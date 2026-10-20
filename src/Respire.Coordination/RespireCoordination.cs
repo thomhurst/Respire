@@ -111,6 +111,11 @@ public sealed class RespireCoordination
     /// <exception cref="ArgumentOutOfRangeException">The capacity is not positive.</exception>
     public RespireSemaphore CreateSemaphore(RespireKey key, int capacity) => new(_client, key, capacity);
 
+    /// <summary>Creates a FIFO lock view over three dedicated, distinct keys in the same Cluster slot.</summary>
+    /// <remarks>Acquisition requires RESP3 client tracking. All contenders must use this view and the same keys.</remarks>
+    public RespireFairLock CreateFairLock(RespireKey key, RespireKey fencingCounterKey, RespireKey queueKey)
+        => new(_client, key, fencingCounterKey, queueKey);
+
     // Shared per connection so every limiter (for example, one per PartitionedRateLimiter partition) skips the
     // failing INCREX probe after an unknown-command reply from a pre-8.8 server. The result expires so that
     // upgraded nodes (rolling Cluster upgrades, failover to a newer primary) regain the INCREX fast path.

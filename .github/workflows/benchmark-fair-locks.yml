@@ -1,0 +1,85 @@
+name: Fair lock benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  fair-locks:
+    if: github.event.label.name == 'run-fair-lock-benchmarks'
+    name: Compare fair and fenced locks (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      redis:
+        image: mirror.gcr.io/library/redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Validate and measure the pinned PR head
+        shell: bash
+        run: |
+          set -euo pipefail
+          for phase in validation measurement; do
+            job=Medium
+            if [ "$phase" = validation ]; then job=Dry; fi
+            (
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
+                --filter '*FairLockBenchmarks*' --job "$job" --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+          done
+      - name: Verify and summarize results
+        shell: python
+        run: |
+          import json, os
+          from pathlib import Path
+          expected = {'FencedUncontended', 'FairUncontended', 'FairContendedFifoHandoff'}
+          phases = {}
+          for phase in ('validation', 'measurement'):
+              reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
+              assert len(reports) == 1, f'Missing report: {phase}'
+              cases = json.loads(reports[0].read_text())['Benchmarks']
+              assert len(cases) == len(expected), f'Unexpected case count: {phase}'
+              assert {case['Method'] for case in cases} == expected, f'Unexpected methods: {phase}'
+              assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases)
+              phases[phase] = cases
+          lines = ['## Fair lock acquisition and FIFO handoff', '',
+                   'Fenced and fair uncontended leases are measured on the same pinned PR head. These are different contracts; ratios are informational.', '',
+                   'The contended case acquires a holder, queues two waiters in order, releases the holder, and hands ownership through both waiters. Its time includes queue-observation round trips used to guarantee contention, and is reported per complete three-owner scenario, not per acquisition.', '',
+                   '| Scenario | Mean ns | Scenarios/s | Allocated B |',
+                   '| --- | ---: | ---: | ---: |']
+          for case in phases['measurement']:
+              mean = case['Statistics']['Mean']
+              allocation = case['Memory']['BytesAllocatedPerOperation']
+              lines.append(f"| {case['Method']} | {mean:.3f} | {1e9/mean:.3f} | {allocation} |")
+          report = '\n'.join(lines) + '\n'
+          Path('results/comparison.md').write_text(report)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output: output.write(report)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: fair-lock-comparison
+          path: |
+            results/
+            validation.log
+            measurement.log

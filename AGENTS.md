@@ -52,6 +52,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-connection-contention.yml` | `run-connection-contention-benchmarks` |
 | `benchmark-connection-establishment.yml` | `run-connection-establishment-benchmarks` |
 | `benchmark-dedicated-pool.yml` | `run-dedicated-pool-benchmarks` |
+| `benchmark-fair-locks.yml` | `run-fair-lock-benchmarks` |
 | `benchmark-fenced-locks.yml` | `run-fenced-locks-benchmarks` |
 | `benchmark-hash-partial-reads.yml` | `run-hash-partial-reads-benchmarks` |
 | `benchmark-hedge-ownership.yml` | `run-hedge-ownership-benchmarks` |

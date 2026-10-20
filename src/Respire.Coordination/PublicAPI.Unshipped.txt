@@ -1,4 +1,10 @@
 #nullable enable
+Respire.Coordination.RespireCoordination.CreateFairLock(Respire.RespireKey key, Respire.RespireKey fencingCounterKey, Respire.RespireKey queueKey) -> Respire.Coordination.RespireFairLock!
+Respire.Coordination.RespireFairLock
+Respire.Coordination.RespireFairLock.Key.get -> Respire.RespireKey
+Respire.Coordination.RespireFairLock.FencingCounterKey.get -> Respire.RespireKey
+Respire.Coordination.RespireFairLock.QueueKey.get -> Respire.RespireKey
+Respire.Coordination.RespireFairLock.AcquireAsync(System.TimeSpan duration, System.TimeSpan waitTimeout, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireFencedLock!>
 Respire.Coordination.RespireIdempotency
 Respire.Coordination.RespireIdempotency.RespireIdempotency(Respire.IRespireClient! client) -> void
 Respire.Coordination.RespireIdempotency.TryBeginAsync(Respire.RespireKey key, System.TimeSpan ttl, string? fingerprint = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireIdempotencyResult!>
