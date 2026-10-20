@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -17,19 +18,16 @@ public sealed partial class RespireClient
         // Copy borrowed data before the first send or asynchronous routing wait.
         var snapshot = new BacklogCommand<TCommand>(command, operation);
         deadline = CreateCircuitDeadline(deadline);
-        var pending = tracking
-            ? SendTrackedOnConnectionCoreAsync(operation, connection, snapshot, cancellationToken, sendAsking, track,
-                observation, deadline)
-            : SendOnConnectionCoreAsync(operation, connection, snapshot, cancellationToken, sendAsking,
-                deadline, allowStreamingConnectionReroute, observation: observation);
-        return FollowReplicaRedirectsAsync(operation, connection, snapshot, pending, cancellationToken,
-            deadline, observation, storedProcedureName, instrument, onConnectionSelected);
+        return FollowReplicaRedirectsAsync(operation, connection, snapshot, cancellationToken,
+            deadline, observation, storedProcedureName, instrument, onConnectionSelected,
+            sendAsking, tracking, track, allowStreamingConnectionReroute);
     }
 
     private async ValueTask<RespValue> FollowReplicaRedirectsAsync<TCommand>(
-        string operation, RespireConnection connection, TCommand command, ValueTask<RespValue> pending,
+        string operation, RespireConnection connection, TCommand command,
         CancellationToken cancellationToken, CommandDeadline deadline, RespireTelemetry.ErrorObservation observation,
-        string? storedProcedureName, bool instrument, Action<RespireConnection>? onConnectionSelected)
+        string? storedProcedureName, bool instrument, Action<RespireConnection>? onConnectionSelected,
+        bool sendAsking, bool tracking, bool track, bool allowStreamingConnectionReroute)
         where TCommand : struct, IRespCommand
     {
         var acquisition = new CommandAcquisitionScope(cancellationToken, deadline, _core.Options.CommandTimeout);
@@ -47,10 +45,23 @@ public sealed partial class RespireClient
                 RespireServerException error;
                 try
                 {
-                    var reply = await pending.ConfigureAwait(false);
+                    var reply = await SendReplicaRedirectAttemptAsync(operation, connection, command,
+                        cancellationToken, deadline, observation, sendAsking, tracking, track).ConfigureAwait(false);
                     if (!reply.IsError) return reply;
                     try { error = ResponseReader.ServerError(in reply, operation, new(connection.Host, connection.Port)); }
                     finally { reply.Dispose(); }
+                }
+                catch (RespireConnectionRetiredException retired) when (allowStreamingConnectionReroute
+                    && TryRerouteCircuit(connection, deadline, out var target, out var rerouted, GetTransportReadZone(in command)))
+                {
+                    observation.Handled(retired, new(connection.Host, connection.Port));
+                    connection = target;
+                    deadline = rerouted;
+                    telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                    onConnectionSelected?.Invoke(connection);
+                    // Retirement rejected admission; it does not consume a server redirect attempt.
+                    attempt--;
+                    continue;
                 }
                 catch (RespireServerException rejection) { error = rejection; }
 
@@ -79,8 +90,9 @@ public sealed partial class RespireClient
                 acquisition.CheckDeadline(operation, _core, connection);
                 // Release this admission timer; another redirect can re-arm the remaining deadline.
                 acquisition.Dispose();
-                pending = SendOnConnectionCoreAsync(operation, connection, command, cancellationToken,
-                    commandDeadline: deadline, allowStreamingConnectionReroute: false, observation: observation);
+                sendAsking = false;
+                tracking = false;
+                allowStreamingConnectionReroute = false;
             }
         }
         catch (OperationCanceledException error) when (acquisition.IsDeadlineCancellation(error))
@@ -111,6 +123,39 @@ public sealed partial class RespireClient
                 }
             }
         }
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> SendReplicaRedirectAttemptAsync<TCommand>(
+        string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
+        CommandDeadline deadline, RespireTelemetry.ErrorObservation observation, bool sendAsking, bool tracking, bool track)
+        where TCommand : struct, IRespCommand
+    {
+        // Keep every attempt pinned so this logical owner sees all endpoint changes,
+        // including maintenance retirement before the first REDIRECT response.
+        connection.ThrowIfRetired();
+        var admission = (tracking ? _core.Circuits is not null && !_snapshotPrefixedBinaryKeys
+            : UsesCircuitResponsePath(operation, pinToConnection: false))
+            ? AcquireCircuit(connection, cancellationToken) : default;
+        try
+        {
+            var response = tracking
+                ? await SendTrackedOnConnectionUncheckedAsync(operation, connection, command, cancellationToken,
+                    sendAsking, track, deadline, pinToConnection: true, observation: observation).ConfigureAwait(false)
+                : await SendOnConnectionUncheckedAsync(operation, connection, command, cancellationToken,
+                    sendAsking, deadline, allowStreamingConnectionReroute: false, pinToConnection: true,
+                    observation: observation).ConfigureAwait(false);
+            admission.Success();
+            return response;
+        }
+        catch (Exception error)
+        {
+            admission.Failed(error, cancellationToken);
+            throw;
+        }
+        finally { admission.Dispose(); }
     }
 
     internal static bool TryParseReplicaRedirect(string message, string sourceHost, out RespireEndpoint endpoint)

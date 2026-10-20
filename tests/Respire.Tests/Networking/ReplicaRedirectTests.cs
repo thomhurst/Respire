@@ -11,6 +11,93 @@ namespace Respire.Tests.Networking;
 public class ReplicaRedirectTests
 {
     [Test]
+    [NotInParallel]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task RetirementBeforeRedirectAdmissionReportsReplacementEndpoint(bool circuit, bool script)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
+        var activities = new List<Activity>();
+        var measurements = new List<Dictionary<string, object?>>();
+        Action? beforeScriptSend = null;
+        var procedure = RespireScript.Create("return 7");
+        var operation = script ? procedure.EvalShaOperation : "GET";
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "Respire",
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStarted = activity =>
+            {
+                if (Equals(activity.GetTagItem("db.stored_procedure.name"), procedure.Sha1)) beforeScriptSend?.Invoke();
+            },
+            ActivityStopped = activity => { lock (activities) activities.Add(activity); },
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var meter = new MeterListener();
+        meter.InstrumentPublished = (instrument, capture) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+                capture.EnableMeasurementEvents(instrument);
+        };
+        meter.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            lock (measurements) measurements.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+        });
+        meter.Start();
+        await using var target = Server();
+        await using var source = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
+        {
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            CircuitBreaker = circuit ? new() : null,
+        });
+        var original = client.Core.Multiplexer.GetConnection();
+        var announcement = client.Core.Multiplexer.CaptureMovingAnnouncement(0, original,
+            new MaintenanceNotification("MOVING", 1, 10, new("127.0.0.1", target.Port)));
+        var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Core.Multiplexer.MovingHandoffPublished += () => published.TrySetResult();
+        async Task PublishReplacement()
+        {
+            client.Core.Multiplexer.QueueDedicatedMovingHandoff(original, announcement, static () => true);
+            await published.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        if (script)
+        {
+            // Script selection precedes activity creation; retire that selection before admission.
+            beforeScriptSend = () => PublishReplacement().GetAwaiter().GetResult();
+            await Assert.That(await client.Scripts.ExecuteIntegerAsync(procedure, "key")).IsEqualTo(7);
+        }
+        else
+        {
+            await PublishReplacement();
+            using var reply = await client.SendOnConnectionAsync("GET", original,
+                new Respire.Commands.Cmd1(Respire.Commands.Verbs.Get, "key"), timeout.Token);
+            await Assert.That(reply.AsString()).IsEqualTo("value");
+        }
+        var wireOperation = script ? "EVALSHA " : "GET ";
+        await Assert.That(source.ReceivedCommands.Any(command => command.StartsWith(wireOperation, StringComparison.Ordinal))).IsFalse();
+        await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith(wireOperation, StringComparison.Ordinal))).IsEqualTo(1);
+        Activity[] traces;
+        Dictionary<string, object?>[] durations;
+        lock (activities) traces = activities.Where(activity => Equals(activity.GetTagItem("db.operation.name"), operation)).ToArray();
+        lock (measurements) durations = measurements.Where(tags => Equals(tags.GetValueOrDefault("db.operation.name"), operation)).ToArray();
+        await Assert.That(traces.Length).IsEqualTo(1);
+        await Assert.That(traces[0].GetTagItem("server.port")).IsEqualTo(target.Port);
+        await Assert.That(durations.Length).IsEqualTo(1);
+        await Assert.That(durations[0]["server.port"]).IsEqualTo(target.Port);
+
+        static FakeRespServer Server() => new(4)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
+                : command.StartsWith("EVALSHA ", StringComparison.Ordinal) ? Bytes(":7\r\n")
+                : command == "GET key" ? Bytes("$5\r\nvalue\r\n") : FakeRespServer.OkReply,
+        };
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task CapabilityPipelinesAfterAuthAndIgnoresUnsupportedServers(bool supported)
