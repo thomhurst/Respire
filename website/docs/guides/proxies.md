@@ -16,10 +16,13 @@ await using var client = await RespireClient.ConnectAsync(new RespireOptions
 await client.SetAsync("key", "value");
 ```
 
-For HTTP CONNECT, replace the factory:
+For HTTP CONNECT, configure the options with the HTTP factory:
 
 ```csharp
-ConnectionFactory = RespireProxy.HttpConnect(new("proxy.example", 8080)),
+var options = new RespireOptions
+{
+    ConnectionFactory = RespireProxy.HttpConnect(new("proxy.example", 8080)),
+};
 ```
 
 Each invocation creates a new owned TCP stream. Respire disposes it when the connection
@@ -33,6 +36,8 @@ Keep Redis endpoints in `Endpoints`; the proxy belongs only in the factory. Both
 send DNS hostnames to the proxy for resolution, including international names converted to
 ASCII IDN form. IPv4 and IPv6 literals are supported; scoped IPv6 addresses and Unix sockets
 are rejected. Only the proxy's hostname is resolved locally.
+Numeric names such as `1` or `10.1` are sent unchanged for proxy-side resolution;
+IPv4 literals use canonical dotted-decimal form, such as `127.0.0.1`.
 
 Address mapping runs before the factory. Ensure the proxy can reach all mapped destinations,
 including nodes discovered through Cluster or Sentinel. HTTP proxies must permit CONNECT
@@ -44,12 +49,22 @@ Both helpers accept optional `username` and `password` arguments. Supply both or
 Load secrets from your secret store rather than embedding them in source code.
 
 ```csharp
-ConnectionFactory = RespireProxy.Socks5(
-    new("proxy.example", 1080), proxyUsername, proxyPassword),
+var proxyUsername = Environment.GetEnvironmentVariable("PROXY_USERNAME")
+    ?? throw new InvalidOperationException("PROXY_USERNAME is required.");
+var proxyPassword = Environment.GetEnvironmentVariable("PROXY_PASSWORD")
+    ?? throw new InvalidOperationException("PROXY_PASSWORD is required.");
+var options = new RespireOptions
+{
+    ConnectionFactory = RespireProxy.Socks5(
+        new("proxy.example", 1080), proxyUsername, proxyPassword),
+};
 
 // Or:
-ConnectionFactory = RespireProxy.HttpConnect(
-    new("proxy.example", 8080), proxyUsername, proxyPassword),
+var httpOptions = new RespireOptions
+{
+    ConnectionFactory = RespireProxy.HttpConnect(
+        new("proxy.example", 8080), proxyUsername, proxyPassword),
+};
 ```
 
 | Helper | Supported authentication |

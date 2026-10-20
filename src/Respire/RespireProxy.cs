@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
@@ -38,7 +39,7 @@ public static class RespireProxy
         {
             var host = ValidateEndpoint(endpoint);
             byte[] address;
-            if (IPAddress.TryParse(host, out var ip))
+            if (TryParseIpLiteral(host, out var ip))
                 address = [(byte)(ip.AddressFamily == AddressFamily.InterNetwork ? 1 : 4), .. ip.GetAddressBytes()];
             else
             {
@@ -199,16 +200,25 @@ public static class RespireProxy
         ArgumentException.ThrowIfNullOrWhiteSpace(endpoint.Host);
         var host = endpoint.Host;
         if (host.StartsWith('[') && host.EndsWith(']')) host = host[1..^1];
-        if (IPAddress.TryParse(host, out var address))
+        if (TryParseIpLiteral(host, out var address))
         {
             if (address.AddressFamily == AddressFamily.InterNetworkV6 && address.ScopeId != 0)
                 throw new ArgumentException("Scoped IPv6 addresses cannot be routed through a proxy.", nameof(endpoint));
             return address.ToString();
         }
         host = new IdnMapping().GetAscii(host);
-        if (host.Length > 255 || Uri.CheckHostName(host) != UriHostNameType.Dns)
+        // Uri also classifies legacy numeric names as IPv4; preserve them for proxy DNS.
+        if (host.Length > 255 || Uri.CheckHostName(host) is not (UriHostNameType.Dns or UriHostNameType.IPv4))
             throw new ArgumentException("A DNS hostname or IP address is required.", nameof(endpoint));
         return host;
+    }
+
+    private static bool TryParseIpLiteral(string host, [NotNullWhen(true)] out IPAddress? address)
+    {
+        // IPAddress accepts shorthand, hex and octal IPv4. Only dotted-decimal IPv4
+        // that round-trips is a literal; IPv6 may use any valid colon-based spelling.
+        return IPAddress.TryParse(host, out address)
+            && (host.Contains(':') || address.ToString() == host);
     }
 
     private static void ValidateCredentialPair(string? username, string? password)

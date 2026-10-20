@@ -12,8 +12,13 @@ public class ProxyTests
 {
     [Test]
     [Arguments("redis.internal", 3, false)]
+    [Arguments("1", 3, false)]
+    [Arguments("10.1", 3, false)]
+    [Arguments("0x7f000001", 3, false)]
+    [Arguments("127.000.000.001", 3, false)]
     [Arguments("127.0.0.1", 1, false)]
     [Arguments("::1", 4, false)]
+    [Arguments("0:0:0:0:0:0:0:1", 4, false)]
     [Arguments("redis.internal", 3, true)]
     [Arguments("bücher.example", 3, false)]
     public async Task SocksSendsDestinationAndPreservesTunnelBytes(string host, int addressType, bool authenticate)
@@ -54,6 +59,10 @@ public class ProxyTests
 
     [Test]
     [Arguments("redis.internal", "redis.internal:6380", false)]
+    [Arguments("1", "1:6380", false)]
+    [Arguments("10.1", "10.1:6380", false)]
+    [Arguments("0x7f000001", "0x7f000001:6380", false)]
+    [Arguments("127.000.000.001", "127.000.000.001:6380", false)]
     [Arguments("127.0.0.1", "127.0.0.1:6380", false)]
     [Arguments("::1", "[::1]:6380", true)]
     public async Task HttpSendsAuthorityAndPreservesTunnelBytes(string host, string authority, bool authenticate)

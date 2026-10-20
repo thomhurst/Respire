@@ -1,0 +1,14 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireProxy.HttpConnect(RespireEndpoint,string?,string?):Func<RespireEndpoint,CancellationToken,ValueTask<Stream>>",
+      "Reason": "Creates a connection factory for proxy tunnel negotiation; no Redis command dispatch."
+    },
+    {
+      "Member": "Respire.RespireProxy.Socks5(RespireEndpoint,string?,string?):Func<RespireEndpoint,CancellationToken,ValueTask<Stream>>",
+      "Reason": "Creates a connection factory for proxy tunnel negotiation; no Redis command dispatch."
+    }
+  ]
+}
