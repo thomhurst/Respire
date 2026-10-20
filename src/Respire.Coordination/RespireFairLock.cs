@@ -7,7 +7,10 @@ namespace Respire.Coordination;
 /// <remarks>
 /// Arrival means enqueue order on Redis, not local invocation order. A waiter leaves the queue when
 /// its wait timeout expires, even if it is still alive. All participants must use the same three
-/// dedicated keys, in one Cluster slot. Requires RESP3 client-side caching and tracking. Redis
+/// dedicated keys, in one Cluster slot. Requires a built-in <see cref="RespireClient"/> or its views,
+/// primary reads, and RESP3 client-side caching with tracking coverage for the lease and queue keys
+/// and <c>ClientSideCache.NoLoop=false</c>. Custom clients and decorators cannot be verified and are
+/// rejected before enqueueing. Redis
 /// failover or counter rollback can invalidate fencing monotonicity; protected resources must
 /// atomically reject stale fencing tokens. The caller retains ownership of the client.
 /// </remarks>
@@ -154,19 +157,9 @@ public sealed class RespireFairLock
         var waitMilliseconds = waitTimeout.Ticks / TimeSpan.TicksPerMillisecond;
         if (waitMilliseconds <= 0 || waitTimeout > TimeSpan.FromDays(24))
             throw new ArgumentOutOfRangeException(nameof(waitTimeout), "Wait timeout must be between one millisecond and 24 days.");
-        var cache = _client.ClientSideCache ?? throw new RespireConfigurationException(
-            "Fair locks require RESP3 client-side caching and tracking.");
         var physicalLeaseKey = _client.ResolveKey(Key).Snapshot();
         var physicalQueueKey = _client.ResolveKey(QueueKey).Snapshot();
-        if (_client is RespireClient concrete)
-        {
-            if (concrete.GetBatchReadFromPolicy() != RespireReadFrom.Primary)
-                throw new RespireConfigurationException("Fair locks require primary reads so tracking observes lease and queue writes.");
-            if (concrete.Core.Options.ClientSideCache?.NoLoop == true)
-                throw new RespireConfigurationException("Fair locks require ClientSideCache.NoLoop=false so same-client releases wake waiters.");
-            if (concrete.ReadCache is not { } readCache || !readCache.CanTrack(physicalLeaseKey) || !readCache.CanTrack(physicalQueueKey))
-                throw new RespireConfigurationException("Fair locks require cache tracking coverage for both lease and queue keys.");
-        }
+        var cache = CoordinationWaitAdmission.Validate(_client, physicalLeaseKey, physicalQueueKey);
         using var signal = new SemaphoreSlim(0, 1);
         void OnInvalidation(RespireClientCacheInvalidation invalidation)
         {
