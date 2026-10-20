@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -8,6 +9,47 @@ namespace Respire.Coordination.Tests;
 
 public class FairLockWireTests
 {
+    [Test]
+    [Arguments(10001L)]
+    [Arguments(20001L)]
+    public async Task MissingWaiterReportsServerClockEvidenceAndDoesNotRejoin(long serverTime)
+    {
+        var attempts = 0;
+        var prefix = $"EVALSHA {RespireFairLock.Acquire.Sha1} ";
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "GET lease" or "HGET queue head" => "_\r\n"u8.ToArray(),
+                var value when value.StartsWith(prefix, StringComparison.Ordinal) =>
+                    Interlocked.Increment(ref attempts) == 1
+                        ? "*5\r\n:0\r\n$0\r\n\r\n:1\r\n:10000\r\n:20000\r\n"u8.ToArray()
+                        : Encoding.UTF8.GetBytes($"*7\r\n:-1\r\n$0\r\n\r\n:0\r\n:{serverTime}\r\n:0\r\n:-2\r\n:0\r\n"),
+                _ => FakeRespServer.OkReply,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp3, Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1, ClientSideCache = new(),
+        });
+        var fair = new RespireCoordination(client).CreateFairLock("lease", "counter", "queue");
+        var error = await Assert.That(async () => await fair
+            .AcquireAsync(TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(10))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Throws<TimeoutException>();
+        await Assert.That(error!.Message).Contains("is no longer queued");
+        await Assert.That(error.Message).Contains($"Redis TIME={serverTime}ms");
+        await Assert.That(error.Message).Contains("previous TIME=10000ms, previous deadline=20000ms");
+        await Assert.That(error.Message).Contains("elapsed since previous attempt=");
+        await Assert.That(error.Message).Contains("queue PTTL=-2ms, queue fields=0");
+        var acquisitions = server.ReceivedCommands
+            .Where(command => command.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
+        await Assert.That(acquisitions.Length).IsEqualTo(2);
+        await Assert.That(acquisitions[0].EndsWith(" join", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(acquisitions[1].EndsWith(" retry", StringComparison.Ordinal)).IsTrue();
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]

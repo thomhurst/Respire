@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -9,6 +10,10 @@ public class FairLockTests(RedisTestContainer fixture)
 {
     private static readonly TimeSpan Lease = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
+    private static readonly RespireScript QueueSnapshot = RespireScript.Create("""
+        local t = redis.call('TIME')
+        return {t[1], t[2], redis.call('PTTL', KEYS[1]), redis.call('HGETALL', KEYS[1])}
+        """, readOnly: true);
 
     [Test]
     [Arguments(RespireClientTrackingMode.OptIn)]
@@ -23,20 +28,37 @@ public class FairLockTests(RedisTestContainer fixture)
         await using var holder = await fair.AcquireAsync(Lease, Wait);
         var pending = new List<Task<RespireFencedLock>>();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        for (var i = 0; i < 8; i++)
+        var started = Stopwatch.GetTimestamp();
+        var snapshots = new List<string>();
+        try
         {
-            pending.Add((i % 2 == 0 ? fair : other).AcquireAsync(Lease, Wait, timeout.Token).AsTask());
-            await WaitForQueueAsync(first, fair, i + 1, timeout.Token);
+            for (var i = 0; i < 8; i++)
+            {
+                pending.Add((i % 2 == 0 ? fair : other).AcquireAsync(Lease, Wait, timeout.Token).AsTask());
+                await WaitForQueueAsync(first, fair, i + 1, timeout.Token);
+                snapshots.Add(await SnapshotAsync($"enqueued {i}", first, fair, started));
+            }
+            await holder.DisposeAsync();
+            for (var i = 0; i < pending.Count; i++)
+            {
+                await using var acquired = await pending[i].WaitAsync(timeout.Token);
+                await Assert.That(acquired.FencingToken).IsEqualTo(i + 2L);
+                await Assert.That(pending.Skip(i + 1).All(task => !task.IsCompleted)).IsTrue();
+                await Assert.That(await acquired.VerifyStillHeldAsync()).IsTrue();
+            }
+            await Assert.That(await first.Keys.ExistsAsync(fair.QueueKey)).IsFalse();
         }
-        await holder.DisposeAsync();
-        for (var i = 0; i < pending.Count; i++)
+        catch (Exception error)
         {
-            await using var acquired = await pending[i].WaitAsync(timeout.Token);
-            await Assert.That(acquired.FencingToken).IsEqualTo(i + 2L);
-            await Assert.That(pending.Skip(i + 1).All(task => !task.IsCompleted)).IsTrue();
-            await Assert.That(await acquired.VerifyStillHeldAsync()).IsTrue();
+            snapshots.Add(await SnapshotAsync("failed", first, fair, started));
+            throw new InvalidOperationException(
+                $"FIFO failure ({trackingMode}, database {fixture.Database}, queue {fair.QueueKey}):\n"
+                + string.Join("\n", snapshots), error);
         }
-        await Assert.That(await first.Keys.ExistsAsync(fair.QueueKey)).IsFalse();
+        finally
+        {
+            await timeout.CancelAsync();
+        }
     }
 
     [Test]
@@ -175,6 +197,72 @@ public class FairLockTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MissingWaiterReportsQueueStateWithoutRejoining(bool deleteWholeQueue)
+    {
+        await using var client = await ConnectAsync();
+        var fair = Create(client);
+        await using var holder = await fair.AcquireAsync(Lease, Wait);
+        using (var orphan = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
+            [fair.Key, fair.FencingCounterKey, fair.QueueKey], ["orphan", 20000, 10000, "join"]))
+            await Assert.That(orphan[0].AsInteger()).IsEqualTo(0);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var pending = fair.AcquireAsync(Lease, Wait, timeout.Token).AsTask();
+        await WaitForQueueAsync(client, fair, 2, timeout.Token);
+        var owner = await client.Hashes.GetStringAsync(fair.QueueKey, "tail");
+        var deadline = await client.Hashes.GetStringAsync(fair.QueueKey, "d" + owner);
+        if (deleteWholeQueue)
+            await client.Keys.DeleteAsync(fair.QueueKey);
+        else
+        {
+            using var removed = await client.Scripts.ExecuteAsync(RespireFairLock.RemoveWaiter,
+                [fair.Key, fair.FencingCounterKey, fair.QueueKey], [owner!, "remove"]);
+        }
+
+        var error = await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<TimeoutException>();
+        await Assert.That(error!.Message).Contains("is no longer queued");
+        await Assert.That(error.Message).Contains($"previous deadline={deadline}ms");
+        await Assert.That(error.Message).Contains($"queue fields={(deleteWholeQueue ? 0 : 3)}");
+        if (deleteWholeQueue)
+            await Assert.That(error.Message).Contains("queue PTTL=-2ms");
+        await Assert.That(await client.GetStringAsync(fair.FencingCounterKey)).IsEqualTo("1");
+        await Assert.That(await holder.VerifyStillHeldAsync()).IsTrue();
+        await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "tail"))
+            .IsEqualTo(deleteWholeQueue ? null : "orphan");
+    }
+
+    [Test]
+    public async Task ExpiredNonHeadReportsDeadlineBeforeRemovingItsEntry()
+    {
+        await using var client = await ConnectAsync();
+        var fair = Create(client);
+        await using var holder = await fair.AcquireAsync(Lease, Wait);
+        foreach (var owner in new[] { "head", "expired" })
+        {
+            using var enqueued = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
+                [fair.Key, fair.FencingCounterKey, fair.QueueKey], [owner, 20000, 10000, "join"]);
+            await Assert.That(enqueued[0].AsInteger()).IsEqualTo(0);
+            await Assert.That(enqueued[4].AsInteger() - enqueued[3].AsInteger()).IsEqualTo(10000);
+        }
+        using var shortened = await client.Scripts.ExecuteAsync(RespireScript.Create("""
+            local t = redis.call('TIME')
+            local deadline = t[1] * 1000 + math.floor(t[2] / 1000) - 1
+            redis.call('HSET', KEYS[1], 'dexpired', string.format('%.0f', deadline))
+            return deadline
+            """), [fair.QueueKey], []);
+        using var expired = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
+            [fair.Key, fair.FencingCounterKey, fair.QueueKey], ["expired", 20000, 10000, "retry"]);
+        await Assert.That(expired[0].AsInteger()).IsEqualTo(-1);
+        await Assert.That(expired[3].AsInteger()).IsGreaterThanOrEqualTo(shortened.AsInteger());
+        await Assert.That(expired[4].AsInteger()).IsEqualTo(shortened.AsInteger());
+        await Assert.That(expired[5].AsInteger()).IsGreaterThan(0);
+        await Assert.That(expired[6].AsInteger()).IsEqualTo(6);
+        await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "dexpired")).IsNull();
+        await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "head")).IsEqualTo("head");
+    }
+
+    [Test]
     public async Task ExpiredLeaseWakesQueueAndStaleOwnerCannotReleaseSuccessor()
     {
         await using var client = await ConnectAsync();
@@ -299,6 +387,24 @@ public class FairLockTests(RedisTestContainer fixture)
             using var length = await client.ExecuteAsync(RespireCommands.Hash.HLEN, token, (RespireValue)fair.QueueKey);
             if (length.AsInteger() == count * 3) return;
             await Task.Delay(10, token);
+        }
+    }
+
+    private static async Task<string> SnapshotAsync(string stage, IRespireClient client, RespireFairLock fair, long started)
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            using var snapshot = await client.Scripts.ExecuteAsync(QueueSnapshot, [fair.QueueKey], [], timeout.Token);
+            var entries = snapshot[3].Select(value => value.AsString());
+            return $"{stage}: elapsed={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0}ms, "
+                + $"TIME={snapshot[0].AsString()}.{snapshot[1].AsString().PadLeft(6, '0')}, PTTL={snapshot[2].AsInteger()}, "
+                + $"queue=[{string.Join(", ", entries)}]";
+        }
+        catch (Exception error)
+        {
+            // A diagnostic read must not replace the original acquisition/assertion failure.
+            return $"{stage}: snapshot unavailable: {error.GetType().Name}: {error.Message}";
         }
     }
 }
