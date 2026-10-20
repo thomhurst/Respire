@@ -65,7 +65,7 @@
     {
       "Name": "script-connection-fallback",
       "Role": "borrower",
-      "Member": "Respire.RespireClient.ExecuteScriptOnConnectionCoreAsync(RespireConnection,RespireScript,RespireValue[],CancellationToken,ClientSideCacheCoordinator.MutationFence,RespireTelemetry.ErrorObservation,TrackedScriptExecution?,CommandDeadline,Action<RespireConnection>?):ValueTask<RespireResult>",
+      "Member": "Respire.RespireClient.ExecuteScriptOnConnectionCoreAsync(RespireConnection,RespireScript,RespireValue[],CancellationToken,ClientSideCacheCoordinator.MutationFence,RespireTelemetry.ErrorObservation,TrackedScriptExecution?,CommandDeadline,Action<RespireEndpoint,RespireConnection?>?):ValueTask<RespireResult>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Contract": "Keep transport retries and NOSCRIPT fallback in the same public or tracked caller observation. Result construction does not publish a final error; mutation cleanup and any joined correction finish first."
     },

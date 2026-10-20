@@ -241,6 +241,7 @@ public sealed record RespireOptions
     /// when the tier has no measured candidate. Pending probes remain excluded.
     /// </summary>
     public TimeSpan? ReplicaLatencyTolerance { get; init; }
+
     /// <summary>Advertise Valkey's CLIENT CAPA REDIRECT and follow standalone replica redirects for individual commands.</summary>
     /// <remarks>Disabled by default. Replica read connections also request READONLY when the capability succeeds.
     /// Server-cursor commands, endpoint-bound server operations, transactions, and streamed payloads retain their connection affinity.</remarks>

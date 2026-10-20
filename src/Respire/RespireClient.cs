@@ -5319,6 +5319,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
         var telemetry = default(RespireTelemetry.OperationScope);
         RespireConnection? connection = null;
+        RespireConnection? telemetryConnection = null;
+        var telemetryEndpoint = core.Endpoint;
         try
         {
             var readDeadline = default(CommandDeadline);
@@ -5360,16 +5362,20 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
             async ValueTask<RespireResult> SendSelectedScriptAsync(CommandDeadline deadline)
             {
+                telemetryEndpoint = new(connection!.Host, connection.Port);
+                telemetryConnection = connection;
                 telemetry = RespireTelemetry.StartOperation(script.EvalShaOperation, connection!,
                     core.Options.Database, storedProcedureName: script.Sha1, started: started);
                 var result = await ExecuteScriptOnConnectionCoreAsync(connection!, script, tail, cancellationToken, mutationFence,
                         observation: observation, commandDeadline: deadline,
-                        onConnectionSelected: connection!.ReplicaRedirectsEnabled ? selected =>
+                        onEndpointSelected: connection!.ReplicaRedirectsEnabled ? (endpoint, selected) =>
                         {
-                            connection = selected;
-                            telemetry.UpdateServerEndpoint(selected.Host, selected.Port);
+                            telemetryEndpoint = endpoint;
+                            telemetryConnection = selected;
+                            telemetry.UpdateServerEndpoint(endpoint.Host, endpoint.Port);
                         } : null).ConfigureAwait(false);
-                telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);
+                telemetry.Complete(script.EvalShaOperation, telemetryEndpoint.Host, telemetryEndpoint.Port,
+                    core.Options.Database, script.Sha1, connection: telemetryConnection);
                 return result;
             }
         }
@@ -5381,7 +5387,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     started, ex, script.Sha1, endpoint: core.Sentinel is null && _readFrom == RespireReadFrom.Primary
                         ? core.Endpoint : (RespireEndpoint?)null);
             }
-            telemetry.Complete(core, script.EvalShaOperation, script.Sha1, ex, connection);
+            telemetry.Complete(script.EvalShaOperation, telemetryEndpoint.Host, telemetryEndpoint.Port,
+                core.Options.Database, script.Sha1, ex, telemetryConnection);
             throw;
         }
     }
@@ -5752,7 +5759,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         ClientSideCacheCoordinator.MutationFence mutationFence,
         RespireTelemetry.ErrorObservation observation,
         TrackedScriptExecution? execution = null, CommandDeadline commandDeadline = default,
-        Action<RespireConnection>? onConnectionSelected = null)
+        Action<RespireEndpoint, RespireConnection?>? onEndpointSelected = null)
     {
         RespValue reply;
         try
@@ -5760,7 +5767,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             reply = await SendScriptCommandAsync(
                 script.EvalShaOperation, connection, new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], tail[1..]),
                 cancellationToken, execution, mutationFence, script.IsCacheReadOnly, observation, commandDeadline,
-                onConnectionSelected).ConfigureAwait(false);
+                onEndpointSelected).ConfigureAwait(false);
         }
         catch (RespireServerException error) when (error.Code == RespireErrorCodes.NoScript)
         {
@@ -5770,7 +5777,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             reply = await SendScriptCommandAsync(
                 script.EvalOperation, connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]),
                 cancellationToken, execution, mutationFence, script.IsCacheReadOnly, observation, commandDeadline,
-                onConnectionSelected).ConfigureAwait(false);
+                onEndpointSelected).ConfigureAwait(false);
         }
         return new RespireResult(in reply, _core.Options.Serializer);
     }
@@ -5782,14 +5789,14 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         CancellationToken cancellationToken,
         TrackedScriptExecution? execution, ClientSideCacheCoordinator.MutationFence mutationFence, bool cacheReadOnly,
         RespireTelemetry.ErrorObservation observation, CommandDeadline commandDeadline = default,
-        Action<RespireConnection>? onConnectionSelected = null)
+        Action<RespireEndpoint, RespireConnection?>? onEndpointSelected = null)
     {
         if (!mutationFence.IsRequired)
         {
             var readOnly = ReadOnlyCommand<Cmd2N>.ForAuditedScript(command, cacheReadOnly);
             if (execution is null && connection.ReplicaRedirectsEnabled)
                 return SendWithReplicaRedirectsAsync(operation, connection, readOnly, cancellationToken,
-                    commandDeadline, observation, instrument: false, onConnectionSelected: onConnectionSelected);
+                    commandDeadline, observation, instrument: false, onEndpointSelected: onEndpointSelected);
             return execution is null
                 ? SendOnConnectionCoreAsync(operation, connection, readOnly, cancellationToken, observation: observation, commandDeadline: commandDeadline)
                 : SendOnConnectionCoreAsync(operation, connection,
@@ -5798,7 +5805,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         var bound = new MutationCommand<Cmd2N>(command, mutationFence);
         if (execution is null && connection.ReplicaRedirectsEnabled)
             return SendWithReplicaRedirectsAsync(operation, connection, bound, cancellationToken,
-                commandDeadline, observation, instrument: false, onConnectionSelected: onConnectionSelected);
+                commandDeadline, observation, instrument: false, onEndpointSelected: onEndpointSelected);
         return execution is null
             ? SendOnConnectionCoreAsync(operation, connection, bound, cancellationToken, observation: observation, commandDeadline: commandDeadline)
             : SendOnConnectionCoreAsync(operation, connection,

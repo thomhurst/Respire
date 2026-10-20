@@ -11,6 +11,93 @@ namespace Respire.Tests.Networking;
 public class ReplicaRedirectTests
 {
     [Test]
+    [NotInParallel]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task RedirectAcquisitionFailureTelemetryNamesTarget(bool retry, bool script)
+    {
+        using var configuration = new MetricConfigurationScope();
+        var activities = new List<Activity>();
+        var durations = new List<Dictionary<string, object?>>();
+        var errors = new List<Dictionary<string, object?>>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "Respire",
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => { lock (activities) activities.Add(activity); },
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var meter = new MeterListener();
+        meter.InstrumentPublished = (instrument, capture) =>
+        {
+            if (instrument.Meter.Name == "Respire"
+                && instrument.Name is "db.client.operation.duration" or "redis.client.errors")
+                capture.EnableMeasurementEvents(instrument);
+        };
+        meter.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            lock (durations) durations.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+        });
+        meter.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            lock (errors) errors.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+        });
+        meter.Start();
+        await using var target = new FakeRespServer(3) { CloseConnectionAfterCommand = 1 };
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "GET key" || command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                ? Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : FakeRespServer.OkReply,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        {
+            CircuitBreaker = new() { MinimumFailureCount = 1, OpenDuration = TimeSpan.FromMinutes(1) },
+            RetryPolicy = retry ? new() { RetryableErrors = RespireRetryableErrors.Loading } : null,
+            CommandTimeout = TimeSpan.FromSeconds(5),
+        });
+        var procedure = RespireScript.Create("return 7");
+        var operation = script ? procedure.EvalShaOperation : "GET";
+        async Task Send()
+        {
+            if (script) await client.Scripts.ExecuteIntegerAsync(procedure, "key");
+            else await client.GetStringAsync("key");
+        }
+
+        await Assert.That(Send).Throws<RespireConnectionException>();
+        await Assert.That(Send).Throws<RespireCircuitOpenException>();
+        Activity[] traces;
+        Dictionary<string, object?>[] measurements;
+        Dictionary<string, object?>[] failures;
+        lock (activities) traces = activities.Where(activity => Equals(activity.GetTagItem("db.operation.name"), operation)).ToArray();
+        lock (durations) measurements = durations.Where(tags => Equals(tags.GetValueOrDefault("db.operation.name"), operation)).ToArray();
+        lock (errors) failures = errors.ToArray();
+        await Assert.That(traces.Length).IsEqualTo(2);
+        await Assert.That(measurements.Length).IsEqualTo(2);
+        foreach (var trace in traces)
+        {
+            await Assert.That(trace.GetTagItem("server.port")).IsEqualTo(target.Port);
+            await Assert.That(trace.Status).IsEqualTo(ActivityStatusCode.Error);
+            // No target connection was acquired: do not attach the source socket as its peer.
+            await Assert.That(trace.GetTagItem("network.peer.port")).IsNull();
+        }
+        foreach (var measurement in measurements)
+            await Assert.That(measurement["server.port"]).IsEqualTo(target.Port);
+        var redirects = failures.Where(tags => Equals(tags.GetValueOrDefault("db.response.status_code"), "REDIRECT")).ToArray();
+        await Assert.That(redirects.Length).IsEqualTo(2);
+        foreach (var redirect in redirects)
+        {
+            await Assert.That(redirect["server.port"]).IsEqualTo(replica.Port);
+            await Assert.That((bool)redirect["redis.client.errors.internal"]!).IsTrue();
+        }
+        var finalErrors = failures.Where(tags => Equals(tags.GetValueOrDefault("redis.client.errors.internal"), false)).ToArray();
+        await Assert.That(finalErrors.Length).IsEqualTo(2);
+        foreach (var error in finalErrors)
+            await Assert.That(error["server.port"]).IsEqualTo(target.Port);
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo(["CLIENT CAPA REDIRECT"]);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task RedirectTargetHandshakeFailureOpensOnlyTargetCircuit(bool retry)

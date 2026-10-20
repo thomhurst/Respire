@@ -13,20 +13,20 @@ public sealed partial class RespireClient
         CommandDeadline deadline, RespireTelemetry.ErrorObservation observation, bool sendAsking = false,
         bool tracking = false, bool track = true, bool allowStreamingConnectionReroute = true,
         string? storedProcedureName = null, bool instrument = true,
-        Action<RespireConnection>? onConnectionSelected = null) where TCommand : struct, IRespCommand
+        Action<RespireEndpoint, RespireConnection?>? onEndpointSelected = null) where TCommand : struct, IRespCommand
     {
         // Copy borrowed data before the first send or asynchronous routing wait.
         var snapshot = new BacklogCommand<TCommand>(command, operation);
         deadline = CreateCircuitDeadline(deadline);
         return FollowReplicaRedirectsAsync(operation, connection, snapshot, cancellationToken,
-            deadline, observation, storedProcedureName, instrument, onConnectionSelected,
+            deadline, observation, storedProcedureName, instrument, onEndpointSelected,
             sendAsking, tracking, track, allowStreamingConnectionReroute);
     }
 
     private async ValueTask<RespValue> FollowReplicaRedirectsAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command,
         CancellationToken cancellationToken, CommandDeadline deadline, RespireTelemetry.ErrorObservation observation,
-        string? storedProcedureName, bool instrument, Action<RespireConnection>? onConnectionSelected,
+        string? storedProcedureName, bool instrument, Action<RespireEndpoint, RespireConnection?>? onEndpointSelected,
         bool sendAsking, bool tracking, bool track, bool allowStreamingConnectionReroute)
         where TCommand : struct, IRespCommand
     {
@@ -36,10 +36,12 @@ public sealed partial class RespireClient
                 storedProcedureName: storedProcedureName) : default;
         DedicatedConnectionPool? pool = null;
         RespireConnection? rentedConnection = null;
+        var telemetryEndpoint = new RespireEndpoint(connection.Host, connection.Port);
+        RespireConnection? telemetryConnection = connection;
         Exception? failure = null;
         try
         {
-            onConnectionSelected?.Invoke(connection);
+            onEndpointSelected?.Invoke(telemetryEndpoint, connection);
             for (var attempt = 0; ; attempt++)
             {
                 RespireServerException error;
@@ -56,12 +58,14 @@ public sealed partial class RespireClient
                 {
                     observation.Handled(retired, new(connection.Host, connection.Port));
                     connection = target;
+                    telemetryEndpoint = new(connection.Host, connection.Port);
+                    telemetryConnection = connection;
                     deadline = rerouted;
                     // Maintenance may extend the deadline; subsequent redirect rents share it.
                     acquisition.Dispose();
                     acquisition = new CommandAcquisitionScope(cancellationToken, deadline, _core.Options.CommandTimeout);
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
-                    onConnectionSelected?.Invoke(connection);
+                    onEndpointSelected?.Invoke(telemetryEndpoint, connection);
                     // Retirement rejected admission; it does not consume a server redirect attempt.
                     attempt--;
                     continue;
@@ -85,12 +89,19 @@ public sealed partial class RespireClient
                     rentedConnection = null;
                     await _core.ReleaseServerPoolAsync(completedPool).ConfigureAwait(false);
                 }
+                // Acquisition can fail before a connection exists. Attribute it to the
+                // selected destination without attaching the previous hop's socket.
+                telemetryEndpoint = endpoint;
+                telemetryConnection = null;
+                telemetry.UpdateServerEndpoint(endpoint.Host, endpoint.Port);
+                observation.UseEndpoint(endpoint, cancellationToken);
+                onEndpointSelected?.Invoke(endpoint, null);
                 pool = _core.CreateServerPool(endpoint, replicaRedirect: true);
                 // The logical command owns the deadline, including any maintenance allowance.
                 rentedConnection = await RentReplicaRedirectTargetAsync(pool, acquisition.Token).ConfigureAwait(false);
                 connection = rentedConnection;
-                telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
-                onConnectionSelected?.Invoke(connection);
+                telemetryConnection = connection;
+                onEndpointSelected?.Invoke(endpoint, connection);
                 acquisition.CheckDeadline(operation, _core, connection);
                 // Release this admission timer; another redirect can re-arm the remaining deadline.
                 acquisition.Dispose();
@@ -115,8 +126,8 @@ public sealed partial class RespireClient
             acquisition.Dispose();
             try
             {
-                telemetry.Complete(operation, connection.Host, connection.Port, _core.Options.Database,
-                    storedProcedureName, error: failure, connection: connection);
+                telemetry.Complete(operation, telemetryEndpoint.Host, telemetryEndpoint.Port, _core.Options.Database,
+                    storedProcedureName, error: failure, connection: telemetryConnection);
             }
             finally
             {

@@ -70,6 +70,7 @@ public sealed partial class RespireClient
         CancellationTokenSource? timeout = null;
         var token = callerToken;
         RespireConnection? connection = null;
+        var telemetryEndpoint = _core.Endpoint;
         RespireTelemetry.OperationScope telemetry = default;
         try
         {
@@ -111,6 +112,7 @@ public sealed partial class RespireClient
                         ? await multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false)
                         : backlogConnection ?? GetCircuitAwareConnection(multiplexer, token);
                     observation.UseEndpoint(new(connection.Host, connection.Port), token);
+                    telemetryEndpoint = new(connection.Host, connection.Port);
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                     connection.ThrowIfRetired();
                     if (_core.Circuits is not null) admission = AcquireCircuit(connection, token);
@@ -163,6 +165,10 @@ public sealed partial class RespireClient
                             redirectConnection = null;
                             await _core.ReleaseServerPoolAsync(completedPool).ConfigureAwait(false);
                         }
+                        telemetryEndpoint = endpoint;
+                        connection = null;
+                        observation.UseEndpoint(endpoint, token);
+                        telemetry.UpdateServerEndpoint(endpoint.Host, endpoint.Port);
                         redirectPool = _core.CreateServerPool(endpoint, replicaRedirect: true);
                         redirectConnection = await RentReplicaRedirectTargetAsync(redirectPool, token).ConfigureAwait(false);
                         connection = redirectConnection;
@@ -215,7 +221,8 @@ public sealed partial class RespireClient
         {
             if (finalError is not null && state.Retries != 0)
                 RespireTelemetry.RecordCommandRetry(state.Category, "exhausted");
-            try { telemetry.Complete(_core, operation, error: finalError, connection: connection); }
+            try { telemetry.Complete(operation, telemetryEndpoint.Host, telemetryEndpoint.Port,
+                _core.Options.Database, error: finalError, connection: connection); }
             catch (Exception) { /* A listener cannot replace the logical command outcome. */ }
             try { timeout?.Dispose(); }
             finally { state.Return(); }
