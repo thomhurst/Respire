@@ -474,7 +474,9 @@ public sealed class RespireCoordination
     /// <param name="duration">A positive lease duration of at least one millisecond.</param>
     /// <param name="cancellationToken">Cancels the wait; an accepted acquisition can still execute and expire naturally.</param>
     /// <remarks>
-    /// Requires RESP3 client-side caching/tracking. Subscribe-before-check ordering avoids missed
+    /// Requires RESP3 client-side caching/tracking with <c>ClientSideCache.NoLoop=false</c>.
+    /// NOLOOP suppresses same-client release notifications and is rejected before waiting.
+    /// Subscribe-before-check ordering avoids missed
     /// wakeups; every wake retries the atomic acquisition script, so a notification never grants
     /// ownership. Notifications are hints and can be coalesced. The lease PTTL schedules one
     /// expiry wake if Redis delays its invalidation. Reconnect continuity loss wakes waiters to
@@ -599,7 +601,9 @@ public sealed class RespireCoordination
 
     /// <summary>Waits for and acquires a named lease stored in a Redis hash field.</summary>
     /// <remarks>
-    /// Requires RESP3 client-side caching/tracking and Redis 7.4 or later. With a concrete
+    /// Requires RESP3 client-side caching/tracking with <c>ClientSideCache.NoLoop=false</c>
+    /// and Redis 7.4 or later. NOLOOP suppresses same-client release notifications and is
+    /// rejected before waiting. With a concrete
     /// <see cref="RespireClient"/>, reliable cleanup after an uncertain acquisition also requires
     /// Redis <c>CLIENT ID</c> and <c>CLIENT KILL</c> permissions.
     /// </remarks>

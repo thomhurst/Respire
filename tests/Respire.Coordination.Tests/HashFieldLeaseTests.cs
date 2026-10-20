@@ -122,22 +122,26 @@ public class HashFieldLeaseTests
     }
 
     [Test]
-    public async Task EarlyReleaseWakesLeaseWaiterBeforeExpiry()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EarlyReleaseWakesLeaseWaiterBeforeExpiry(bool sameClient)
     {
         var fixture = Redis74;
         var registry = SharedRespireContainer.Key("registry");
         await using var ownerClient = await RespireClient.ConnectAsync(fixture.CreateOptions() with
         {
+            Connections = 1,
             Protocol = RespireProtocol.Resp3,
             ClientSideCache = new(),
         });
-        await using var waiterClient = await RespireClient.ConnectAsync(fixture.CreateOptions() with
+        await using var waiterClient = sameClient ? null : await RespireClient.ConnectAsync(fixture.CreateOptions() with
         {
+            Connections = 1,
             Protocol = RespireProtocol.Resp3,
             ClientSideCache = new(),
         });
         var ownerCoordination = new RespireCoordination(ownerClient);
-        var waiterCoordination = new RespireCoordination(waiterClient);
+        var waiterCoordination = new RespireCoordination(waiterClient ?? ownerClient);
         await using var owner = await ownerCoordination.TryAcquireLeaseAsync(
             registry, "worker", TimeSpan.FromSeconds(20))
             ?? throw new InvalidOperationException("Expected lease acquisition.");
