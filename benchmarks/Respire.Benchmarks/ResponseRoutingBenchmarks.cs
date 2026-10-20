@@ -47,8 +47,10 @@ public class ResponseRoutingBenchmarks
     {
         // This isolated topology has no other GET producer during setup. Observe each
         // server directly so a silent fallback to the primary cannot validate the fixture.
+#pragma warning disable RESP010 // Setup-only observers verify server counters; the measured client remains shared.
         await using var primary = await RespireClient.ConnectAsync(new RespireOptions { Endpoints = [new("127.0.0.1", 19580)] });
         await using var replica = await RespireClient.ConnectAsync(new RespireOptions { Endpoints = [new("127.0.0.1", 19581)] });
+#pragma warning restore RESP010
         var primaryBefore = await GetCallsAsync(primary, cancellationToken);
         var replicaBefore = await GetCallsAsync(replica, cancellationToken);
         if (await _client.GetStringAsync(Key, cancellationToken) != Value)

@@ -117,10 +117,10 @@ public class ClusterOwnershipBenchmarks
     public bool CheckConnectivity() => _router.IsConnected;
 
     [GlobalCleanup]
-    public void Cleanup()
+    public async Task Cleanup()
     {
-        _router.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        _oldOwner.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        _newOwner.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        await _router.DisposeAsync();
+        await _oldOwner.DisposeAsync();
+        await _newOwner.DisposeAsync();
     }
 }

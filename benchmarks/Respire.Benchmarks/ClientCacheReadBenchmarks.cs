@@ -73,7 +73,9 @@ public class ClientCacheReadBenchmarks
                     var operation = _client.GetStringAsync(_key);
                     if (!operation.IsCompletedSuccessfully)
                         throw new InvalidOperationException("Expected a synchronous cache hit.");
+#pragma warning disable RESP009 // The completion check above guarantees this measured cache-hit read cannot block.
                     length += operation.Result!.Length;
+#pragma warning restore RESP009
                 }
                 return length;
             });

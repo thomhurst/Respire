@@ -81,11 +81,13 @@ internal static class TransportBatchDiagnostics
                 var gate = new BatchReplyGate();
                 var host = Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1";
                 var port = int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379");
+#pragma warning disable RESP010 // One gated client is reused across all batch observations, outside measured boundaries.
                 await using (var client = await RespireClient.ConnectAsync(new RespireOptions
                 {
                     Endpoints = [new(host, port)], Connections = connections, Protocol = RespireProtocol.Resp2,
                     ThreadPoolMonitoring = false, TestingStreamFactory = gate.ConnectAsync,
                 }).ConfigureAwait(false))
+#pragma warning restore RESP010
                 {
                     // This changes the receive transport only in the explicitly labeled
                     // causal control. Direct socket fixtures above remain unchanged.
