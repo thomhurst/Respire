@@ -53,4 +53,6 @@
         </ItemGroup>
     </Target>
 
+    <Import Project="FocusedTests.targets" Condition="'$(RespireTestFilter)' != ''" />
+
 </Project>

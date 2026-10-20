@@ -1,4 +1,12 @@
 <Project>
+  <!-- Keep source-filtered local test builds out of the full suite's assets and outputs.
+       This must precede Microsoft.Common.props' intermediate-path defaults. -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Respire.Tests' And '$(RespireTestFilter)' != ''">
+    <BaseIntermediateOutputPath>obj/focused/</BaseIntermediateOutputPath>
+    <BaseOutputPath>bin/focused/</BaseOutputPath>
+    <DefaultItemExcludes>$(DefaultItemExcludes);$(MSBuildProjectDirectory)/obj/**;$(MSBuildProjectDirectory)/bin/**</DefaultItemExcludes>
+  </PropertyGroup>
+
   <PropertyGroup>
     <RepositoryRoot>$(MSBuildThisFileDirectory)</RepositoryRoot>
     <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
