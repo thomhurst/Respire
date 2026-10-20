@@ -9,12 +9,15 @@ internal static class DashboardScripts
             local rows = redis.call('XRANGE', KEYS[1], id, id)
             if #rows == 1 then
                 local identity, mode = '', 'FirstSubmissionWins'
+                local separateLifecycle = false
                 for i = 1, #rows[1][2], 2 do
                     local name, value = rows[1][2][i], rows[1][2][i+1]
                     if name == '_respire.job.id' then identity = value end
                     if name == '_respire.job.deduplication' then mode = value end
-                    if name == '_respire.job.flow' or name == '_respire.job.batch' then mode = 'Separate lifecycle' end
+                    if name == '_respire.job.flow' or name == '_respire.job.batch'
+                        or name == '_respire.job.schedule' then separateLifecycle = true end
                 end
+                if separateLifecycle then mode = 'Separate lifecycle' end
                 table.insert(result, {id, identity, mode})
             end
         end

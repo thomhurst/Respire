@@ -14,6 +14,8 @@ internal static class JobDeduplication
     // Default records retain their original stream-ID-only format. Extended records carry
     // the winning window, independent of the stream entry's promotion, retry or deletion.
     // Both enqueue scripts (including EXEC) execute this before any append.
+    // Extend hits renew with one SET: a denied renewal leaves the record unchanged,
+    // and a successful renewal returns without staging or appending anything to roll back.
     internal const string Duplicate = """
         local existing = redis.call('GET', deduplicationKey)
         if existing then

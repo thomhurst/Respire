@@ -24,7 +24,8 @@ internal static class JobQueueScheduling
             throw new ArgumentOutOfRangeException(name);
     }
 
-    // Every script checks types and all cleanup permissions before its first write.
+    // Staging paths check types and all cleanup permissions before their first write.
+    // Duplicate Extend hits only renew their record and return before staging permissions.
     // Redis scripts are atomic, but errors do not undo writes: append/index failures
     // roll back only the new staged entry, leaving the original pending job intact.
     internal const string Helpers = """
