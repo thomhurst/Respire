@@ -38,6 +38,7 @@ const sidebars = {
         'guides/async-only',
         'fundamentals/connections',
         'guides/connection-hooks',
+        'guides/proxies',
         'guides/command-hooks',
         'guides/unix-sockets',
         'guides/node-address-mapping',

@@ -73,6 +73,9 @@ Address mapping runs before the factory, so the factory receives the mapped dest
 
 The factory owns DNS, socket options, and proxy negotiation. Respire's built-in TCP keepalive and socket-buffer settings do not configure custom streams. Connection diagnostics identify the Redis destination; a custom stream does not expose the underlying network peer address. With `ConnectionFactory = null` (the default), Respire uses its ordinary socket transport. [Connection lifecycle hooks](../guides/connection-hooks.md) still surround the entire attempt.
 
+For built-in proxy negotiation, use `RespireProxy.Socks5` or `RespireProxy.HttpConnect`.
+See [SOCKS5 and HTTP proxies](../guides/proxies.md) for authentication, proxy-side DNS, and TLS examples.
+
 ## Full configuration
 
 ```csharp
