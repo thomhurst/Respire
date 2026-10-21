@@ -15,18 +15,21 @@ internal static class AllocationMeasurement
     // Call only from an unkeyed NotInParallel test. Warm measured paths first and
     // keep counters inside synchronous no-inline methods; assertions belong outside.
     // Keep total region allocations well below the reservation. See docs/ALLOCATION_MEASUREMENT.md.
-    internal static TResult WithoutConcurrentGc<TResult>(Func<TResult> measure)
+    internal static TResult WithoutConcurrentGc<TResult>(Func<TResult> measure, Action? beforeInitialSnapshot = null)
     {
         // This is a bounded GC reservation, not a permitted allocation threshold.
         if (!GC.TryStartNoGCRegion(NoGcReservationBytes))
             throw new InvalidOperationException("Could not establish the allocation measurement's no-GC region.");
         TResult result;
         InvalidOperationException? regionError = null;
-        var started = RegionSnapshot.Capture();
-        var prepared = started;
-        var finished = started;
+        RegionSnapshot started = default, prepared = default, finished = default;
         try
         {
+            // A deterministic interference seam for lifecycle regressions. The first
+            // snapshot is not atomic with region entry; activity in that gap predates
+            // every reported delta. Keep it inside cleanup protection as well.
+            beforeInitialSnapshot?.Invoke();
+            started = prepared = finished = RegionSnapshot.Capture();
             // Starting the region runs a blocking full GC. The finalizer thread can then
             // flush the runtime's cast cache, racing with the measured thread. Wait for
             // that pass, then refill the cache so the measured thread does not pay for it.

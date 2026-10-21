@@ -16,8 +16,9 @@ internal static class Program
             ?? StandaloneReplicaReadyTests.RunIsolatedAllocationProbe()
             ?? ConnectionMetricCleanupTests.RunIsolatedQueuedSelectionProbe()
             ?? AsyncFlushSignalTests.RunIsolatedAllocationProbe()
+            ?? SentinelIdentityTests.RunIsolatedAllocationProbe()
             ?? StandaloneBatchFlushTests.RunIsolatedAllocationProbe();
-        // TUnit 1.72.16 supplies this helper; keep the centrally pinned package and entry point in sync.
+        // TUnit 1.76.0 supplies this helper; keep the centrally pinned package and entry point in sync.
         return probeResult is { } exitCode
             ? Task.FromResult(exitCode)
             : MicrosoftTestingPlatformApplication.RunAsync(args);
