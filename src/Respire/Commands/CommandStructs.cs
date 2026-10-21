@@ -334,6 +334,24 @@ internal readonly struct Cmd1N(Verb verb, RespireValue a1, RespireValue[] rest) 
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
+    public bool TryGetArgument(int index, out RespireValue value)
+    {
+        if (index == 0)
+        {
+            value = a1;
+            return true;
+        }
+
+        if ((uint)(index - 1) < (uint)rest.Length)
+        {
+            value = rest[index - 1];
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, a1, rest);

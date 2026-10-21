@@ -197,8 +197,8 @@ public class CommandCatalogTests
         await Assert.That(RespireCommands.PathHash.PHGET.ReadKind).IsEqualTo(ReadCommandKind.Read);
         await Assert.That(RespireCommands.PathHash.PHSCAN.ReadKind).IsEqualTo(ReadCommandKind.CursorRead);
         await Assert.That(RespireCommands.PathHash.PHSCAN.CursorArgumentIndex).IsEqualTo(1);
-        var start = new CmdN(RespireCommands.PathHash.PHSCAN.Verb, ["key", "0"]);
-        var continuation = new CmdN(RespireCommands.PathHash.PHSCAN.Verb, ["key", "opaque-cursor"]);
+        var start = new Cmd1N(RespireCommands.PathHash.PHSCAN.Verb, "key", ["0"]);
+        var continuation = new Cmd1N(RespireCommands.PathHash.PHSCAN.Verb, "key", ["opaque-cursor"]);
         await Assert.That(Internal.CursorCommandMetadata.IsCursorContinuation(in start)).IsFalse();
         await Assert.That(Internal.CursorCommandMetadata.IsCursorContinuation(in continuation)).IsTrue();
         await Assert.That(RespireCommands.PathHash.PHSET.CacheMutation).IsEqualTo(RespireCacheMutation.Mutation);

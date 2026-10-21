@@ -226,6 +226,67 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task PathHashRetirementReroutesOnlyFreshScans(bool continuation, bool streaming)
+    {
+        await using var first = Primary();
+        await using var second = Primary();
+        var firstReply = first.ReplyOverride!;
+        var secondReply = second.ReplyOverride!;
+        first.ReplyOverride = (connection, command) => command.StartsWith("PHSCAN ", StringComparison.Ordinal)
+            ? "*2\r\n$7\r\nopaque!\r\n*1\r\n*2\r\n$2\r\n/a\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n"u8.ToArray()
+            : firstReply(connection, command);
+        second.ReplyOverride = (connection, command) => command.StartsWith("PHSCAN ", StringComparison.Ordinal)
+            ? "*2\r\n$1\r\n0\r\n*1\r\n*2\r\n$2\r\n/b\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n"u8.ToArray()
+            : secondReply(connection, command);
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await Connect(sentinel);
+        var view = client.WithReadFrom(RespireReadFrom.PrimaryPreferred);
+        await using var enumerator = view.PathHashes.ScanAsync("tree").GetAsyncEnumerator();
+        if (continuation)
+        {
+            if (streaming) await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            else await Assert.That((await view.PathHashes.ScanPageAsync("tree")).Cursor).IsEqualTo("opaque!");
+        }
+
+        var (circuit, _) = Prepare(client, first);
+        using var clock = new AdmissionGateClock();
+        CircuitClock(circuit) = clock;
+        clock.Arm();
+        var pending = Task.Run(async () =>
+        {
+            if (streaming) await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            else await view.PathHashes.ScanPageAsync("tree", continuation ? "opaque!" : "0");
+        });
+        try
+        {
+            await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref port, second.Port);
+            await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
+        }
+        finally { clock.Release(); }
+
+        if (continuation)
+        {
+            await Assert.That(await Failure(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5))))
+                .IsTypeOf<RespireConnectionRetiredException>();
+            await Assert.That(second.ReceivedCommands.Any(command => command.StartsWith("PHSCAN ", StringComparison.Ordinal))).IsFalse();
+        }
+        else
+        {
+            await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(second.ReceivedCommands.Count(command => command == "PHSCAN tree 0 COUNT 100 WITHVALUES")).IsEqualTo(1);
+        }
+        await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("PHSCAN tree opaque!", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments("raw")]
     [Arguments("queued")]
     [Arguments("ordered")]
