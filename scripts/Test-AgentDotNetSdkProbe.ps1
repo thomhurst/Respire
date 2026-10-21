@@ -48,6 +48,7 @@ if (Environment.GetEnvironmentVariable("RESPIRE_AGENT_DOTNET_INVOCATION") is not
 var mode = Environment.GetEnvironmentVariable("RESPIRE_SDK_PROBE_MODE");
 Console.Error.WriteLine($"sdk-probe childPid={self.Id} mode={mode}");
 if (mode == "failure") { Console.Error.WriteLine("SDK probe failure sentinel"); return 73; }
+if (mode == "startup-failure") return -1073741502;
 if (mode == "descendant")
 {
     using var child = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "child") { UseShellExecute = false, CreateNoWindow = true })!;
@@ -76,14 +77,16 @@ return 0;
     $probeName = if ($IsWindows) { 'SdkProbe.exe' } else { 'SdkProbe' }
     $probe = Join-Path $testRoot "bin/Debug/net10.0/$probeName"
     $env:DOTNET_TEST_RUNNER = 'VSTest'
-    foreach ($mode in @('descendant', 'timeout', 'memory', 'failure')) {
+    $modes = @('descendant', 'timeout', 'memory', 'failure')
+    if ($IsWindows) { $modes += 'startup-failure' }
+    foreach ($mode in $modes) {
         $env:RESPIRE_SDK_PROBE_MODE = $mode
         $env:RESPIRE_SDK_PROBE_PID = Join-Path $testRoot "$mode-pid.json"
         $env:RESPIRE_SDK_PROBE_CHILD_PID = Join-Path $testRoot "$mode-child-pid.json"
         $env:RESPIRE_SDK_PROBE_WORKLOAD = Join-Path $testRoot "$mode-workload.txt"
         $timeout = if ($mode -eq 'timeout') { 4 } else { 30 }
-        $expectedExit = switch ($mode) { 'timeout' { 124 } 'memory' { 137 } 'failure' { 1 } default { 0 } }
-        if ($mode -in @('timeout', 'failure')) {
+        $expectedExit = switch ($mode) { 'timeout' { 124 } 'memory' { 137 } 'failure' { 1 } 'startup-failure' { -1073741502 } default { 0 } }
+        if ($mode -in @('timeout', 'failure', 'startup-failure')) {
             # Capture a fresh host's OS stderr, as Actions does. The marker must
             # arrive while the SDK probe is still blocked, before guard timeout.
             $probeHostScript = Join-Path $testRoot 'ProbeHost.ps1'
@@ -113,6 +116,12 @@ exit $LASTEXITCODE
                 [Console]::Error.Write($errorText)
                 if ($mode -eq 'failure' -and -not $errorText.Contains('SDK probe failure sentinel')) {
                     throw 'Failed SDK probe lost its stderr.'
+                }
+                if ($mode -eq 'startup-failure' -and
+                    ($errorText -notmatch 'startup-failure sdkProbePid=\d+ executable=SdkProbe.exe exit=0xC0000142' -or
+                     $errorText -notmatch 'startup-failure .*exit=0xC0000142 guardPid=\d+ wrapperPid=\d+' -or
+                     $errorText -notmatch 'event log=Application (records=\d+|unavailable:)')) {
+                    throw "Failed SDK probe lost startup evidence: $errorText"
                 }
                 if ($stdout.GetAwaiter().GetResult()) { throw 'Failed SDK probe emitted unexpected stdout.' }
                 $guardResult = $guardHost.ExitCode
