@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
+using Respire.Commands;
+using Respire.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -13,6 +15,47 @@ namespace Respire.Tests.Networking;
 public class FakeRespServerTests
 {
     private const int RetiredPortAttempts = 10;
+
+    [Test]
+    [Arguments("127.0.0.1", true)]
+    [Arguments("127.0.0.2", true)]
+    [Arguments("::1", true)]
+    [Arguments("::ffff:127.0.0.1", true)]
+    [Arguments("192.0.2.1", false)]
+    [Arguments("2001:db8::1", false)]
+    [Arguments("::ffff:192.0.2.1", false)]
+    [Arguments("0.0.0.0", false)]
+    [Arguments("::", false)]
+    public async Task PeerFilterAcceptsOnlyLoopbackAddresses(string address, bool expected)
+    {
+        var endpoint = new IPEndPoint(IPAddress.Parse(address), 1234);
+        await Assert.That(FakeRespServer.IsLoopbackPeer(endpoint)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task PeerFilterRejectsMissingOrNonIpEndpoint()
+    {
+        await Assert.That(FakeRespServer.IsLoopbackPeer(null)).IsFalse();
+        await Assert.That(FakeRespServer.IsLoopbackPeer(new DnsEndPoint("localhost", 1234))).IsFalse();
+    }
+
+    [Test]
+    public async Task SuppliedListenerServesBothLoopbackFamilies()
+    {
+        IPAddress[] addresses = Socket.OSSupportsIPv6
+            ? [IPAddress.Loopback, IPAddress.IPv6Loopback]
+            : [IPAddress.Loopback];
+        await using var server = new FakeRespServer(addresses.Length, () => TcpListener.Create(0), FakeRespServer.PongReply);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        foreach (var address in addresses)
+        {
+            await using var connection = await RespireConnection.ConnectAsync(address.ToString(), server.Port,
+                new RespireConnectionOptions { Protocol = RespireProtocol.Resp2 }, cancellationToken: deadline.Token);
+            using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token);
+            await Assert.That(reply.AsString()).IsEqualTo("PONG");
+        }
+        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(addresses.Length);
+    }
 
     [Test]
     public async Task ListenerAllocationDoesNotReuseRetiredEndpoint()
