@@ -88,6 +88,9 @@ internal sealed class ClientCore : IAsyncDisposable
     // Canceled once by disposal and never disposed, so linking to its token cannot throw.
     private readonly CancellationTokenSource _lifetime = new();
 
+    // Test seam: advance whole-unit backoff only after observing the preceding wire phase.
+    internal TimeProvider UnitRetryClock { get; set; } = TimeProvider.System;
+
     /// <summary>
     /// Waits for a whole-unit retry backoff. Disposal ends the wait at once with
     /// <see cref="ObjectDisposedException"/>, instead of holding the unit until the delay elapses.
@@ -96,7 +99,7 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         if (delay == TimeSpan.Zero) return;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
-        try { await Task.Delay(delay, linked.Token).ConfigureAwait(false); }
+        try { await Task.Delay(delay, UnitRetryClock, linked.Token).ConfigureAwait(false); }
         catch (OperationCanceledException)
         {
             // Report the caller's own token, as an unlinked delay would.
