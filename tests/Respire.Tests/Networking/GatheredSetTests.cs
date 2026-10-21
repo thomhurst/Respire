@@ -177,7 +177,9 @@ public sealed class GatheredSetTests
         var lease = GatheredSetWriteLease.Rent();
         lease.RetainWrite();
         var completion = lease.CompleteResponseAsync(ValueTask.FromResult(false));
+#pragma warning disable RESP009 // Deliberately consume before write release to verify the lease rejects premature synchronous access.
         await Assert.That(() => completion.GetAwaiter().GetResult()).ThrowsExactly<InvalidOperationException>();
+#pragma warning restore RESP009
         await Assert.That(completion.IsCompleted).IsFalse();
         lease.ReleaseWrite();
         await Assert.That(await completion).IsFalse();
@@ -275,7 +277,9 @@ public sealed class GatheredSetTests
             await Assert.That(completion.IsCompleted).IsFalse();
             lease.ReleaseWrite();
             await Assert.That(await completion).IsTrue();
+#pragma warning disable RESP009 // The completed lease was already consumed; this second synchronous access must reject the stale token.
             await Assert.That(() => completion.GetAwaiter().GetResult()).ThrowsExactly<InvalidOperationException>();
+#pragma warning restore RESP009
         }
     }
 
@@ -283,11 +287,13 @@ public sealed class GatheredSetTests
     public async Task BinarySetDoesNotGrowTheCoalescingBufferAndPreservesFollowingFrames()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // This gathered-write scenario owns its client, transport gates, and borrowed-memory lifetime.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var connection = client.Core.Multiplexer.GetConnection();
         var initialCapacity = connection.WriteBufferCapacity;
         var flushField = typeof(RespireConnection).GetField("_flushTask", BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -316,6 +322,7 @@ public sealed class GatheredSetTests
     {
         var reads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = reads.Task };
+#pragma warning disable RESP010 // This gathered-write scenario owns its client, transport gates, and borrowed-memory lifetime.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             LibraryName = null, // Reads stay parked until the application write is in flight.
@@ -325,6 +332,7 @@ public sealed class GatheredSetTests
             ConnectionIdleReadTimeout = receiveOnly ? TimeSpan.FromMilliseconds(200) : null,
             GatheredWriteStallTimeout = receiveOnly ? Timeout.InfiniteTimeSpan : null,
         });
+#pragma warning restore RESP010
         await server.ConnectionAccepted;
         var connection = client.Core.Multiplexer.GetConnection();
         var initialCapacity = connection.WriteBufferCapacity;
@@ -404,6 +412,7 @@ public sealed class GatheredSetTests
     {
         var reads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = pausedConsumer ? null : reads.Task };
+#pragma warning disable RESP010 // This gathered-write scenario owns its client, transport gates, and borrowed-memory lifetime.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             LibraryName = null, // Reads may be parked before connection setup.
@@ -413,6 +422,7 @@ public sealed class GatheredSetTests
             ConnectionIdleReadTimeout = independent ? null : TimeSpan.FromSeconds(1),
             GatheredWriteStallTimeout = independent ? TimeSpan.FromSeconds(1) : null,
         });
+#pragma warning restore RESP010
         var connection = client.Core.Multiplexer.GetConnection();
         var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(connection)!;
@@ -491,6 +501,7 @@ public sealed class GatheredSetTests
     {
         var reads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = reads.Task };
+#pragma warning disable RESP010 // This gathered-write scenario owns its client, transport gates, and borrowed-memory lifetime.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             LibraryName = null, // Reads stay parked until the application write is in flight.
@@ -503,6 +514,7 @@ public sealed class GatheredSetTests
             ConnectionIdleReadTimeout = independent ? TimeSpan.FromMinutes(1) : TimeSpan.FromSeconds(boundary == "resume" ? 5 : 1),
             GatheredWriteStallTimeout = independent ? TimeSpan.FromSeconds(boundary == "resume" ? 5 : 1) : null,
         });
+#pragma warning restore RESP010
         var connection = client.Core.Multiplexer.GetConnection();
         var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(connection)!;
@@ -622,6 +634,7 @@ public sealed class GatheredSetTests
     public async Task CompletedBorrowedWriteDoesNotLeaveAnIdleWatchdogArmed(bool independent)
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // This gathered-write scenario owns its client, transport gates, and borrowed-memory lifetime.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
@@ -629,6 +642,7 @@ public sealed class GatheredSetTests
             ConnectionIdleReadTimeout = independent ? null : TimeSpan.FromMilliseconds(200), CommandTimeout = null,
             GatheredWriteStallTimeout = independent ? TimeSpan.FromMilliseconds(200) : null,
         });
+#pragma warning restore RESP010
         var connection = client.Core.Multiplexer.GetConnection();
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await Assert.That(await client.SetAsync("complete", new byte[512 * 1024],
@@ -646,12 +660,14 @@ public sealed class GatheredSetTests
     public async Task QueuedWriteKeepsPublicCompletionPendingAfterNativeCallerConsumption(bool deadline)
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // This gathered-write scenario owns its client, transport gates, and borrowed-memory lifetime.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = deadline ? TimeSpan.FromMilliseconds(500) : null,
         });
+#pragma warning restore RESP010
         var connection = client.Core.Multiplexer.GetConnection();
         var gate = typeof(RespireConnection).GetField("_writeGate", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(connection)!;
@@ -779,11 +795,13 @@ public sealed class GatheredSetTests
         using var memory = new NonArrayMemory(128 * 1024);
         memory.GetSpan().Fill((byte)'a');
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // This gathered-write scenario owns its client, transport gates, and borrowed-memory lifetime.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await Assert.That(await client.SetAsync("non-array", new RespireValue(memory.Memory))).IsTrue();
         await Assert.That(client.Core.Multiplexer.GetConnection().WriteBufferCapacity).IsGreaterThanOrEqualTo(128 * 1024);
         await Assert.That(server.ReceivedArguments[0][2].All(value => value == (byte)'a')).IsTrue();
@@ -794,6 +812,7 @@ public sealed class GatheredSetTests
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         PausedWriteStream? stream = null;
+#pragma warning disable RESP010 // This gathered-write scenario owns its client, transport gates, and borrowed-memory lifetime.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             LibraryName = null, // The stream parks its first write until the application cancels.
@@ -806,6 +825,7 @@ public sealed class GatheredSetTests
                 return stream = new PausedWriteStream(new NetworkStream(socket, ownsSocket: true));
             },
         });
+#pragma warning restore RESP010
         var payload = new byte[128 * 1024];
         payload.AsSpan().Fill((byte)'a');
         using var cancellation = new CancellationTokenSource();

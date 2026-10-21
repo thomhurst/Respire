@@ -126,7 +126,9 @@ public class KeySerializationCommandTests
     [Test]
     public async Task InvalidRestoreDoesNotSelectTransactionSlot()
     {
+#pragma warning disable RESP010 // This test owns a lazy cluster client to prove invalid RESTORE does not select a transaction slot.
         await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true, Endpoints = { new RespireEndpoint("localhost") } });
+#pragma warning restore RESP010
         await using var transaction = client.WithKeyPrefix("tenant:").CreateTransaction();
         await Assert.That(() => transaction.Keys.Restore("{a}:key", default, RespireExpiry.Keep)).Throws<ArgumentException>();
         _ = transaction.Keys.Dump("{b}:key");

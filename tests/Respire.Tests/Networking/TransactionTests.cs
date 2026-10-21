@@ -15,11 +15,14 @@ public class TransactionTests
     [Test]
     public async Task CreateWatchedTransaction_NullArray_Throws()
     {
+        // An unconnected client verifies null watched keys fail before creating a transaction.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") },
         });
+#pragma warning restore RESP010
         RespireKey[]? watchKeys = null;
 
         await Assert.That(async () => await client.CreateTransactionAsync(watchKeys!))

@@ -82,6 +82,7 @@ public class PrimitiveSerializationWireTests
     public async Task SerializerCancellation_AfterResponseTimeoutWindow_IsNotCommandTimeout()
     {
         await using var server = new FakeRespServer("$2\r\n{}\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This serializer scenario owns its client and cancelling deserializer to isolate timeout classification.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -90,6 +91,7 @@ public class PrimitiveSerializationWireTests
             CommandTimeout = TimeSpan.FromMilliseconds(250),
             Serializer = new CancelingDeserializer()
         });
+#pragma warning restore RESP010
 
         await Assert.That(async () => await client.GetAsync<Payload>("key"))
             .ThrowsExactly<OperationCanceledException>();

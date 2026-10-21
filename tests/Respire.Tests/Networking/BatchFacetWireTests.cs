@@ -22,7 +22,7 @@ public class BatchFacetWireTests
 
         await Assert.That(await client.Hashes.RemoveAsync("hash", "first", "second")).IsEqualTo(2);
         var immediateValues = await client.Hashes.GetAndRemoveAsync("hash", "first", "missing");
-        var batch = client.CreateBatch();
+        using var batch = client.CreateBatch();
         var deferredCount = batch.Hashes.Remove("hash", "first", "second");
         var deferredValues = batch.Hashes.GetAndRemove("hash", "first", "missing");
         await batch.ExecuteAsync();
@@ -51,7 +51,7 @@ public class BatchFacetWireTests
         await client.Hashes.SetAsync("hash", "existing", (RespireValue)"two", RespireSetWhen.Exists);
         await client.Strings.SetRangeAsync("text", 2, "xyz");
 
-        var batch = client.CreateBatch();
+        using var batch = client.CreateBatch();
         var created = batch.Hashes.Set("hash", "new", "one", RespireSetWhen.NotExists);
         var updated = batch.Hashes.Set("hash", "existing", "two", RespireSetWhen.Exists);
         var length = batch.Strings.SetRange("text", 2, "xyz");
@@ -99,7 +99,9 @@ public class BatchFacetWireTests
     [Arguments(true)]
     public async Task ExecuteAsync_CancellationFaultsPendingsAndRemainsSingleShot(bool inspect)
     {
+#pragma warning disable RESP010 // The test owns a lazy client; pre-cancelled execution must complete pending results without connecting.
         await using var client = RespireClient.Create("localhost:6379");
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var pending = batch.GetString("key");
         using var cancellation = new CancellationTokenSource();
@@ -133,7 +135,7 @@ public class BatchFacetWireTests
             ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var batch = client.CreateBatch();
+        using var batch = client.CreateBatch();
         var failed = batch.GetString("wrong-type");
         var succeeded = batch.Exists("present");
 
@@ -158,6 +160,7 @@ public class BatchFacetWireTests
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
         server.SuppressReply = static command => command == "GET key";
+#pragma warning disable RESP010 // This timeout scenario owns its client and server with the GET reply deliberately suppressed.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -165,8 +168,9 @@ public class BatchFacetWireTests
             Connections = 1,
             CommandTimeout = TimeSpan.FromMilliseconds(100)
         });
+#pragma warning restore RESP010
 
-        var batch = client.CreateBatch();
+        using var batch = client.CreateBatch();
         var timedOut = batch.GetString("key");
 
         if (inspect)
@@ -187,9 +191,12 @@ public class BatchFacetWireTests
     [Test]
     public async Task ExecuteAsync_EmptyBatchReturnsEmptySummary()
     {
+#pragma warning disable RESP010 // The test owns a lazy client; executing an empty batch must not need a connection.
         await using var client = RespireClient.Create("localhost:6379");
+#pragma warning restore RESP010
 
-        var result = await client.CreateBatch().ExecuteAsync();
+        using var batch = client.CreateBatch();
+        var result = await batch.ExecuteAsync();
 
         await Assert.That(result.Count).IsEqualTo(0);
         await Assert.That(result.FailureCount).IsEqualTo(0);
@@ -207,13 +214,15 @@ public class BatchFacetWireTests
         using var unavailable = new ReservedUnavailablePort();
         var unavailablePort = unavailable.Port;
 
+#pragma warning disable RESP010 // This failure scenario owns its client and reserved unavailable endpoint to isolate connection errors.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", unavailablePort) },
             ConnectTimeout = TimeSpan.FromMilliseconds(100),
         });
-        var batch = client.CreateBatch();
+#pragma warning restore RESP010
+        using var batch = client.CreateBatch();
         var first = batch.GetString("first");
         var second = batch.Exists("second");
 
@@ -246,7 +255,7 @@ public class BatchFacetWireTests
         await using var server = new FakeRespServer("-WRONGTYPE bad value\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var batch = client.CreateBatch();
+        using var batch = client.CreateBatch();
         var pending = batch.GetString("key");
 
         await Assert.That(async () => await batch.ExecuteAsync()).ThrowsExactly<RespireServerException>();
@@ -283,7 +292,7 @@ public class BatchFacetWireTests
 
         var expected = server.ReceivedCommands;
 
-        var batch = client.CreateBatch();
+        using var batch = client.CreateBatch();
         _ = batch.Strings.SetManyExpire(
             RespireExpiry.In(TimeSpan.FromSeconds(1)), RespireSetWhen.NotExists, ("a", "1"), ("b", "2"));
         _ = batch.Keys.Delete("k1", "k2", "k3");
@@ -327,7 +336,7 @@ public class BatchFacetWireTests
         await client.Hashes.SetExpireAsync("hash", RespireExpiry.Keep, ("field", "value"));
         var expected = server.ReceivedCommands.ToArray();
 
-        var batch = client.CreateBatch();
+        using var batch = client.CreateBatch();
         _ = batch.Keys.Expire("key", RespireExpiry.In(TimeSpan.FromSeconds(2)), RespireExpireWhen.GreaterThan);
         _ = batch.Strings.GetAndExpire("key", RespireExpiry.At(instant));
         _ = batch.Hashes.Expire("hash", RespireExpiry.Persist, "field");
@@ -347,7 +356,7 @@ public class BatchFacetWireTests
             "$-1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var batch = client.CreateBatch();
+        using var batch = client.CreateBatch();
         var stored = batch.TryGet<int>("stored");
         var missing = batch.Strings.TryGet<int>("missing");
         await batch.ExecuteAsync();
@@ -390,7 +399,7 @@ public class BatchFacetWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var script = RespireScript.Create("return {7, ARGV[1]}");
 
-        var transaction = client.CreateTransaction();
+        await using var transaction = client.CreateTransaction();
         var pending = transaction.Scripts.Evaluate(script, args: ["value"]);
         await transaction.CommitAsync();
 
@@ -414,10 +423,12 @@ public class BatchFacetWireTests
             "*3\r\n:2\r\n:1\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var transaction = client.CreateTransaction();
+        await using var transaction = client.CreateTransaction();
         var pushed = transaction.Lists.RightPush("audit", "a", "b");
         var stored = transaction.Hashes.Set("user", "name", "Ada");
+#pragma warning disable RESP011 // The scripted EXEC reply above contains exactly two list items; preserve the full-range wire assertion.
         var range = transaction.Lists.Range("audit");
+#pragma warning restore RESP011
 
         await transaction.CommitAsync();
 
@@ -439,7 +450,7 @@ public class BatchFacetWireTests
         await using var server = new FakeRespServer(":3\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var batch = client.CreateBatch();
+        using var batch = client.CreateBatch();
         var deleted = batch.Delete("one", "two", "three");
         await batch.ExecuteAsync();
 
@@ -453,7 +464,7 @@ public class BatchFacetWireTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var batch = client.CreateBatch();
+        using var batch = client.CreateBatch();
         var pending = batch.Hashes.GetString("user", "name");
 
         await Assert.That(pending.Status).IsEqualTo(RespirePendingStatus.Pending);
@@ -467,8 +478,10 @@ public class BatchFacetWireTests
     [Test]
     public async Task DisposingUnsentBatch_FaultsEveryPending()
     {
+#pragma warning disable RESP010 // The test owns a lazy client; disposing an unsent batch must fault its pending results without connecting.
         await using var client = RespireClient.Create("localhost:6379");
-        var batch = client.CreateBatch();
+#pragma warning restore RESP010
+        using var batch = client.CreateBatch();
         var first = batch.GetString("first");
         var second = batch.Exists("second");
 

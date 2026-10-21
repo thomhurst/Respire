@@ -77,11 +77,13 @@ public class KeySortCommandTests
     [Arguments("tenant:{", "sort}:items", "sort}:weight:*")]
     public async Task ClusterPatternValidationUsesCompletePrefixJoin(string prefix, string key, string pattern)
     {
+#pragma warning disable RESP010 // This SORT scenario owns its client to isolate prefix, pattern-slot validation, and scripted routing.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", 1)],
         });
+#pragma warning restore RESP010
         using var batch = client.WithKeyPrefix(prefix).CreateBatch();
         _ = batch.Keys.Sort(key, new RespireSortOptions { By = pattern });
         // Validation completes without opening the lazy client or contacting Redis.
@@ -212,11 +214,13 @@ public class KeySortCommandTests
         var slot = ClusterHash.GetSlot("tenant:{sort}:source");
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology, "-ERR wrong route\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This SORT scenario owns its client to isolate prefix, pattern-slot validation, and scripted routing.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         var options = new RespireSortOptions { By = "{sort}:weight:*", Get = new RespireKey[] { "{sort}:object:*->field", "#" } };
         if (path == "immediate") await view.Keys.SortStoreAsync("{sort}:source", "{sort}:target", options);

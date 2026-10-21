@@ -34,11 +34,13 @@ public class BatchDurabilityTests
                 return true;
             },
         };
+#pragma warning disable RESP010 // This durability scenario owns its client, dedicated leases, and acknowledgement state until test teardown.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new(), Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
         using var cancellation = new CancellationTokenSource();
@@ -87,11 +89,13 @@ public class BatchDurabilityTests
             : aof ? "*2\r\n:1\r\n:1\r\n"u8.ToArray() : ":1\r\n"u8.ToArray();
         await using var server = new FakeRespServer(FakeRespServer.OkReply, acknowledgement);
         using var logger = new FailingDisconnectLogger();
+#pragma warning disable RESP010 // This durability scenario owns its client, dedicated leases, and acknowledgement state until test teardown.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
         });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var write = batch.Set("key", "value");
         if (acknowledgementFails)
@@ -118,11 +122,13 @@ public class BatchDurabilityTests
     {
         byte[] acknowledgement = aof ? "*2\r\n:1\r\n:1\r\n"u8.ToArray() : ":1\r\n"u8.ToArray();
         await using var server = new FakeRespServer(3, FakeRespServer.OkReply, acknowledgement);
+#pragma warning disable RESP010 // This durability scenario owns its client, dedicated leases, and acknowledgement state until test teardown.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var pool = client.Core.DedicatedPool;
         var prior = await pool.RentAsync(CancellationToken.None);
         using (var reply = await prior.SendAsync(new Cmd2(Verbs.Set, "earlier", "value"))) { }
@@ -161,12 +167,14 @@ public class BatchDurabilityTests
                 return true;
             },
         };
+#pragma warning disable RESP010 // This durability scenario owns its client, dedicated leases, and acknowledgement state until test teardown.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 2,
             CommandTimeout = ordinaryTimeout, ConnectionIdleReadTimeout = ordinaryTimeout,
         });
+#pragma warning restore RESP010
         using var batch = client.WithKeyPrefix("tenant:").CreateBatch();
         var first = batch.Set("a", "first");
         var second = batch.Set("b", "second");
@@ -268,11 +276,13 @@ public class BatchDurabilityTests
     {
         byte[] acknowledgement = aof ? "*2\r\n:1\r\n:1\r\n"u8.ToArray() : ":1\r\n"u8.ToArray();
         await using var server = new FakeRespServer(FakeRespServer.OkReply, acknowledgement);
+#pragma warning disable RESP010 // This durability scenario owns its client, dedicated leases, and acknowledgement state until test teardown.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await Assert.That(async () => await Execute(batch, aof, 1, TimeSpan.Zero))
             .Throws<InvalidOperationException>();
@@ -290,11 +300,13 @@ public class BatchDurabilityTests
     public async Task InvalidOptionsAndClusterLayoutsFailBeforeSending()
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // This durability scenario owns its client, dedicated leases, and acknowledgement state until test teardown.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, UseCluster = true,
         });
+#pragma warning restore RESP010
         using var empty = client.CreateBatch();
         await Assert.That(async () => await empty.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero)).Throws<InvalidOperationException>();
         using var batch = client.CreateBatch();
@@ -324,11 +336,13 @@ public class BatchDurabilityTests
         var slot = ClusterHash.GetSlot("tenant:{durability}:key");
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
+#pragma warning disable RESP010 // This durability scenario owns its client, dedicated leases, and acknowledgement state until test teardown.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         using var batch = client.WithKeyPrefix("tenant:").CreateBatch();
         _ = batch.Set("{durability}:key", "value");
         if (redirect)
@@ -408,11 +422,13 @@ public class BatchDurabilityTests
     public async Task AcquisitionFailureFaultsEveryPending(bool aof)
     {
         using var unavailable = new ReservedUnavailablePort();
+#pragma warning disable RESP010 // This durability scenario owns its client, dedicated leases, and acknowledgement state until test teardown.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", unavailable.Port)], ConnectTimeout = TimeSpan.FromSeconds(1),
         });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var first = batch.Set("first", "value");
         var second = batch.Set("second", "value");

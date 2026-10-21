@@ -26,6 +26,7 @@ public class CommandConversionTests
                 return true;
             },
         };
+#pragma warning disable RESP010 // This scenario owns its client and single-slot inflight ring to gate command serialization.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
@@ -33,6 +34,7 @@ public class CommandConversionTests
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             CommandTimeout = null,
         });
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var parked = client.Strings.LengthAsync("parked", timeout.Token).AsTask();
         await arrived.Task.WaitAsync(timeout.Token);

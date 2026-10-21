@@ -19,6 +19,8 @@ public class ScriptTypedCommandTests
             "-NOSCRIPT missing\r\n"u8.ToArray(), ":42\r\n"u8.ToArray(),
             "-NOSCRIPT missing\r\n"u8.ToArray(), "$5\r\nhello\r\n"u8.ToArray());
         var serializer = new RecordingSerializer();
+        // The script-reply fixture needs its own recording serializer and fake connection.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -26,6 +28,7 @@ public class ScriptTypedCommandTests
             Connections = 1,
             Serializer = serializer,
         });
+#pragma warning restore RESP010
         var script = RespireScript.Create("return ARGV[1]", readOnly);
 
         var typed = await client.Scripts.ExecuteAsync<Payload>(script);
@@ -70,12 +73,15 @@ public class ScriptTypedCommandTests
     {
         await using var server = new FakeRespServer("$7\r\npayload\r\n"u8.ToArray());
         var serializer = new RecordingSerializer();
+        // The deferred script fixture owns the client configured with its recording serializer.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Serializer = serializer,
         });
+#pragma warning restore RESP010
         var script = RespireScript.Create("return ARGV[1]");
 
         using var batch = client.CreateBatch();

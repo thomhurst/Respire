@@ -104,11 +104,14 @@ public class SortedSetCombineOptionsTests
     [Test]
     public async Task CrossSlotKeys_RejectBeforeIoOnAllSurfaces()
     {
+        // An unconnected cluster client exercises combine-option slot validation on all surfaces.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true,
             Endpoints = [new("localhost", 1)], Connections = 1,
         });
+#pragma warning restore RESP010
         var options = new RespireSortedSetCombineOptions { Weights = new double[] { 2, 3 }, Aggregate = RespireSortedSetAggregate.Count };
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();

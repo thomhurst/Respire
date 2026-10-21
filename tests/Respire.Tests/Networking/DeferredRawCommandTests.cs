@@ -121,7 +121,9 @@ public class DeferredRawCommandTests
     [Arguments("FUNCTION LOAD")]
     public async Task UnsupportedCommandsNeverEnqueue(string name)
     {
+#pragma warning disable RESP010 // This raw-command scenario owns its client to isolate queue validation and cluster routing state.
         await using var client = RespireClient.Create("localhost:1");
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, transaction })
@@ -142,7 +144,9 @@ public class DeferredRawCommandTests
     [Arguments("pıng")]
     public async Task InvalidNamesFailBeforeEnqueue(string name)
     {
+#pragma warning disable RESP010 // This raw-command scenario owns its client to isolate queue validation and cluster routing state.
         await using var client = RespireClient.Create("localhost:1");
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await Assert.That(() => batch.Execute(name, "key")).Throws<ArgumentException>();
         await Assert.That(batch.Count).IsEqualTo(0);
@@ -151,11 +155,13 @@ public class DeferredRawCommandTests
     [Test]
     public async Task InvalidLayoutsDoNotPinClusterTransaction()
     {
+#pragma warning disable RESP010 // This raw-command scenario owns its client to isolate queue validation and cluster routing state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("localhost", 1)],
         });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         await Assert.That(() => transaction.Execute("MGET", "{a}:one", "{b}:two")).Throws<RespireCrossSlotException>();
         await Assert.That(() => transaction.Execute("EVAL", "return 1", -1)).Throws<ArgumentException>();
@@ -193,11 +199,13 @@ public class DeferredRawCommandTests
         var slot = ClusterHash.GetSlot("{tenant}:one");
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology, "-ERR wrong route\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This raw-command scenario owns its client to isolate queue validation and cluster routing state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("{tenant}:");
         using var batch = transactional ? null : view.CreateBatch();
         await using var transaction = transactional ? view.CreateTransaction() : null;

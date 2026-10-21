@@ -25,6 +25,8 @@ public partial class RespireJsonClientTests
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         PausedJsonWriteStream? transport = null;
+        // Keep one client for the paused-write scenario so later serialization reuses its buffers.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -42,6 +44,7 @@ public partial class RespireJsonClientTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         var json = new RespireJsonClient(client);
         var info = JsonWriteContext.Default.TextDocument;
         var first = new TextDocument(new string('a', 32768));
@@ -103,6 +106,8 @@ public partial class RespireJsonClientTests
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         PausedJsonWriteStream? transport = null;
+        // The fault-injection client must retain the paused transport until the scenario completes.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null,
@@ -118,6 +123,7 @@ public partial class RespireJsonClientTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         var json = new RespireJsonClient(client);
         var info = JsonWriteContext.Default.TextDocument;
         var first = new TextDocument(new string('a', 32768));

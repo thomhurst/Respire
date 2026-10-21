@@ -31,11 +31,13 @@ public class ClientFilterCommandTests
     public async Task MatchAllFiltersFailSynchronouslyAcrossAllPaths(int filter, bool grouped)
     {
         await using var server = new FakeRespServer(":7\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This filter scenario owns its client and admin permissions against an isolated scripted server.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var handle = await client.Server.GetClientConnectionAsync();
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
@@ -73,11 +75,13 @@ public class ClientFilterCommandTests
     public async Task ExplicitUnfilteredKillAndReplicaTokensUseCompatibleWireForms(bool grouped)
     {
         await using var server = new FakeRespServer(4, ":0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This filter scenario owns its client and admin permissions against an isolated scripted server.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         foreach (var filter in new RespireClientFilterOptions[]
         {
             new() { AllowUnfilteredKill = true }, new() { AllowUnfilteredKill = true, SkipMe = false },
@@ -108,11 +112,13 @@ public class ClientFilterCommandTests
             _ => [list, ":2\r\n"u8.ToArray()],
         };
         await using var server = new FakeRespServer(replies);
+#pragma warning disable RESP010 // This filter scenario owns its client and admin permissions against an isolated scripted server.
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var client = owner.WithKeyPrefix("tenant:");
         long[] ids = [42, 43];
         long[] excluded = [44, 45];
@@ -167,11 +173,13 @@ public class ClientFilterCommandTests
     public async Task InvalidFiltersFailBeforeSendingOrQueueing(bool grouped)
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // This filter scenario owns its client and admin permissions against an isolated scripted server.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
         (RespireClientFilterOptions Options, string Property)[] invalid =
@@ -212,10 +220,12 @@ public class ClientFilterCommandTests
     public async Task KillFiltersRequireAdminPermission(bool grouped)
     {
         await using var server = new FakeRespServer(":7\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This filter scenario owns its client and admin permissions against an isolated scripted server.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var options = new RespireClientFilterOptions { Ids = [42] };
         if (grouped) options = ClientFilterTestOptions.Group(options);
         using var batch = client.CreateBatch();

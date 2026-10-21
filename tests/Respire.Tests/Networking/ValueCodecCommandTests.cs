@@ -28,11 +28,14 @@ public class ValueCodecCommandTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply, Bulk(frame),
             FakeRespServer.OkReply, Bulk("42"u8.ToArray()), FakeRespServer.OkReply,
             FakeRespServer.OkReply, FakeRespServer.OkReply, Bulk(frame), "$-1\r\n"u8.ToArray());
+        // The codec scenario owns a client configured with its selected value serializer.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Serializer = serializer,
         });
+#pragma warning restore RESP010
         var prefixed = client.WithKeyPrefix("tenant:");
         await prefixed.SetAsync("typed", value);
         await Assert.That(await prefixed.GetAsync<Payload>("typed")).IsEqualTo(value);
@@ -77,11 +80,14 @@ public class ValueCodecCommandTests
         if (transaction) replies = [FakeRespServer.OkReply, "+QUEUED\r\n"u8.ToArray(), "+QUEUED\r\n"u8.ToArray(),
             [.. "*2\r\n"u8, .. replies.SelectMany(reply => reply)]];
         await using var server = new FakeRespServer(replies);
+        // The deferred codec scenario owns the serializer used to snapshot mutable values.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Serializer = serializer,
         });
+#pragma warning restore RESP010
         if (transaction)
         {
             await using var queue = client.CreateTransaction();

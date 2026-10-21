@@ -18,7 +18,9 @@ public class FunctionClusterTests
         await using var first = new FakeRespServer(responses);
         await using var second = new FakeRespServer(responses);
         await using var seed = new FakeRespServer(Topology(first.Port, second.Port));
+#pragma warning disable RESP010 // This function scenario owns its client, scripted cluster topology, and library propagation state.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         await Assert.That(await client.Functions.LoadAsync("source", true)).IsEqualTo("sample");
         await client.Functions.DeleteAsync("sample");
         await client.Functions.RestoreAsync("binary"u8.ToArray(), RespireFunctionRestorePolicy.Replace);
@@ -40,7 +42,9 @@ public class FunctionClusterTests
             : [":42\r\n"u8.ToArray()];
         await using var second = new FakeRespServer(replies);
         await using var seed = new FakeRespServer(Topology(first.Port, second.Port));
+#pragma warning disable RESP010 // This function scenario owns its client, scripted cluster topology, and library propagation state.
         await using var owner = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         var client = owner.WithKeyPrefix("{foo}:");
         var function = RespireFunction.Create("function", true);
         long result;
@@ -72,7 +76,9 @@ public class FunctionClusterTests
         await using var second = new FakeRespServer("-ERR Function not found\r\n"u8.ToArray(), "*0\r\n"u8.ToArray(),
             "$6\r\nsample\r\n"u8.ToArray(), FunctionLibraryList(source), ":42\r\n"u8.ToArray());
         await using var seed = new FakeRespServer(Topology(first.Port, second.Port));
+#pragma warning disable RESP010 // This function scenario owns its client, scripted cluster topology, and library propagation state.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         var function = RespireFunctionLibrary.Create(source).Function("function");
         await Assert.That(await client.Functions.ExecuteIntegerAsync(function, ["{foo}:key"])).IsEqualTo(42);
         await Assert.That(first.ReceivedCommands).IsEquivalentTo([
@@ -90,7 +96,9 @@ public class FunctionClusterTests
             "-ERR Function not found\r\n"u8.ToArray(), "-ERR Function not found\r\n"u8.ToArray(), ":42\r\n"u8.ToArray());
         await using var primary = new FakeRespServer(FunctionLibraryList(source));
         await using var seed = new FakeRespServer(TopologyWithReplica(primary.Port, replica.Port));
+#pragma warning disable RESP010 // This function scenario owns its client, scripted cluster topology, and library propagation state.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         var function = RespireFunctionLibrary.Create(source).Function("function", readOnly: true);
 
         var result = await client.WithReadFrom(RespireReadFrom.Replica)
@@ -113,12 +121,14 @@ public class FunctionClusterTests
             "-ERR Function not found\r\n"u8.ToArray());
         await using var primary = new FakeRespServer(FunctionLibraryList(source));
         await using var seed = new FakeRespServer(TopologyWithReplica(primary.Port, replica.Port));
+#pragma warning disable RESP010 // This function scenario owns its client, scripted cluster topology, and library propagation state.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
             CommandTimeout = disabled ? null : TimeSpan.FromMilliseconds(100),
             ClusterTopologyRefreshInterval = null,
             FunctionPropagationLimit = PropagationLimit,
         });
+#pragma warning restore RESP010
         var function = RespireFunctionLibrary.Create(source).Function("function", readOnly: true);
         using var cancellation = new CancellationTokenSource();
         var pending = client.WithReadFrom(RespireReadFrom.Replica).Functions
@@ -145,7 +155,9 @@ public class FunctionClusterTests
             "-ERR Function not found\r\n"u8.ToArray());
         await using var primary = new FakeRespServer(FunctionLibraryList(source, "different"));
         await using var seed = new FakeRespServer(TopologyWithReplica(primary.Port, replica.Port));
+#pragma warning disable RESP010 // This function scenario owns its client, scripted cluster topology, and library propagation state.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         var function = RespireFunctionLibrary.Create(source).Function("function", readOnly: true);
 
         await Assert.That(async () => await client.WithReadFrom(RespireReadFrom.Replica)
@@ -164,7 +176,9 @@ public class FunctionClusterTests
         await using var first = new FakeRespServer { SuppressReply = _ => { firstArrived.TrySetResult(); return true; } };
         await using var second = new FakeRespServer { SuppressReply = _ => { secondArrived.TrySetResult(); return true; } };
         await using var seed = new FakeRespServer(Topology(first.Port, second.Port));
+#pragma warning disable RESP010 // This function scenario owns its client, scripted cluster topology, and library propagation state.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         var pending = client.Functions.FlushAsync().AsTask();
         await Task.WhenAll(firstArrived.Task, secondArrived.Task).WaitAsync(TimeSpan.FromSeconds(5));
         await first.SendRawAsync("-ERR rejected\r\n"u8.ToArray());
@@ -226,6 +240,7 @@ public class FunctionClusterTests
                 };
             }
         }
+#pragma warning disable RESP010 // This function scenario owns its client, scripted cluster topology, and library propagation state.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
             ClientSideCache = outcome == "MOVED" ? new() : null,
@@ -233,6 +248,7 @@ public class FunctionClusterTests
             ClusterTopologyRefreshInterval = null,
             FunctionPropagationLimit = PropagationLimit,
         });
+#pragma warning restore RESP010
         if (outcome == "MOVED")
         {
             await Assert.That(await client.GetStringAsync("{foo}:cached")).IsEqualTo("old");

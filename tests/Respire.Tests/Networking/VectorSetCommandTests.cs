@@ -142,7 +142,10 @@ public class VectorSetCommandTests
     [Test]
     public async Task InvalidExplorationFactorNamesOptionsAndExplainsTheMember()
     {
+        // An unconnected client checks vector option errors without performing network I/O.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create("redis://localhost:1");
+#pragma warning restore RESP010
         var addError = await Assert.That(async () => await client.VectorSets.AddAsync("k", new[] { 1f }, "m",
             new() { ExplorationFactor = 0 })).ThrowsExactly<ArgumentOutOfRangeException>();
         var searchError = await Assert.That(async () => await client.VectorSets.SearchAsync("k", new[] { 1f },
@@ -181,7 +184,10 @@ public class VectorSetCommandTests
     [Test]
     public async Task VectorCommandRoutesByPrefixedKeyAndSnapshotRetainsSlot()
     {
+        // This unconnected prefixed client is used only to inspect vector command slot metadata.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create("redis://localhost:1");
+#pragma warning restore RESP010
         var view = (RespireClient)client.WithKeyPrefix("{tenant}:");
         var command = VectorSetCommands.BuildAdd(view, "key", new[] { 1f, 2f }, "{other}:member", default, default);
         await Assert.That(command.TryGetClusterSlot(out var slot)).IsTrue();

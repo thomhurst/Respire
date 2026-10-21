@@ -171,7 +171,10 @@ public class StandaloneReconnectBacklogTests
             CloseConnectionAfterCommand = 2,
             ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal) ? ValueReply : null,
         };
+        // The reconnect scenario owns the client whose dropped socket and replacement it gates.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port));
+#pragma warning restore RESP010
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
@@ -554,10 +557,13 @@ public class StandaloneReconnectBacklogTests
             },
         };
         byte[] SetValue() { value = "new"; return FakeRespServer.OkReply; }
+        // This cache scenario requires its own tracked client and gated replacement connection.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>

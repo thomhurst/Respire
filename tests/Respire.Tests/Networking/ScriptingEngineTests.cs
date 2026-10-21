@@ -47,12 +47,15 @@ public class ScriptingEngineTests
                 _ => null,
             },
         };
+        // Each matrix case owns the client whose fire-and-forget reply routing it measures.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = (RespireProtocol)protocol, Connections = 1, UseCluster = cluster,
             ClusterTopologyRefreshInterval = null, ClientSideCache = cache ? new() : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await client.ExecuteFireAndForgetAsync(operation, ["return 42", 1, "private-key"]);
         using var barrier = await client.ExecuteAsync("PING");
         await Assert.That(barrier.AsString()).IsEqualTo("PONG");
@@ -92,12 +95,15 @@ public class ScriptingEngineTests
                 return true;
             },
         };
+        // The client belongs to this gated engine-probe cancellation/transport scenario.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = (RespireProtocol)protocol, Connections = 1, UseCluster = route != "cache",
             ClusterTopologyRefreshInterval = null, ClientSideCache = route != "cluster" ? new() : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         using var tokenSource = new CancellationTokenSource();
         // Explicitly fence EVAL_RO too, so each route exercises its awaited-reply boundary.
         var command = RespireCommand.Create(operation, cacheMutation: RespireCacheMutation.Unknown);
@@ -313,12 +319,15 @@ public class ScriptingEngineTests
         {
             SuppressReply = command => command == "INFO scriptingengines"
         };
+        // This client isolates the missing-engine probe timeout configuration for each case.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
             CommandTimeout = disableCommandTimeout ? null : TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         var error = await Assert.That(async () => await EvaluateAsync(client)
                 .AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
             .ThrowsExactly<RespireServerException>();

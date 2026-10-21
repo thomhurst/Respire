@@ -79,11 +79,14 @@ public class SortedSetQueryCommandTests
     public async Task Cluster_RejectsCrossSlotBeforeSendingAndDoesNotPoisonTransaction()
     {
         await using var server = new FakeRespServer();
+        // The unconnected cluster client proves rejected sorted-set commands preserve the queue.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)]
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         RespireKey[] keys = ["{a}:one", "{b}:two"];
         await Assert.That(async () => await view.SortedSets.IntersectCountAsync(keys)).ThrowsExactly<RespireCrossSlotException>();
@@ -111,6 +114,8 @@ public class SortedSetQueryCommandTests
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology, "-ERR command reached seed instead of slot owner\r\n"u8.ToArray());
+        // This client owns the fake seed/owner topology used to verify sorted-set routing.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -118,6 +123,7 @@ public class SortedSetQueryCommandTests
             Connections = 1,
             Endpoints = { new("127.0.0.1", seed.Port) },
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         long result;
         if (path == "immediate")

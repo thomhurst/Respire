@@ -123,11 +123,13 @@ public class ListMoveManyTests
     public async Task CrossSlotValidationDoesNotPoisonQueues()
     {
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This list-move scenario owns its client and isolated cluster queue validation state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         foreach (var wait in new TimeSpan?[] { null, TimeSpan.Zero })
             await Assert.That(() => { _ = view.Lists.MoveManyAsync("{a}:s", "{b}:d", waitFor: wait); })

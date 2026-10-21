@@ -10,11 +10,13 @@ public class GroupedClientFilterTests
     public async Task MixedSelectorFormsFailSynchronouslyAcrossEveryPath()
     {
         await using var server = new FakeRespServer(":7\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This grouped-filter scenario owns its client and scripted admin command replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var handle = await client.Server.GetClientConnectionAsync();
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
@@ -75,11 +77,13 @@ public class GroupedClientFilterTests
     public async Task GroupedIdsSelectTheSameWireCommandAsFlatIds()
     {
         await using var server = new FakeRespServer(2, ":0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This grouped-filter scenario owns its client and scripted admin command replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await client.Server.KillClientsAsync(new() { Ids = [42], SkipMe = true });
         await client.Server.KillClientsAsync(new() { Include = new() { Ids = [42] }, SkipMe = true });
         await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo([
@@ -98,11 +102,13 @@ public class GroupedClientFilterTests
             ReplyOverride = (_, command) => command == "HELLO 3"
                 ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : null,
         };
+#pragma warning disable RESP010 // This grouped-filter scenario owns its client and scripted admin command replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = (RespireProtocol)protocol, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var filter = new RespireClientFilterOptions
         {
             Exclude = capabilities ? new() { Capabilities = "" } : new() { Flags = "" },
@@ -118,11 +124,13 @@ public class GroupedClientFilterTests
     public async Task EmptyGroupsStillRequireExplicitUnfilteredKill()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // This grouped-filter scenario owns its client and scripted admin command replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         RespireClientFilterOptions[] empty =
         [
             new() { Include = new() }, new() { Exclude = new() },
@@ -139,11 +147,13 @@ public class GroupedClientFilterTests
     public async Task NullGroupedIdsFailBeforeSendingOrQueueing(bool exclude)
     {
         await using var server = new FakeRespServer(":7\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This grouped-filter scenario owns its client and scripted admin command replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var handle = await client.Server.GetClientConnectionAsync();
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();

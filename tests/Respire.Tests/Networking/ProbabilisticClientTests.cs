@@ -14,7 +14,9 @@ public class ProbabilisticClientTests
     public async Task KeyPrefixedProbabilisticCommandsUseTheirKnownModuleLayouts()
     {
         await using var server = Server();
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var probabilistic = client.WithKeyPrefix("tenant:").Probabilistic;
 
         await probabilistic.BloomAddAsync("filter", "item");
@@ -26,7 +28,9 @@ public class ProbabilisticClientTests
     public async Task KeyPrefixedMergesPrefixDestinationAndEverySource()
     {
         await using var server = Server();
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client.WithKeyPrefix("tenant:"));
 
         await probabilistic.CountMinMergeAsync("destination", ["source-a", "source-b"], new() { Weights = [1, 2] });
@@ -41,7 +45,9 @@ public class ProbabilisticClientTests
     [Test]
     public async Task KeyPrefixedViewStillRejectsCatalogCommandsWithoutModuleLayouts()
     {
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = RespireClient.Create(DisconnectedOptions());
+#pragma warning restore RESP010
         var prefixed = client.WithKeyPrefix("tenant:");
 
         await Assert.That(async () => await prefixed.ExecuteAsync(RespireCommands.All.ToArray().Single(command => command.Name == "TS.MGET"), "FILTER", "sensor=1"))
@@ -55,7 +61,9 @@ public class ProbabilisticClientTests
     public async Task KeyPrefixedViewRejectsAbsentKeysInsteadOfWritingThePrefixKey()
     {
         await using var server = Server();
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var prefixed = client.WithKeyPrefix("tenant:");
         var bloomAdd = RespireCommands.All.ToArray().Single(command => command.Name == "BF.ADD");
         var countMinMerge = RespireCommands.All.ToArray().Single(command => command.Name == "CMS.MERGE");
@@ -74,7 +82,9 @@ public class ProbabilisticClientTests
     [Test]
     public async Task NullItemsAreRejectedBeforeSending()
     {
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = RespireClient.Create(DisconnectedOptions());
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
 
         await Assert.That(async () => await probabilistic.CuckooCountAsync("filter", RespireValue.Null))
@@ -89,7 +99,9 @@ public class ProbabilisticClientTests
     public async Task BloomInsertAcceptsCapacityAndErrorIndependently()
     {
         await using var server = Server();
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
 
         await probabilistic.BloomInsertAsync("capacity-only", ["one"], new() { Capacity = 100 });
@@ -102,7 +114,9 @@ public class ProbabilisticClientTests
     [Test]
     public async Task CountMinMergeRejectsNonPositiveWeightsBeforeSending()
     {
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = RespireClient.Create(DisconnectedOptions());
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
 
         await Assert.That(async () => await probabilistic.CountMinMergeAsync("destination", ["source"],
@@ -113,7 +127,9 @@ public class ProbabilisticClientTests
     public async Task CountMinMergeWritesPositiveIntegerWeightsOnly()
     {
         await using var server = Server();
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
 
         await probabilistic.CountMinMergeAsync("destination", ["source-a", "source-b"], new() { Weights = [2, 3] });
@@ -125,7 +141,9 @@ public class ProbabilisticClientTests
     [Test]
     public async Task CountMinIncrementRejectsNonPositiveAmountsBeforeSending()
     {
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = RespireClient.Create(DisconnectedOptions());
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
         var increments = new Dictionary<RespireValue, long> { ["item"] = 0 };
 
@@ -145,7 +163,9 @@ public class ProbabilisticClientTests
                 => [.. "*1\r\n$2\r\n"u8.ToArray(), 0xFF, 0x00, .. "\r\n"u8.ToArray()],
             _ => null,
         };
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
 
         var evicted = await probabilistic.TopKAddAsync("sketch", [(RespireValue)(new byte[] { 0xFE, 0x01 })]);
@@ -168,7 +188,9 @@ public class ProbabilisticClientTests
             "TDIGEST.MAX digest" => "$4\r\n+inf\r\n"u8.ToArray(),
             _ => null,
         };
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
 
         var values = await probabilistic.TDigestByRankAsync("digest", [100, 200]);
@@ -189,7 +211,9 @@ public class ProbabilisticClientTests
             "CF.INSERTNX filter ITEMS a b c" => "*3\r\n:1\r\n:0\r\n:-1\r\n"u8.ToArray(),
             _ => null,
         };
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
 
         var results = await probabilistic.CuckooInsertIfAbsentAsync("filter", ["a", "b", "c"]);
@@ -200,7 +224,9 @@ public class ProbabilisticClientTests
     [Test]
     public async Task TDigestAddRejectsNonFiniteObservations()
     {
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = RespireClient.Create(DisconnectedOptions());
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
 
         await Assert.That(async () => await probabilistic.TDigestAddAsync("digest", [1, double.NaN]))
@@ -212,7 +238,9 @@ public class ProbabilisticClientTests
     [Test]
     public async Task TdigestTrimRejectsEqualCutoffs()
     {
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = RespireClient.Create(DisconnectedOptions());
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
 
         await Assert.That(async () => await probabilistic.TDigestTrimmedMeanAsync("digest", 0.5, 0.5))
@@ -222,7 +250,9 @@ public class ProbabilisticClientTests
     [Test]
     public async Task InvalidTopKDecayAndTDigestCompressionAreRejected()
     {
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = RespireClient.Create(DisconnectedOptions());
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
 
         await Assert.That(async () => await probabilistic.TopKReserveAsync("sketch", 10,
@@ -234,7 +264,9 @@ public class ProbabilisticClientTests
     [Test]
     public async Task BloomExpansionRejectsValuesAboveRedisMaximum()
     {
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = RespireClient.Create(DisconnectedOptions());
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
 
         await Assert.That(async () => await probabilistic.BloomReserveAsync("filter", 0.01, 100,
@@ -246,7 +278,9 @@ public class ProbabilisticClientTests
     [Test]
     public async Task CuckooReserveRejectsValuesAboveRedisMaxima()
     {
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = RespireClient.Create(DisconnectedOptions());
+#pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
 
         await Assert.That(async () => await probabilistic.CuckooReserveAsync("filter", 100,

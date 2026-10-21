@@ -21,11 +21,13 @@ public class MGetAllocationTests
                 ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray()
                 : command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray() : FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // This allocation scenario owns its client and prepopulated cache, with no shared cache mutations.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = cluster,
             Endpoints = [new("127.0.0.1", server.Port)], ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         RespireKey[] keys = ["{mget}:a", "{mget}:b"];
         foreach (var key in keys)
         {
@@ -53,8 +55,10 @@ public class MGetAllocationTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 1000; i++)
         {
+#pragma warning disable RESP009 // Both keys are prepopulated above; synchronous cache hits keep this warmed allocation measurement on one thread.
             var result = baseline ? new int[keys.Length] : client.CachedGetManyAsync(
                 keys, default, static (RespireClient _, in RespValue value) => 42).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             GC.KeepAlive(result);
             if (positiveControl) GC.KeepAlive(new byte[37]);
         }

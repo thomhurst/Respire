@@ -88,6 +88,8 @@ public class SetExpiryWireTests
     public async Task Set_WithPersist_ThrowsBeforeConnectingOrSerializing()
     {
         var serializer = new ThrowingSerializer();
+        // An unconnected client and throwing serializer prove Persist fails before I/O or serialization.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -95,6 +97,7 @@ public class SetExpiryWireTests
             ConnectTimeout = TimeSpan.FromMilliseconds(50),
             Serializer = serializer,
         });
+#pragma warning restore RESP010
 
         await Assert.That(async () => await client.SetAsync("raw", (RespireValue)"value", RespireExpiry.Persist))
             .ThrowsExactly<ArgumentException>();

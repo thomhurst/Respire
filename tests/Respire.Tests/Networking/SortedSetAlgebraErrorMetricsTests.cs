@@ -27,11 +27,14 @@ public class SortedSetAlgebraErrorMetricsTests
             : outcome == "server" ? "-WRONGTYPE rejected\r\n"u8.ToArray()
             : operation.EndsWith("STORE", StringComparison.Ordinal) ? ":1\r\n"u8.ToArray()
             : "*1\r\n$3\r\none\r\n"u8.ToArray();
+        // Each metrics case needs a client bound to its isolated validation/server outcome.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
         });
+#pragma warning restore RESP010
         var measurements = new ConcurrentQueue<(long Value, Dictionary<string, object?> Tags)>();
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, current) =>

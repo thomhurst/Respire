@@ -16,7 +16,10 @@ public class ValkeySlotMigrationCommandTests
     {
         await using var seed = Server(1);
         await using var target = Server(6);
+        // The lazy seed client proves node-local migration commands connect only to the selected target.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(seed.Port, protocol));
+#pragma warning restore RESP010
         var node = client.WithKeyPrefix("ignored:").Server.OnNode(new("127.0.0.1", target.Port));
         await node.ClusterMigrateSlotsAsync([new("target-a", [new(20, 30), new(0, 10)]), new("target-b", [new(16383, 16383)])]);
         await node.ClusterCancelSlotMigrationsAsync();
@@ -56,7 +59,10 @@ public class ValkeySlotMigrationCommandTests
     public async Task InvalidArgumentsDoNotConnect(string shape)
     {
         await using var target = Server(1);
+        // An unconnected client verifies invalid migration arguments never dial the target.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(target.Port, 2));
+#pragma warning restore RESP010
         var node = client.Server.OnNode(new("127.0.0.1", target.Port));
         await Assert.That(async () =>
         {
@@ -87,7 +93,10 @@ public class ValkeySlotMigrationCommandTests
     public async Task MutationsRequireAdminButStatusDoesNot(string operation)
     {
         await using var target = Server(1);
+        // This scenario owns a client with admin disabled to test mutation rejection and status access.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(target.Port, 2) with { AllowAdmin = false });
+#pragma warning restore RESP010
         var node = client.Server.OnNode(new("127.0.0.1", target.Port));
         await Assert.That(async () => await Call(node, operation)).Throws<NotSupportedException>();
         await Assert.That(target.ConnectionAccepted.IsCompleted).IsFalse();
@@ -102,7 +111,10 @@ public class ValkeySlotMigrationCommandTests
     public async Task PreCancellationDoesNotConnect(string operation)
     {
         await using var target = Server(1);
+        // An unconnected client proves pre-canceled migration calls never connect.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(target.Port, 2));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.That(async () => await Call(client.Server.OnNode(new("127.0.0.1", target.Port)), operation, cancellation.Token))
@@ -119,7 +131,10 @@ public class ValkeySlotMigrationCommandTests
         await using var seed = Server(1);
         await using var target = Server(1);
         target.ReplyOverride = (_, _) => Encoding.UTF8.GetBytes($"-{error} 0 127.0.0.1:{seed.Port}\r\n");
+        // The lazy seed client verifies target errors never redirect or replay onto the seed.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(seed.Port, 2));
+#pragma warning restore RESP010
         await Assert.That(async () => await Call(client.Server.OnNode(new("127.0.0.1", target.Port)), "start"))
             .Throws<RespireServerException>();
         await Assert.That(target.ReceivedCommands.Count).IsEqualTo(1);
@@ -144,7 +159,10 @@ public class ValkeySlotMigrationCommandTests
             if (!command.StartsWith("CLUSTER ", StringComparison.Ordinal)) return false;
             received.TrySetResult(target.ReceivedConnectionIds[^1]); return true;
         };
+        // This tracked client belongs to the migration fence/socket-release scenario.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port, 3) with { ClientSideCache = new() });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         Insert();
         using var cancellation = new CancellationTokenSource();
