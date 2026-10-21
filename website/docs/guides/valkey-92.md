@@ -118,12 +118,12 @@ await foreach (var entry in redis.PathHashes.ScanAsync("routes", prefix: "/api",
 }
 
 var page = await redis.PathHashes.ScanPageAsync("routes", prefix: "/api", count: 100);
-if (page.Cursor != "0")
+if (!page.IsComplete)
     page = await redis.PathHashes.ScanPageAsync("routes", page.Cursor, prefix: "/api", count: 100);
 ```
 
-Traversal is lexicographic. PHSCAN cursors are opaque strings; pass them back unchanged with
-the same key and prefix, and stop only at `"0"`. An empty page alone does not end traversal.
+Traversal is lexicographic. PHSCAN cursors are owned opaque bytes (`ReadOnlyMemory<byte>`); pass them back unchanged with
+the same key and prefix, and stop only when `IsComplete` is true (the single ASCII byte `0`). Omit the cursor or pass empty memory to start a scan. An empty page alone does not end traversal.
 Streamed enumerations pin their cursor to its issuing server, including when reading replicas.
 Each page is a separate read, so concurrent writes can alter the traversal. Cancellation is
 forwarded to page requests and checked between yielded entries. Pages own their response data.

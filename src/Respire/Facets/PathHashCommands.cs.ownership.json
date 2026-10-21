@@ -19,7 +19,7 @@
         "RemoveAsync(RespireKey,RespireKey,RespireKey,CancellationToken):ValueTask<long>",
         "RemovePrefixAsync(RespireKey,RespireKey,CancellationToken):ValueTask<long>",
         "ScanAsync(RespireKey,RespireKey?,int,CancellationToken):IAsyncEnumerable<RespirePathHashEntry>",
-        "ScanPageAsync(RespireKey,string,RespireKey?,int,CancellationToken):ValueTask<RespirePathHashPage>",
+        "ScanPageAsync(RespireKey,ReadOnlyMemory<byte>,RespireKey?,int,CancellationToken):ValueTask<RespirePathHashPage>",
         "SetAsync(RespireKey,RespireKey,RespireKey,RespireValue,RespireSetWhen,CancellationToken):ValueTask<bool>",
         "SetAsync`1(RespireKey,RespireKey,RespireKey,T,RespireSetWhen,CancellationToken):ValueTask<bool>",
         "SetFieldsAsync(RespireKey,RespireKey,ReadOnlySpan<(RespireKeyField,RespireValueValue)>,RespireSetWhen,CancellationToken):ValueTask<bool>",

@@ -74,7 +74,7 @@ public class PathHashCommandTests
         var prefixes = await paths.PrefixesAsync("tree", "/abc", count: 2, maxPathLength: 3);
         await Assert.That(prefixes[0].Fields[0].Value).IsEquivalentTo("v"u8.ToArray());
         var page = await paths.ScanPageAsync("tree", prefix: "/a", count: 2);
-        await Assert.That(page.Cursor).IsEqualTo("0");
+        await Assert.That(page.IsComplete).IsTrue();
         await Assert.That(page.Entries[0].Path).IsEquivalentTo(longest.Path);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo([
             "PHSET tenant:tree /a FIELDS 1 f v", "PHSET tenant:tree /a FNX FIELDS 1 f v",
@@ -85,6 +85,44 @@ public class PathHashCommandTests
             "PHDELPREFIX tenant:tree /", "PHLONGEST tenant:tree /abc WITHVALUES",
             "PHPREFIXES tenant:tree /abc WITHVALUES COUNT 2 MAXPATHLEN 3",
             "PHSCAN tenant:tree 0 PREFIX /a COUNT 2 WITHVALUES"]);
+    }
+
+    [Test]
+    public async Task ManualPagingPreservesOwnedBinaryCursor()
+    {
+        byte[] cursor = [0xff, 0, 0x80, (byte)'0'];
+        var firstPage = "*2\r\n$4\r\n"u8.ToArray().Concat(cursor).Concat("\r\n*0\r\n"u8.ToArray()).ToArray();
+        await using var server = new FakeRespServer(firstPage, "*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var page = await client.PathHashes.ScanPageAsync("tree");
+        await Assert.That(page.IsComplete).IsFalse();
+        var last = await client.PathHashes.ScanPageAsync("tree", page.Cursor);
+        await Assert.That(last.IsComplete).IsTrue();
+        await Assert.That(page.Cursor.Span.SequenceEqual(cursor)).IsTrue();
+        await Assert.That(server.ReceivedArguments[1][2].AsSpan().SequenceEqual(cursor)).IsTrue();
+    }
+
+    [Test]
+    [Arguments("0", true)]
+    [Arguments("00", false)]
+    [Arguments("+0", false)]
+    [Arguments("0\0", false)]
+    public async Task CompletionRequiresExactAsciiZero(string cursor, bool complete)
+    {
+        var page = new RespirePathHashPage(Encoding.UTF8.GetBytes(cursor), []);
+        await Assert.That(page.IsComplete).IsEqualTo(complete);
+    }
+
+    [Test]
+    public async Task StreamingPreservesBinaryCursorAcrossEmptyPages()
+    {
+        byte[] cursor = [0xff, 0, 0x80, (byte)'0'];
+        var firstPage = "*2\r\n$4\r\n"u8.ToArray().Concat(cursor).Concat("\r\n*0\r\n"u8.ToArray()).ToArray();
+        await using var server = new FakeRespServer(firstPage, "*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await foreach (var _ in client.PathHashes.ScanAsync("tree")) { }
+        await Assert.That(server.ReceivedArguments.Count).IsEqualTo(2);
+        await Assert.That(server.ReceivedArguments[1][2].AsSpan().SequenceEqual(cursor)).IsTrue();
     }
 
     [Test]
@@ -161,23 +199,27 @@ public class PathHashCommandTests
         var write = queue.PathHashes.Set(key, path, field, value, RespireSetWhen.Exists);
         var read = queue.PathHashes.GetBytes(key, path, field);
         var match = queue.PathHashes.LongestPrefix(key, "/abc");
-        var page = queue.PathHashes.ScanPage(key, prefix: path, count: 1);
+        byte[] cursor = [0xff, 0, 0x80];
+        var page = queue.PathHashes.ScanPage(key, cursor, prefix: path, count: 1);
         var deleted = queue.PathHashes.Remove(key, path);
         var fieldRead = queue.PathHashes.GetFields(key, path, field);
         var fieldDeleted = queue.PathHashes.Remove(key, path, field);
         key[0] = (byte)'X'; path[0] = (byte)'X'; field[0] = (byte)'X'; value[0] = (byte)'X';
+        cursor[0] = (byte)'X';
         if (tx is not null) await tx.CommitAsync(); else await batch!.ExecuteAsync();
         await Assert.That(write.Result).IsTrue();
         await Assert.That(read.Result!).IsEquivalentTo("v"u8.ToArray());
         await Assert.That(match.Result!.Path).IsEquivalentTo("/a"u8.ToArray());
-        await Assert.That(page.Result.Cursor).IsEqualTo("0");
+        await Assert.That(page.Result.IsComplete).IsTrue();
         await Assert.That(deleted.Result).IsEqualTo(1);
         await Assert.That(fieldRead.Result.Length).IsEqualTo(1);
         await Assert.That(fieldRead.Result[0]!).IsEquivalentTo("v"u8.ToArray());
         await Assert.That(fieldDeleted.Result).IsEqualTo(1);
+        var scan = server.ReceivedArguments.Single(args => args[0].AsSpan().SequenceEqual("PHSCAN"u8));
+        await Assert.That(scan[2].AsSpan().SequenceEqual(new byte[] { 0xff, 0, 0x80 })).IsTrue();
         await Assert.That(server.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC")).IsEquivalentTo([
             "PHSET tenant:tree /a FXX FIELDS 1 f v", "PHGET tenant:tree /a f",
-            "PHLONGEST tenant:tree /abc WITHVALUES", "PHSCAN tenant:tree 0 PREFIX /a COUNT 1 WITHVALUES", "PHDEL tenant:tree /a",
+            "PHLONGEST tenant:tree /abc WITHVALUES", $"PHSCAN tenant:tree {Encoding.UTF8.GetString(new byte[] { 0xff, 0, 0x80 })} PREFIX /a COUNT 1 WITHVALUES", "PHDEL tenant:tree /a",
             "PHGET tenant:tree /a f", "PHDEL tenant:tree /a f"]);
     }
 

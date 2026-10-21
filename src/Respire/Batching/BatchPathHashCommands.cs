@@ -58,8 +58,8 @@ public interface IRespireBatchPathHashCommands
     /// <summary>Gets ancestor byte prefixes from shortest to longest; count retains deepest matches after the byte-length limit. Valkey: PHPREFIXES.</summary>
     RespirePending<RespirePathHashEntry[]> Prefixes(RespireKey key, RespireKey query, long? count = null, long? maxPathLength = null);
 
-    /// <summary>Traverses lexicographic paths with an opaque cursor; count is a server hint, and cursor 0 ends traversal. Valkey: PHSCAN.</summary>
-    RespirePending<RespirePathHashPage> ScanPage(RespireKey key, string cursor = "0", RespireKey? prefix = null, int count = 100);
+    /// <summary>Traverses lexicographic paths with an opaque cursor; count is a server hint. An omitted or empty cursor starts traversal; the single ASCII byte "0" ends traversal. Valkey: PHSCAN.</summary>
+    RespirePending<RespirePathHashPage> ScanPage(RespireKey key, ReadOnlyMemory<byte> cursor = default, RespireKey? prefix = null, int count = 100);
 
     /// <summary>Serializes one field and applies a field condition. Valkey: PHSET.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -156,7 +156,7 @@ internal sealed class BatchPathHashCommands(IPendingSink sink) : IRespireBatchPa
             Command(RespireCommands.PathHash.PHPREFIXES, key, PathHashCodec.Prefixes(query, count, maxPathLength)),
             static (client, reply) => PathHashCodec.Entries(in reply));
 
-    public RespirePending<RespirePathHashPage> ScanPage(RespireKey key, string cursor = "0", RespireKey? prefix = null, int count = 100)
+    public RespirePending<RespirePathHashPage> ScanPage(RespireKey key, ReadOnlyMemory<byte> cursor = default, RespireKey? prefix = null, int count = 100)
         => sink.Add<Cmd1N, RespirePathHashPage>("PHSCAN",
             Command(RespireCommands.PathHash.PHSCAN, key, PathHashCodec.Scan(cursor, prefix, count)),
             static (client, reply) => PathHashCodec.Page(in reply));

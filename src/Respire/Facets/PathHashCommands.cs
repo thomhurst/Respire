@@ -58,8 +58,8 @@ public interface IRespirePathHashCommands
     /// <summary>Gets ancestor byte prefixes from shortest to longest; count retains deepest matches after the byte-length limit. Valkey: PHPREFIXES.</summary>
     ValueTask<RespirePathHashEntry[]> PrefixesAsync(RespireKey key, RespireKey query, long? count = null, long? maxPathLength = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Traverses lexicographic paths with an opaque cursor; count is a server hint, and cursor 0 ends traversal. Manual paging does not guarantee replica affinity; use ScanAsync to pin an enumeration. Valkey: PHSCAN.</summary>
-    ValueTask<RespirePathHashPage> ScanPageAsync(RespireKey key, string cursor = "0", RespireKey? prefix = null, int count = 100, CancellationToken cancellationToken = default);
+    /// <summary>Traverses lexicographic paths with an opaque cursor; count is a server hint. An omitted or empty cursor starts traversal; the single ASCII byte "0" ends traversal. Manual paging does not guarantee replica affinity; use ScanAsync to pin an enumeration. Valkey: PHSCAN.</summary>
+    ValueTask<RespirePathHashPage> ScanPageAsync(RespireKey key, ReadOnlyMemory<byte> cursor = default, RespireKey? prefix = null, int count = 100, CancellationToken cancellationToken = default);
 
     /// <summary>Serializes one field and applies a field condition. Valkey: PHSET.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -299,7 +299,7 @@ internal sealed class PathHashCommands(RespireClient client) : IRespirePathHashC
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
-    public ValueTask<RespirePathHashPage> ScanPageAsync(RespireKey key, string cursor = "0", RespireKey? prefix = null, int count = 100, CancellationToken cancellationToken = default)
+    public ValueTask<RespirePathHashPage> ScanPageAsync(RespireKey key, ReadOnlyMemory<byte> cursor = default, RespireKey? prefix = null, int count = 100, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespirePathHashPage>.Start();
         try
@@ -369,17 +369,17 @@ internal sealed class PathHashCommands(RespireClient client) : IRespirePathHashC
     public async IAsyncEnumerable<RespirePathHashEntry> ScanAsync(RespireKey key, RespireKey? prefix = null, int count = 100,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var cursor = "0";
+        ReadOnlyMemory<byte> cursor = default;
         var affinity = new ReadAffinity();
         do
         {
             var page = await ReadScanPageAsync(key, cursor, prefix, count, affinity, cancellationToken).ConfigureAwait(false);
             foreach (var entry in page.Entries) { CollectionScan.CheckCancellation(cancellationToken); yield return entry; }
             cursor = page.Cursor;
-        } while (cursor != "0");
+        } while (!cursor.Span.SequenceEqual("0"u8));
     }
 
-    private ValueTask<RespirePathHashPage> ReadScanPageAsync(RespireKey key, string cursor, RespireKey? prefix, int count,
+    private ValueTask<RespirePathHashPage> ReadScanPageAsync(RespireKey key, ReadOnlyMemory<byte> cursor, RespireKey? prefix, int count,
         ReadAffinity affinity, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<RespirePathHashPage>.Start();

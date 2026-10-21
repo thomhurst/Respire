@@ -64,11 +64,10 @@ internal static class PathHashCodec
         return args.ToArray();
     }
 
-    internal static RespireValue[] Scan(string cursor, RespireKey? prefix, int count)
+    internal static RespireValue[] Scan(ReadOnlyMemory<byte> cursor, RespireKey? prefix, int count)
     {
-        ArgumentException.ThrowIfNullOrEmpty(cursor);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
-        var args = new List<RespireValue> { cursor };
+        var args = new List<RespireValue> { cursor.IsEmpty ? new RespireValue("0") : new RespireValue(cursor) };
         if (prefix.HasValue) { args.Add("PREFIX"); args.Add(prefix.Value.AsValue()); }
         args.Add("COUNT"); args.Add(count); args.Add("WITHVALUES");
         return args.ToArray();
@@ -125,7 +124,7 @@ internal static class PathHashCodec
         var parts = value.AsArray();
         // Cursors encode server state; they are never parsed as SCAN's numeric cursor.
         if (parts[0].Type != RespireDataType.BulkString || parts[0].IsNull || parts[0].AsSpan().IsEmpty) throw Malformed();
-        return new(parts[0].AsString(), Entries(in parts[1]));
+        return new(parts[0].AsSpan().ToArray(), Entries(in parts[1]));
     }
 
     private static RespirePathHashEntry Entry(in RespValue value)

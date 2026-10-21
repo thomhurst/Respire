@@ -20,7 +20,7 @@ public class PathHashIntegrationTests(VersionedServerFixture servers)
         (await paths.GetAllAsync("tree", "missing")).Should().BeEmpty();
         (await paths.LongestPrefixAsync("tree", "missing")).Should().BeNull();
         (await paths.PrefixesAsync("tree", "missing")).Should().BeEmpty();
-        (await paths.ScanPageAsync("tree")).Cursor.Should().Be("0");
+        (await paths.ScanPageAsync("tree")).IsComplete.Should().BeTrue();
         (await paths.SetAsync("tree", "", "root", "root-value")).Should().BeTrue();
         (await paths.SetFieldsAsync("tree", "a", [("f", "one"), ("g", "two")])).Should().BeTrue();
         (await paths.SetFieldsAsync("tree", "a", [("f", "ignored"), ("new", "ignored")], RespireSetWhen.NotExists)).Should().BeFalse();
@@ -82,7 +82,7 @@ public class PathHashIntegrationTests(VersionedServerFixture servers)
         all.Result.Single().Value.Should().Equal(value);
         longest.Result!.Path.Should().Equal(path);
         page.Result.Entries.Single().Path.Should().Equal(path);
-        page.Result.Cursor.Should().Be("0");
+        page.Result.IsComplete.Should().BeTrue();
         number.Result.Should().BeTrue(); typed.Result.Should().Be(0);
         found.Result.Found.Should().BeTrue(); missing.Result.Found.Should().BeFalse();
         await view.PathHashes.SetAsync<int>("typed", "p", "f", 42);

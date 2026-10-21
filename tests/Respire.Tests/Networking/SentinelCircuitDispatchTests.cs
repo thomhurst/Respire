@@ -250,7 +250,7 @@ public sealed class SentinelCircuitDispatchTests
         if (continuation)
         {
             if (streaming) await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
-            else await Assert.That((await view.PathHashes.ScanPageAsync("tree")).Cursor).IsEqualTo("opaque!");
+            else await Assert.That((await view.PathHashes.ScanPageAsync("tree")).Cursor.ToArray()).IsEquivalentTo("opaque!"u8.ToArray());
         }
 
         var (circuit, _) = Prepare(client, first);
@@ -260,7 +260,7 @@ public sealed class SentinelCircuitDispatchTests
         var pending = Task.Run(async () =>
         {
             if (streaming) await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
-            else await view.PathHashes.ScanPageAsync("tree", continuation ? "opaque!" : "0");
+            else await view.PathHashes.ScanPageAsync("tree", continuation ? "opaque!"u8.ToArray() : "0"u8.ToArray());
         });
         try
         {

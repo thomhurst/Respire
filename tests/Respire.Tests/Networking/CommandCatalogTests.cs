@@ -201,6 +201,10 @@ public class CommandCatalogTests
         var continuation = new Cmd1N(RespireCommands.PathHash.PHSCAN.Verb, "key", ["opaque-cursor"]);
         await Assert.That(Internal.CursorCommandMetadata.IsCursorContinuation(in start)).IsFalse();
         await Assert.That(Internal.CursorCommandMetadata.IsCursorContinuation(in continuation)).IsTrue();
+        var binaryStart = new Cmd1N(RespireCommands.PathHash.PHSCAN.Verb, "key", ["0"u8.ToArray()]);
+        var binaryContinuation = new Cmd1N(RespireCommands.PathHash.PHSCAN.Verb, "key", ["00"u8.ToArray()]);
+        await Assert.That(Internal.CursorCommandMetadata.IsServerCursorContinuation(in binaryStart)).IsFalse();
+        await Assert.That(Internal.CursorCommandMetadata.IsServerCursorContinuation(in binaryContinuation)).IsTrue();
         await Assert.That(RespireCommands.PathHash.PHSET.CacheMutation).IsEqualTo(RespireCacheMutation.Mutation);
         await Assert.That(RespireCommands.PathHash.PHMSET.CacheMutation).IsEqualTo(RespireCacheMutation.Mutation);
         await Assert.That(RespireCommands.PathHash.PHDEL.CacheMutation).IsEqualTo(RespireCacheMutation.Mutation);

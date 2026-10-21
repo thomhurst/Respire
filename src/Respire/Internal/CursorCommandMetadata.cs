@@ -15,6 +15,8 @@ internal static class CursorCommandMetadata
     {
         var index = command.CursorArgumentIndex;
         if (index < 0 || !command.TryGetArgument(index, out var cursor)) return false;
+        // Binary cursors are opaque: only the exact ASCII terminator starts a scan.
+        if (cursor.TryGetByteMemory(out var bytes)) return !bytes.Span.SequenceEqual("0"u8);
         return !(cursor.TryGetInt64(out var value) && value == 0);
     }
 
