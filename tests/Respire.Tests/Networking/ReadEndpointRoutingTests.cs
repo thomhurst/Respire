@@ -11,6 +11,8 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
+// Each case owns isolated fake endpoints and a client to exercise routing and connection lifetimes.
+#pragma warning disable RESP010
 public class ReadEndpointRoutingTests
 {
     private static readonly byte[] PrimaryRole = "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
@@ -734,10 +736,10 @@ public class ReadEndpointRoutingTests
         await Assert.That(async () => await view.ExecuteAsync(RespireCommands.Key.SCAN, [7])).Throws<RespireConnectionException>();
         await Assert.That(async () => await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7", "COUNT", 10])).Throws<RespireConnectionException>();
         await Assert.That(ScanCursors(other)).IsEmpty();
-        // A fresh scan selects a healthy replica.
-        using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"])) { }
+        // A numeric zero in binary form still starts a fresh scan after losing the pin.
+        using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["00"u8.ToArray()])) { }
 
-        await Assert.That(ScanCursors(other)).IsEquivalentTo(["0"]);
+        await Assert.That(ScanCursors(other)).IsEquivalentTo(["00"]);
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("SCAN ", StringComparison.Ordinal))).IsFalse();
     }
 

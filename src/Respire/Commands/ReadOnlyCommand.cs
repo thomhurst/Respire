@@ -28,6 +28,7 @@ internal readonly struct ReadOnlyCommand<TCommand> : IRespCommandWrapper
     public ReadCommandKind ReadKind => _command.ReadKind;
     public bool IsConnectionProtocol => CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in _command);
     public int CursorArgumentIndex => _command.CursorArgumentIndex;
+    public bool HasOpaqueCursor => _command.HasOpaqueCursor;
     public void OnAccepted() => _command.OnAccepted();
     public void ValidateAdmission() => _command.ValidateAdmission();
     public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken)

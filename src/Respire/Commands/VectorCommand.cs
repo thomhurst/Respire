@@ -12,6 +12,7 @@ internal readonly struct VectorCommand(Verb verb, RespireValue key, ReadOnlyMemo
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
+    public bool HasOpaqueCursor => verb.HasOpaqueCursor;
 
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
     {

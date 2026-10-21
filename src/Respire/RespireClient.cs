@@ -5325,6 +5325,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             => command.GetResponseCancellationToken(admissionToken);
 
         public int CursorArgumentIndex => command.CursorArgumentIndex;
+        public bool HasOpaqueCursor => command.HasOpaqueCursor;
 
         public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
         public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);

@@ -191,6 +191,48 @@ public class CommandCatalogTests
     }
 
     [Test]
+    [Arguments("SCAN")]
+    [Arguments("HSCAN")]
+    [Arguments("SSCAN")]
+    [Arguments("ZSCAN")]
+    public async Task NumericScanCursorsKeepNumericZeroSemantics(string name)
+    {
+        var descriptor = RespireCommands.All.ToArray().Single(command => command.Name == name);
+        foreach (var token in new[] { "0", "00", "+0", "17" })
+        {
+            RespireValue cursor = System.Text.Encoding.ASCII.GetBytes(token);
+            RespireValue[] args = descriptor.CursorArgumentIndex == 0 ? [cursor] : ["key", cursor];
+            var command = new CatalogCommand(descriptor, args);
+            await Assert.That(Internal.CursorCommandMetadata.IsServerCursorContinuation(in command))
+                .IsEqualTo(token == "17");
+            var raw = DeferredRawCommands.CreateCommand(descriptor, [name, .. args], -1, 1);
+            await Assert.That(Internal.CursorCommandMetadata.IsServerCursorContinuation(in raw))
+                .IsEqualTo(token == "17");
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OpaqueCursorMetadataSurvivesRawCommandsAndWrappers(bool binary)
+    {
+        var descriptor = RespireCommands.PathHash.PHSCAN;
+        foreach (var token in new[] { "0", "00", "+0", "opaque" })
+        {
+            RespireValue cursor = binary ? System.Text.Encoding.ASCII.GetBytes(token) : (RespireValue)token;
+            var command = new CatalogCommand(descriptor, ["key", cursor]);
+            var raw = DeferredRawCommands.CreateCommand(descriptor, ["phscan", "key", cursor], -1, 1);
+            var wrapped = new MutationCommand<CatalogCommand>(command, default);
+            await Assert.That(Internal.CursorCommandMetadata.IsServerCursorContinuation(in command))
+                .IsEqualTo(token != "0");
+            await Assert.That(Internal.CursorCommandMetadata.IsServerCursorContinuation(in raw))
+                .IsEqualTo(token != "0");
+            await Assert.That(Internal.CursorCommandMetadata.IsServerCursorContinuation(in wrapped))
+                .IsEqualTo(token != "0");
+        }
+    }
+
+    [Test]
     public async Task PathHashReadsPreserveCursorAffinityAndWritesRemainMutations()
     {
         await Assert.That(RespireCommands.PathHash.PHGET.IsReadOnly).IsTrue();

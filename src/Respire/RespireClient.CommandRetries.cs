@@ -536,6 +536,7 @@ public sealed partial class RespireClient
         }
         public ReadCommandKind ReadKind => command.ReadKind;
         public int CursorArgumentIndex => command.CursorArgumentIndex;
+        public bool HasOpaqueCursor => command.HasOpaqueCursor;
         public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
         public bool TryGetClusterSlot(out int slot) => state.TryGetClusterSlot(out slot);
         public bool IsConnectionProtocol => false;

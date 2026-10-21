@@ -19,6 +19,7 @@ internal readonly struct MutationCommand<TCommand>(TCommand command,
     public ReadCommandKind ReadKind => command.ReadKind;
     public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
     public int CursorArgumentIndex => command.CursorArgumentIndex;
+    public bool HasOpaqueCursor => command.HasOpaqueCursor;
     public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);
     public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);

@@ -116,6 +116,8 @@ public readonly struct RespireCommand
 
     internal int CursorArgumentIndex => _verb.Bulk is null ? -1 : _verb.CursorArgumentIndex;
 
+    internal bool HasOpaqueCursor => _verb.HasOpaqueCursor;
+
     internal RespireCommandBehavior Behavior { get; }
 
     internal bool IsCallerSupplied => _verb.Bulk is null;

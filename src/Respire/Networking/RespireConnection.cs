@@ -3914,6 +3914,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         public ReadCommandKind ReadKind => _command.ReadKind;
         public bool TryGetArgument(int index, out RespireValue value) => _command.TryGetArgument(index, out value);
         public int CursorArgumentIndex => _command.CursorArgumentIndex;
+        public bool HasOpaqueCursor => _command.HasOpaqueCursor;
     }
 
     private static Exception TranslateReceiveFault(Exception ex)

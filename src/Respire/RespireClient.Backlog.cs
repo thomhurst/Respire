@@ -251,6 +251,7 @@ public sealed partial class RespireClient
         public ReadCommandKind ReadKind => _command.ReadKind;
         public RespireCommandRetryCategory RetryCategory => _command.RetryCategory;
         public int CursorArgumentIndex => _command.CursorArgumentIndex;
+        public bool HasOpaqueCursor => _command.HasOpaqueCursor;
         public bool IsConnectionProtocol => CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in _command);
         public ClientSideCacheCoordinator.MutationFence GetMutationFence() => CommandDispatchAdmission<TCommand>.GetMutationFence(in _command);
         // Classification is immutable verb/declaration metadata, independent of borrowed argument bytes.

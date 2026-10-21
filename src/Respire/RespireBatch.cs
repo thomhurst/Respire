@@ -1348,6 +1348,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
         public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);
         public int CursorArgumentIndex => command.CursorArgumentIndex;
+        public bool HasOpaqueCursor => command.HasOpaqueCursor;
         public bool TryGetArgument(int index, out RespireValue value) => command.TryGetArgument(index, out value);
         public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
         public bool TryGetClusterSlot(out int slot) => snapshot.TryGetClusterSlot(out slot);
