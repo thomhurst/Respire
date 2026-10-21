@@ -8,7 +8,7 @@ public sealed record RespireSemanticCacheOptions
     /// <summary>The additional-properties key that bypasses both cache reads and writes when set to true.</summary>
     public const string DisableCacheKey = "Respire.SemanticCache.Disabled";
 
-    /// <summary>Application and embedding-model namespace. Change it when the embedding model or deployment changes.</summary>
+    /// <summary>Nonblank, well-formed UTF-16 application and embedding-model namespace. Change it when the embedding model or deployment changes.</summary>
     public string CacheName { get; init; } = "default";
 
     /// <summary>Required FLOAT32 embedding dimensions.</summary>
@@ -21,7 +21,7 @@ public sealed record RespireSemanticCacheOptions
     public TimeSpan TimeToLive { get; init; } = TimeSpan.FromHours(1);
 
     /// <summary>Returns provider responses on non-cancellation cache failures and reports failures through Trace. Defaults to true.</summary>
-    /// <remarks>False propagates embedding, cache lookup, serialization and insertion errors. Provider errors and cancellation always propagate.</remarks>
+    /// <remarks>False propagates embedding, cache lookup, serialization and insertion errors, including malformed UTF-16 in scope inputs. Provider errors and cancellation always propagate.</remarks>
     public bool FailOpen { get; init; } = true;
 
     /// <summary>Selects an exact user/tenant scope. Null bypasses caching. Defaults to a shared scope.</summary>
@@ -34,6 +34,7 @@ public sealed record RespireSemanticCacheOptions
     internal void Validate()
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(CacheName);
+        _ = StrictUnicodeJsonEncoder.Utf8.GetByteCount(CacheName);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(Dimensions);
         if (!double.IsFinite(DistanceThreshold) || DistanceThreshold < 0 || DistanceThreshold > 2)
             throw new ArgumentOutOfRangeException(nameof(DistanceThreshold));
