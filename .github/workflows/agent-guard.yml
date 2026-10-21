@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - scripts/Invoke-AgentDotNet.ps1
+      - scripts/Test-AgentDotNetProcessTree.ps1
       - scripts/AgentDotNetWindowsJob.cs
       - scripts/Write-AgentWindowsStartupDiagnostics.ps1
       - scripts/Write-AgentRunnerProcessDiagnostics.ps1
@@ -39,6 +40,7 @@ on:
     branches: [main]
     paths:
       - scripts/Invoke-AgentDotNet.ps1
+      - scripts/Test-AgentDotNetProcessTree.ps1
       - scripts/AgentDotNetWindowsJob.cs
       - scripts/Write-AgentWindowsStartupDiagnostics.ps1
       - scripts/Write-AgentRunnerProcessDiagnostics.ps1
@@ -191,6 +193,9 @@ jobs:
       - name: Verify process containment and resource limits
         shell: pwsh
         run: ./scripts/Test-InvokeAgentDotNet.ps1
+      - name: Verify process ancestry excludes recycled parent PIDs
+        shell: pwsh
+        run: ./scripts/Test-AgentDotNetProcessTree.ps1
       - name: Verify PR review gate heuristics
         shell: pwsh
         run: ./scripts/Test-AssertPrGreenReviewHeuristics.ps1
