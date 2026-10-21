@@ -663,6 +663,12 @@ if ($probeSdk) {
         $output = $probe.StandardOutput.ReadLineAsync()
         $probe.WaitForExit()
         if ($probe.ExitCode -ne 0) {
+            if ($IsWindows -and $probe.ExitCode -eq -1073741502) {
+                try { [Console]::Error.WriteLine("startup-failure sdkProbePid=$($probe.Id) executable=$([IO.Path]::GetFileName($probeInfo.FileName)) exit=0xC0000142") } catch { }
+                # Forward this native startup status so the surviving guard
+                # can collect evidence after containment cleanup.
+                exit $probe.ExitCode
+            }
             throw "SDK runner probe failed with exit $($probe.ExitCode); see stderr above."
         }
         $versionText = ($output.GetAwaiter().GetResult() ?? '').Trim()
@@ -694,6 +700,7 @@ exit $exitCode
 $process = [System.Diagnostics.Process]::new()
 $process.StartInfo = $startInfo
 $processStarted = $false
+$wrapperProcessId = 0
 $trackedProcesses = [System.Collections.Generic.Dictionary[int, string]]::new()
 $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
 $memoryLimitBytes = [long]$MemoryLimitMb * 1MB
@@ -754,6 +761,7 @@ try {
         $unixProcessGroupId = $process.Id
     }
     $processStarted = $true
+    $wrapperProcessId = $process.Id
 
     try {
         $process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
@@ -812,16 +820,6 @@ try {
         $process.WaitForExit()
         $finalExitCode = $process.ExitCode
     }
-    if ($IsWindows -and $finalExitCode -eq -1073741502) {
-        try {
-            & (Join-Path $PSScriptRoot 'Write-AgentWindowsStartupDiagnostics.ps1') `
-                -WrapperProcessId $process.Id -PeakWorkingSetBytes $peakWorkingSetBytes
-        }
-        catch {
-            # Startup evidence must not hide the original exit or skip containment cleanup.
-            try { [Console]::Error.WriteLine("Windows startup diagnostics unavailable: $_") } catch { }
-        }
-    }
 }
 finally {
     Write-Verbose ("Agent dotnet peak sampled process-tree working set: {0} MB (limit {1} MB)." -f
@@ -849,6 +847,19 @@ finally {
     }
     if (Test-Path -LiteralPath $invocationPath) {
         Remove-Item -LiteralPath $invocationPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+if ($IsWindows -and $finalExitCode -eq -1073741502) {
+    try {
+        # Event-log construction and OS calls are best-effort and can stall.
+        # Close containment and remove launch files before collecting evidence.
+        & (Join-Path $PSScriptRoot 'Write-AgentWindowsStartupDiagnostics.ps1') `
+            -WrapperProcessId $wrapperProcessId -PeakWorkingSetBytes $peakWorkingSetBytes
+    }
+    catch {
+        # Startup evidence must not hide the original exit.
+        try { [Console]::Error.WriteLine("Windows startup diagnostics unavailable: $_") } catch { }
     }
 }
 
