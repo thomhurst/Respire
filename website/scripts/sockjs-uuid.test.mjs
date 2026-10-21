@@ -12,7 +12,7 @@ const sockjs = createRequire(devServer.resolve('sockjs/package.json'));
 const uuid = sockjs('uuid');
 
 // GHSA-w5hq-g745-h8pq: keep the patched buffer contract when changing the
-// SockJS-scoped override. v11 retains the CommonJS named exports SockJS uses.
+// SockJS-scoped override. Node 24 exposes the named exports SockJS requires.
 test('SockJS resolves UUID functions with output-buffer bounds checks', () => {
   const generators = [
     (buffer, offset) => uuid.v3('respire', uuid.v3.DNS, buffer, offset),

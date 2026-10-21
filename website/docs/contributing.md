@@ -169,15 +169,15 @@ these major upgrades through overrides just to silence warnings. Track the paren
 releases and review their compatibility first.
 
 For [#2096](https://github.com/thomhurst/Respire/issues/2096), `package.json` pins
-`uuid@11.1.1` only beneath `sockjs@0.3.24` to remove
+`uuid@14.0.3` only beneath `sockjs@0.3.24` to remove
 [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq).
 SockJS's published `lib/transport.js` imports `require('uuid').v4` and calls
 `uuidv4()` without arguments to create connection IDs. It never calls the affected
 v3/v5/v6 functions or supplies output buffers, so this path does not reach the
 advisory's vulnerable operations. The site's Docusaurus configuration also keeps
-webpack-dev-server's default `ws` transport rather than selecting SockJS. UUID 11
-retains the CommonJS named export and argument-free v4 behavior;
-[UUID 12 removes CommonJS support](https://github.com/uuidjs/uuid/releases/tag/v12.0.0). The scoped
+webpack-dev-server's default `ws` transport rather than selecting SockJS. UUID 14
+is an ES module; the supported Node 24 runtime lets SockJS load its named exports
+through `require()`, preserving the argument-free v4 behavior. The scoped
 override is covered by output-buffer regression tests and a real SockJS WebSocket
 connection/message test in `scripts/sockjs-uuid.test.mjs`.
 
