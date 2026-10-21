@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
+import {mkdtemp, readFile, rm, utimes, writeFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
@@ -94,6 +94,13 @@ for (const advanced of [false, true]) {
     try {
       await writeFile(path.join(directory, 'input.css'), css);
       await writeFile(path.join(directory, 'input.txt'), 'Respire documentation');
+      // Webpack allows up to two seconds of filesystem timestamp uncertainty.
+      // Backdate these unchanged fixtures before the first snapshot so cache
+      // reuse does not depend on how quickly the two compilations run.
+      const timestamp = new Date(Date.now() - 10_000);
+      for (const filename of ['input.css', 'input.txt']) {
+        await utimes(path.join(directory, filename), timestamp, timestamp);
+      }
       let transforms = 0;
       const preset = advanced ? bundler.resolve('@docusaurus/cssnano-preset') : 'default';
       compiler = webpack({
@@ -133,8 +140,10 @@ for (const advanced of [false, true]) {
       const first = await readFile(path.join(directory, 'output/site.css'), 'utf8');
       assert.equal(first, '.card{color:red;width:20px}.card:before{content:"Respire"}[data-kind=docs]>.link:nth-child(odd){margin:0}:is(.card,.card,.link):not([hidden]){padding:0}@media (min-width:800px){.card{display:block}}');
       assert.equal(await readFile(path.join(directory, 'output/copied.txt'), 'utf8'), 'RESPIRE DOCUMENTATION');
+      assert.equal(transforms, 1, 'the first compilation must run the transform');
       await compile(compiler);
       assert.equal(await readFile(path.join(directory, 'output/site.css'), 'utf8'), first);
+      assert.equal(await readFile(path.join(directory, 'output/copied.txt'), 'utf8'), 'RESPIRE DOCUMENTATION');
       assert.equal(transforms, 1, 'the second compilation must reuse the transform cache');
     } finally {
       if (compiler) {
