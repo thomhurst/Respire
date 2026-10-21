@@ -12,7 +12,9 @@ public partial class SentinelRoutingTests
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var probe = new SentinelMonitorProbe { DisposeClient = () => new(release.Task) };
@@ -47,7 +49,9 @@ public partial class SentinelRoutingTests
         await using var primary = Primary();
         await using var promoted = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         var probe = new SentinelMonitorProbe();
         router.Monitoring.ClientFactory = _ => probe.Client;
@@ -116,7 +120,9 @@ public partial class SentinelRoutingTests
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -162,7 +168,9 @@ public partial class SentinelRoutingTests
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var probe = new SentinelMonitorProbe();
@@ -236,7 +244,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var port = primary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         var probe = new SentinelMonitorProbe { IgnoreCancellation = true };
         router.Monitoring.ClientFactory = _ => probe.Client;

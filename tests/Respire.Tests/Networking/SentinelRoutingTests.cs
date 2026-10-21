@@ -39,7 +39,9 @@ public partial class SentinelRoutingTests
         var port = first.Port;
         long epoch = 0;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port), () => Volatile.Read(ref epoch), maxConnections: 256);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var endpoints = new[] { new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", second.Port) };
@@ -149,10 +151,12 @@ public partial class SentinelRoutingTests
             : command == "SENTINEL MASTER mymaster"
                 ? Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(ConfigurationReply(primary.Port, 6)).Replace("127.0.0.1", "localhost"))
                 : firstReply(id, command);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         router.HostResolver = static (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback, IPAddress.Parse("127.0.0.2")]);
         await client.PingAsync().AsTask().WaitAsync(Limit);
@@ -267,11 +271,13 @@ public partial class SentinelRoutingTests
         var secondPort = original.Port;
         await using var second = Sentinel(() => Volatile.Read(ref secondPort), () => secondPort == original.Port ? 1 : 2);
         var retryDelay = TimeSpan.FromMilliseconds(200);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", unavailable.Port), new("127.0.0.1", second.Port)],
             ReconnectPolicy = new() { InitialDelay = retryDelay, MaxDelay = retryDelay, JitterRatio = 0, MaxAttempts = 1 },
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, first);
         await WaitForInitialSentinelValidationAsync(client, unavailable, expectedSubscriptions: 2);
         await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 3);
@@ -307,7 +313,9 @@ public partial class SentinelRoutingTests
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var clock = new DiscoverySpacingClock();
@@ -405,7 +413,9 @@ public partial class SentinelRoutingTests
         var reply = sentinel.ReplyOverride!;
         sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
             ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         Volatile.Write(ref port, promoted.Port);
         var router = client.Core.Sentinel!;
@@ -456,7 +466,9 @@ public partial class SentinelRoutingTests
         sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
             ? AddressReply(Volatile.Read(ref host), primary.Port)
             : command == "SENTINEL MASTER mymaster" ? "-NOPERM metadata denied\r\n"u8.ToArray() : previous(id, command);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { Connections = connections });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback]);
@@ -493,7 +505,9 @@ public partial class SentinelRoutingTests
         sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
             ? AddressReply("localhost", primary.Port)
             : command == "SENTINEL MASTER mymaster" ? "-NOPERM metadata denied\r\n"u8.ToArray() : previous(id, command);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { Connections = 2 });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var original = router.Current!;
@@ -533,7 +547,9 @@ public partial class SentinelRoutingTests
         sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
             ? AddressReply("localhost", primary.Port)
             : command == "SENTINEL MASTER mymaster" ? "-NOPERM metadata denied\r\n"u8.ToArray() : previous(id, command);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var original = router.Current!;
@@ -562,7 +578,9 @@ public partial class SentinelRoutingTests
         sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
             ? AddressReply("localhost", primary.Port)
             : command == "SENTINEL MASTER mymaster" ? "-NOPERM metadata denied\r\n"u8.ToArray() : previous(id, command);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var original = router.Current!;
@@ -581,7 +599,9 @@ public partial class SentinelRoutingTests
     [Test]
     public async Task AnnouncedIpv6TargetUsesNormalizedIdentity()
     {
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(26379));
+#pragma warning restore RESP010
         await using var current = new SentinelRouter.Generation(client.Core.Sentinel!, client.Core,
             Options(26379) with { Endpoints = [new("2001:db8::1", 6379)] });
         var hint = SentinelHintBuilder.Create("failback", new("2001:0db8:0:0:0:0:0:1", 6379), current.Endpoint);
@@ -603,7 +623,9 @@ public partial class SentinelRoutingTests
         sentinel.ReplyOverride = (id, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
             ? AddressReply("localhost", primary.Port)
             : command == "SENTINEL MASTER mymaster" ? "-NOPERM metadata denied\r\n"u8.ToArray() : previous(id, command);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback, IPAddress.Parse("192.0.2.9")]);
         var generation = await router.GetGenerationAsync(CancellationToken.None);
@@ -618,7 +640,9 @@ public partial class SentinelRoutingTests
     public async Task DelayedSourceAddressesNeverDescribeArrivalGeneration(bool samePort, bool failback)
     {
         await using var primary = Primary();
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(26379));
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         await using var arrived = new SentinelRouter.Generation(router, client.Core,
             Options(26379) with { Endpoints = [new("192.0.2.1", samePort ? primary.Port : 1)] });
@@ -645,7 +669,9 @@ public partial class SentinelRoutingTests
     [Test]
     public async Task SameEndpointSentinelPublicationPreservesPubSubHealth()
     {
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(26379));
+#pragma warning restore RESP010
         var core = client.Core;
         var node = core.Multiplexer;
         var endpoint = new RespireEndpoint(node.Host, node.Port);
@@ -667,7 +693,9 @@ public partial class SentinelRoutingTests
     [Test]
     public async Task SentinelDisconnectNotificationPreservesTransportError()
     {
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(26379));
+#pragma warning restore RESP010
         var node = client.Core.Multiplexer;
         var error = new RespireConnectionException("remote EOF");
         RespireConnectionStateChange? observed = null;
@@ -688,7 +716,9 @@ public partial class SentinelRoutingTests
         await using var primary = Primary((_, command) => command == "ROLE" && !Volatile.Read(ref valid)
             ? "*0\r\n"u8.ToArray() : null);
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         await using var prefixed = client.WithKeyPrefix("tenant:");
         foreach (IRespireClient view in new[] { client, prefixed })
             await Assert.That(() => _ = view.Endpoint).ThrowsExactly<InvalidOperationException>();
@@ -719,7 +749,9 @@ public partial class SentinelRoutingTests
         {
             Endpoints = [new("127.0.0.1", firstSentinel.Port), new("127.0.0.1", reportingSentinel.Port)],
         };
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(options);
+#pragma warning restore RESP010
         await client.PingAsync().AsTask().WaitAsync(Limit);
         await WaitForCommandAsync(firstSentinel, "SUBSCRIBE +switch-master");
         await WaitForCommandAsync(reportingSentinel, "SUBSCRIBE +switch-master");
@@ -765,7 +797,9 @@ public partial class SentinelRoutingTests
         {
             Endpoints = [new("127.0.0.1", firstSentinel.Port), new("127.0.0.1", reportingSentinel.Port)],
         };
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(options);
+#pragma warning restore RESP010
         await client.PingAsync().AsTask().WaitAsync(Limit);
         await WaitForCommandAsync(firstSentinel, "SUBSCRIBE +sdown");
         await WaitForCommandAsync(reportingSentinel, "SUBSCRIBE +sdown");
@@ -804,7 +838,9 @@ public partial class SentinelRoutingTests
         await using var fallback = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
         await WaitForInitialSentinelValidationAsync(client, sentinel);
@@ -851,10 +887,12 @@ public partial class SentinelRoutingTests
         await using var recovered = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port) with
         {
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0 },
         });
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var monitorCommand = sentinel.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
@@ -895,10 +933,12 @@ public partial class SentinelRoutingTests
                 ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
         }
         var retryDelay = TimeSpan.FromSeconds(1);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port) with
         {
             ReconnectPolicy = new() { InitialDelay = retryDelay, MaxDelay = retryDelay, JitterRatio = 0 },
         });
+#pragma warning restore RESP010
         await client.PingAsync().AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
@@ -928,7 +968,9 @@ public partial class SentinelRoutingTests
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var roles = primary.ReceivedCommands.Count(command => command == "ROLE");
@@ -952,10 +994,12 @@ public partial class SentinelRoutingTests
         await using var first = Sentinel(() => primary.Port, () => 0);
         await using var second = Sentinel(() => promoted.Port, () => 1);
         second.SuppressReply = command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, first);
         var router = client.Core.Sentinel!;
         // Offer the alternate reporter at an already validated version, as when two
@@ -983,10 +1027,12 @@ public partial class SentinelRoutingTests
         await using var second = Sentinel(() => Volatile.Read(ref reportedPort),
             () => Volatile.Read(ref reportedPort) == primary.Port ? 0 : 1);
         second.SuppressReply = command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, first);
         await WaitForCommandAsync(second, "SUBSCRIBE +switch-master");
         var readiness = WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
@@ -1030,10 +1076,12 @@ public partial class SentinelRoutingTests
                     ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
             }
         }
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, first);
         await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         var router = client.Core.Sentinel!;
@@ -1074,10 +1122,12 @@ public partial class SentinelRoutingTests
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
         }
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, first);
         await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         var router = client.Core.Sentinel!;
@@ -1115,10 +1165,12 @@ public partial class SentinelRoutingTests
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
         }
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, first);
         await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         var router = client.Core.Sentinel!;
@@ -1156,10 +1208,12 @@ public partial class SentinelRoutingTests
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
         }
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, first);
         await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         var router = client.Core.Sentinel!;
@@ -1204,10 +1258,12 @@ public partial class SentinelRoutingTests
                 ? "-NOPERM configuration metadata denied\r\n"u8.ToArray()
                 : ReferenceEquals(sentinel, first) && command == query ? CurrentReply() : previous(id, command);
         }
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, first);
         await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         var router = client.Core.Sentinel!;
@@ -1242,7 +1298,9 @@ public partial class SentinelRoutingTests
         await using var latest = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         Volatile.Write(ref port, latest.Port);
@@ -1280,10 +1338,12 @@ public partial class SentinelRoutingTests
                 return reply(id, command);
             };
         }
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
+#pragma warning restore RESP010
         client.Core.Sentinel!.HostResolver = static (_, _) => Task.FromResult(new[] { IPAddress.Loopback });
         await client.PingAsync().AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, first);
@@ -1357,7 +1417,9 @@ public partial class SentinelRoutingTests
         var reply = sentinel.ReplyOverride!;
         sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
             ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         router.HostResolver = (_, _) => addresses.Length == 0
@@ -1484,10 +1546,12 @@ public partial class SentinelRoutingTests
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
         }
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, first);
         await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         Volatile.Write(ref firstPort, replica.Port);
@@ -1511,7 +1575,9 @@ public partial class SentinelRoutingTests
         var reply = sentinel.ReplyOverride!;
         sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
             ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var slowStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1543,7 +1609,9 @@ public partial class SentinelRoutingTests
         var port = original.Port;
         long epoch = 1;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port), () => Volatile.Read(ref epoch));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         router.HostResolver = (_, _) => throw new InvalidOperationException("A newer epoch needs no down-report DNS proof.");
@@ -1573,10 +1641,12 @@ public partial class SentinelRoutingTests
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
         }
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, first);
         await WaitForInitialSentinelValidationAsync(client, second, expectedSubscriptions: 2);
         Volatile.Write(ref firstPort, original.Port);
@@ -1602,7 +1672,9 @@ public partial class SentinelRoutingTests
         var reply = sentinel.ReplyOverride!;
         sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
             ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var monitor = sentinel.ReceivedCommands.ToList()
             .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
@@ -1642,7 +1714,9 @@ public partial class SentinelRoutingTests
                 : "?invalid RESP\r\n"u8.ToArray();
         };
         var logger = new SentinelTests.OptionalDiscoveryLogger();
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { LoggerFactory = logger });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var monitor = sentinel.ReceivedCommands.ToList()
             .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
@@ -1661,7 +1735,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         await WaitForCommandAsync(sentinel, "SUBSCRIBE +sdown");
@@ -1700,7 +1776,9 @@ public partial class SentinelRoutingTests
         await using var recovered = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var monitorCommand = sentinel.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
@@ -1735,7 +1813,9 @@ public partial class SentinelRoutingTests
         await using var recovered = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var monitorCommand = sentinel.ReceivedCommands.ToList()
@@ -1770,7 +1850,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var monitorCommand = sentinel.ReceivedCommands.ToList()
@@ -1802,7 +1884,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var monitorCommand = sentinel.ReceivedCommands.ToList()
@@ -1837,7 +1921,9 @@ public partial class SentinelRoutingTests
     [Arguments(true)]
     public async Task ResolvedSwitchSourceRetiresOnlyTheGenerationCurrentWhenItArrived(bool sameGeneration)
     {
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(26379));
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         await using var arrivedDuring = new SentinelRouter.Generation(router, client.Core,
             Options(26379) with { Endpoints = [new("127.0.0.1", 6380)] });
@@ -1866,7 +1952,9 @@ public partial class SentinelRoutingTests
     [Arguments(true, false)]
     public async Task DelayedSourceResolutionKeepsNewerFailbackEvidence(bool discoveryCompleted, bool failbackArrives)
     {
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(26379));
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         await using var current = new SentinelRouter.Generation(router, client.Core,
             Options(26379) with { Endpoints = [new("old-primary.invalid", 6379)] });
@@ -1897,7 +1985,9 @@ public partial class SentinelRoutingTests
     [Arguments(true)]
     public async Task DelayedSourceResolutionRetainsSourceAfterDeliveryGap(bool discoveryCompleted)
     {
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(26379));
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         await using var current = new SentinelRouter.Generation(router, client.Core,
             Options(26379) with { Endpoints = [new("old-primary.invalid", 6379)] });
@@ -1924,7 +2014,9 @@ public partial class SentinelRoutingTests
     [Test]
     public async Task RetiredSwitchSourceResolutionQueuesFreshDiscoveryBehindActiveHint()
     {
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(26379));
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         await using var current = new SentinelRouter.Generation(router, client.Core,
             Options(26379) with { Endpoints = [new("old-primary.invalid", 6379)] });
@@ -1987,7 +2079,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
 
@@ -2020,6 +2114,7 @@ public partial class SentinelRoutingTests
         using var unreachable = new ReservedUnavailablePort();
         var deadPort = unreachable.Port;
         var logger = new MonitorExhaustionLogger(deadPort);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port) with
         {
             Endpoints = [new("127.0.0.1", sentinel.Port), new("127.0.0.1", deadPort)],
@@ -2030,6 +2125,7 @@ public partial class SentinelRoutingTests
                 JitterRatio = 0, MaxAttempts = 1,
             },
         });
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         await logger.WaitForExhaustionsAsync(1);
@@ -2068,6 +2164,7 @@ public partial class SentinelRoutingTests
         var logger = new MonitorExhaustionLogger(deadPort);
         // A distinctive delay identifies the dead monitor's retry timer on the gated clock.
         var retryDelay = TimeSpan.FromSeconds(7);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port) with
         {
             Endpoints = [new("127.0.0.1", sentinel.Port), new("127.0.0.1", deadPort)],
@@ -2077,6 +2174,7 @@ public partial class SentinelRoutingTests
                 InitialDelay = retryDelay, MaxDelay = retryDelay, JitterRatio = 0, MaxAttempts = 1,
             },
         });
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         var clock = new FenceClock();
         router.Clock = clock;
@@ -2114,11 +2212,13 @@ public partial class SentinelRoutingTests
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         var logger = new RediscoveryLogger();
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port) with
         {
             LoggerFactory = logger,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0 },
         });
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var monitorCommand = sentinel.ReceivedCommands.ToList()
@@ -2152,6 +2252,7 @@ public partial class SentinelRoutingTests
         unavailable.DelayCommand("ROLE", 1_000);
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port) with
         {
             ReconnectPolicy = new()
@@ -2160,6 +2261,7 @@ public partial class SentinelRoutingTests
                 MaxAttempts = 1,
             },
         });
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         Volatile.Write(ref port, unavailable.Port);
@@ -2202,7 +2304,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port) with { LoggerFactory = logger });
+#pragma warning restore RESP010
         await client.PingAsync().AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         await Assert.That(Volatile.Read(ref failures)).IsGreaterThan(0);
@@ -2278,12 +2382,14 @@ public partial class SentinelRoutingTests
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
         }
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(fresh.Port) with
         {
             Endpoints = [new("127.0.0.1", fresh.Port), new("127.0.0.1", stale.Port), new("127.0.0.1", alternate.Port)],
             LoggerFactory = logger,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0 },
         });
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, fresh);
         await WaitForInitialSentinelValidationAsync(client, stale);
@@ -2365,7 +2471,9 @@ public partial class SentinelRoutingTests
         await using var original = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
         var monitorCommand = sentinel.ReceivedCommands.ToList()
@@ -2403,7 +2511,9 @@ public partial class SentinelRoutingTests
                     ? "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray()
                     : "*0\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
@@ -2447,10 +2557,12 @@ public partial class SentinelRoutingTests
             : command.StartsWith("SENTINEL GET-MASTER-ADDR")
                 ? AddressReply(Volatile.Read(ref reportAlias) ? "127.0.0.1" : "localhost", original.Port)
                 : reply(id, command);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
             ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var originalGeneration = router.Current!;
@@ -2475,10 +2587,12 @@ public partial class SentinelRoutingTests
         await using var current = Primary();
         await using var other = Primary();
         await using var sentinel = Sentinel(() => current.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
             ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var generation = router.Current!;
@@ -2504,7 +2618,9 @@ public partial class SentinelRoutingTests
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var current = router.Current!;
@@ -2540,7 +2656,9 @@ public partial class SentinelRoutingTests
                 ? Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(response!).Replace("127.0.0.1", "localhost"))
                 : response;
         };
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var original = router.Current!;
@@ -2578,7 +2696,9 @@ public partial class SentinelRoutingTests
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
         var options = Options(sentinel.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var original = router.Current!;
@@ -2628,7 +2748,9 @@ public partial class SentinelRoutingTests
                 ? Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(response!).Replace("127.0.0.1", "localhost"))
                 : response;
         };
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var original = router.Current!;
@@ -2661,7 +2783,9 @@ public partial class SentinelRoutingTests
         await using var final = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
 
@@ -2715,10 +2839,12 @@ public partial class SentinelRoutingTests
         await using var original = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port) with
         {
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0 },
         });
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
         var queuedBeforeDiscovery = QueuedNotificationCount(router);
@@ -2760,7 +2886,9 @@ public partial class SentinelRoutingTests
         await using var primary = Primary((_, command) => command == "ROLE" && state == "failed-validation"
             ? "*0\r\n"u8.ToArray() : null);
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         if (state == "failed-validation")
             await Assert.That(async () => await client.PingAsync().AsTask().WaitAsync(Limit)).Throws<RespireConnectionException>();
         else if (state == "published")
@@ -2796,7 +2924,9 @@ public partial class SentinelRoutingTests
     [Test]
     public async Task EndpointSnapshotsNeverMixPublishedGenerations()
     {
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(26379));
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         await using var first = new Respire.Internal.SentinelRouter.Generation(router, client.Core,
             Options(26379) with { Endpoints = [new("first.invalid", 6379)] });
@@ -2843,7 +2973,9 @@ public partial class SentinelRoutingTests
     [Test]
     public async Task StaleQueuedSwitchSourceCannotRetireNewGeneration()
     {
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(26379));
+#pragma warning restore RESP010
         var router = client.Core.Sentinel!;
         await using var old = new SentinelRouter.Generation(router, client.Core,
             Options(26379) with { Endpoints = [new("old.invalid", 6379)] });
@@ -2875,7 +3007,9 @@ public partial class SentinelRoutingTests
                     ? "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray()
                     : "*0\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -2939,7 +3073,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         Volatile.Write(ref primaryPort, promoted.Port);
         Volatile.Write(ref replica, true);
@@ -2966,7 +3102,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { MaxInflightCommands = 4 });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var original = client.Core.Multiplexer.GetConnection();
         var accepted = Enumerable.Range(0, 4).Select(_ => original.SendAsync(
@@ -3001,7 +3139,9 @@ public partial class SentinelRoutingTests
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         await using var prefixed = client.WithKeyPrefix("tenant:");
         await Assert.That(sentinel.CommandsSeen).IsEqualTo(0);
         await Assert.That(primary.CommandsSeen).IsEqualTo(0);
@@ -3023,7 +3163,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         await using var prefixed = client.WithKeyPrefix("tenant:");
         var core = client.Core;
@@ -3045,7 +3187,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         oldPrimary.CloseConnectionAfterCommand = oldPrimary.CommandsSeen + 1;
         Volatile.Write(ref primaryPort, promoted.Port);
@@ -3061,7 +3205,9 @@ public partial class SentinelRoutingTests
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var original = client.Core.Sentinel!.Current!;
         primary.CloseConnectionAfterCommand = primary.CommandsSeen + 1;
@@ -3082,7 +3228,9 @@ public partial class SentinelRoutingTests
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         if (rediscovery)
         {
             await client.PingAsync();
@@ -3111,7 +3259,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         await using var watched = await client.CreateTransactionAsync(["watched"]);
         var queued = watched.Set("old transaction", "value");
@@ -3138,7 +3288,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var originalPool = client.Core.DedicatedPool;
         var pending = client.Lists.LeftPopAsync("queue", waitFor: Timeout.InfiniteTimeSpan).AsTask();
@@ -3168,7 +3320,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var started = new ConcurrentQueue<Activity>();
         var stopped = new ConcurrentQueue<Activity>();
@@ -3222,7 +3376,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var originalPool = client.Core.DedicatedPool;
         await using var source = new MemoryStream("payload"u8.ToArray());
@@ -3251,7 +3407,9 @@ public partial class SentinelRoutingTests
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
         sentinel.SuppressReply = command => command.StartsWith("SENTINEL GET-MASTER");
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var pending = client.SetAsync("cancelled", "value", cancellationToken: cancellation.Token).AsTask();
         await WaitForCommandAsync(sentinel, "SENTINEL GET-MASTER");
@@ -3272,7 +3430,9 @@ public partial class SentinelRoutingTests
         await using var primary = Primary();
         primary.SuppressReply = command => command == "ROLE";
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         var pending = client.SetAsync("never", "value").AsTask();
         await WaitForCommandAsync(primary, "ROLE");
         await client.DisposeAsync().AsTask().WaitAsync(Limit);
@@ -3294,6 +3454,7 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
             BacklogPolicy = backlogPolicy,
@@ -3301,6 +3462,7 @@ public partial class SentinelRoutingTests
             // ROLE responses. Both policies must reject the replica before any write.
             ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0 },
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         Volatile.Write(ref primaryPort, replica.Port);
         Volatile.Write(ref rejectWrites, true);
@@ -3324,7 +3486,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         var events = new ConcurrentQueue<RespireConnectionStateChange>();
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
@@ -3382,10 +3546,12 @@ public partial class SentinelRoutingTests
         });
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         await WaitForInitialSentinelValidationAsync(client, sentinel);
@@ -3419,11 +3585,13 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary((_, command) => Reply(command));
         var port = primary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
             Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var generation = client.Core.Sentinel!.Current!;
         var connection = generation.Multiplexer.GetConnection();
@@ -3460,7 +3628,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary((_, command) => SubscriptionReply(command));
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         await using var subscription = await client.SubscribeAsync("events");
         var gap = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -3494,7 +3664,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary((_, command) => command.StartsWith("WAIT ") ? ":1\r\n"u8.ToArray() : null);
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         Volatile.Write(ref primaryPort, promoted.Port);
         Volatile.Write(ref rejectWrites, true);
@@ -3530,7 +3702,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary((_, command) => ScriptReply(command, 42));
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var script = RespireScript.Create("return 1");
         var execution = await client.StartTrackedScriptExecutionAsync(script, ["key"], [], default, true);
@@ -3568,7 +3742,9 @@ public partial class SentinelRoutingTests
             : command.StartsWith("DELEX ") ? ":1\r\n"u8.ToArray() : IdentityReply(command, 42));
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         await client.EnsureReliableCorrectionOrderingAsync().AsTask().WaitAsync(Limit);
         await Assert.That(oldPrimary.ReceivedCommands).Contains("CLIENT ID");
@@ -3609,7 +3785,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var pool = client.Core.CreateServerPool(client.Endpoint);
         try
@@ -3641,7 +3819,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var original = client.Core.Sentinel!.Current!;
         var blocking = client.Lists.LeftPopAsync("queue", waitFor: Timeout.InfiniteTimeSpan).AsTask();
@@ -3668,10 +3848,12 @@ public partial class SentinelRoutingTests
         await using var replica = Primary((_, command) => command == "ROLE"
             ? "*1\r\n$5\r\nslave\r\n"u8.ToArray() : Hello(command));
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
         var current = client.Core.Sentinel!.Current;
@@ -3706,7 +3888,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = primary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         Volatile.Write(ref primaryPort, promoted.Port);
         using (var response = await client.ExecuteAsync((RespireCommand)operation, []))
@@ -3732,7 +3916,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var port = primary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { MaxInflightCommands = 2 });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var generation = client.Core.Sentinel!.Current!;
         if (operation == "EXEC")
@@ -3802,7 +3988,9 @@ public partial class SentinelRoutingTests
             _ => null,
         });
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { Protocol = RespireProtocol.Resp3 });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         using var response = await client.ExecuteAsync((RespireCommand)"EVAL", []);
         await Assert.That(client.IsConnected).IsEqualTo(!readOnly);
@@ -3820,7 +4008,9 @@ public partial class SentinelRoutingTests
             + (readOnly ? "-READONLY replica\r\n" : ":4\r\n");
         await using var primary = Primary((_, command) => command == "EVAL" ? Encoding.ASCII.GetBytes(reply) : null);
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         using var response = await client.ExecuteAsync((RespireCommand)"EVAL", []);
         await Assert.That(client.IsConnected).IsEqualTo(!readOnly);
@@ -3851,10 +4041,12 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary((_, command) => Reply(command, "new"));
         var port = primary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         await using var prefixed = client.WithKeyPrefix("tenant:");
         await Assert.That(await ReadAsync()).IsEqualTo("old");
@@ -3932,11 +4124,13 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary((_, command) => Reply(command, "new"));
         var port = primary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
             Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { ReuseHashFields = true, CoalesceConcurrentMisses = coalesce },
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         await using var view = client.WithKeyPrefix("tenant:");
         await view.Hashes.GetStringAsync("key", "first");
@@ -4004,10 +4198,12 @@ public partial class SentinelRoutingTests
         promotedServer = promoted;
         port = primary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         generation = client.Core.Sentinel!.Current!;
         connection = generation.Multiplexer.GetConnection();
@@ -4055,11 +4251,13 @@ public partial class SentinelRoutingTests
         promotedServer = promoted;
         port = primary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
             Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { ReuseHashFields = true },
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         generation = client.Core.Sentinel!.Current!;
         connection = generation.Multiplexer.GetConnection();
@@ -4119,7 +4317,9 @@ public partial class SentinelRoutingTests
                 return true;
             },
         };
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         // A failed discovery has no endpoint tags to filter on. Listeners are process-wide, so
         // observe only telemetry recorded in this test's execution context.
         var observed = new AsyncLocal<bool>();
@@ -4202,7 +4402,9 @@ public partial class SentinelRoutingTests
             _ => null,
         });
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         var samples = new ConcurrentQueue<Dictionary<string, object?>>();
         using var listener = new ActivityListener
         {
@@ -4276,7 +4478,9 @@ public partial class SentinelRoutingTests
             queried.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         var activities = new List<Activity>();
         var sampled = new List<Dictionary<string, object?>>();
         using var activityListener = new ActivityListener
@@ -4382,7 +4586,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var port = primary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var original = client.Core.Sentinel!.Current!;
         var samples = new ConcurrentQueue<Dictionary<string, object?>>();
@@ -4446,14 +4652,18 @@ public partial class SentinelRoutingTests
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
             if (change.State != RespireConnectionState.Connected) return;
             try
             {
+#pragma warning disable RESP009 // Synchronous observer disposal deliberately probes re-entry and shutdown deadlocks.
                 client.DisposeAsync().AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
                 disposed.TrySetResult();
             }
             catch (Exception error) { disposed.TrySetException(error); }
@@ -4475,7 +4685,9 @@ public partial class SentinelRoutingTests
         await using var third = Primary();
         var port = first.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var original = client.Core.Sentinel!.Current!;
         var firstRead = client.Lists.LeftPopAsync("first", waitFor: Timeout.InfiniteTimeSpan).AsTask();
@@ -4520,7 +4732,9 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var port = primary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         var observerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseObserver = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var measured = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -4570,7 +4784,9 @@ public partial class SentinelRoutingTests
             _ => null,
         });
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         await client.EnsureReliableCorrectionOrderingAsync().AsTask().WaitAsync(Limit);
         var router = client.Core.Sentinel!;
@@ -4621,7 +4837,9 @@ public partial class SentinelRoutingTests
         await using var third = Primary();
         var port = first.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var router = client.Core.Sentinel!;
         var clock = new FenceClock();
@@ -4666,7 +4884,9 @@ public partial class SentinelRoutingTests
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+#pragma warning restore RESP010
         if (rediscovery)
         {
             await client.PingAsync();
@@ -4720,11 +4940,13 @@ public partial class SentinelRoutingTests
         await using var second = Primary((_, command) => Reply(command, "new"));
         var port = first.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
             Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { TrackingMode = mode, CoalesceConcurrentMisses = coalesce },
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         await using var view = client.WithKeyPrefix("tenant:");
         await Assert.That(await view.GetStringAsync("key")).IsEqualTo("old");
@@ -4735,7 +4957,9 @@ public partial class SentinelRoutingTests
         {
             if (!change.Reasons.HasFlag(RespireClientCacheInvalidationReason.ContinuityLost)
                 || Interlocked.CompareExchange(ref reading, 1, 0) != 0) return;
+#pragma warning disable RESP009 // The continuity observer must synchronously read the promoted primary to exercise re-entry.
             try { observed.TrySetResult(view.GetStringAsync("key").AsTask().WaitAsync(Limit).GetAwaiter().GetResult()); }
+#pragma warning restore RESP009
             catch (Exception error) { observed.TrySetException(error); }
         });
         Volatile.Write(ref port, second.Port);
@@ -4772,7 +4996,9 @@ public partial class SentinelRoutingTests
         // The command deadline cannot fire within the test limit unless it is the chosen winner.
         var timeout = winner == "command" ? TimeSpan.FromSeconds(3) : TimeSpan.FromMinutes(1);
         var commandTimeout = winner == "discoveryWithoutCommandTimeout" ? (TimeSpan?)null : timeout;
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port) with { CommandTimeout = commandTimeout });
+#pragma warning restore RESP010
         if (rediscovery)
         {
             await client.PingAsync();
@@ -4835,10 +5061,12 @@ public partial class SentinelRoutingTests
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
             CommandTimeout = commandTimeout ? TimeSpan.FromMinutes(1) : null,
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         primary.SuppressReply = command =>
@@ -4874,11 +5102,13 @@ public partial class SentinelRoutingTests
         await using var primary = Primary();
         primary.SuppressReply = command => command == "ROLE";
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port) with
         {
             ConnectTimeout = TimeSpan.FromMilliseconds(150),
             CommandTimeout = TimeSpan.FromSeconds(1),
         });
+#pragma warning restore RESP010
 
         var error = await Assert.That(async () => await client.PingAsync().AsTask().WaitAsync(Limit))
             .ThrowsExactly<RespireConnectionException>();

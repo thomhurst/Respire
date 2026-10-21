@@ -25,11 +25,13 @@ public partial class SentinelRoutingTests
         await using var replacement = Primary(Reply);
         var port = first.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
             Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
         });
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var original = client.Core.Sentinel!.Current!;
         var retirements = 0;
