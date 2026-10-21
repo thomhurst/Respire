@@ -78,11 +78,18 @@ internal static class JobGroupScheduling
                     local candidate = #rows == 1 and rows[1][2] or nil
                     local rank = candidate and tonumber(field(candidate, '_respire.job.priority', '0')) or math.huge
                     local expires = candidate and tonumber(field(candidate, '_respire.job.expires', '0')) or 0
-                    if candidate and (not current(candidate) or (expires > 0 and expires <= clock)) then
+                    local waiting = candidate and blocked(candidate) and (expires == 0 or expires > clock)
+                    if waiting then
+                        -- Re-index a held follow-up beyond this bounded page without spending admission.
+                        local next = prefix .. string.format('%016.0f', clock + 1000) .. '|' .. entryId
+                        permit('ZADD', grouped, 0, next)
+                        redis.call('ZADD', grouped, 0, next)
+                        redis.call('ZREM', grouped, member)
+                    elseif candidate and (not current(candidate) or (expires > 0 and expires <= clock)) then
                         retire(candidate)
                         candidate = nil; rank = math.huge
                     end
-                    if not chosen or rank > priority then
+                    if not waiting and (not chosen or rank > priority) then
                         chosen, fields, id, priority = member, candidate, entryId, rank
                     end
                 end

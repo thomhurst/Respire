@@ -32,10 +32,30 @@ public sealed partial class RespireJobQueue<T>
             or not redis.acl_check_cmd('XDEL', KEYS[1], '0-0') then
             return redis.error_reply('NOPERM job enqueue is not permitted')
         end
-        local id = redis.call('XADD', KEYS[1], '*', unpack(fields))
-        local recorded = persist(id)
+        -- Keep the original three EVAL keys: Redis checks declared key ACLs even
+        -- when unused. Only an active KeepLastIfActive generation touches these
+        -- fixed suffixes of the already-prefixed, same-slot ready key.
+        local target = followup and KEYS[1] .. ':scheduled' or KEYS[1]
+        local followups = followup and KEYS[1] .. ':followups'
+        if followup then
+            if not redis.acl_check_cmd('XADD', target, '*', unpack(fields))
+                or not redis.acl_check_cmd('XDEL', target, '0-0')
+                or not redis.acl_check_cmd('ZADD', followups, 0, '0-0')
+                or not redis.acl_check_cmd('ZREM', followups, '0-0') then
+                return redis.error_reply('NOPERM job follow-up staging is not permitted')
+            end
+            local kind = redis.call('TYPE', followups).ok
+            if kind ~= 'none' and kind ~= 'zset' then return redis.error_reply('WRONGTYPE job due index') end
+        end
+        local id = redis.call('XADD', target, '*', unpack(fields))
+        if followup then
+            local indexed = redis.pcall('ZADD', followups, 0, id)
+            if type(indexed) == 'table' and indexed.err then redis.call('XDEL', target, id); return indexed end
+        end
+        local recorded = persist(id, followup)
         if type(recorded) == 'table' and recorded.err then
-            redis.call('XDEL', KEYS[1], id)
+            redis.call('XDEL', target, id)
+            if followup then redis.call('ZREM', followups, id) end
             return recorded
         end
         return {id, 1}
@@ -107,7 +127,10 @@ public sealed partial class RespireJobQueue<T>
     /// Extend renews the original window on duplicates, including after completion, without replacing payload or options.
     /// Replace accepts the latest payload and options until first acquisition, without renewing the window.
     /// Acquired Replace generations retain their envelope through retries and completion.
-    /// Upgrade all producers before opting into Extend, and all producers and workers before using Replace.
+    /// KeepLastIfActive preserves queued work and retains one latest follow-up while acquired, including retries.
+    /// Terminal completion or job expiry unblocks that follow-up; the original window never slides.
+    /// Immediate follow-ups work with every hosted job worker; scheduled/grouped follow-ups require scheduling.
+    /// Upgrade all producers before opting into Extend, and all producers and workers before using Replace or KeepLastIfActive.
     /// Workers do not renew the window on acquisition or retries.</remarks>
     public async ValueTask<RespireJobEnqueueResult> EnqueueAsync(RespireJobDeduplicationMode deduplicationMode,
         string jobId, T payload, TimeSpan? deduplicationWindow = null,
@@ -121,20 +144,24 @@ public sealed partial class RespireJobQueue<T>
         cancellationToken.ThrowIfCancellationRequested();
         // Hash the ID so user-supplied braces and arbitrarily long IDs cannot change the Redis key's hash tag.
         var deduplicationKey = StreamKey + ":dedup:" + Convert.ToHexString(SHA256.HashData(StrictUtf8.GetBytes(jobId)));
-        JobQueueScheduling.ValidateKeys(_client, [StreamKey, deduplicationKey, JobDeduplication.Key(StreamKey)]);
+        var keys = ImmediateKeys(deduplicationKey);
+        JobQueueScheduling.ValidateKeys(_client, keys);
         using var trace = new JobEnqueueTrace();
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");
-        using var result = await _client.Scripts.ExecuteAsync(EnqueueScript, [StreamKey, deduplicationKey, JobDeduplication.Key(StreamKey)],
+        using var result = await _client.Scripts.ExecuteAsync(EnqueueScript, [.. keys],
             [jobId, bytes, (long)Math.Ceiling(window.TotalMilliseconds), trace.Parent, trace.State,
                 (int)deduplicationMode, Guid.NewGuid().ToString("N")], cancellationToken).ConfigureAwait(false);
         trace.Succeeded = true;
         return new(new(result[0].AsString()), result[1].AsInteger() == 1);
     }
 
+    private string[] ImmediateKeys(string deduplicationKey)
+        => [StreamKey, deduplicationKey, JobDeduplication.Key(StreamKey)];
+
     /// <summary>Enqueues with delay, bounded-batch priority and optional lifetime from enqueue.</summary>
     /// <remarks>The returned ID identifies the staged enqueue; processing receives a new ready-stream ID.
     /// A registered job worker promotes due jobs using Redis server time. Duplicate calls retain the first options
-    /// unless the generation uses Replace and has never been acquired.</remarks>
+    /// unless the generation uses Replace and has never been acquired, or KeepLastIfActive holds a follow-up.</remarks>
     public async ValueTask<RespireJobEnqueueResult> EnqueueScheduledAsync(string jobId, T payload,
         RespireJobEnqueueOptions options, CancellationToken cancellationToken = default)
     {

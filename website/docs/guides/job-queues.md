@@ -223,6 +223,79 @@ Use the hosted job worker rather than reading Replace entries with a generic str
 Dashboard operator retries clear the terminal generation fence and run independently of the
 original deduplication window; their displayed mode is `Separate lifecycle`.
 
+## Keep the latest follow-up while active
+
+Use `KeepLastIfActive` when an update arriving during processing should trigger one later run:
+
+```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "refresh", Encoding.UTF8.GetBytes);
+var latestSnapshot = "customer:42 updated";
+await queue.EnqueueAsync(RespireJobDeduplicationMode.KeepLastIfActive,
+    "refresh:customer:42", latestSnapshot);
+```
+
+The application job ID is the identity. The first successful submission fixes the mode and
+deduplication deadline. Immediate, scheduled, grouped and transactional APIs share that policy;
+passing different modes or windows on a duplicate does not change it.
+
+| State | Duplicate behavior |
+| --- | --- |
+| Queued or scheduled, before acquisition | Keep the first payload and options. |
+| Acquired, including visibility recovery, retry backoff or cooperative yield | Retain one logical follow-up, replacing its entire payload and options with each accepted duplicate. |
+| Follow-up unblocked but not yet acquired | Keep that follow-up's payload and options. |
+| Completed with no held follow-up | Suppress duplicates until the original window expires. |
+
+Each accepted follow-up submission returns `Enqueued = true` and its new staging ID. The last
+one ordered by Redis wins; concurrent producers have no independent wall-clock ordering.
+Acquisition and terminal transitions run atomically with enqueue: a racing submission either
+observes queued work and is suppressed, or observes active work and becomes the follow-up.
+Completion either observes and unblocks that follow-up once, or finishes before the duplicate,
+which is then suppressed. A stale owner cannot unblock or publish it again. Processing remains
+at least once: handlers must tolerate visibility recovery and server failover.
+
+Successful completion, dead-letter completion and active job TTL expiry unblock the follow-up.
+Nack, retry backoff and cooperative yield preserve the active generation and leave the follow-up
+blocked. Each follow-up's delay and TTL start at its own submission on the Redis server; waiting
+for the active job does not reset them. Due priority, group, runtime/checkpoint identity and trace
+context come from the latest accepted envelope. An expired held follow-up is discarded without
+retiring the active job. Replacing it later uses the new submission's TTL. A delayed follow-up
+runs only after both its due time and the active generation's terminal transition.
+
+The deduplication deadline never slides. If it expires while a job or its follow-up is still
+live, a new submission starts an independent generation, which may execute concurrently with
+the old one. Expiry does not cancel old work or its held follow-up. Use a window long enough
+for the desired coalescing interval; this mode is not a permanent per-identity mutex.
+
+All hosted job workers promote immediate follow-ups, including workers registered without
+scheduling options. Delayed/grouped follow-ups still require scheduling-enabled workers, as
+other scheduled jobs do. Immediate follow-ups use the queue's `:scheduled` stream and a separate
+`:followups` sorted set, inspected once per second. Blocked candidates rotate by one second so
+a bounded scan cannot starve unrelated work; allow that interval plus worker polling latency
+after completion. Superseded staged bodies are fenced immediately and removed on a later
+candidate scan; there is only one eligible successor. Retained ready bodies use normal trimming.
+
+Upgrade **all producers and hosted job workers** before selecting this mode. It uses a new
+deduplication record format and the same durable generation fence as Replace. Protect lifecycle
+and scheduling keys from eviction and manual deletion while work exists. In addition to Replace
+permissions, producers accepting immediate follow-ups need `XADD`/`XDEL` on `:scheduled` and
+`TYPE`/`ZADD`/`ZREM` on `:followups`. Workers processing this mode need the scheduling
+inspection/promotion permissions on those two keys, even without scheduling options. Workers
+on queues without immediate follow-ups retain their existing ACL requirements. Scripts
+keep every key in the queue's Cluster slot and honor client key prefixes. Immediate enqueue
+declares only its original ready, deduplication and lifecycle keys, deriving the two fixed
+staging suffixes from the prefixed ready key only for an active follow-up. Ordinary producers
+therefore retain their key permissions; follow-up staging still checks both key and command
+permissions before writing. Denied
+staging or deduplication writes leave the previous successor intact; failed completion leaves
+the active delivery and successor recoverable. The dashboard shows `KeepLastIfActive` and the
+application identity without fetching payloads. Operator retries use a separate lifecycle,
+as with Replace.
+
 ## Transactional enqueue
 
 Use `Enqueue(transaction, ...)` or `EnqueueScheduled(transaction, ..., options)` to queue a
@@ -1118,7 +1191,8 @@ Queue names must be nonblank and cannot contain braces. The generated ready stre
 `{respire-job:<name>}:ready`; its default dead-letter stream appends `:dead`, and deduplication
 keys append `:dedup:<SHA256-of-job-ID>`. The staging stream appends `:scheduled`, and its due-time
 sorted set appends `:due`. The event stream appends `:events`; the persistent control hash appends
-`:control` (`queue.ControlKey`), and Replace lifecycle tracking appends `:dedup-deliveries`.
+`:control` (`queue.ControlKey`), and Replace/KeepLastIfActive lifecycle tracking appends `:dedup-deliveries`.
+Immediate active follow-ups append `:followups` for their eligibility index.
 The shared hash tag keeps the atomic operations in one
 Redis Cluster slot, including through key-prefixed clients. Reserve this namespace exclusively
 for the queue. All worker hosts must agree on the codecs and worker policy for a queue.

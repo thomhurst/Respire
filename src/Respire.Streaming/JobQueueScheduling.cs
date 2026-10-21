@@ -130,6 +130,7 @@ internal static class JobQueueScheduling
         permit('XDEL', KEYS[2], '0-0')
         permit('ZREM', KEYS[3], '0-0')
         local clock = now()
+        if ARGV[2] == 'followups' then permit('HDEL', lifecycleKey, 'followups') end
         local ids = redis.call('ZRANGEBYSCORE', KEYS[3], '-inf', clock, 'LIMIT', 0, ARGV[1])
         local entries = {}
         for position, id in ipairs(ids) do
@@ -148,14 +149,24 @@ internal static class JobQueueScheduling
         local promoted = 0
         for _, entry in ipairs(entries) do
             local expires = tonumber(field(entry.fields, '_respire.job.expires', '0'))
-            if current(entry.fields) and (expires == 0 or expires > clock) then
+            local waiting = blocked(entry.fields) and (expires == 0 or expires > clock)
+            if waiting then
+                -- Rotate blocked candidates so a bounded page cannot starve other jobs.
+                permit('ZADD', KEYS[3], clock + 1000, entry.id)
+                redis.call('ZADD', KEYS[3], clock + 1000, entry.id)
+            elseif current(entry.fields) and (expires == 0 or expires > clock) then
                 redis.call('XADD', KEYS[1], '*', unpack(entry.fields))
                 promoted = promoted + 1
-            elseif current(entry.fields) then
+            elseif current(entry.fields) or blocked(entry.fields) then
                 retire(entry.fields)
             end
-            redis.call('ZREM', KEYS[3], entry.id)
-            redis.call('XDEL', KEYS[2], entry.id)
+            if not waiting then
+                redis.call('ZREM', KEYS[3], entry.id)
+                redis.call('XDEL', KEYS[2], entry.id)
+            end
+        end
+        if ARGV[2] == 'followups' and #redis.call('ZRANGEBYSCORE', KEYS[3], '-inf', '+inf', 'LIMIT', 0, 1) == 0 then
+            redis.call('HDEL', lifecycleKey, 'followups')
         end
         return promoted
         """);
@@ -213,10 +224,21 @@ internal static class JobQueueScheduling
         local clock = now()
         local expires = tonumber(field(fields, '_respire.job.expires', '0'))
         if expires > 0 and expires <= clock then
+            retirementPermissions(fields)
             local generation = identity(fields)
-            if generation then permit('HDEL', lifecycleKey, generation) end
-            local result = acknowledge()
-            if result == 1 then retire(fields) end
+            local state = generation and redis.call('HGET', lifecycleKey, generation)
+            local next = generation and redis.call('HGET', lifecycleKey, generation .. ':next')
+            if next then retire(fields) end
+            local ok, result = pcall(acknowledge)
+            if ok and result == 1 and not next then retire(fields) end
+            if next and (not ok or result ~= 1) then
+                if state then redis.call('HSET', lifecycleKey, generation, state) end
+                if next then redis.call('HSET', lifecycleKey, generation .. ':next', next) end
+            end
+            if not ok then
+                if type(result) == 'table' and result.err then return result end
+                return redis.error_reply(result)
+            end
             return result
         end
         -- ARGV[4] is both the fenced delivery count and this copy's contribution;
@@ -235,7 +257,11 @@ internal static class JobQueueScheduling
         local id = stage(fields, due)
         if type(id) == 'table' then return id end
         local ok, result = pcall(acknowledge)
-        if not ok then unstage(fields, due, id); return redis.error_reply(result) end
+        if not ok then
+            unstage(fields, due, id)
+            if type(result) == 'table' and result.err then return result end
+            return redis.error_reply(result)
+        end
         return 1
         """);
 

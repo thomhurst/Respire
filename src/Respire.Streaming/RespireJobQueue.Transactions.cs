@@ -29,10 +29,11 @@ public sealed partial class RespireJobQueue<T>
         var window = deduplicationWindow ?? TimeSpan.FromDays(1);
         JobQueueScheduling.ValidateDuration(window, nameof(deduplicationWindow));
         var deduplicationKey = GetTransactionDeduplicationKey(jobId);
-        JobQueueScheduling.ValidateKeys(_client, [StreamKey, deduplicationKey, JobDeduplication.Key(StreamKey)]);
+        var keys = ImmediateKeys(deduplicationKey);
+        JobQueueScheduling.ValidateKeys(_client, keys);
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");
         var (parent, state) = CaptureTransactionTrace();
-        return QueueEnqueue(sink, EnqueueScript, [StreamKey, deduplicationKey, JobDeduplication.Key(StreamKey)],
+        return QueueEnqueue(sink, EnqueueScript, [.. keys],
             [jobId, bytes, (long)Math.Ceiling(window.TotalMilliseconds), parent, state, (int)deduplicationMode,
                 Guid.NewGuid().ToString("N")]);
     }
