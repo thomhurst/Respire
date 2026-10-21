@@ -93,6 +93,25 @@ Child-process rules:
   stdout and stderr with an explicit newline.
 - Preserve the environment and child coverage configuration under a coverage collector.
 
+The circuit-disabled dispatch probe writes and flushes a bounded set of stage records to
+stderr: managed entry, pool warmup, connection/command warmup, dispatch/control warmup,
+no-GC preparation, each measurement, and client/server disposal. Records include runtime,
+dispatch/retry modes, elapsed time and worker state. If it must be killed, the last record
+identifies the operation it entered; no entry record means managed entry is unconfirmed,
+not that measurement timed out. Command-receipt and completion timeouts also name the
+iteration and ownership state. Stage formatting stays outside the dispatch byte counters.
+
+This probe runs its synchronous dispatch/wait loop on the child entry thread, leaving
+both warmed pool workers available for socket and flush work. Its busy-worker control
+holds one worker throughout measurement: all four dispatch/retry combinations stalled
+in command receipt with the previous async continuation, and complete with the entry-thread
+measurement. This establishes a starvation path, not the cause of the historical empty-output
+30-second Windows failure in #2107. The production probe's 30-second deadline, two-worker
+limit, no-GC boundary, zero-byte assertion and allocation positive control are unchanged.
+Killed-child controls stop at entry, pool warmup, measurement and disposal to check that
+stage diagnostics survive process termination; their short exit deadline begins after a
+readiness handshake and does not change the ordinary probe's deadline.
+
 ## Diagnosing a nonzero sample
 
 1. Keep the failing run. Do not rerun until green or weaken the assertion.
