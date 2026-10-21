@@ -25,6 +25,8 @@ public class AsyncAllocationPolicyTests
             (typeof(RespireClient), "SendFireAndForgetOnConnectionInstrumentedAsync"),
             (typeof(RespireClient), "SendFireAndForgetClusterAsync"),
             (typeof(RespireClient), "SendOnConnectionInstrumentedAsync"),
+            (typeof(RespireClient), "SendImmediateRetryWithoutRedirectsAsync"),
+            (typeof(RespireClient), "SendImmediateRedirectRetryCoreAsync"),
             (typeof(RespireClient), "SendReadFromAsync"),
             (typeof(RespireClient), "SendBulkStreamViaReadRouterAsync"),
             (typeof(Respire.Internal.ReadEndpointRouter), "GetConnectionAsync"),

@@ -38,6 +38,35 @@ public class StandaloneCommandRetryTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "RESP010", Justification =
+        "Each wire case needs an isolated server, retry policy and capability negotiation.")]
+    public async Task HealthyRetryOwnersPreserveTypedAndCatalogReplies(bool redirects, bool catalog)
+    {
+        var reads = 0;
+        await using var server = Server();
+        server.ReplyOverride = (_, command) => command == "STRLEN key"
+            ? Interlocked.Increment(ref reads) == 1 ? "-TRYAGAIN busy\r\n"u8.ToArray() : ":5\r\n"u8.ToArray()
+            : Setup(command);
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        { EnableReplicaRedirects = redirects });
+        for (var index = 0; index < 2; index++)
+        {
+            if (catalog)
+            {
+                using var result = await client.ExecuteAsync(RespireCommands.String.STRLEN, ["key"]);
+                await Assert.That(result.AsInteger()).IsEqualTo(5L);
+            }
+            else await Assert.That(await client.Strings.LengthAsync("key")).IsEqualTo(5L);
+        }
+        await Assert.That(reads).IsEqualTo(3);
+        await Assert.That(server.ReceivedCommands.Contains("CLIENT CAPA REDIRECT")).IsEqualTo(redirects);
+    }
+
+    [Test]
     [Arguments("string")]
     [Arguments("bytes")]
     [Arguments("converted")]
