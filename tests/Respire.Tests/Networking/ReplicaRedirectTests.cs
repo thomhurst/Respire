@@ -163,15 +163,19 @@ public partial class ReplicaRedirectTests
 
     [Test]
     [NotInParallel]
-    [Arguments(false, false, false)]
-    [Arguments(true, false, false)]
-    [Arguments(false, true, false)]
-    [Arguments(true, true, false)]
-    [Arguments(false, false, true)]
-    [Arguments(true, false, true)]
-    [Arguments(false, true, true)]
-    [Arguments(true, true, true)]
-    public async Task RedirectFromConnectedMaintenanceSourcePreservesDeadline(bool circuit, bool delayHandshake, bool retry)
+    [Arguments(false, false, false, false)]
+    [Arguments(true, false, false, false)]
+    [Arguments(false, true, false, false)]
+    [Arguments(true, true, false, false)]
+    [Arguments(false, false, true, false)]
+    [Arguments(true, false, true, false)]
+    [Arguments(false, true, true, false)]
+    [Arguments(true, true, true, false)]
+    [Arguments(false, true, false, true)]
+    [Arguments(true, true, false, true)]
+    [Arguments(false, true, true, true)]
+    [Arguments(true, true, true, true)]
+    public async Task RedirectFromConnectedMaintenanceSourcePreservesDeadline(bool circuit, bool delayHandshake, bool retry, bool cache)
     {
         await using var target = new FakeRespServer(4)
         {
@@ -192,6 +196,7 @@ public partial class ReplicaRedirectTests
             MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(10),
             CircuitBreaker = circuit ? new() : null,
             RetryPolicy = retry ? new() : null,
+            ClientSideCache = cache ? new() : null,
         });
 #pragma warning restore RESP010
         var original = client.Core.Multiplexer.GetConnection();
@@ -1043,7 +1048,7 @@ public partial class ReplicaRedirectTests
     [Arguments(false, true)]
     [Arguments(true, false)]
     [Arguments(true, true)]
-    public async Task RedirectedCacheReadsAreNotPublishedFromTemporaryTarget(bool retry, bool multi)
+    public async Task RedirectedCacheReadsRetainTrackingAndReceiveInvalidations(bool retry, bool multi)
     {
         var reads = 0;
         var operation = multi ? "MGET key" : "GET key";
@@ -1062,14 +1067,23 @@ public partial class ReplicaRedirectTests
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { ClientSideCache = new(), RetryPolicy = retry ? new() : null });
 #pragma warning restore RESP010
-        for (var expected = 1; expected <= 2; expected++)
+        for (var attempt = 0; attempt < 2; attempt++)
         {
             var value = multi ? (await client.Strings.GetManyAsync("key"))[0] : await client.GetStringAsync("key");
-            await Assert.That(value).IsEqualTo(expected.ToString());
+            await Assert.That(value).IsEqualTo("1");
         }
+        await Assert.That(reads).IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("CLIENT TRACKING ", StringComparison.Ordinal))).IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "CLIENT CACHING YES")).IsEqualTo(1);
+
+        var invalidated = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var subscription = client.ClientSideCache!.SubscribeInvalidations("key", _ => invalidated.TrySetResult());
+        await target.SendRawAsync(Bytes(">2\r\n+invalidate\r\n*1\r\n$3\r\nkey\r\n"));
+        await invalidated.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var refreshed = multi ? (await client.Strings.GetManyAsync("key"))[0] : await client.GetStringAsync("key");
+        await Assert.That(refreshed).IsEqualTo("2");
         await Assert.That(reads).IsEqualTo(2);
-        await Assert.That(target.ReceivedCommands.Any(command => command.StartsWith("CLIENT CACHING ", StringComparison.Ordinal)
-            || command.StartsWith("CLIENT TRACKING ", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("CLIENT TRACKING ", StringComparison.Ordinal))).IsEqualTo(1);
     }
 
     private static RespireOptions Options(int port) => new()

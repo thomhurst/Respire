@@ -2328,7 +2328,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         var response = default(RespValue);
         var released = false;
         var returned = false;
-        var redirect = _core.Cluster is null ? null : new CacheGetRedirect(cache, token);
+        var redirect = _core.Cluster is null && _core.RedirectTargets is null ? null : new CacheGetRedirect(cache, token);
         Action? onRedirect = redirect is null ? null : redirect.Rebase;
 
         try
@@ -2490,7 +2490,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         var completed = 0;
         var returned = false;
         Action? onRedirect = null;
-        if (_core.Cluster is not null)
+        if (_core.Cluster is not null || _core.RedirectTargets is not null)
         {
             onRedirect = () =>
             {
@@ -2559,7 +2559,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
         if (CanRetryImmediate(in command))
             return await SendImmediateWithRetriesAsync(operation, command, cancellationToken, observation,
-                NeedsCachingPrelude(track), optOut: _optOutTracking).ConfigureAwait(false);
+                NeedsCachingPrelude(track), optOut: _optOutTracking, onTrackingReady: onRedirect,
+                retainTracking: true).ConfigureAwait(false);
 
         RespValue response;
         for (var attempt = 0; ; attempt++)
@@ -2577,10 +2578,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     var snapshot = new BacklogCommand<TCommand>(command, operation);
                     response = await RunPrimaryBacklogAsync(operation, cancellationToken, deadline,
                         (ready, originalDeadline) => SendTrackedOnConnectionAsync(operation, ready, snapshot,
-                            cancellationToken, sendAsking: false, track, observation, originalDeadline), observation).ConfigureAwait(false);
+                            cancellationToken, sendAsking: false, track, observation, originalDeadline,
+                            onTrackingReady: onRedirect), observation).ConfigureAwait(false);
                 }
                 else response = await SendTrackedOnConnectionAsync(
-                        operation, connection, command, cancellationToken, sendAsking: false, track, observation).ConfigureAwait(false);
+                        operation, connection, command, cancellationToken, sendAsking: false, track, observation,
+                        onTrackingReady: onRedirect).ConfigureAwait(false);
                 break;
             }
             catch (RespireConnectionRetiredException error) when (core.Sentinel is not null && attempt == 0
@@ -2722,12 +2725,13 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         TCommand command,
         CancellationToken cancellationToken,
         bool sendAsking,
-        bool track, RespireTelemetry.ErrorObservation observation = default, CommandDeadline commandDeadline = default)
+        bool track, RespireTelemetry.ErrorObservation observation = default, CommandDeadline commandDeadline = default,
+        Action? onTrackingReady = null)
         where TCommand : struct, IRespCommand
     {
         if (connection.ReplicaRedirectsEnabled && !CursorCommandMetadata.HasServerCursor(in command))
             return SendWithReplicaRedirectsAsync(operation, connection, command, cancellationToken, commandDeadline, observation,
-                sendAsking: sendAsking, tracking: true, track: track);
+                sendAsking: sendAsking, tracking: true, track: track, onTrackingReady: onTrackingReady);
         return RespireTelemetry.IsOperationEnabled(operation)
             ? SendTrackedOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, sendAsking, track, observation, commandDeadline)
@@ -3104,7 +3108,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         var snapshot = SnapshotCommand.Create(in command);
         var token = cache.BeginRead(operation, in request);
         var completed = false;
-        var redirect = _core.Cluster is null ? null : new CacheQueryRedirect(cache, token);
+        var redirect = _core.Cluster is null && _core.RedirectTargets is null ? null : new CacheQueryRedirect(cache, token);
         Action? onRedirect = redirect is null ? null : redirect.Rebase;
 
         var response = default(RespValue);

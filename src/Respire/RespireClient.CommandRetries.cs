@@ -26,7 +26,8 @@ public sealed partial class RespireClient
     // The original command retains admission callbacks and its logical fence; only serialization
     // uses the snapshot. Each transport source still retains its own fence until FIFO retirement.
     private ValueTask<RespValue> SendImmediateWithRetriesAsync<TCommand>(string operation, TCommand command,
-        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool track = false, bool optOut = false)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool track = false, bool optOut = false,
+        Action? onTrackingReady = null, bool retainTracking = false)
         where TCommand : struct, IRespCommand
     {
         if (ShouldSkipTracking(operation, in command))
@@ -40,14 +41,14 @@ public sealed partial class RespireClient
         var state = ImmediateRetryState.Rent(in command);
         if (UsesPrimaryBacklog && backlogConnection is null)
             return SendBackloggedImmediateRetryAsync(operation, new ImmediateRetryCommand<TCommand>(command, state, track, optOut),
-                state, cancellationToken, deadline, observation, track);
+                state, cancellationToken, deadline, observation, track, onTrackingReady, retainTracking);
         return SendImmediateRetryCoreAsync(operation, new ImmediateRetryCommand<TCommand>(command, state, track, optOut),
-            state, cancellationToken, deadline, observation, track, backlogConnection);
+            state, cancellationToken, deadline, observation, track, backlogConnection, onTrackingReady, retainTracking);
     }
 
     private async ValueTask<RespValue> SendBackloggedImmediateRetryAsync<TCommand>(string operation, ImmediateRetryCommand<TCommand> command,
         ImmediateRetryState state, CancellationToken token, CommandDeadline deadline,
-        RespireTelemetry.ErrorObservation observation, bool track) where TCommand : struct, IRespCommand
+        RespireTelemetry.ErrorObservation observation, bool track, Action? onTrackingReady, bool retainTracking) where TCommand : struct, IRespCommand
     {
         var dispatched = false;
         try
@@ -56,7 +57,7 @@ public sealed partial class RespireClient
             {
                 dispatched = true;
                 return SendImmediateRetryCoreAsync(operation, command, state, token, originalDeadline,
-                    observation, track, connection);
+                    observation, track, connection, onTrackingReady, retainTracking);
             }, observation).ConfigureAwait(false);
         }
         finally { if (!dispatched) state.Return(); }
@@ -178,7 +179,8 @@ public sealed partial class RespireClient
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespValue> SendImmediateRedirectRetryCoreAsync<TCommand>(string operation, ImmediateRetryCommand<TCommand> command,
         ImmediateRetryState state, CancellationToken callerToken, CommandDeadline deadline,
-        RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection = null) where TCommand : struct, IRespCommand
+        RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection = null,
+        Action? onTrackingReady = null, bool retainTracking = false) where TCommand : struct, IRespCommand
     {
         CancellationTokenSource? timeout = null;
         var token = callerToken;
@@ -208,6 +210,7 @@ public sealed partial class RespireClient
                 CircuitAdmission admission = default;
                 DedicatedConnectionPool? redirectPool = null;
                 RespireConnection? redirectConnection = null;
+                ReplicaRedirectTargets.Lease? trackedTarget = null;
                 try
                 {
                     // Use the same validated ready route as default dispatch. Healthy Sentinel
@@ -235,9 +238,10 @@ public sealed partial class RespireClient
                     {
                         // The connection enforces the send deadline and can relax it for
                         // maintenance. The acquisition timer must not cancel that allowance.
-                        var result = await connection.SendAttemptAsync(redirects == 0 ? command : command.WithoutTracking(),
+                        var useTracking = redirects == 0 || trackedTarget is not null;
+                        var result = await connection.SendAttemptAsync(useTracking ? command : command.WithoutTracking(),
                             connection.ReplicaRedirectsEnabled ? callerToken : token, operation, deadline,
-                            repliesBeforeFinal: redirects == 0 && track ? 1 : 0,
+                            repliesBeforeFinal: useTracking && track ? 1 : 0,
                             errorObservation: observation).ConfigureAwait(false);
                         if (redirects == 0 && state.IsRetry && state.AcceptedAttempt)
                             RespireTelemetry.RecordCommandRetry(state.Category, "attempted");
@@ -254,6 +258,23 @@ public sealed partial class RespireClient
                             }
                             try { rejection = ResponseReader.ServerError(in response, operation, new(connection.Host, connection.Port)); }
                             finally { response.Dispose(); }
+                        }
+                        catch (RespireConnectionRetiredException retired) when (trackedTarget is not null
+                            && TryRerouteCircuit(connection, deadline, out var replacement, out var rerouted,
+                                GetTransportReadZone(in command)))
+                        {
+                            // Planned target recycling rejected admission, so it spends neither
+                            // a server redirect nor a command retry and retains tracking ownership.
+                            observation.Handled(retired, new(connection.Host, connection.Port));
+                            admission.Dispose();
+                            admission = default;
+                            connection = replacement;
+                            deadline = rerouted;
+                            trackedTarget.UseConnection(connection);
+                            onTrackingReady?.Invoke();
+                            if (_core.Circuits is not null) admission = AcquireCircuit(connection, token);
+                            redirects--;
+                            continue;
                         }
                         catch (RespireServerException error) { rejection = error; }
 
@@ -276,7 +297,7 @@ public sealed partial class RespireClient
                         admission.Success();
                         admission.Dispose();
                         admission = default;
-                        _core.ClientCache?.FlushForContinuityLoss();
+                        if (!retainTracking) _core.ClientCache?.FlushForContinuityLoss();
                         command.ValidateAdmission();
                         ThrowIfRetryStopped(operation, token, deadline);
                         if (observation.IsEmpty)
@@ -290,16 +311,29 @@ public sealed partial class RespireClient
                             redirectConnection = null;
                             await _core.ReleaseServerPoolAsync(completedPool).ConfigureAwait(false);
                         }
+                        trackedTarget?.Dispose();
+                        trackedTarget = null;
                         telemetryEndpoint = endpoint;
                         connection = null;
                         observation.UseEndpoint(endpoint, token);
                         telemetry.UpdateServerEndpoint(endpoint.Host, endpoint.Port);
-                        redirectPool = _core.CreateServerPool(endpoint, replicaRedirect: true);
-                        redirectConnection = await RentReplicaRedirectTargetAsync(redirectPool, token).ConfigureAwait(false);
-                        connection = redirectConnection;
+                        if (retainTracking && _core.RedirectTargets is { } targets)
+                            trackedTarget = await AcquireTrackedReplicaTargetAsync(targets, endpoint, token).ConfigureAwait(false);
+                        if (trackedTarget is not null)
+                        {
+                            connection = trackedTarget.Connection;
+                            onTrackingReady?.Invoke();
+                        }
+                        else
+                        {
+                            if (retainTracking) _core.ClientCache?.FlushForContinuityLoss();
+                            redirectPool = _core.CreateServerPool(endpoint, replicaRedirect: true);
+                            redirectConnection = await RentReplicaRedirectTargetAsync(redirectPool, token).ConfigureAwait(false);
+                            connection = redirectConnection;
+                        }
                         observation.UseEndpoint(new(connection.Host, connection.Port), token);
                         telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
-                        connection.ThrowIfRetired();
+                        if (trackedTarget is null) connection.ThrowIfRetired();
                         if (_core.Circuits is not null) admission = AcquireCircuit(connection, token);
                         ThrowIfRetryStopped(operation, token, deadline);
                     }
@@ -321,6 +355,7 @@ public sealed partial class RespireClient
                 finally
                 {
                     admission.Dispose();
+                    trackedTarget?.Dispose();
                     if (redirectPool is not null)
                     {
                         if (redirectConnection is not null) redirectPool.Return(redirectConnection);

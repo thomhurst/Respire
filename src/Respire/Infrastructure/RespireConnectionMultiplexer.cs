@@ -315,7 +315,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
 
     /// <summary>Opens all connections on first call; later calls return immediately.</summary>
     public async ValueTask EnsureConnectedAsync(CancellationToken cancellationToken = default,
-        bool observeEstablishmentErrors = false)
+        bool observeEstablishmentErrors = false, bool armHandshakeDeadline = true)
     {
         ThrowIfUnavailable();
         if (_connected)
@@ -326,7 +326,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopConnecting.Token);
         try
         {
-            await InitializeConnectionsAsync(lifetime.Token, observeEstablishmentErrors).ConfigureAwait(false);
+            await InitializeConnectionsAsync(lifetime.Token, observeEstablishmentErrors, armHandshakeDeadline).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
             error, cancellationToken, lifetime.Token))
@@ -336,7 +336,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private async ValueTask InitializeConnectionsAsync(CancellationToken cancellationToken, bool observeEstablishmentErrors)
+    private async ValueTask InitializeConnectionsAsync(CancellationToken cancellationToken, bool observeEstablishmentErrors,
+        bool armHandshakeDeadline)
     {
         await _connectGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -352,7 +353,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             for (var i = 0; i < connectTasks.Length; i++)
             {
                 var endpoint = Volatile.Read(ref _activeEndpoint);
-                connectTasks[i] = RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port, options, _logger, cancellationToken);
+                connectTasks[i] = RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port, options, _logger, cancellationToken,
+                    armHandshakeDeadline);
             }
 
             try

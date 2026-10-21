@@ -118,7 +118,7 @@ public sealed partial class RespireClient
         try
         {
             Action? onRedirect = null;
-            if (_core.Cluster is not null)
+            if (_core.Cluster is not null || _core.RedirectTargets is not null)
             {
                 onRedirect = () =>
                 {
