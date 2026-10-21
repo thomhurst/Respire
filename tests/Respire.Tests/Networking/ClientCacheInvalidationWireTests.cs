@@ -31,8 +31,10 @@ public class ClientCacheInvalidationWireTests
         {
             try
             {
+#pragma warning disable RESP009 // A bounded synchronous read inside the observer verifies that invalidation callbacks can reenter the client.
                 observed.TrySetResult(view.Hashes.GetManyAsync("key", "a", "b").AsTask()
                     .WaitAsync(Limit).GetAwaiter().GetResult());
+#pragma warning restore RESP009
             }
             catch (Exception error) { observed.TrySetException(error); }
         });
@@ -94,7 +96,9 @@ public class ClientCacheInvalidationWireTests
             try
             {
                 subscription!.Dispose();
+#pragma warning disable RESP009 // Synchronous disposal inside the observer is the reentrancy/deadlock behavior under test.
                 client.DisposeAsync().AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
                 completed.TrySetResult();
             }
             catch (Exception error) { completed.TrySetException(error); }

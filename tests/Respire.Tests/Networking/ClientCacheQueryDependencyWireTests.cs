@@ -32,12 +32,14 @@ public class ClientCacheQueryDependencyWireTests
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray()
                 : command == "STRLEN key" ? redirect : Handshake(command),
         };
+#pragma warning disable RESP010 // This redirect scenario owns and disposes its client to isolate topology and cache publication state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             UseCluster = true, Endpoints = [new("127.0.0.1", seed.Port)], Connections = 1,
             Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
             CommandTimeout = Limit, ConnectTimeout = Limit,
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         var mutation = cache.BeginUnknownMutation();
         try

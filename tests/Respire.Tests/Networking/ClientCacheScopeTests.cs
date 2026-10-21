@@ -16,7 +16,9 @@ public class ClientCacheScopeTests
     {
         await using var server = new FakeRespServer(
             Hello, FakeRespServer.OkReply, FakeRespServer.OkReply, Old, New, New);
+#pragma warning disable RESP010 // Each scope scenario owns and disposes its client to isolate tracking configuration and cache state.
         await using var client = await RespireClient.ConnectAsync(Options(server, ["hot:"]));
+#pragma warning restore RESP010
 
         await Assert.That(await client.GetStringAsync("hot:key")).IsEqualTo("old");
         await Assert.That(await client.GetStringAsync("hot:key")).IsEqualTo("old");
@@ -40,7 +42,9 @@ public class ClientCacheScopeTests
         await using var server = new FakeRespServer(
             Hello, FakeRespServer.OkReply,
             "*2\r\n$1\r\na\r\n$1\r\nb\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each scope scenario owns and disposes its client to isolate tracking configuration and cache state.
         await using var client = await RespireClient.ConnectAsync(Options(server, ["hot:"]));
+#pragma warning restore RESP010
 
         await Assert.That(await client.Strings.GetManyAsync("cold:a", "cold:b"))
             .IsEquivalentTo((string?[])["a", "b"]);
@@ -57,7 +61,9 @@ public class ClientCacheScopeTests
         await using var server = new FakeRespServer(
             Hello, FakeRespServer.OkReply, FakeRespServer.OkReply,
             "*2\r\n$1\r\na\r\n$1\r\nb\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each scope scenario owns and disposes its client to isolate tracking configuration and cache state.
         await using var client = await RespireClient.ConnectAsync(Options(server, ["hot:"]));
+#pragma warning restore RESP010
 
         await Assert.That(await client.Strings.GetManyAsync("hot:a", "cold:b"))
             .IsEquivalentTo((string?[])["a", "b"]);
@@ -72,11 +78,13 @@ public class ClientCacheScopeTests
     [Test]
     public async Task InvalidationSubscriptionRequiresCoveredKeyInOptInMode()
     {
+#pragma warning disable RESP010 // Each scope scenario owns and disposes its client to isolate tracking configuration and cache state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 1)],
             ClientSideCache = new() { KeyPrefixes = ["hot:"] },
         });
+#pragma warning restore RESP010
 
         await Assert.That(() => client.ClientSideCache!.SubscribeInvalidations("cold:key", static _ => { }))
             .ThrowsExactly<ArgumentException>();
@@ -97,7 +105,9 @@ public class ClientCacheScopeTests
         {
             ClientSideCache = options.ClientSideCache! with { CoalesceConcurrentMisses = coalesce },
         };
+#pragma warning disable RESP010 // Each scope scenario owns and disposes its client to isolate tracking configuration and cache state.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
 
         using var result = await client.ExecuteAsync(RespireCommands.String.MGET, "hot:a", "cold:b");
 
@@ -117,7 +127,9 @@ public class ClientCacheScopeTests
         await using var server = new FakeRespServer(
             Hello, FakeRespServer.OkReply, FakeRespServer.OkReply, Old, New, ":1\r\n"u8.ToArray(),
             FakeRespServer.OkReply);
+#pragma warning disable RESP010 // Each scope scenario owns and disposes its client to isolate tracking configuration and cache state.
         await using var client = await RespireClient.ConnectAsync(Options(server, []));
+#pragma warning restore RESP010
         var fresh = client.WithoutClientCache();
 
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
@@ -138,7 +150,9 @@ public class ClientCacheScopeTests
     {
         await using var server = new FakeRespServer(
             Hello, FakeRespServer.OkReply, "$-1\r\n"u8.ToArray(), "$-1\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each scope scenario owns and disposes its client to isolate tracking configuration and cache state.
         await using var client = await RespireClient.ConnectAsync(Options(server, []));
+#pragma warning restore RESP010
         var fresh = client.WithKeyPrefix("tenant:").WithoutClientCache();
 
         var value = await fresh.GetOrSetAsync<string>(
@@ -154,13 +168,17 @@ public class ClientCacheScopeTests
     [Test]
     public async Task WithoutClientCacheReturnsSameClientWhenCachingIsDisabled()
     {
+#pragma warning disable RESP010 // Each scope scenario owns and disposes its client to isolate tracking configuration and cache state.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 1)] });
+#pragma warning restore RESP010
         await Assert.That(ReferenceEquals(client.WithoutClientCache(), client)).IsTrue();
 
+#pragma warning disable RESP010 // Each scope scenario owns and disposes its client to isolate tracking configuration and cache state.
         await using var cached = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var fresh = cached.WithoutClientCache();
         await Assert.That(ReferenceEquals(fresh, cached)).IsFalse();
         await Assert.That(ReferenceEquals(fresh.WithoutClientCache(), fresh)).IsTrue();

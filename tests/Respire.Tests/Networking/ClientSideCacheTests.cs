@@ -25,12 +25,14 @@ public class ClientSideCacheTests
                     ? "$5\r\nvalue\r\n"u8.ToArray() : FakeRespServer.OkReply,
         };
         var parked = new ParkedReply(server, "XREADGROUP ");
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate cache state, topology, and scripted replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
         });
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var entries = client.Streams.ReadGroupAsync(new RespireStreamReadOptions
         {
@@ -290,8 +292,10 @@ public class ClientSideCacheTests
             "*4\r\n$1\r\na\r\n$1\r\n1\r\n$1\r\nb\r\n$1\r\n2\r\n"u8.ToArray());
         await using var client = await ConnectAsync(server);
 
+#pragma warning disable RESP011 // The scripted HGETALL reply above contains exactly two fields; the test verifies deep cache ownership.
         var first = await client.Hashes.GetAllAsync("hash");
         var second = await client.Hashes.GetAllAsync("hash");
+#pragma warning restore RESP011
 
         await Assert.That(first).IsEquivalentTo(new Dictionary<string, string>
         {
@@ -1216,6 +1220,7 @@ public class ClientSideCacheTests
             "*0\r\n"u8.ToArray(),
             FakeRespServer.OkReply,
             Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"));
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate cache state, topology, and scripted replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -1223,6 +1228,7 @@ public class ClientSideCacheTests
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
         });
+#pragma warning restore RESP010
 
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
@@ -1248,6 +1254,7 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply,
             "$3\r\nold\r\n"u8.ToArray(),
             Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate cache state, topology, and scripted replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -1255,6 +1262,7 @@ public class ClientSideCacheTests
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
         });
+#pragma warning restore RESP010
 
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
@@ -1275,6 +1283,7 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply,
             "$3\r\nold\r\n"u8.ToArray());
         var parked = new ParkedReply(seed, "SET key new");
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate cache state, topology, and scripted replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -1282,6 +1291,7 @@ public class ClientSideCacheTests
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
         });
+#pragma warning restore RESP010
 
         await client.GetStringAsync("key");
         var write = client.ExecuteFireAndForgetAsync(
@@ -1371,6 +1381,7 @@ public class ClientSideCacheTests
             HelloReply,
             FakeRespServer.OkReply,
             topology);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate cache state, topology, and scripted replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -1379,6 +1390,7 @@ public class ClientSideCacheTests
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
         });
+#pragma warning restore RESP010
 
         await client.GetStringAsync("key");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
@@ -1410,6 +1422,7 @@ public class ClientSideCacheTests
             HelloReply,
             FakeRespServer.OkReply,
             topology);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate cache state, topology, and scripted replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -1417,6 +1430,7 @@ public class ClientSideCacheTests
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
         });
+#pragma warning restore RESP010
 
         await client.GetStringAsync("key");
         var flush = client.ExecuteAsync(RespireCommands.Scripting.SCRIPT_FLUSH).AsTask();
@@ -1447,6 +1461,7 @@ public class ClientSideCacheTests
             HelloReply,
             FakeRespServer.OkReply,
             topology);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate cache state, topology, and scripted replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -1454,6 +1469,7 @@ public class ClientSideCacheTests
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
         });
+#pragma warning restore RESP010
 
         await client.GetStringAsync("key");
         await client.ExecuteFireAndForgetAsync(RespireCommands.Scripting.SCRIPT_FLUSH);
@@ -1734,12 +1750,14 @@ public class ClientSideCacheTests
                 _ => FakeRespServer.OkReply,
             },
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate cache state, topology, and scripted replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, AllowAdmin = true, Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         InsertCachedValue(client.Core.ClientCache!, "key", "old");
         if (execution == 0)
             await client.Server.FlushAllAsync(mode, default);

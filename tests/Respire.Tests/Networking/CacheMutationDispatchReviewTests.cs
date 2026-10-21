@@ -28,12 +28,14 @@ public class CacheMutationDispatchReviewTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // Each dispatch scenario owns and disposes its client to isolate tracking, protocol, and mutation state.
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp3, Connections = 1,
             ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var client = prefix ? root.WithKeyPrefix("tenant:") : root;
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         var bypass = client.WithoutClientCache();
@@ -75,11 +77,13 @@ public class CacheMutationDispatchReviewTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // Each dispatch scenario owns and disposes its client to isolate tracking, protocol, and mutation state.
         await using var owner = RespireClient.Create(new RespireOptions
         {
             Protocol = (RespireProtocol)protocol, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var options = owner.Core.CreateConnectionOptions(enableClientTracking: protocol == 3) with
         {
             Database = 2, RequireClusterDatabaseSupport = true, ReadOnly = true,
@@ -111,11 +115,13 @@ public class CacheMutationDispatchReviewTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // Each dispatch scenario owns and disposes its client to isolate tracking, protocol, and mutation state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp3, Connections = 1, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var attempts = 0;
         var result = await client.RunTransactionAsync(["watched"], (_, _) => ValueTask.FromResult(++attempts),
             new RespireTransactionRetryOptions { MaxAttempts = 2 });

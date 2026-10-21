@@ -20,8 +20,10 @@ public class BroadcastClientCacheTests
     public async Task BroadcastRegistersBeforeReadsAndOmitsCachingYes(bool prefix)
     {
         await using var server = new FakeRespServer(Hello, FakeRespServer.OkReply, Old);
+#pragma warning disable RESP010 // Each broadcast scenario owns and disposes its client to isolate tracking prefixes and cache state.
         await using var client = await RespireClient.ConnectAsync(Options(server,
             prefix ? ["hot:"] : []) with { MaxInflightCommands = 1 });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("hot:key")).IsEqualTo("old");
         await Assert.That(await client.GetStringAsync("hot:key")).IsEqualTo("old");
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
@@ -37,7 +39,9 @@ public class BroadcastClientCacheTests
         byte[] binary = [255, 0, (byte)'*'];
         RespireKey[] prefixes = [binary, "tenant:hot:"];
         await using var server = new FakeRespServer(Hello, FakeRespServer.OkReply, Old);
+#pragma warning disable RESP010 // Each broadcast scenario owns and disposes its client to isolate tracking prefixes and cache state.
         await using var client = RespireClient.Create(Options(server, prefixes));
+#pragma warning restore RESP010
         binary[0] = 1;
         prefixes[1] = "changed:";
         var view = client.WithKeyPrefix("tenant:");
@@ -60,7 +64,9 @@ public class BroadcastClientCacheTests
     {
         await using var server = new FakeRespServer(Hello, FakeRespServer.OkReply,
             "*2\r\n$3\r\nold\r\n$3\r\nold\r\n"u8.ToArray(), "*1\r\n$3\r\nnew\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each broadcast scenario owns and disposes its client to isolate tracking prefixes and cache state.
         await using var client = await RespireClient.ConnectAsync(Options(server, ["hot:"]));
+#pragma warning restore RESP010
         await Assert.That(await client.Strings.GetManyAsync("hot:key", "cold:key")).IsEquivalentTo((string?[])["old", "old"]);
         var values = await client.Strings.GetManyAsync("hot:key", "cold:key");
         await Assert.That(values[0]).IsEqualTo("old");
@@ -73,7 +79,9 @@ public class BroadcastClientCacheTests
     public async Task MultiKeyProjectionRequiresEveryDependencyToBeCovered()
     {
         await using var server = new FakeRespServer(Hello, FakeRespServer.OkReply, ":1\r\n"u8.ToArray(), ":0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each broadcast scenario owns and disposes its client to isolate tracking prefixes and cache state.
         await using var client = await RespireClient.ConnectAsync(Options(server, ["hot:"]));
+#pragma warning restore RESP010
         using var first = await client.ExecuteAsync(RespireCommands.Key.EXISTS, "hot:key", "cold:key");
         using var second = await client.ExecuteAsync(RespireCommands.Key.EXISTS, "hot:key", "cold:key");
         await Assert.That(first.AsInteger()).IsEqualTo(1L);
@@ -85,7 +93,9 @@ public class BroadcastClientCacheTests
     public async Task InvalidationBeforeReplyPreventsStaleInsertion()
     {
         await using var server = new FakeRespServer(Hello, FakeRespServer.OkReply, New);
+#pragma warning disable RESP010 // Each broadcast scenario owns and disposes its client to isolate tracking prefixes and cache state.
         await using var client = await RespireClient.ConnectAsync(Options(server, ["hot:"]));
+#pragma warning restore RESP010
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
@@ -108,7 +118,9 @@ public class BroadcastClientCacheTests
     {
         await using var server = new FakeRespServer(Hello, FakeRespServer.OkReply, Old,
             FakeRespServer.OkReply, New, FakeRespServer.PongReply, New);
+#pragma warning disable RESP010 // Each broadcast scenario owns and disposes its client to isolate tracking prefixes and cache state.
         await using var client = await RespireClient.ConnectAsync(Options(server, ["hot:"]));
+#pragma warning restore RESP010
         await client.GetStringAsync("hot:key");
         await client.SetAsync("hot:key", "new");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
@@ -221,7 +233,9 @@ public class BroadcastClientCacheTests
     public async Task OneEmptyPrefixTracksEveryKey()
     {
         await using var server = new FakeRespServer(Hello, FakeRespServer.OkReply, Old);
+#pragma warning disable RESP010 // Each broadcast scenario owns and disposes its client to isolate tracking prefixes and cache state.
         await using var client = await RespireClient.ConnectAsync(Options(server, [RespireKey.Empty]));
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("any:key")).IsEqualTo("old");
         await Assert.That(await client.GetStringAsync("any:key")).IsEqualTo("old");
         await Assert.That(server.ReceivedArguments[1].Length).IsEqualTo(6);

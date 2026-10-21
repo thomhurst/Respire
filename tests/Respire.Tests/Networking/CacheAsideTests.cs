@@ -169,7 +169,11 @@ public class CacheAsideTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var index = 0; index < 1_000; index++)
         {
-            _ = client.GetOrSetAsync<int>("zero", static _ => throw new Exception("factory"), Ttl).GetAwaiter().GetResult();
+            var pending = client.GetOrSetAsync<int>("zero", static _ => throw new Exception("factory"), Ttl);
+            if (!pending.IsCompletedSuccessfully) throw new InvalidOperationException("Expected a local hit.");
+#pragma warning disable RESP009 // IsCompletedSuccessfully above guarantees the allocation probe cannot block or leave the measuring thread.
+            _ = pending.Result;
+#pragma warning restore RESP009
             if (allocate) Volatile.Write(ref _escape, new byte[37]);
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;

@@ -387,7 +387,9 @@ public class ClientCacheStringPublicationTests
         var start = GC.GetAllocatedBytesForCurrentThread();
         var pending = client.GetStringAsync("key");
         if (!pending.IsCompletedSuccessfully) throw new InvalidOperationException("Expected a local hit.");
+#pragma warning disable RESP009 // IsCompletedSuccessfully above guarantees this local-hit allocation probe cannot block.
         GC.KeepAlive(pending.Result);
+#pragma warning restore RESP009
         if (control) GC.KeepAlive(new byte[37]);
         return GC.GetAllocatedBytesForCurrentThread() - start;
     }
