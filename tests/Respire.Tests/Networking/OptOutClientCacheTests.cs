@@ -19,11 +19,13 @@ public class OptOutClientCacheTests
     public async Task OrdinaryUncachedReadsKeepDefaultOptOutTracking(bool retry)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             ClientSideCache = new() { TrackingMode = RespireClientTrackingMode.OptOut, KeyPrefixes = ["hot:"] },
             RetryPolicy = retry ? new() { MaxAttempts = 2 } : null,
         });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("cold:key")).IsEqualTo("value");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
         await Assert.That(server.ReceivedCommands.Contains("CLIENT CACHING NO")).IsFalse();
@@ -47,10 +49,12 @@ public class OptOutClientCacheTests
                 : command == "CLIENT CACHING NO" && prefixError ? "-ERR denied caching\r\n"u8.ToArray()
                 : command.StartsWith("GET ", StringComparison.Ordinal) ? Value : FakeRespServer.OkReply;
         };
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             RetryPolicy = retry ? new() { MaxAttempts = 2 } : null,
         });
+#pragma warning restore RESP010
         await using var transaction = client.WithoutClientCache().CreateTransaction();
         var first = transaction.GetString("first");
         _ = transaction.Set("written", "new");
@@ -91,11 +95,13 @@ public class OptOutClientCacheTests
             "EXEC" => "*2\r\n+OK\r\n+OK\r\n"u8.ToArray(),
             _ => FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             MaxInflightCommands = 4,
             RetryPolicy = retry ? new() { MaxAttempts = 2 } : null,
         });
+#pragma warning restore RESP010
         await using var transaction = client.WithoutClientCache().CreateTransaction();
         if (!empty)
         {
@@ -117,11 +123,13 @@ public class OptOutClientCacheTests
     public async Task BypassTransactionRejectsInsufficientCapacityBeforeWriting(bool retry)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             MaxInflightCommands = 4,
             RetryPolicy = retry ? new() { MaxAttempts = 2 } : null,
         });
+#pragma warning restore RESP010
         await using var transaction = client.WithoutClientCache().CreateTransaction();
         _ = transaction.GetString("key");
         _ = transaction.GetString("second");
@@ -140,7 +148,9 @@ public class OptOutClientCacheTests
         server.ReplyOverride = (_, command) => command.StartsWith("HELLO ", StringComparison.Ordinal) ? Hello
             : command.StartsWith("EVAL_RO ", StringComparison.Ordinal) ? "-ERR Could not find scripting engine 'lua'\r\n"u8.ToArray()
             : command == "INFO scriptingengines" ? infoReply : FakeRespServer.OkReply;
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         using var batch = client.WithoutClientCache().CreateBatch();
         var pending = batch.Execute(RespireCommands.Scripting.EVAL_RO, "return 42", 0);
         var result = await batch.TryExecuteAsync();
@@ -158,10 +168,12 @@ public class OptOutClientCacheTests
     public async Task HandshakeAndCachedReadsUseSelectedMode(RespireClientTrackingMode mode, bool noLoop)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             ClientSideCache = new() { TrackingMode = mode, NoLoop = noLoop, KeyPrefixes = ["hot:"] },
         });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("hot:key")).IsEqualTo("value");
         await Assert.That(await client.GetStringAsync("hot:key")).IsEqualTo("value");
         var registration = mode switch
@@ -184,10 +196,12 @@ public class OptOutClientCacheTests
     public async Task BypassPairsNoWithEachReadAndDoesNotPopulateCache(bool raw, bool retry)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             RetryPolicy = retry ? new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } : null,
         });
+#pragma warning restore RESP010
         var bypass = client.WithKeyPrefix("hot:").WithoutClientCache();
         for (var i = 0; i < 2; i++)
         {
@@ -214,10 +228,12 @@ public class OptOutClientCacheTests
     public async Task StreamedBypassPairsNoWithReadAndDrainsPayload(bool circuit)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CircuitBreaker = circuit ? new() : null,
         });
+#pragma warning restore RESP010
         await using (var stream = await client.WithKeyPrefix("hot:").WithoutClientCache().Strings.GetStreamAsync("key"))
         {
             using var received = new MemoryStream();
@@ -240,10 +256,12 @@ public class OptOutClientCacheTests
     public async Task StandaloneBypassBatchPairsNoWithEveryReadOnly(int capacity, bool circuit)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             MaxInflightCommands = capacity, CircuitBreaker = circuit ? new() : null,
         });
+#pragma warning restore RESP010
         using var batch = client.WithKeyPrefix("hot:").WithoutClientCache().CreateBatch();
         var first = batch.GetString("first");
         _ = batch.Strings.Set("written", "new");
@@ -270,10 +288,12 @@ public class OptOutClientCacheTests
     public async Task FireAndForgetBypassPairsNoWithRead(int surface, bool circuit)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CircuitBreaker = circuit ? new() : null,
         });
+#pragma warning restore RESP010
         var bypass = client.WithoutClientCache();
         RespireKey key = "hot:key";
         if (surface == 0) await bypass.ExecuteFireAndForgetAsync(RespireCommands.String.GET, key);
@@ -293,10 +313,12 @@ public class OptOutClientCacheTests
     {
         var writeArrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = Server();
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             ClientSideCache = new() { TrackingMode = RespireClientTrackingMode.OptOut, NoLoop = true },
         });
+#pragma warning restore RESP010
         server.MinimumCommandsBeforeReply = 2;
         server.SuppressReply = command =>
         {
@@ -325,10 +347,12 @@ public class OptOutClientCacheTests
         server.ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal)
             ? Interlocked.Increment(ref calls) == 1 ? "-TRYAGAIN retry\r\n"u8.ToArray() : Value
             : command.StartsWith("HELLO ", StringComparison.Ordinal) ? Hello : FakeRespServer.OkReply;
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         await Assert.That(await client.WithoutClientCache().GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(server.ReceivedCommands.Count(command => command == "CLIENT CACHING NO")).IsEqualTo(2);
         await Assert.That(calls).IsEqualTo(2);
@@ -343,7 +367,9 @@ public class OptOutClientCacheTests
         await using var server = new FakeRespServer(Hello, FakeRespServer.OkReply,
             preludeError ? "-ERR caching denied\r\n"u8.ToArray() : FakeRespServer.OkReply,
             preludeError ? Value : "-WRONGTYPE invalid type\r\n"u8.ToArray(), FakeRespServer.PongReply);
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.WithoutClientCache().GetStringAsync("key"))
             .ThrowsExactly<RespireServerException>();
         await client.PingAsync();
@@ -354,7 +380,9 @@ public class OptOutClientCacheTests
     public async Task ConcurrentBypassAndCachedReadsKeepPreludeAdjacentToBypass()
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var bypass = client.WithoutClientCache();
         await Task.WhenAll(Enumerable.Range(0, 40).Select(async i =>
         {
@@ -392,10 +420,12 @@ public class OptOutClientCacheTests
             ReplyOverride = (_, command) => command.StartsWith("HELLO ", StringComparison.Ordinal) ? Hello
                 : command.StartsWith("CLIENT ", StringComparison.Ordinal) ? FakeRespServer.OkReply : topology,
         };
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(seed) with
         {
             UseCluster = true, RetryPolicy = new() { MaxAttempts = 2 },
         });
+#pragma warning restore RESP010
         var reader = bypass ? client.WithoutClientCache() : client;
         await Assert.That(await reader.GetStringAsync("key")).IsEqualTo("value");
         var commands = target.ReceivedCommands.ToArray();
@@ -417,10 +447,12 @@ public class OptOutClientCacheTests
             ? "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray()
             : command.StartsWith("HELLO ", StringComparison.Ordinal) ? Hello
             : command.StartsWith("GET ", StringComparison.Ordinal) ? Value : FakeRespServer.OkReply;
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(primary) with
         {
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
+#pragma warning restore RESP010
         var bypass = client.WithReadFrom(RespireReadFrom.Replica).WithoutClientCache();
         await Assert.That(await bypass.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(replica.ReceivedCommands.Contains("GET key")).IsTrue();
@@ -489,10 +521,12 @@ public class OptOutClientCacheTests
             ReplyOverride = (_, command) => command.StartsWith("HELLO ", StringComparison.Ordinal) ? Hello
                 : command.StartsWith("CLIENT ", StringComparison.Ordinal) ? FakeRespServer.OkReply : topology,
         };
+#pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(seed) with
         {
             UseCluster = true, RetryPolicy = new() { MaxAttempts = 2 },
         });
+#pragma warning restore RESP010
         await using var stream = await client.WithoutClientCache().Strings.GetStreamAsync("key");
         using var text = new StreamReader(stream!);
         await Assert.That(await text.ReadToEndAsync()).IsEqualTo("value");

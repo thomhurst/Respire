@@ -10,10 +10,12 @@ public class CacheStampedeTests
     public async Task ExistingDefaultTokenCallsRemainUnambiguous()
     {
         using var endpoint = new ReservedUnavailablePort();
+#pragma warning disable RESP010 // This validation-only client is owned and disposed by the test and must not connect to the unavailable endpoint.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", endpoint.Port)], ThreadPoolMonitoring = false,
         });
+#pragma warning restore RESP010
         IRespireClient contract = client;
         Func<CancellationToken, ValueTask<string?>> factory = _ => ValueTask.FromResult<string?>("value");
 

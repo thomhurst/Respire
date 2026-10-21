@@ -30,12 +30,14 @@ public class CacheStampedeCancellationTests
                 ? "*4\r\n$-1\r\n:0\r\n:0\r\n$0\r\n\r\n"u8.ToArray()
                 : ":1\r\n"u8.ToArray();
         };
+#pragma warning disable RESP010 // Each cancellation scenario owns and disposes its client to isolate blocked replies and caller cancellation.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null, ThreadPoolMonitoring = false,
         });
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var failure = new InvalidOperationException("factory failed");
         var pending = client.GetOrSetAsync<string>("key", new RespireCacheAsideOptions(), token =>
@@ -106,12 +108,14 @@ public class CacheStampedeCancellationTests
             if (owner == Encoding.UTF8.GetString(args[5])) owner = null;
             return ":1\r\n"u8.ToArray();
         };
+#pragma warning disable RESP010 // Each cancellation scenario owns and disposes its client to isolate blocked replies and caller cancellation.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = TimeSpan.FromSeconds(30), ThreadPoolMonitoring = false,
         });
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var factories = 0;
         var pending = client.GetOrSetAsync<string>("key", new RespireCacheAsideOptions(), _ =>

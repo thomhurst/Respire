@@ -42,6 +42,7 @@ public class ClientSideCacheCoalescingTests
                 return FakeRespServer.OkReply;
             },
         };
+#pragma warning disable RESP010 // Each coalescing scenario owns and disposes its clients to isolate cache, database, and waiter state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Connections = 2, CommandTimeout = TimeSpan.FromSeconds(10),
@@ -49,6 +50,7 @@ public class ClientSideCacheCoalescingTests
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         foreach (var key in keys) await Assert.That(await client.GetStringAsync(key)).IsEqualTo("0");
         using var stop = new CancellationTokenSource();
         var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -262,6 +264,7 @@ public class ClientSideCacheCoalescingTests
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : FakeRespServer.OkReply,
             SuppressReply = command => command.StartsWith("GET "),
         };
+#pragma warning disable RESP010 // Each coalescing scenario owns and disposes its clients to isolate cache, database, and waiter state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
@@ -271,6 +274,7 @@ public class ClientSideCacheCoalescingTests
                 KeyPrefixes = ["covered:"],
             },
         });
+#pragma warning restore RESP010
         var key = covered ? "covered:key" : "outside:key";
         var first = client.GetStringAsync(key).AsTask();
         var second = client.GetStringAsync(key).AsTask();
@@ -543,6 +547,7 @@ public class ClientSideCacheCoalescingTests
             SuppressReply = command => command == "CLIENT CACHING YES" || command.StartsWith("GET "),
         };
         await using var firstClient = await ConnectAsync(server);
+#pragma warning disable RESP010 // Each coalescing scenario owns and disposes its clients to isolate cache, database, and waiter state.
         await using var secondClient = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
@@ -550,6 +555,7 @@ public class ClientSideCacheCoalescingTests
             Database = 1,
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
         });
+#pragma warning restore RESP010
         var first = firstClient.GetStringAsync("key").AsTask();
         var second = secondClient.GetStringAsync("key").AsTask();
         await WaitUntilAsync(() => server.ReceivedCommands.Count(c => c == "GET key") == 2);
@@ -567,12 +573,14 @@ public class ClientSideCacheCoalescingTests
     public async Task CoalescingIsExplicitlyEnabled(bool enabled, int requests, bool many)
     {
         await using var server = CreateServer();
+#pragma warning disable RESP010 // Each coalescing scenario owns and disposes its clients to isolate cache, database, and waiter state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             ClientSideCache = enabled ? new() { CoalesceConcurrentMisses = true } : new(),
         });
+#pragma warning restore RESP010
         async Task<string?> ReadAsync() => many
             ? string.Join(",", await client.Strings.GetManyAsync("key", "missing", "key"))
             : await client.GetStringAsync("key");
