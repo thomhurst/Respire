@@ -9,6 +9,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
+[ParallelLimiter<TimingSensitive>]
 public class ClusterWatchedTransactionTests
 {
     private static readonly byte[] Queued = "+QUEUED\r\n"u8.ToArray();

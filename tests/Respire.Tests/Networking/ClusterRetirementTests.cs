@@ -12,6 +12,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
+[ParallelLimiter<TimingSensitive>]
 public class ClusterRetirementTests
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;

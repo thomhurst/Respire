@@ -9,6 +9,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
+[ParallelLimiter<TimingSensitive>]
 public class ClusterReconnectPolicyTests
 {
     [Test]
@@ -1082,7 +1083,6 @@ public class ClusterReconnectPolicyTests
     }
 
     [Test]
-    [ParallelLimiter<TimingSensitive>] // Keep time available for the real READONLY phase deadline and seed fallback.
     [Arguments(false)]
     [Arguments(true)]
     public async Task ReadOnlyPhaseCancellationDoesNotPoisonSuccessfulSeedFallback(bool cachedOwner)
