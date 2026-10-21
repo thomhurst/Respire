@@ -18,9 +18,38 @@ $expectedTimeout = if ($verb -eq 'build') { 180 } else { 60 }
 if ($TimeoutSeconds -ne $expectedTimeout) { throw "Expected timeout $expectedTimeout for $verb, received $TimeoutSeconds" }
 if ($verb -eq 'new') { New-Item -ItemType Directory -Path fixture -Force | Out-Null }
 $failureVerb = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'failure-verb.txt')
+if ($failureVerb -eq 'failure-control' -and $verb -eq 'test') {
+    if ($DotNetArguments -contains '--list-tests') {
+        Write-Output 'GuardVstestTests.SelectedTestExecutes'
+        $global:LASTEXITCODE = 0
+        return
+    }
+    $isFailureControl = $DotNetArguments -contains 'FullyQualifiedName=GuardVstestTests.UnselectedTestFails'
+    if (-not $isFailureControl) { 'executed' | Set-Content -LiteralPath $env:RESPIRE_VSTEST_GUARD_TEST_MARKER }
+    $mode = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'failure-report-mode.txt')
+    $results = $DotNetArguments[[Array]::IndexOf($DotNetArguments, '--results-directory') + 1]
+    if (-not $isFailureControl -or $mode -ne 'missing') {
+        New-Item -ItemType Directory -Path $results -Force | Out-Null
+        $name = if ($isFailureControl) { 'GuardVstestTests.UnselectedTestFails' } else { 'GuardVstestTests.SelectedTestExecutes' }
+        $outcome = if ($isFailureControl) { 'Failed' } else { 'Passed' }
+        $executed = 1
+        if ($isFailureControl -and $mode -eq 'aborted') { $executed = 0 }
+        if ($isFailureControl -and $mode -eq 'wrong-test') { $name = 'AnotherTest' }
+        if ($isFailureControl -and $mode -eq 'wrong-outcome') { $outcome = 'NotExecuted' }
+        $message = if ($isFailureControl -and $mode -eq 'wrong-error') { 'test host aborted' } else { 'guard failure control' }
+        $failed = if ($isFailureControl) { 1 } else { 0 }
+        $passed = 1 - $failed
+        '<TestRun><ResultSummary><Counters total="1" executed="{0}" passed="{1}" failed="{2}" /></ResultSummary><Results><UnitTestResult testName="{3}" outcome="{4}"><Output><ErrorInfo><Message>{5}</Message></ErrorInfo></Output></UnitTestResult></Results></TestRun>' -f $executed, $passed, $failed, $name, $outcome, $message |
+            Set-Content -LiteralPath (Join-Path $results 'report.trx')
+    }
+    $global:LASTEXITCODE = if ($isFailureControl) { 1 } else { 0 }
+    return
+}
 if ($verb -eq $failureVerb) {
     if ($verb -eq 'test') { [Console]::WriteLine('partial discovery output control') }
     if ($verb -eq 'test' -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'stall.txt'))) {
+        # Deliberately exceed the short stall timer before announcing readiness.
+        [Threading.Thread]::Sleep(4000)
         $PID | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'host-pid.txt')
         [Threading.Thread]::Sleep(30000)
     }
@@ -89,6 +118,23 @@ if ($verb -eq $failureVerb) {
         }
     }
 
+    'failure-control' | Set-Content -LiteralPath (Join-Path $scripts 'failure-verb.txt')
+    foreach ($mode in @('valid', 'missing', 'aborted', 'wrong-test', 'wrong-outcome', 'wrong-error')) {
+        $mode | Set-Content -LiteralPath (Join-Path $scripts 'failure-report-mode.txt')
+        $failure = $null
+        try {
+            & (Join-Path $scripts 'Test-AgentDotNetVstest.ps1') -DiagnosticsDirectory (Join-Path $testRoot "failure-report-$mode") *>&1 | Out-Null
+        }
+        catch { $failure = $_ }
+        if ($mode -eq 'valid') {
+            if ($failure) { throw "Valid failure-control report was rejected: $failure" }
+        } else {
+            $expected = if ($mode -eq 'missing') { 'Expected one failure-control TRX report' } else { 'Expected exactly the failure-control VSTest test' }
+            if ([string]$failure -notlike "*$expected*") { throw "Invalid failure-control report ($mode) was not rejected: $failure" }
+        }
+    }
+    'test' | Set-Content -LiteralPath (Join-Path $scripts 'failure-verb.txt')
+
     # Exercise the generated discovery host with an unwritable phase path, too.
     $tokens = $null
     $parseErrors = $null
@@ -120,6 +166,31 @@ if ($verb -eq $failureVerb) {
     $smokeSource.Replace('[TimeSpan]::FromSeconds(90)', '[TimeSpan]::FromSeconds(3)') |
         Set-Content -LiteralPath (Join-Path $scripts 'Test-AgentDotNetVstest.ps1')
     New-Item -ItemType File -Path (Join-Path $scripts 'stall.txt') | Out-Null
+    # Keep process startup separate from the shortened stall deadline. The smoke
+    # retains its production 90-second startup/teardown bound; only this test
+    # waits for the fake guard's PID before returning the real process handle.
+    function Start-Process {
+        [CmdletBinding()]
+        param([string]$FilePath, [string[]]$ArgumentList, [string]$RedirectStandardOutput,
+            [string]$RedirectStandardError, [switch]$PassThru, [string]$WindowStyle)
+        $hostProcess = Microsoft.PowerShell.Management\Start-Process @PSBoundParameters
+        $startup = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            while (-not (Test-Path -LiteralPath (Join-Path $scripts 'host-pid.txt'))) {
+                if ($hostProcess.WaitForExit(50)) { throw 'Stall host exited before readiness.' }
+                if ($startup.Elapsed.TotalSeconds -ge 30) { throw 'Stall host did not become ready within 30s.' }
+            }
+            return $hostProcess
+        }
+        catch {
+            if (-not $hostProcess.HasExited) {
+                $hostProcess.Kill($true)
+                $null = $hostProcess.WaitForExit(5000)
+            }
+            $hostProcess.Dispose()
+            throw
+        }
+    }
     $diagnostics = Join-Path $testRoot 'diagnostics-stall'
     $failure = $null
     try {

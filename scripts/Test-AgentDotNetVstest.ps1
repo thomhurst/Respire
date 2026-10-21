@@ -146,9 +146,20 @@ exit $guardExitCode
     if ((Get-Content -LiteralPath $env:RESPIRE_VSTEST_GUARD_TEST_MARKER).Count -ne 1) { throw 'Selected test did not execute exactly once.' }
     Write-VstestPhase 'discovery and execution assertions passed'
     Write-VstestPhase 'failure control started'
-    & $guardScript -TimeoutSeconds $smokeTimeoutSeconds -SingleNode -DotNetArguments ($baseArguments + @('--filter', 'FullyQualifiedName=GuardVstestTests.UnselectedTestFails'))
+    $failureResults = Join-Path $testRoot 'failure-results'
+    & $guardScript -TimeoutSeconds $smokeTimeoutSeconds -SingleNode -DotNetArguments ($baseArguments + @('--filter', 'FullyQualifiedName=GuardVstestTests.UnselectedTestFails', '--logger', 'trx', '--results-directory', $failureResults))
     Write-VstestPhase "failure control returned; exit=$LASTEXITCODE"
     if ($LASTEXITCODE -ne 1) { throw "Expected test-failure exit 1, received $LASTEXITCODE" }
+    $failureReports = @(Get-ChildItem -LiteralPath $failureResults -Filter '*.trx' -Recurse -ErrorAction SilentlyContinue)
+    if ($failureReports.Count -ne 1) { throw "Expected one failure-control TRX report, found $($failureReports.Count)." }
+    [xml]$failureTrx = Get-Content -LiteralPath $failureReports[0].FullName
+    $failureCounters = $failureTrx.TestRun.ResultSummary.Counters
+    $failureTests = @($failureTrx.TestRun.Results.UnitTestResult)
+    if ($failureCounters.total -ne '1' -or $failureCounters.executed -ne '1' -or $failureCounters.passed -ne '0' -or $failureCounters.failed -ne '1' -or
+        $failureTests.Count -ne 1 -or $failureTests[0].testName -ne 'GuardVstestTests.UnselectedTestFails' -or $failureTests[0].outcome -ne 'Failed' -or
+        $failureTests[0].Output.ErrorInfo.Message -notlike '*guard failure control*') {
+        throw 'Expected exactly the failure-control VSTest test to execute and fail with its deliberate exception.'
+    }
     Write-VstestPhase 'all VSTest assertions passed'
     Write-Output 'OK VSTest discovery and execution select exactly one test with conflicting global/environment runner settings.'
 }
