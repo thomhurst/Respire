@@ -142,7 +142,9 @@ public class NodeAddressMappingTests
     [Arguments(true, true, true, true)]
     public async Task SentinelRefreshReconnectsMappedAnnouncement(bool callback, bool identityResolver, bool factory, bool epoch)
     {
-        static FakeRespServer Primary() => new(16, FakeRespServer.OkReply)
+        // The identity resolver keeps "localhost". Accept both loopback families so an
+        // IPv6-first DNS answer does not spend Windows' refusal delay on every refresh.
+        static FakeRespServer Primary() => new(16, () => TcpListener.Create(0), FakeRespServer.OkReply)
         {
             ReplyOverride = (_, command) => command == "ROLE" ? "*3\r\n+master\r\n:0\r\n*0\r\n"u8.ToArray() : null,
         };
@@ -156,7 +158,9 @@ public class NodeAddressMappingTests
             {
                 "SENTINEL MASTER mymaster" when epoch => Encoding.ASCII.GetBytes($"*6\r\n+ip\r\n+{announced.Host}\r\n+port\r\n+{announced.Port}\r\n+config-epoch\r\n+42\r\n"),
                 "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => Encoding.ASCII.GetBytes($"*2\r\n+{announced.Host}\r\n+{announced.Port}\r\n"),
-                "SUBSCRIBE +switch-master +sdown +odown" => "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray(),
+                "SUBSCRIBE +switch-master" => "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n"u8.ToArray(),
+                "SUBSCRIBE +sdown" => "*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n"u8.ToArray(),
+                "SUBSCRIBE +odown" => "*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray(),
                 _ => null,
             },
         };

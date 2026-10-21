@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
+using Respire.Commands;
+using Respire.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -13,6 +15,24 @@ namespace Respire.Tests.Networking;
 public class FakeRespServerTests
 {
     private const int RetiredPortAttempts = 10;
+
+    [Test]
+    public async Task SuppliedListenerServesBothLoopbackFamilies()
+    {
+        IPAddress[] addresses = Socket.OSSupportsIPv6
+            ? [IPAddress.Loopback, IPAddress.IPv6Loopback]
+            : [IPAddress.Loopback];
+        await using var server = new FakeRespServer(addresses.Length, () => TcpListener.Create(0), FakeRespServer.PongReply);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        foreach (var address in addresses)
+        {
+            await using var connection = await RespireConnection.ConnectAsync(address.ToString(), server.Port,
+                new RespireConnectionOptions { Protocol = RespireProtocol.Resp2 }, cancellationToken: deadline.Token);
+            using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token);
+            await Assert.That(reply.AsString()).IsEqualTo("PONG");
+        }
+        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(addresses.Length);
+    }
 
     [Test]
     public async Task ListenerAllocationDoesNotReuseRetiredEndpoint()

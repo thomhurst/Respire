@@ -130,10 +130,20 @@ internal sealed class FakeRespServer : IAsyncDisposable
     }
 
     public FakeRespServer(int maxConnections, Task acceptGate, params byte[][] replies)
+        : this(maxConnections, acceptGate, null, replies)
+    {
+    }
+
+    public FakeRespServer(int maxConnections, Func<TcpListener> createListener, params byte[][] replies)
+        : this(maxConnections, Task.CompletedTask, createListener, replies)
+    {
+    }
+
+    private FakeRespServer(int maxConnections, Task acceptGate, Func<TcpListener>? createListener, byte[][] replies)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
         _replies = replies;
-        _listener = StartListener();
+        _listener = StartListener(createListener);
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
         _acceptTask = Task.Run(async () =>
         {
