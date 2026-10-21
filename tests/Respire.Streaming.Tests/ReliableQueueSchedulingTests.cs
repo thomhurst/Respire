@@ -318,10 +318,8 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
 
     private static async Task AssertPendingCount(IRespireClient client, RespireReliableQueue<string> queue, int expected)
     {
-        using var payloads = await client.ExecuteAsync("HLEN", [queue.StreamKey + ":scheduled"]);
-        using var deadlines = await client.ExecuteAsync("ZCARD", [queue.StreamKey + ":scheduled-due"]);
-        await Assert.That(payloads.AsInteger()).IsEqualTo(expected);
-        await Assert.That(deadlines.AsInteger()).IsEqualTo(expected);
+        await Assert.That(await client.Hashes.CountAsync(queue.StreamKey + ":scheduled")).IsEqualTo(expected);
+        await Assert.That(await client.SortedSets.CountAsync(queue.StreamKey + ":scheduled-due")).IsEqualTo(expected);
     }
 
     private static async Task<long> Score(IRespireClient client, string key, string id)
