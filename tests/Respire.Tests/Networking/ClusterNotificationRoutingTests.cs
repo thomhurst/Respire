@@ -7,6 +7,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
+[ParallelLimiter<TimingSensitive>]
 public class ClusterNotificationRoutingTests
 {
     private static readonly byte[] Hello = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();

@@ -7,6 +7,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
+[ParallelLimiter<TimingSensitive>]
 public class ClusterMigrationCommandTests
 {
     [Test]

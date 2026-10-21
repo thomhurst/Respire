@@ -9,6 +9,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
+[ParallelLimiter<TimingSensitive>]
 public class ClusterReadOnlyTests
 {
     private static readonly byte[] ReadOnlyReply = "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
