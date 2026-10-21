@@ -19,6 +19,7 @@ FAMILIES = ("ExecuteScriptCoreAsync", "ExecuteScriptOnConnectionCoreAsync")
 POLICIES = ("Default", "Disabled", "Enabled")
 DRIVER = Path("tools/Respire.CommandRetryJit")
 FIXTURE = Path("benchmarks/Respire.Benchmarks/CommandRetryBenchmarks.cs")
+OPERATIONS = 16384
 
 
 def verify_pins(baseline, candidate, parents):
@@ -63,7 +64,12 @@ def run(workspace):
                   "infrastructure": subprocess.check_output(
                       ["git", "-C", str(infrastructure), "rev-parse", "HEAD"], text=True).strip(),
                   "fixtureSha256": hashlib.sha256(fixture).hexdigest(),
-                  "framework": "net10.0", "operationsPerProcess": 16384,
+                  "framework": "net10.0", "operationsPerProcess": OPERATIONS,
+                  "buildInputs": {name: {str(path): hashlib.sha256((source / path).read_bytes()).hexdigest()
+                                         for path in (Path("Directory.Build.props"), Path("Directory.Packages.props"))}
+                                  for name, source in sources.items()},
+                  "dotnetInfo": {name: subprocess.check_output(["dotnet", "--info"], cwd=source, text=True)
+                                 for name, source in sources.items()},
                   "purpose": "JIT diagnostics only; no timing or performance acceptance"}
     (output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     for name, source in sources.items():
@@ -82,6 +88,8 @@ def run(workspace):
                 directory = output / mode / phase / policy
                 directory.mkdir(parents=True)
                 environment = dict(os.environ, DOTNET_TieredCompilation="1" if mode == "tiered" else "0",
+                                   # Start counting immediately, rather than racing the default delay.
+                                   DOTNET_TC_CallCountingDelayMs="0",
                                    # Qualify both wrappers and compiler-generated script types.
                                    # JitDisasmAssemblies is unavailable in release runtimes;
                                    # broad MoveNext matching also interleaves unrelated JIT output.
@@ -89,12 +97,18 @@ def run(workspace):
                                    DOTNET_JitDisasmDiffable="1",
                                    DOTNET_JitStdOutFile=str(directory / "jit.asm"))
                 with (directory / "exercise.log").open("w") as log:
-                    subprocess.run(["dotnet", str(DRIVER / "bin/Release/net10.0/Respire.CommandRetryJit.dll"), policy],
+                    subprocess.run(["dotnet", str(DRIVER / "bin/Release/net10.0/Respire.CommandRetryJit.dll"),
+                                    policy, str(OPERATIONS)],
                                    cwd=source, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
-                completion = f"JIT_EXERCISE_COMPLETE policy={policy} operations=16384"
+                completion = f"JIT_EXERCISE_COMPLETE policy={policy} operations={OPERATIONS}"
                 if completion not in (directory / "exercise.log").read_text():
                     raise ValueError(f"Incomplete exercise: {mode}/{phase}/{policy}")
-                methods = validate_dump((directory / "jit.asm").read_text(), mode)
+                try:
+                    methods = validate_dump((directory / "jit.asm").read_text(), mode)
+                except (ValueError, OSError) as error:
+                    message = f"{mode}/{phase}/{policy}: {directory / 'jit.asm'}: {error}"
+                    (directory / "failure.json").write_text(json.dumps({"error": message}, indent=2) + "\n")
+                    raise ValueError(message) from error
                 manifest = {"mode": mode, "phase": phase, "policy": policy, "methods": methods}
                 (directory / "methods.json").write_text(json.dumps(manifest, indent=2) + "\n")
                 manifests.append(manifest)

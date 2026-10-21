@@ -1,6 +1,10 @@
 import unittest
+import json
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
-from CommandRetryJit import BASELINE, CANDIDATE, HEAD, FAMILIES, validate_dump, verify_pins
+from CommandRetryJit import BASELINE, CANDIDATE, HEAD, FAMILIES, DRIVER, FIXTURE, OPERATIONS, run, validate_dump, verify_pins
 
 
 def dump(tier="Tier1", families=FAMILIES):
@@ -9,6 +13,44 @@ def dump(tier="Tier1", families=FAMILIES):
 
 
 class CommandRetryJitTests(unittest.TestCase):
+    def test_collection_records_inputs_and_reports_failed_dump_context(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            for name in ("baseline", "candidate", "infrastructure"):
+                source = workspace / name
+                (source / FIXTURE).parent.mkdir(parents=True)
+                (source / FIXTURE).write_text("fixture")
+                (source / DRIVER).parent.mkdir(parents=True)
+                if name == "infrastructure":
+                    (source / DRIVER).mkdir()
+                for props in ("Directory.Build.props", "Directory.Packages.props"):
+                    (source / props).write_text("<Project />")
+
+            def check_output(command, **kwargs):
+                if command == ["dotnet", "--info"]:
+                    return "test SDK info"
+                if "--format=%P" in command:
+                    return f"{BASELINE} {HEAD}"
+                return BASELINE if command[2].endswith("baseline") else CANDIDATE
+
+            def execute(command, **kwargs):
+                if command[1].endswith(".dll"):
+                    self.assertEqual(command[-2:], ["Default", str(OPERATIONS)])
+                    self.assertEqual(kwargs["env"]["DOTNET_TC_CallCountingDelayMs"], "0")
+                    self.assertEqual(kwargs["env"]["DOTNET_TieredCompilation"], "1")
+                    kwargs["stdout"].write(f"JIT_EXERCISE_COMPLETE policy=Default operations={OPERATIONS}")
+                    Path(kwargs["env"]["DOTNET_JitStdOutFile"]).write_text(dump("Tier0"))
+
+            with patch("CommandRetryJit.subprocess.check_output", side_effect=check_output), \
+                    patch("CommandRetryJit.subprocess.run", side_effect=execute):
+                with self.assertRaisesRegex(ValueError, r"tiered/baseline-a/Default: .*jit.asm: Missing Tier1"):
+                    run(workspace)
+            provenance = json.loads((workspace / "jit-results/provenance.json").read_text())
+            self.assertEqual(provenance["dotnetInfo"]["baseline"], "test SDK info")
+            self.assertEqual(len(provenance["buildInputs"]["baseline"]["Directory.Build.props"]), 64)
+            failure = json.loads((workspace / "jit-results/tiered/baseline-a/Default/failure.json").read_text())
+            self.assertIn("Missing Tier1", failure["error"])
+
     def test_exact_original_pair_is_required(self):
         verify_pins(BASELINE, CANDIDATE, [BASELINE, HEAD])
         for baseline, candidate, parents in (
