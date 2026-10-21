@@ -24,6 +24,21 @@ thread-pool growth and runtime caches charge bytes to the measuring thread.
 it wraps the `GC.EndNoGCRegion` failure, unless the measurement itself threw first; that
 exception propagates unchanged.
 
+A lost-region failure reports the 16 MiB reservation and separate preparation and
+measurement snapshots: process and measuring-thread allocation deltas, generation 0/1/2
+collection deltas, latency-mode transitions, and elapsed time. Preparation includes the
+finalizer wait and cast-cache primer. Snapshot counters are outside the measured methods;
+diagnostic strings are built only after region cleanup fails. These diagnostics do not
+retry the sample or permit a nonzero allocation result.
+
+Compare process bytes with thread bytes to identify allocation outside the measured
+thread. A collection or mode change during preparation points to finalizer/runtime or
+other process activity before the measured delegate. The cleanup exception alone does
+not identify the cause: .NET can report `NoGCRegion mode must be set` after an interrupted
+region [clears its bookkeeping](https://github.com/dotnet/runtime/blob/v10.0.0/src/coreclr/gc/gc.cpp#L20844-L20855).
+Preserve the failure and use runtime GC events to
+distinguish an induced collection from budget exhaustion when the counters are ambiguous.
+
 ### When to use a child process
 
 Use a bounded child process when the measured path depends on process-wide state that
