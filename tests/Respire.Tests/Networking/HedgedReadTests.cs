@@ -59,6 +59,7 @@ public class HedgedReadTests
         {
             SuppressReply = command => command.StartsWith("GET ", StringComparison.Ordinal),
         };
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
@@ -67,6 +68,7 @@ public class HedgedReadTests
             ReadFrom = RespireReadFrom.ReplicaPreferred,
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(10), MaximumExtraLoadPercent = 100 },
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("primary");
         await Assert.That(primary.ReceivedCommands).Contains("GET key");
@@ -80,7 +82,9 @@ public class HedgedReadTests
     {
         await using var primary = new FakeRespServer(Bulk("primary")) { SuppressReply = _ => true };
         await using var replica = Replica();
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica) with { ReadFrom = RespireReadFrom.PrimaryPreferred });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("replica");
         await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["ROLE", "GET key"]);
@@ -92,7 +96,9 @@ public class HedgedReadTests
     {
         await using var primary = new FakeRespServer(Bulk("primary"));
         await using var replica = Replica();
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica));
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var first = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, deadline.Token, observation: default);
         var alternate = await client.Core.ReadRouter.GetHedgeConnectionAsync(RespireReadFrom.Replica, first, deadline.Token);
@@ -107,7 +113,9 @@ public class HedgedReadTests
         await using var primary = new FakeRespServer(Bulk("primary"));
         await using var firstReplica = Replica();
         await using var secondReplica = Replica();
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, firstReplica, secondReplica) with { ReadFrom = RespireReadFrom.Replica });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var selected = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, deadline.Token, observation: default);
         var slow = selected.Port == firstReplica.Port ? firstReplica : secondReplica;
@@ -129,7 +137,9 @@ public class HedgedReadTests
     {
         await using var primary = new FakeRespServer(Bulk("primary"));
         await using var replica = Replica(holdReads: true);
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica));
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var selected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var listener = new MeterListener();
@@ -165,7 +175,9 @@ public class HedgedReadTests
     {
         await using var primary = new FakeRespServer("-ERR optional failed\r\n"u8.ToArray());
         await using var replica = Replica(holdReads: true);
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica));
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var read = client.GetStringAsync("key", deadline.Token).AsTask();
         await WaitForCommandAsync(primary, "GET key", deadline.Token);
@@ -178,7 +190,9 @@ public class HedgedReadTests
     {
         await using var primary = new FakeRespServer("-ERR optional failed\r\n"u8.ToArray());
         await using var replica = Replica(holdReads: true);
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica));
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var read = client.GetStringAsync("key", deadline.Token).AsTask();
         await WaitForCommandAsync(primary, "GET key", deadline.Token);
@@ -192,7 +206,9 @@ public class HedgedReadTests
     {
         await using var primary = new FakeRespServer(Bulk("primary")) { SuppressReply = command => command == "GET held" };
         await using var replica = Replica(holdReads: true);
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica));
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         using var caller = new CancellationTokenSource();
         var read = client.GetStringAsync("held", caller.Token).AsTask();
@@ -211,7 +227,9 @@ public class HedgedReadTests
     {
         await using var primary = new FakeRespServer(Bulk("primary"));
         await using var replica = Replica(holdReads: true);
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica) with { MaxInflightCommands = 1 });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var strict = client.WithReadFrom(RespireReadFrom.Replica);
         var blocker = strict.GetStringAsync("blocker", deadline.Token).AsTask();
@@ -238,10 +256,12 @@ public class HedgedReadTests
         await using var primary = new FakeRespServer(16, FakeRespServer.OkReply);
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, replica.Port) : NodeReply(command, "primary");
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary) with
         {
             Protocol = protocol, UseCluster = true, ClusterTopologyRefreshInterval = null,
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await Assert.That(await client.GetStringAsync("{hedge}:key", deadline.Token)).IsEqualTo("primary");
         await Assert.That(replica.ReceivedCommands).Contains("READONLY");
@@ -267,11 +287,13 @@ public class HedgedReadTests
         await using var primary = new FakeRespServer(16, FakeRespServer.OkReply);
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, replica.Port) : NodeReply(command, "primary");
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary) with
         {
             UseCluster = true, ClusterTopologyRefreshInterval = null,
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(200), MaximumExtraLoadPercent = 100 },
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var read = client.GetStringAsync("key", deadline.Token).AsTask();
         await WaitForCommandAsync(replacement, "GET key", deadline.Token);
@@ -296,7 +318,9 @@ public class HedgedReadTests
             ? SlotReply(primary.Port, replica.Port)
             : command == "GET key" ? Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{replacement.Port}\r\n")
             : NodeReply(command, "primary");
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary) with { UseCluster = true, ClusterTopologyRefreshInterval = null });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("replacement");
         await Assert.That(primary.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
@@ -310,7 +334,9 @@ public class HedgedReadTests
         await using var primary = new FakeRespServer(16, FakeRespServer.OkReply)
         { ReplyOverride = (_, command) => NodeReply(command, "primary") };
         await using var replica = Replica(holdReads: true);
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica) with { ReadFrom = RespireReadFrom.Nearest });
+#pragma warning restore RESP010
         var sampler = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
         client.Core.ReadRouter.NearestLatency = sampler;
@@ -330,7 +356,9 @@ public class HedgedReadTests
             ReplyOverride = (_, command) => NodeReply(command, "primary"),
         };
         await using var replica = Replica(holdReads: true);
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica) with { Password = "secret" });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var read = client.GetStringAsync("key", deadline.Token).AsTask();
         try
@@ -376,10 +404,12 @@ public class HedgedReadTests
                 if (tag.Key == "server.port" && (Equals(tag.Value, primary.Port) || Equals(tag.Value, replica.Port))) return true;
             return false;
         }
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica) with
         {
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(10), MaximumExtraLoadPercent = 50 },
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await client.GetStringAsync("warm", deadline.Token);
         // One warm read funds the slow read's hedge. The final fast read has no remaining
@@ -403,10 +433,12 @@ public class HedgedReadTests
         await using var primary = new FakeRespServer(Bulk("primary"));
         if (delayPrimaryReply) primary.DelayCommand("GET ", 100);
         await using var replica = Replica(holdReads: true);
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica) with
         {
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(1), MaximumExtraLoadPercent = 5 },
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         const int count = 200;
         var reads = Enumerable.Range(0, count).Select(index =>
@@ -433,10 +465,12 @@ public class HedgedReadTests
         await using var primary = new FakeRespServer(16, FakeRespServer.OkReply)
         { ReplyOverride = (_, command) => NodeReply(command, "primary") };
         await using var replica = Replica(holdReads: true);
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica) with
         {
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(1), MaximumExtraLoadPercent = 25 },
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         for (var i = 0; i < 4; i++)
         {
@@ -470,12 +504,14 @@ public class HedgedReadTests
         await using var primary = new FakeRespServer(16, FakeRespServer.OkReply);
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, replica.Port) : NodeReply(command, "primary");
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica) with
         {
             ReadFrom = RespireReadFrom.Replica, UseCluster = cluster,
             ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
             ClusterTopologyRefreshInterval = null, MaxInflightCommands = 1,
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var blocker = client.GetStringAsync("blocker", deadline.Token).AsTask();
         await WaitForCommandAsync(replica, "GET blocker", deadline.Token);
@@ -519,11 +555,13 @@ public class HedgedReadTests
         var selected = policy == RespireReadFrom.Primary ? primary : replica;
         var other = policy == RespireReadFrom.Primary ? replica : primary;
         selected.SuppressReply = command => command.StartsWith("GET ", StringComparison.Ordinal);
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica) with
         {
             ReadFrom = policy,
             HedgedReads = enabled ? new() { Delay = TimeSpan.FromMilliseconds(1), MaximumExtraLoadPercent = 100 } : null,
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var read = client.GetStringAsync("held", deadline.Token).AsTask();
         await WaitForCommandAsync(selected, "GET held", deadline.Token);
@@ -542,7 +580,9 @@ public class HedgedReadTests
             SuppressReply = command => command.StartsWith("SET ", StringComparison.Ordinal),
         };
         await using var replica = Replica();
+#pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica));
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var write = client.SetAsync("key", "value", cancellationToken: deadline.Token).AsTask();
         await WaitForCommandAsync(primary, "SET key value", deadline.Token);

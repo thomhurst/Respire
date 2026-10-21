@@ -24,8 +24,10 @@ public partial class ReadDedicatedRoutingTests
             blocked.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // This exclusion scenario owns and disposes its client to isolate discovery and failed dedicated candidates.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.Nearest)
             with { SentinelPrimaryName = "primary" });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await blocked.Task.WaitAsync(deadline.Token);
         while (client.Core.Sentinel!.SubscribedSentinelCount == 0) await Task.Delay(5, deadline.Token);
@@ -49,8 +51,10 @@ public partial class ReadDedicatedRoutingTests
         await using var primary = Node("primary", false);
         await using var replica = Node("replica", true);
         await using var sentinel = Sentinel(primary, () => [replica]);
+#pragma warning disable RESP010 // This exclusion scenario owns and disposes its client to isolate discovery and failed dedicated candidates.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.Nearest)
             with { SentinelPrimaryName = "primary" });
+#pragma warning restore RESP010
         await SentinelTestSetup.WaitForStartupAsync(client);
         var router = client.Core.ReadRouter;
         await router.RefreshNowAsync(default);
@@ -97,12 +101,14 @@ public partial class ReadDedicatedRoutingTests
         await using var second = Node("second", true);
         var connections = new ConcurrentDictionary<int, int>();
         var attempts = new ConcurrentDictionary<int, int>();
+#pragma warning disable RESP010 // This exclusion scenario owns and disposes its client to isolate discovery and failed dedicated candidates.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [first, second], policy) with
         {
             ReplicaRefreshInterval = TimeSpan.Zero,
             ClientAvailabilityZone = ReadFallbackPolicy.UsesAvailabilityZone(policy) ? "local" : null,
             TestingStreamFactory = OpenStreamAsync,
         });
+#pragma warning restore RESP010
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>(
             (connection, _) => ValueTask.FromResult(connection.Port == first.Port ? 1L
                 : connection.Port == second.Port ? 10L : 100L), () => 0L);
@@ -140,10 +146,12 @@ public partial class ReadDedicatedRoutingTests
         var primaryConnections = 0;
         var rentalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var failRental = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+#pragma warning disable RESP010 // This exclusion scenario owns and disposes its client to isolate discovery and failed dedicated candidates.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.Nearest) with
         {
             SentinelPrimaryName = "primary", TestingStreamFactory = OpenStreamAsync,
         });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         router.NearestLatency = new ReadLatencySampler<RespireConnection>(
             (connection, _) => ValueTask.FromResult(connection.Port == primary.Port ? 1L : 10L), () => 0L);

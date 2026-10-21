@@ -225,6 +225,7 @@ public class ReadLatencySamplerTests
         {
             SuppressReply = command => (command == "PING" || command == "GET blocked") && Volatile.Read(ref suppress),
         };
+#pragma warning disable RESP010 // This wire-probe scenario owns and disposes its client to isolate outstanding replies and command deadlines.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
@@ -232,6 +233,7 @@ public class ReadLatencySamplerTests
             CommandTimeout = commandDeadline ? TimeSpan.FromMilliseconds(250) : null,
             ConnectionIdleReadTimeout = null,
         });
+#pragma warning restore RESP010
         await using var sampler = ReadLatencySampler.Create();
         var connection = client.Core.Multiplexer.GetConnection();
         await Assert.That(await sampler.GetLatencyAsync(connection, default))

@@ -14,7 +14,9 @@ public partial class ReadDedicatedRoutingTests
     {
         await using var primary = Node("primary", false);
         await using var replica = Node("replica", true);
+#pragma warning disable RESP010 // This cleanup scenario owns and disposes its client to isolate pool retirement and disposal failures.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], RespireReadFrom.PrimaryPreferred));
+#pragma warning restore RESP010
         var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
         await pool.RetireAsync();
         using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(1));
@@ -34,8 +36,10 @@ public partial class ReadDedicatedRoutingTests
         FakeRespServer[] replicas = [replica];
         await using var sentinel = Sentinel(primary, () => Volatile.Read(ref replicas));
         using var logger = new PausedReplicaCleanupLogger(replica.Port, cleanupFails);
+#pragma warning disable RESP010 // This cleanup scenario owns and disposes its client to isolate pool retirement and disposal failures.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.ReplicaPreferred)
             with { SentinelPrimaryName = "primary", LoggerFactory = logger });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         var lease = await router.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, CancellationToken.None, observation: default);
         lease.Pool.Return(lease.Connection);

@@ -20,11 +20,13 @@ public partial class ReadDedicatedRoutingTests
         await using var primary = Node("primary", false);
         await using var replica = Node("replica", true);
         var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = RespireClient.Create(Options(primary, [replica], RespireReadFrom.PrimaryPreferred) with
         {
             TestingStreamFactory = OpenStreamAsync,
             ConnectTimeout = TimeSpan.FromMilliseconds(200),
         });
+#pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         var read = client.ExecuteAsync(RespireCommands.Stream.XREAD,
             ["BLOCK", 1, "STREAMS", "key", "0"], cancellationToken: caller.Token).AsTask();
@@ -69,10 +71,12 @@ public partial class ReadDedicatedRoutingTests
         var attempts = 0;
         try
         {
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
             await using var client = await RespireClient.ConnectAsync(Options(primary, replicas, policy) with
             {
                 TestingStreamFactory = OpenStreamAsync,
             });
+#pragma warning restore RESP010
             client.Core.ReadRouter.FailedReplicaCooldown = TimeSpan.FromMinutes(1);
             client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>(
                 (connection, _) => ValueTask.FromResult(connection.Port == primary.Port ? 100L : 1L), () => 0L);
@@ -122,11 +126,13 @@ public partial class ReadDedicatedRoutingTests
         var oldRental = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var oldDeadline = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseOld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.Nearest) with
         {
             SentinelPrimaryName = "primary", TestingStreamFactory = OpenStreamAsync,
             ConnectTimeout = TimeSpan.FromSeconds(2),
         });
+#pragma warning restore RESP010
         await SentinelTestSetup.WaitForStartupAsync(client);
         var router = client.Core.ReadRouter;
         router.NearestLatency = new ReadLatencySampler<RespireConnection>(
@@ -201,7 +207,9 @@ public partial class ReadDedicatedRoutingTests
         await using var sentinel = Sentinel(primary, () => [replica]);
         var options = Options(sentinelMode ? sentinel : primary, sentinelMode ? [] : [replica], policy)
             with { SentinelPrimaryName = sentinelMode ? "primary" : null };
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         for (var index = 0; index < 3; index++)
         {
             using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"]);
@@ -236,8 +244,10 @@ public partial class ReadDedicatedRoutingTests
         var fallbackConnections = 0;
         RejectReads(first);
         if (bothFail) RejectReads(second);
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica],
             primaryFirst ? RespireReadFrom.PrimaryPreferred : RespireReadFrom.ReplicaPreferred) with { TestingStreamFactory = fallbackDeadline ? OpenStreamAsync : null });
+#pragma warning restore RESP010
         if (bothFail || fallbackDeadline)
         {
             var error = await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
@@ -285,8 +295,10 @@ public partial class ReadDedicatedRoutingTests
             if (id > 0 && command == "HELLO 3") primary.CloseConnection(id);
             return previous(id, command);
         };
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], policy)
             with { Protocol = RespireProtocol.Resp3 });
+#pragma warning restore RESP010
         using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"])
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(reply.AsString()).IsEqualTo("replica");
@@ -341,6 +353,7 @@ public partial class ReadDedicatedRoutingTests
             if (failure == 0 && id > 0 && command == "HELLO 3" && Volatile.Read(ref failDedicated)) failedNode.CloseConnection(id);
             return previous(id, command);
         };
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = await RespireClient.ConnectAsync(
             Options(useSentinel ? sentinel : primary, useSentinel ? [] : [replica, fast], RespireReadFrom.Nearest)
             with
@@ -348,6 +361,7 @@ public partial class ReadDedicatedRoutingTests
                 Protocol = RespireProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null,
                 TestingStreamFactory = failure == 0 ? null : OpenStreamAsync,
             });
+#pragma warning restore RESP010
         if (useSentinel) await SentinelTestSetup.WaitForStartupAsync(client);
         long now = 0;
         var router = client.Core.ReadRouter;
@@ -475,12 +489,14 @@ public partial class ReadDedicatedRoutingTests
         var connections = new System.Collections.Concurrent.ConcurrentDictionary<int, int>();
         var failedPort = 0;
         var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = await RespireClient.ConnectAsync(
             Options(useSentinel ? sentinel : primary, useSentinel ? [] : [first, second], policy) with
             {
                 Protocol = RespireProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null,
                 TestingStreamFactory = OpenStreamAsync,
             });
+#pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         var read = client.ExecuteAsync(RespireCommands.Stream.XREAD,
             ["BLOCK", 1, "STREAMS", "key", "0"], cancellationToken: caller.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
@@ -536,8 +552,10 @@ public partial class ReadDedicatedRoutingTests
             if (id > 0 && command == "HELLO 3") primary.CloseConnection(id);
             return previous(id, command);
         };
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], policy)
             with { Protocol = RespireProtocol.Resp3, SentinelPrimaryName = "primary" });
+#pragma warning restore RESP010
         var error = await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
                 ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<RespireConnectionException>();
@@ -561,8 +579,10 @@ public partial class ReadDedicatedRoutingTests
         var previous = replica.ReplyOverride!;
         replica.ReplyOverride = (id, command) => id > 0 && command == "ROLE"
             ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray() : previous(id, command);
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica],
             strict ? RespireReadFrom.Replica : RespireReadFrom.ReplicaPreferred));
+#pragma warning restore RESP010
         if (strict)
             await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
                 ["BLOCK", 1, "STREAMS", "key", "0"])).Throws<RespireConnectionException>();
@@ -586,8 +606,10 @@ public partial class ReadDedicatedRoutingTests
             arrived.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica],
             RespireReadFrom.ReplicaPreferred) with { CommandTimeout = TimeSpan.FromMilliseconds(500) });
+#pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         var pending = client.ExecuteAsync(RespireCommands.Stream.XREAD,
             ["BLOCK", 0, "STREAMS", "key", "0"], cancellationToken: caller.Token).AsTask();
@@ -618,8 +640,10 @@ public partial class ReadDedicatedRoutingTests
         await using var replica = Node("replica", true);
         FakeRespServer[] replicas = [replica];
         await using var sentinel = Sentinel(primary, () => Volatile.Read(ref replicas));
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.ReplicaPreferred)
             with { SentinelPrimaryName = "primary" });
+#pragma warning restore RESP010
         var lease = await client.Core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, CancellationToken.None, observation: default);
         lease.Pool.Return(lease.Connection);
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -660,8 +684,10 @@ public partial class ReadDedicatedRoutingTests
         await using var primary = Node("primary", false);
         await using var replica = Node("replica", true);
         var arrived = GateDedicatedRole(replica);
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], RespireReadFrom.ReplicaPreferred)
             with { CommandTimeout = null });
+#pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         var pending = client.ExecuteAsync(RespireCommands.Stream.XREAD,
             ["BLOCK", 0, "STREAMS", "key", "0"], cancellationToken: caller.Token).AsTask();
@@ -689,8 +715,10 @@ public partial class ReadDedicatedRoutingTests
         FakeRespServer[] replicas = [replica];
         await using var sentinel = Sentinel(primary, () => Volatile.Read(ref replicas));
         var arrived = GateDedicatedRole(replica);
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.ReplicaPreferred)
             with { SentinelPrimaryName = "primary" });
+#pragma warning restore RESP010
         var pending = client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask();
         await arrived.WaitAsync(TimeSpan.FromSeconds(5));
         Volatile.Write(ref replicas, []);
@@ -720,7 +748,9 @@ public partial class ReadDedicatedRoutingTests
     {
         await using var primary = Node("primary", false);
         await using var replica = Node("replica", true);
+#pragma warning disable RESP010 // This dedicated-read scenario owns and disposes its client to isolate lease pools and injected connection failures.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], RespireReadFrom.ReplicaPreferred));
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         router.RoleRevalidationInterval = TimeSpan.FromDays(1);
         var first = await router.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, CancellationToken.None, observation: default);
@@ -740,7 +770,9 @@ public partial class ReadDedicatedRoutingTests
         {
             var pending = router.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, CancellationToken.None, observation: default);
             if (!pending.IsCompletedSuccessfully) throw new InvalidOperationException("Warm rental performed asynchronous work.");
+#pragma warning disable RESP009 // IsCompletedSuccessfully above guarantees this allocation probe cannot block or leave the measuring thread.
             var lease = pending.Result;
+#pragma warning restore RESP009
             lease.Pool.Return(lease.Connection);
             if (control) GC.KeepAlive(new byte[37]);
         }

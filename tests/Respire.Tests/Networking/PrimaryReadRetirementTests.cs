@@ -21,11 +21,13 @@ public class PrimaryReadRetirementTests
         var limit = TimeSpan.FromSeconds(5);
         // The multiplexer and its dedicated replacement both perform connection setup.
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
+#pragma warning disable RESP010 // This retirement scenario owns and disposes its client and replacement pools to isolate the admission race.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var core = client.Core;
         var replacement = await core.GetDedicatedPoolAsync(default, observation: default);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -51,7 +51,9 @@ public class ReplicaCursorDeadlineTests
             ReplicaRefreshInterval = TimeSpan.FromMinutes(10),
             BacklogPolicy = failFast ? RespireBacklogPolicy.FailFast : RespireBacklogPolicy.Queue,
         };
+#pragma warning disable RESP010 // This cursor scenario owns and disposes its client to isolate pinned acquisition, command budgets, and cancellation.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         // Prepare the socket outside the first page's command budget.
         var selection = await router.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), default, default);

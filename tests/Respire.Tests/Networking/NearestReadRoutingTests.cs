@@ -24,7 +24,9 @@ public partial class NearestReadRoutingTests
             ReplicaRefreshInterval = TimeSpan.Zero,
             CommandTimeout = null, ConnectionIdleReadTimeout = null,
         };
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), deadline.Token, observation: default);
         await using var sampler = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));
@@ -67,7 +69,9 @@ public partial class NearestReadRoutingTests
             Connections = 2, ReplicaRefreshInterval = TimeSpan.Zero,
             CommandTimeout = null, ConnectionIdleReadTimeout = null,
         };
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), deadline.Token, observation: default);
         var entry = selection.Replica!;
@@ -100,7 +104,9 @@ public partial class NearestReadRoutingTests
             Connections = 3, ReplicaRefreshInterval = TimeSpan.Zero,
             CommandTimeout = null, ConnectionIdleReadTimeout = null,
         };
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), deadline.Token, observation: default);
         var entry = selection.Replica!;
@@ -138,7 +144,9 @@ public partial class NearestReadRoutingTests
             ? SlotReply(primary.Port, 0, 16383) : Reply(command, "primary");
         var options = Options(primary) with { Connections = 3, CommandTimeout = null, ConnectionIdleReadTimeout = null };
         if (cluster) options = options with { UseCluster = true, ClusterTopologyRefreshInterval = null };
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var slot = ClusterHash.GetSlot("key");
         var multiplexer = cluster ? client.Core.Cluster!.GetKnownSlotOwner(slot)! : client.Core.Multiplexer;
@@ -182,7 +190,9 @@ public partial class NearestReadRoutingTests
             CommandTimeout = null, ConnectionIdleReadTimeout = null,
         };
         if (cluster) options = options with { UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null };
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var slot = ClusterHash.GetSlot("key");
         var replicaConnection = cluster
@@ -211,7 +221,9 @@ public partial class NearestReadRoutingTests
         await using var primary = Server("primary");
         await using var replica = Server("replica");
         var options = Options(primary, replica) with { ReplicaRefreshInterval = TimeSpan.Zero };
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), default, observation: default);
         var probe = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var sampler = new ReadLatencySampler<RespireConnection>((_, token) => new(probe.Task.WaitAsync(token)));
@@ -246,7 +258,9 @@ public partial class NearestReadRoutingTests
             CommandTimeout = null, ConnectionIdleReadTimeout = null,
         };
         if (cluster) options = options with { UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null };
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         var slot = ClusterHash.GetSlot("key");
         var connections = new Dictionary<int, RespireConnection>();
         for (var index = 0; index < 12 && connections.Count < 4; index++)
@@ -283,12 +297,14 @@ public partial class NearestReadRoutingTests
                 .Replace("127.0.0.1", "localhost")) : Reply(command, "primary");
         target.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? System.Text.Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$0\r\n\r\n:{target.Port}\r\n") : Reply(command, "primary");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
             Endpoints = [new("localhost", source.Port)],
             Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             UseCluster = true, ClusterTopologyRefreshInterval = null,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var owner = router.GetKnownSlotOwner(0)!;
         var connection = owner.GetConnection();
@@ -329,7 +345,9 @@ public partial class NearestReadRoutingTests
             primary.DelayCommand("AUTH ", 3_000);
         }
         if (cluster) options = options with { UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null };
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         // Connection handshakes and topology discovery are setup, not sampling wait time.
         // Acquire every transport before dispatch: once one replica is ready, ordinary reads
         // can keep using it while skipping cold alternatives. Leave latency samples cold.
@@ -404,10 +422,12 @@ public partial class NearestReadRoutingTests
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? System.Text.Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n")
             : Reply(command, "primary");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(Options(primary) with
         {
             UseCluster = true, ClusterTopologyRefreshInterval = null, CommandTimeout = TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         var slot = ClusterHash.GetSlot("key");
         var router = client.Core.Cluster!;
         router.SetSlotOwner(slot, router.GetKnownSlotOwner(slot)!);
@@ -438,11 +458,13 @@ public partial class NearestReadRoutingTests
                 : "*0\r\n"u8.ToArray(),
             SuppressReply = command => command.StartsWith("SENTINEL REPLICAS "),
         };
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", sentinel.Port)], CommandTimeout = TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
         await Assert.That(await nearest.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(2)))
             .IsEqualTo("primary");
@@ -475,7 +497,9 @@ public partial class NearestReadRoutingTests
             ? "-NOPERM ping denied\r\n"u8.ToArray() : Reply(command, "replica");
         try
         {
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
             await using var client = RespireClient.Create(Options(primary, replica));
+#pragma warning restore RESP010
             await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var first = nearest.GetStringAsync("first", cancellation.Token).AsTask();
@@ -497,10 +521,12 @@ public partial class NearestReadRoutingTests
         var wrongRole = false;
         replica.ReplyOverride = (_, command) => command == "ROLE" && Volatile.Read(ref wrongRole)
             ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray() : Reply(command, "replica");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(Options(primary, replica) with
         {
             ReplicaRefreshInterval = TimeSpan.Zero, BacklogPolicy = RespireBacklogPolicy.FailFast,
         });
+#pragma warning restore RESP010
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
@@ -519,12 +545,14 @@ public partial class NearestReadRoutingTests
         var port = ((System.Net.IPEndPoint)unavailable.LocalEndpoint).Port;
         unavailable.Stop();
         await using var replica = Server("replica");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, ConnectTimeout = TimeSpan.FromMilliseconds(200),
             Endpoints = [new("127.0.0.1", port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
+#pragma warning restore RESP010
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
         await Assert.That(await nearest.GetStringAsync("key")).IsEqualTo("replica");
         await Assert.That(await nearest.GetStringAsync("key")).IsEqualTo("replica");
@@ -538,7 +566,9 @@ public partial class NearestReadRoutingTests
         var wrongRole = false;
         replica.ReplyOverride = (_, command) => command == "ROLE" && Volatile.Read(ref wrongRole)
             ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray() : Reply(command, "replica");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(Options(primary, replica) with { ReplicaRefreshInterval = TimeSpan.Zero });
+#pragma warning restore RESP010
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>(async (connection, token) =>
@@ -569,7 +599,9 @@ public partial class NearestReadRoutingTests
         await using var replica = Server("replica");
         replica.ReplyOverride = (_, command) => command == "ROLE"
             ? "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$7\r\nconnect\r\n:0\r\n"u8.ToArray() : Reply(command, "replica");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(Options(primary, replica));
+#pragma warning restore RESP010
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
@@ -586,11 +618,13 @@ public partial class NearestReadRoutingTests
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? System.Text.Encoding.ASCII.GetBytes($"*1\r\n*4\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{replica.Port}\r\n")
             : Reply(command, "primary");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
+#pragma warning restore RESP010
         client.Core.Cluster!.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
         if (movedCoverage)
@@ -627,11 +661,13 @@ public partial class NearestReadRoutingTests
                     ? System.Text.Encoding.ASCII.GetBytes($"*1\r\n*6\r\n$2\r\nip\r\n$9\r\n127.0.0.1\r\n$4\r\nport\r\n${replica.Port.ToString().Length}\r\n{replica.Port}\r\n$5\r\nflags\r\n$5\r\nslave\r\n")
                     : "*0\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", sentinel.Port)],
         });
+#pragma warning restore RESP010
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
         await client.PingAsync();
@@ -648,10 +684,12 @@ public partial class NearestReadRoutingTests
     {
         await using var primary = Server("primary");
         await using var replica = Server("replica");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(Options(primary, replica) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("primary");
@@ -670,7 +708,9 @@ public partial class NearestReadRoutingTests
         replica.ReplyOverride = (_, command) => command.StartsWith("SCAN 0 ")
             ? "*2\r\n$1\r\n7\r\n*1\r\n$1\r\na\r\n"u8.ToArray()
             : command.StartsWith("SCAN 7 ") ? "*2\r\n$1\r\n0\r\n*1\r\n$1\r\nb\r\n"u8.ToArray() : Reply(command, "replica");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(Options(primary, replica));
+#pragma warning restore RESP010
         long now = 100;
         var changed = false;
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
@@ -692,7 +732,9 @@ public partial class NearestReadRoutingTests
         await using var primary = Server("primary");
         await using var slower = Server("slower");
         await using var faster = Server("faster");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(Options(primary, slower, faster));
+#pragma warning restore RESP010
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == faster.Port ? 10L : connection.Port == slower.Port ? 50L : 100L));
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
@@ -709,7 +751,9 @@ public partial class NearestReadRoutingTests
     {
         await using var primary = Server("primary");
         await using var replica = Server("replica");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(Options(primary, replica));
+#pragma warning restore RESP010
         long now = 100;
         var changed = false;
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
@@ -728,7 +772,9 @@ public partial class NearestReadRoutingTests
     {
         await using var primary = Server("primary");
         await using var replica = Server("replica");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(Options(primary, replica));
+#pragma warning restore RESP010
         var reply = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, token) =>
         {
@@ -747,7 +793,9 @@ public partial class NearestReadRoutingTests
     {
         await using var primary = Server("primary");
         await using var replica = Server("replica");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(Options(primary, replica));
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("primary");
         await Assert.That(client.Core.ReadRouter.NearestLatency).IsNull();
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["GET key"]);
@@ -761,7 +809,9 @@ public partial class NearestReadRoutingTests
         await using var replica = Server("replica");
         primary.ReplyOverride = (_, command) => command == "PING" ? "-NOPERM ping denied\r\n"u8.ToArray() : Reply(command, "primary");
         replica.ReplyOverride = (_, command) => command == "PING" ? "-NOPERM ping denied\r\n"u8.ToArray() : Reply(command, "replica");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(Options(primary, replica));
+#pragma warning restore RESP010
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
         await Assert.That(await nearest.GetStringAsync("key")).IsNotNull();
         await Assert.That(primary.ReceivedCommands).Contains("PING");
@@ -775,10 +825,12 @@ public partial class NearestReadRoutingTests
         await using var replica = Server("replica");
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383) : Reply(command, "primary");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(Options(primary) with
         {
             UseCluster = true, ClusterTopologyRefreshInterval = null, CommandTimeout = TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var owner = router.GetKnownSlotOwner(0)!;
         router.SetSlotOwner(0, owner);
@@ -822,7 +874,9 @@ public partial class NearestReadRoutingTests
                 ? System.Text.Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${primary.Port.ToString().Length}\r\n{primary.Port}\r\n")
                 : command.StartsWith("SENTINEL REPLICAS ") ? SentinelReplicaReply(replicaPort) : "*0\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel) with { SentinelPrimaryName = "mymaster" });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         await router.RefreshNowAsync(CancellationToken.None);
         router.SentinelRefreshInterval = TimeSpan.Zero;
@@ -863,10 +917,12 @@ public partial class NearestReadRoutingTests
             ? SlotReply(primary.Port, 0, 16383, old.Port) : Reply(command, "primary");
         otherMaster.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 8191, replacement.Port) : Reply(command, "primary");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(Options(primary) with
         {
             UseCluster = true, ClusterTopologyRefreshInterval = null, ReplicaRouteRevalidationInterval = TimeSpan.Zero,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var owner = router.GetKnownSlotOwner(1)!;
         router.SetSlotOwner(8192, router.GetOrCreateNode(new("127.0.0.1", otherMaster.Port)));
@@ -888,10 +944,12 @@ public partial class NearestReadRoutingTests
         await using var replacement = Server("primary");
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383) : Reply(command, "primary");
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(Options(primary) with
         {
             UseCluster = true, ClusterTopologyRefreshInterval = null,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var replacementNode = router.GetOrCreateNode(new("127.0.0.1", replacement.Port));
         // Any advisory discovery after the redirect must describe the replacement too;
@@ -931,6 +989,7 @@ public partial class NearestReadRoutingTests
         seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? SlotReply(seed.Port, 0, 16383) : Reply(command, "primary");
         Action? connectingOld = null;
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(Options(seed) with
         {
             UseCluster = true,
@@ -943,6 +1002,7 @@ public partial class NearestReadRoutingTests
                 return tcp.GetStream();
             },
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var oldNode = router.GetOrCreateNode(new("127.0.0.1", old.Port));
         var replacementNode = router.GetOrCreateNode(new("127.0.0.1", replacement.Port));
@@ -963,6 +1023,7 @@ public partial class NearestReadRoutingTests
     {
         var refused = new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.ConnectionRefused);
         var attempts = 0;
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
@@ -977,6 +1038,7 @@ public partial class NearestReadRoutingTests
                 return ValueTask.FromException<Stream>(refused);
             },
         });
+#pragma warning restore RESP010
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>(
             (_, _) => ValueTask.FromResult(1L), () => 0L);
         client.Core.ReadRouter.FailedReplicaCooldown = TimeSpan.FromMinutes(1);
@@ -1005,10 +1067,12 @@ public partial class NearestReadRoutingTests
             : rejectAuthentication && command.StartsWith("AUTH ")
                 ? "-ERR injected topology handshake failure\r\n"u8.ToArray() : Reply(command, "primary");
         var logger = new RefreshWarningLogger();
+#pragma warning disable RESP010 // This nearest-read scenario owns and disposes its client to isolate latency samples, role validation, and topology.
         await using var client = await RespireClient.ConnectAsync(Options(primary) with
         {
             UseCluster = true, ClusterTopologyRefreshInterval = null, Password = "test-password", LoggerFactory = logger,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         router.SetSlotOwner(0, router.GetKnownSlotOwner(0)!);
         router.NearestLatency = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));

@@ -33,11 +33,13 @@ public class ArrayRoutingTests
             if (command == "ARSET key 2 22") { written = true; return ":1\r\n"u8.ToArray(); }
             return command.StartsWith("ARSCAN ", StringComparison.Ordinal) ? Page(written ? "22" : "11") : FakeRespServer.OkReply;
         };
+#pragma warning disable RESP010 // This array-routing scenario owns and disposes its client to isolate slot topology and batch ordering.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
+#pragma warning restore RESP010
         var reads = client.WithReadFrom(RespireReadFrom.Replica);
         using (var readOnly = reads.CreateBatch())
         {
@@ -83,12 +85,14 @@ public class ArrayRoutingTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // This array-routing scenario owns and disposes its client to isolate slot topology and batch ordering.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
+#pragma warning restore RESP010
         var view = client.WithReadFrom(RespireReadFrom.Replica);
         await view.Arrays.GetStringAsync("a", 2);
         await view.Arrays.GetManyAsync("a", 2, 3);
