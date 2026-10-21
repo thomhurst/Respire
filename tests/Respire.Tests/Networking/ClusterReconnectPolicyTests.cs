@@ -982,7 +982,8 @@ public class ClusterReconnectPolicyTests
     {
         var clock = new GatedDiscoveryClock();
         await using var client = RespireClient.Create(Options(1) with { ClusterDiscoveryClock = clock });
-        var round = new ClusterRouter.DiscoveryRound(client.Core.Cluster, new()
+        var router = await Assert.That(client.Core.Cluster).IsNotNull();
+        var round = new ClusterRouter.DiscoveryRound(router, new()
         {
             InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
         });
