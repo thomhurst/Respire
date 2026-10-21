@@ -199,6 +199,9 @@ public class ReplicaRedirectTargetRecoveryTests
 
         if (lifetime)
         {
+            // Both source and target lifetime workers must register their delays before
+            // advancing: a late registration could otherwise miss this clock advance.
+            while (clock.ActiveTimers < 2) await Task.Delay(10, timeout.Token);
             // Keep the source's recycle unpublished so only the target's fence is measured.
             source.SuppressReply = command => command.StartsWith("HELLO 3", StringComparison.Ordinal);
             clock.Advance(Limit);
