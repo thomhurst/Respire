@@ -162,7 +162,7 @@ published replacement within the current parents' supported dependency ranges:
 | Warning | Dependency path | Upstream change needed |
 | --- | --- | --- |
 | `whatwg-encoding@3.1.1` | `@easyops-cn/docusaurus-search-local@0.55.3` → `cheerio@1.2.0` → `encoding-sniffer@0.2.1` | A Cheerio release containing [cheerio#5157](https://github.com/cheeriojs/cheerio/pull/5157), which updates `encoding-sniffer` to 1.0.2 and uses `@exodus/bytes`. See [cheerio#4977](https://github.com/cheeriojs/cheerio/issues/4977). |
-| `uuid@8.3.2` | `@docusaurus/core@3.10.2` → `webpack-dev-server@5.2.6` → `sockjs@0.3.24` | A compatible SockJS release containing [sockjs-node#315](https://github.com/sockjs/sockjs-node/pull/315), which removes `uuid`, or a Docusaurus update that supports a development-server version without that dependency. See [sockjs-node#316](https://github.com/sockjs/sockjs-node/issues/316). |
+| `uuid@8.3.2` | `@docusaurus/core@3.10.2` → `webpack-dev-server@5.2.7` → `sockjs@0.3.24` | A compatible SockJS release containing [sockjs-node#315](https://github.com/sockjs/sockjs-node/pull/315), which removes `uuid`, or a Docusaurus update that supports a development-server version without that dependency. See [sockjs-node#316](https://github.com/sockjs/sockjs-node/issues/316). |
 
 `encoding-sniffer@1` is outside Cheerio 1.2.0's `^0.2.1` range, and
 `webpack-dev-server@6` is outside Docusaurus 3.10.2's `^5.2.2` range. Do not force
