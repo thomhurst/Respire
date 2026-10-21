@@ -37,6 +37,8 @@ internal sealed class RespireCachingEmbeddingGenerator(
             || string.Equals(options.ModelId, metadata?.DefaultModelId, StringComparison.Ordinal);
         var effectiveDimensions = options?.Dimensions ?? (usesDefaultModel ? metadata?.DefaultModelDimensions : null);
         var scope = GetScope(options, metadata, effectiveDimensions);
+        if (scope is null)
+            return await InnerGenerator.GenerateAsync(inputs, options, cancellationToken).ConfigureAwait(false);
         var unique = inputs.Distinct(StringComparer.Ordinal).ToArray();
         var keys = unique.ToDictionary(input => input,
             input => (RespireKey)(scope + HashInput(input)), StringComparer.Ordinal);
@@ -108,16 +110,25 @@ internal sealed class RespireCachingEmbeddingGenerator(
         };
     }
 
-    private string GetScope(EmbeddingGenerationOptions? options, EmbeddingGeneratorMetadata? metadata, int? effectiveDimensions)
+    private string? GetScope(EmbeddingGenerationOptions? options, EmbeddingGeneratorMetadata? metadata, int? effectiveDimensions)
     {
+        var providerName = metadata?.ProviderName;
+        var providerUri = metadata?.ProviderUri?.ToString();
+        var modelId = options?.ModelId ?? metadata?.DefaultModelId;
+        // JSON replaces unpaired surrogates, which would alias distinct provider/model identities.
+        // Bypass before Redis access while preserving v1 keys for all well-formed identities.
+        if (!EmbeddingCacheIdentity.IsWellFormed(providerName) || !EmbeddingCacheIdentity.IsWellFormed(providerUri)
+            || !EmbeddingCacheIdentity.IsWellFormed(metadata?.ProviderUri?.OriginalString)
+            || !EmbeddingCacheIdentity.IsWellFormed(modelId))
+            return null;
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
         {
             writer.WriteStartArray();
             writer.WriteStringValue(cacheOptions.CacheName);
-            writer.WriteStringValue(metadata?.ProviderName);
-            writer.WriteStringValue(metadata?.ProviderUri?.ToString());
-            writer.WriteStringValue(options?.ModelId ?? metadata?.DefaultModelId);
+            writer.WriteStringValue(providerName);
+            writer.WriteStringValue(providerUri);
+            writer.WriteStringValue(modelId);
             writer.WriteStringValue(effectiveDimensions?.ToString(CultureInfo.InvariantCulture));
             writer.WriteEndArray();
         }

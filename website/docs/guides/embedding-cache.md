@@ -51,6 +51,14 @@ for sensitive data. Change `CacheName` whenever a model deployment changes witho
 a new model ID, or when generators with different configuration share Redis.
 Use separate namespaces or prefixed Redis clients for tenant isolation.
 
+`CacheName` must be nonempty, non-whitespace, and well-formed UTF-16; an unpaired
+surrogate throws `ArgumentException` when configuring the cache. If the provider
+name, provider URI (including its original text), or effective model ID contains an unpaired surrogate,
+the request bypasses all cache reads and writes and goes directly to the provider.
+Valid replacement characters (`U+FFFD`) and surrogate pairs retain their existing
+cache keys. Input text still hashes exact UTF-16 code units, including unpaired
+surrogates.
+
 Request `ModelId` and `Dimensions` override generator metadata for key identity.
 The effective dimensions also validate provider responses and cached vectors.
 Custom option subclasses, `RawRepresentationFactory`, and nonempty request

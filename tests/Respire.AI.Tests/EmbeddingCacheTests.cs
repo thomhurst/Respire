@@ -1,4 +1,6 @@
 using System.Diagnostics.Metrics;
+using System.Security.Cryptography;
+using System.Text;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 using Respire.IntegrationTests;
@@ -68,6 +70,102 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
         using var shared = Build(provider, redis, new() { CacheName = name });
         await shared.GenerateAsync(["same"]);
         provider.Batches.Should().HaveCount(7);
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task MalformedNamespacesAreRejectedBeforeCaching(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var provider = new Generator();
+        foreach (var name in new[] { "\uD800", "\uD801", "\uDC00", "prefix\uD800suffix", "\uDC00\uD800", "\uD800\uD800" })
+        {
+            Action build = () => Build(provider, redis, new() { CacheName = name });
+            build.Should().Throw<ArgumentException>().Which.ParamName.Should().Be("CacheName");
+        }
+        provider.Batches.Should().BeEmpty();
+        (await Keys(redis)).Should().BeEmpty();
+    }
+
+    [Test]
+    [Arguments(2, "provider"), Arguments(3, "provider")]
+    [Arguments(2, "uri"), Arguments(3, "uri")]
+    [Arguments(2, "default-model"), Arguments(3, "default-model")]
+    [Arguments(2, "request-model"), Arguments(3, "request-model")]
+    public async Task MalformedProviderAndModelIdentitiesBypassReadsAndWrites(int protocol, string component)
+    {
+        await using var redis = await Connect(protocol);
+        var provider = new Generator();
+        using var cache = Build(provider, redis, new() { CacheName = "identity" });
+        var options = new EmbeddingGenerationOptions();
+        void SetIdentity(string identity)
+        {
+            switch (component)
+            {
+                case "provider": provider.Provider = identity; break;
+                case "uri": provider.Uri = new(identity, UriKind.Relative); break;
+                case "default-model": provider.Model = identity; break;
+                case "request-model": options.ModelId = identity; break;
+            }
+        }
+
+        SetIdentity("\uFFFD");
+        await cache.GenerateAsync(["same"], options);
+        var key = (await Keys(redis)).Single();
+        var original = await redis.Strings.GetBytesAsync(key);
+        foreach (var identity in new[] { "\uD800", "\uD801", "\uDC00", "prefix\uD800suffix", "\uDC00\uD800", "\uD800\uD800" })
+        {
+            SetIdentity(identity);
+            var previousCount = provider.Batches.Count;
+            for (var i = 0; i < 2; i++)
+            {
+                await cache.GenerateAsync(["same", "same"], options);
+                provider.Batches.Should().HaveCount(previousCount + i + 1);
+                provider.Batches[^1].Should().Equal("same", "same");
+                provider.LastOptions.Should().BeSameAs(options);
+            }
+            (await Keys(redis)).Should().Equal(key);
+            (await redis.Strings.GetBytesAsync(key)).Should().Equal(original!);
+        }
+        SetIdentity("\uFFFD");
+        var calls = provider.Batches.Count;
+        await cache.GenerateAsync(["same"], options);
+        provider.Batches.Should().HaveCount(calls);
+
+        // FailOpen=false and a disposed client prove bypass happens before any Redis access.
+        await redis.DisposeAsync();
+        SetIdentity("\uD800");
+        using var strict = Build(provider, redis, new() { CacheName = "identity", FailOpen = false });
+        await strict.GenerateAsync(["same"], options);
+        provider.Batches.Should().HaveCount(calls + 1);
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task WellFormedUnicodeIdentitiesRetainV1KeysAndCacheHits(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var provider = new Generator();
+        foreach (var identity in new[] { "plain", "\uFFFD", "\uD800\uDC00" })
+        {
+            provider.Provider = identity;
+            provider.Uri = new("https://provider.example/" + identity);
+            provider.Model = identity;
+            using var cache = Build(provider, redis, new() { CacheName = identity });
+            await cache.GenerateAsync(["same"]);
+            var calls = provider.Batches.Count;
+            await cache.GenerateAsync(["same"], new() { ModelId = identity });
+            provider.Batches.Should().HaveCount(calls);
+            // Pin the pre-fix JSON scope and exact UTF-16 input hash for these identities.
+            var scopeJson = identity switch
+            {
+                "plain" => "[\"plain\",\"plain\",\"https://provider.example/plain\",\"plain\",\"2\"]",
+                "\uFFFD" => "[\"\\uFFFD\",\"\\uFFFD\",\"https://provider.example/%EF%BF%BD\",\"\\uFFFD\",\"2\"]",
+                _ => "[\"\\uD800\\uDC00\",\"\\uD800\\uDC00\",\"https://provider.example/\\uD800\\uDC00\",\"\\uD800\\uDC00\",\"2\"]",
+            };
+            var scopeHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(scopeJson)));
+            var inputHash = Convert.ToHexString(SHA256.HashData(new byte[] { 115, 0, 97, 0, 109, 0, 101, 0 }));
+            (await Keys(redis)).Should().Contain($"respire:embedding:v1:{scopeHash}:{inputHash}");
+        }
+        (await Keys(redis)).Should().HaveCount(3);
     }
 
     [Test, Arguments(2), Arguments(3)]
