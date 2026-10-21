@@ -12,7 +12,7 @@ public class JobSchedulingClusterTests
 {
     [Test]
     [NotInParallel]
-    public async Task ActiveFollowupsUseExplicitSameSlotKeysWithPrefixedTransactions()
+    public async Task ActiveFollowupsUseSameSlotKeysWithPrefixedTransactions()
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {

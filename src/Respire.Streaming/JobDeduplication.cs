@@ -183,7 +183,10 @@ internal static class JobDeduplication
                 redis.call('HSET', lifecycleKey, generation, previousState)
                 redis.call('HSET', lifecycleKey, generation .. ':next', previousNext)
             end
-            if not ok then return redis.error_reply(result) end
+            if not ok then
+                if type(result) == 'table' and result.err then return result end
+                return redis.error_reply(result)
+            end
             return result
             """));
 

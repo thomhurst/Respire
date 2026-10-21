@@ -32,26 +32,30 @@ public sealed partial class RespireJobQueue<T>
             or not redis.acl_check_cmd('XDEL', KEYS[1], '0-0') then
             return redis.error_reply('NOPERM job enqueue is not permitted')
         end
-        local target = followup and KEYS[3] or KEYS[1]
+        -- Keep the original three EVAL keys: Redis checks declared key ACLs even
+        -- when unused. Only an active KeepLastIfActive generation touches these
+        -- fixed suffixes of the already-prefixed, same-slot ready key.
+        local target = followup and KEYS[1] .. ':scheduled' or KEYS[1]
+        local followups = followup and KEYS[1] .. ':followups'
         if followup then
             if not redis.acl_check_cmd('XADD', target, '*', unpack(fields))
                 or not redis.acl_check_cmd('XDEL', target, '0-0')
-                or not redis.acl_check_cmd('ZADD', KEYS[4], 0, '0-0')
-                or not redis.acl_check_cmd('ZREM', KEYS[4], '0-0') then
+                or not redis.acl_check_cmd('ZADD', followups, 0, '0-0')
+                or not redis.acl_check_cmd('ZREM', followups, '0-0') then
                 return redis.error_reply('NOPERM job follow-up staging is not permitted')
             end
-            local kind = redis.call('TYPE', KEYS[4]).ok
+            local kind = redis.call('TYPE', followups).ok
             if kind ~= 'none' and kind ~= 'zset' then return redis.error_reply('WRONGTYPE job due index') end
         end
         local id = redis.call('XADD', target, '*', unpack(fields))
         if followup then
-            local indexed = redis.pcall('ZADD', KEYS[4], 0, id)
+            local indexed = redis.pcall('ZADD', followups, 0, id)
             if type(indexed) == 'table' and indexed.err then redis.call('XDEL', target, id); return indexed end
         end
         local recorded = persist(id, followup)
         if type(recorded) == 'table' and recorded.err then
             redis.call('XDEL', target, id)
-            if followup then redis.call('ZREM', KEYS[4], id) end
+            if followup then redis.call('ZREM', followups, id) end
             return recorded
         end
         return {id, 1}
@@ -152,7 +156,7 @@ public sealed partial class RespireJobQueue<T>
     }
 
     private string[] ImmediateKeys(string deduplicationKey)
-        => [StreamKey, deduplicationKey, StreamKey + ":scheduled", StreamKey + ":followups", JobDeduplication.Key(StreamKey)];
+        => [StreamKey, deduplicationKey, JobDeduplication.Key(StreamKey)];
 
     /// <summary>Enqueues with delay, bounded-batch priority and optional lifetime from enqueue.</summary>
     /// <remarks>The returned ID identifies the staged enqueue; processing receives a new ready-stream ID.

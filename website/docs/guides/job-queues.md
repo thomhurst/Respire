@@ -228,6 +228,13 @@ original deduplication window; their displayed mode is `Separate lifecycle`.
 Use `KeepLastIfActive` when an update arriving during processing should trigger one later run:
 
 ```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "refresh", Encoding.UTF8.GetBytes);
+var latestSnapshot = "customer:42 updated";
 await queue.EnqueueAsync(RespireJobDeduplicationMode.KeepLastIfActive,
     "refresh:customer:42", latestSnapshot);
 ```
@@ -279,7 +286,11 @@ permissions, producers accepting immediate follow-ups need `XADD`/`XDEL` on `:sc
 `TYPE`/`ZADD`/`ZREM` on `:followups`. Workers processing this mode need the scheduling
 inspection/promotion permissions on those two keys, even without scheduling options. Workers
 on queues without immediate follow-ups retain their existing ACL requirements. Scripts
-pass every key explicitly in the queue's Cluster slot and honor client key prefixes. Denied
+keep every key in the queue's Cluster slot and honor client key prefixes. Immediate enqueue
+declares only its original ready, deduplication and lifecycle keys, deriving the two fixed
+staging suffixes from the prefixed ready key only for an active follow-up. Ordinary producers
+therefore retain their key permissions; follow-up staging still checks both key and command
+permissions before writing. Denied
 staging or deduplication writes leave the previous successor intact; failed completion leaves
 the active delivery and successor recoverable. The dashboard shows `KeepLastIfActive` and the
 application identity without fetching payloads. Operator retries use a separate lifecycle,

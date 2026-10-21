@@ -17,6 +17,133 @@ public class JobActiveFollowupIntegrationTests(RedisTestContainer redis)
     private const RespireJobDeduplicationMode Mode = RespireJobDeduplicationMode.KeepLastIfActive;
 
     [Test]
+    [Arguments(RespireJobDeduplicationMode.FirstSubmissionWins, false)]
+    [Arguments(RespireJobDeduplicationMode.FirstSubmissionWins, true)]
+    [Arguments(RespireJobDeduplicationMode.Extend, false)]
+    [Arguments(RespireJobDeduplicationMode.Extend, true)]
+    [Arguments(RespireJobDeduplicationMode.Replace, false)]
+    [Arguments(RespireJobDeduplicationMode.Replace, true)]
+    public async Task OrdinaryEnqueuesRetainTheirKeyPermissions(RespireJobDeduplicationMode mode, bool transactional)
+    {
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        var queue = Queue(admin);
+        var user = "ordinary-" + Guid.NewGuid().ToString("N");
+        await admin.Server.AclSetUserAsync(user, ["on", ">password", "+@all", "~" + queue.StreamKey,
+            "~" + Dedup(queue), "~" + Lifecycle(queue)]);
+        try
+        {
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+                with { Username = user, Password = "password" });
+            var producer = Queue(restricted);
+            async Task<RespireJobEnqueueResult> Submit(string payload)
+            {
+                if (!transactional) return await producer.EnqueueAsync(mode, "job", payload);
+                await using var transaction = restricted.CreateTransaction();
+                var pending = producer.Enqueue(transaction, mode, "job", payload);
+                await transaction.CommitAsync();
+                return pending.Result;
+            }
+            await Assert.That((await Submit("first")).Enqueued).IsTrue();
+            await Assert.That((await Submit("duplicate")).Enqueued).IsEqualTo(mode == RespireJobDeduplicationMode.Replace);
+            await admin.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
+            // A superseded Replace envelope is acknowledged before the winner is read.
+            if (mode == RespireJobDeduplicationMode.Replace) await Read(admin, queue);
+            var entry = (await Read(admin, queue)).Single();
+            await Assert.That(entry.GetString("_respire.job.payload"))
+                .IsEqualTo(mode == RespireJobDeduplicationMode.Replace ? "duplicate" : "first");
+        }
+        finally { await admin.Server.AclDeleteUsersAsync([user]); }
+    }
+
+    [Test]
+    [Arguments("redis")]
+    [Arguments("lua")]
+    [Arguments("table")]
+    public async Task TerminalErrorsPreserveTheirMessageAndHeldFollowup(string kind)
+    {
+        await using var client = await Connect();
+        var queue = Queue(client);
+        await queue.EnqueueAsync(Mode, "job", "first");
+        await client.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
+        var active = (await Read(client, queue)).Single();
+        await queue.EnqueueAsync("job", "winner");
+        var failing = Terminal(RespireScript.Create(kind switch
+        {
+            "lua" => "error('NOPERM terminal probe')",
+            "table" => "error({err = 'NOPERM terminal probe'})",
+            _ => "return redis.call('GET', KEYS[1])",
+        }));
+        var error = await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(failing,
+            [queue.StreamKey, Lifecycle(queue)], [Group, "owner", active.Id.Value]))
+            .Throws<RespireServerException>();
+        await Assert.That(error!.Message).Contains(kind == "redis" ? "WRONGTYPE" : "NOPERM terminal probe");
+        await Assert.That(await Complete(client, queue, active)).IsEqualTo(1);
+        await Promote(client, queue);
+        await Assert.That((await Read(client, queue)).Single().GetString("_respire.job.payload")).IsEqualTo("winner");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ActiveFollowupStillRequiresStagingKeyPermissions(bool transactional)
+    {
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        var queue = Queue(admin);
+        await queue.EnqueueAsync(Mode, "job", "first");
+        await admin.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
+        var active = (await Read(admin, queue)).Single();
+        await queue.EnqueueAsync("job", "winner");
+        var user = "staging-" + Guid.NewGuid().ToString("N");
+        await admin.Server.AclSetUserAsync(user, ["on", ">password", "+@all", "~" + queue.StreamKey,
+            "~" + Dedup(queue), "~" + Lifecycle(queue)]);
+        try
+        {
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+                with { Username = user, Password = "password" });
+            var error = await Assert.That(async () =>
+            {
+                if (!transactional) await Queue(restricted).EnqueueAsync("job", "denied");
+                else
+                {
+                    await using var transaction = restricted.CreateTransaction();
+                    var pending = Queue(restricted).Enqueue(transaction, "job", "denied");
+                    await transaction.CommitAsync();
+                    _ = pending.Result;
+                }
+            }).Throws<RespireServerException>();
+            await Assert.That(error!.Message).Contains("NOPERM");
+            await Assert.That(await Complete(admin, queue, active)).IsEqualTo(1);
+            await Promote(admin, queue);
+            await Assert.That((await Read(admin, queue)).Single().GetString("_respire.job.payload")).IsEqualTo("winner");
+        }
+        finally { await admin.Server.AclDeleteUsersAsync([user]); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RestartedWorkerDiscoversAnUnblockedFollowup(bool scheduling)
+    {
+        await using var client = await Connect();
+        var queue = Queue(client);
+        await queue.EnqueueAsync(Mode, "job", "first");
+        await client.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
+        var active = (await Read(client, queue)).Single();
+        await queue.EnqueueAsync("job", "last");
+        await Complete(client, queue, active);
+        var state = new HandlerState();
+        await using var provider = new ServiceCollection().AddSingleton<IRespireClient>(client).AddSingleton(state)
+            .AddRespireJobQueue<Handler, string>("followup", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
+                new() { ReadWait = TimeSpan.FromMilliseconds(10) },
+                scheduling ? new() { SchedulingPollInterval = TimeSpan.FromMilliseconds(10) } : null).BuildServiceProvider();
+        var worker = provider.GetServices<IHostedService>().Single();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await worker.StartAsync(deadline.Token);
+        try { await Assert.That(await state.Followup.Task.WaitAsync(deadline.Token)).IsEqualTo("last"); }
+        finally { await worker.StopAsync(CancellationToken.None); }
+    }
+
+    [Test]
     [Arguments(false, false, 2)]
     [Arguments(false, true, 3)]
     [Arguments(true, false, 3)]
