@@ -546,7 +546,9 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(0, source);
         var disposed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         // Synchronous disposal from the worker's own callback must not wait for that worker.
+#pragma warning disable RESP009 // Bounded synchronous disposal from this callback is the reentrancy/deadlock behavior under test.
         router.NodeRetired += _ => disposed.TrySetResult(router.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)));
+#pragma warning restore RESP009
 
         source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations:
             [new(sourceEndpoint, targetEndpoint, "0")]));
@@ -560,7 +562,9 @@ public class ClusterNodeIdentityTests
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(Options(server.Port));
+#pragma warning restore RESP010
         var core = client.Core;
         var pool = core.CreateServerPool(endpoint);
         await using var activeConnection = await pool.RentAsync(CancellationToken.None);
@@ -577,7 +581,9 @@ public class ClusterNodeIdentityTests
         client.ConnectionStateChanged += change =>
         {
             if (change.Endpoint == sourceEndpoint && change.State == RespireConnectionState.Connected)
+#pragma warning disable RESP009 // Bounded synchronous disposal from this callback is the reentrancy/deadlock behavior under test.
                 disposed.TrySetResult(client.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)));
+#pragma warning restore RESP009
         };
 
         source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1,
@@ -1317,7 +1323,9 @@ public class ClusterNodeIdentityTests
             if (Interlocked.CompareExchange(ref disposalCalls, 1, 0) != 0) return;
             skippedReason = reason;
             sourceRetiredBeforeListener = a.IsRetired;
+#pragma warning disable RESP009 // Bounded synchronous disposal from this callback is the reentrancy/deadlock behavior under test.
             disposedFromListener = router.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
+#pragma warning restore RESP009
         }
         listener.Start();
 
@@ -1748,11 +1756,13 @@ public class ClusterNodeIdentityTests
     [Arguments(true)]
     public async Task CacheMetricsRunOutsideMembershipAndHealthGates(bool retirement)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var core = client.Core;
         var router = core.Cluster!;
         var original = core.Multiplexer;
@@ -1805,11 +1815,13 @@ public class ClusterNodeIdentityTests
     [Test]
     public async Task StaleSnapshotCannotReplaceCurrentIdentityOrSeed()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
@@ -1833,11 +1845,13 @@ public class ClusterNodeIdentityTests
     [Test]
     public async Task ReplicaPromotionCreatesPrimaryTransportAndDropsReplicaIdentity()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
@@ -1875,11 +1889,13 @@ public class ClusterNodeIdentityTests
     [Test]
     public async Task EndpointThatIsPrimaryAndReplicaKeepsSeparateReadOnlyTransport()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
@@ -1913,11 +1929,13 @@ public class ClusterNodeIdentityTests
     [Arguments(true, true)]
     public async Task StaleDiscoveryPreservesRedirectEndpointMappings(bool advertisedAsPreferred, bool knownIdentity)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
@@ -1967,7 +1985,9 @@ public class ClusterNodeIdentityTests
         await using var sourceServer = new FakeRespServer();
         await using var target = new FakeRespServer();
         await using var source = await RespireConnection.ConnectAsync("127.0.0.1", sourceServer.Port);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(Options(sourceServer.Port));
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
@@ -2011,11 +2031,13 @@ public class ClusterNodeIdentityTests
     [Test]
     public async Task DiscardedSnapshotNodeDoesNotRetireOrFlushRepopulatedCache()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
@@ -2050,11 +2072,13 @@ public class ClusterNodeIdentityTests
     public async Task LaterDiscoveryWinsRegardlessOfCompletionOrder(
         bool movedBetweenRequests, bool laterCompletesFirst, bool movedAfterLaterRequest)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
@@ -2105,11 +2129,13 @@ public class ClusterNodeIdentityTests
     [Arguments(true, RespireConnectionState.Connected)]
     public async Task CacheFlushWaitsForMembershipAndHealthCriticalSection(bool retirement, RespireConnectionState state)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var core = client.Core;
         var router = core.Cluster!;
         var original = core.Multiplexer;
@@ -2166,11 +2192,13 @@ public class ClusterNodeIdentityTests
     [Arguments(RespireConnectionState.Disconnected)]
     public async Task StaleHealthCallbacksPreserveRepopulatedCache(RespireConnectionState state)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var core = client.Core;
         var router = core.Cluster!;
         var original = core.Multiplexer;
@@ -2243,7 +2271,9 @@ public class ClusterNodeIdentityTests
             "$5\r\nvalue\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
         await using var seed = new FakeRespServer(
             Topology("localhost", target.Port, "old-id"), Topology("localhost", target.Port, "new-id"));
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         var script = RespireScript.Create("return redis.call('GET', KEYS[1])");
         var execution = await client.StartTrackedScriptExecutionAsync(script, ["key"], [], CancellationToken.None);
         using var result = await execution.ConsumeResponseAsync();
@@ -2383,7 +2413,9 @@ public class ClusterNodeIdentityTests
         var slot = ClusterHash.GetSlot("key");
         await using var seed = new FakeRespServer(Encoding.UTF8.GetBytes("*1\r\n" + Range(
             slot, slot, "127.0.0.1", oldServer.Port, "original", "", includeAliases: false)));
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         var core = client.Core;
         var router = core.Cluster!;
         var original = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", oldServer.Port));
@@ -2410,7 +2442,9 @@ public class ClusterNodeIdentityTests
         var slot = ClusterHash.GetSlot("key");
         await using var seed = new FakeRespServer(Encoding.UTF8.GetBytes("*1\r\n" + Range(
             slot, slot, "127.0.0.1", oldServer.Port, "original", "", includeAliases: false)));
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         var core = client.Core;
         var router = core.Cluster!;
         var original = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", oldServer.Port));

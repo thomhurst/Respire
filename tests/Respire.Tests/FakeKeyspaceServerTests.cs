@@ -16,7 +16,9 @@ public class FakeKeyspaceServerTests
         var start = DateTimeOffset.FromUnixTimeSeconds(123).AddTicks(4567897);
         var clock = new RespireFakeClock(start);
         await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         using var reply = await client.ExecuteAsync("TIME");
         await Assert.That(reply.Count).IsEqualTo(2);
         await Assert.That(reply[0].AsString()).IsEqualTo("123");
@@ -50,7 +52,9 @@ public class FakeKeyspaceServerTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await client.SetAsync("test:string", "value");
         using var hash = await client.ExecuteAsync("HSET", "test:hash", "f", "v");
         using var list = await client.ExecuteAsync("LPUSH", "test:list", "v");
@@ -88,7 +92,9 @@ public class FakeKeyspaceServerTests
     public async Task KeysAndScanUseByteGlobPatterns(string pattern, string key, bool matches)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await client.SetAsync(key, "value");
         using var keys = await client.ExecuteAsync("KEYS", pattern);
         using var scan = await client.ExecuteAsync("SCAN", 0, "MATCH", pattern, "COUNT", 1000);
@@ -103,7 +109,9 @@ public class FakeKeyspaceServerTests
     public async Task BinaryPatternsAndReturnedKeysPreserveBytes(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         byte[] key = [0, 255, 128, 42];
         byte[] pattern = [0, 255, (byte)'?', (byte)'\\', (byte)'*'];
         using var set = await client.ExecuteAsync("SET", key, "value");
@@ -117,7 +125,9 @@ public class FakeKeyspaceServerTests
     public async Task ScanCanDeleteEachPageWithoutSkippingRemainingKeys()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         var expected = Enumerable.Range(0, 100).Select(i => $"cleanup:{i}").ToArray();
         foreach (var key in expected) await client.SetAsync(key, "value");
         var seen = new List<string>();
@@ -145,7 +155,9 @@ public class FakeKeyspaceServerTests
     public async Task NonmatchingScanPagesStillAdvanceAndOptionsUseLastValue()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         for (var i = 0; i < 100; i++) await client.SetAsync($"key:{i}", "value");
         using var empty = await client.ExecuteAsync("SCAN", 0, "MATCH", "absent:*", "COUNT", 1);
         await Assert.That(empty[0].AsString()).IsNotEqualTo("0");
@@ -159,7 +171,9 @@ public class FakeKeyspaceServerTests
     public async Task EmptyAndPrefixedScansWorkAndLargeCursorsTerminate()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         using var empty = await client.ExecuteAsync("SCAN", 0);
         await Assert.That(empty[0].AsString()).IsEqualTo("0");
         await Assert.That(empty[1].Count).IsEqualTo(0);
@@ -180,7 +194,9 @@ public class FakeKeyspaceServerTests
     public async Task ExpensiveGlobsFailExplicitlyWithoutBreakingTheConnection(string command)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 1 });
+#pragma warning restore RESP010
         await client.SetAsync(new string('a', 2000), "v");
         var pattern = "*" + new string('a', 1000) + "b";
         RespireValue[] args = command == "KEYS" ? [pattern] : [0, "MATCH", pattern];
@@ -207,7 +223,9 @@ public class FakeKeyspaceServerTests
     public async Task InvalidArgumentsLeaveConnectionUsable(string command, params string[] args)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 1 });
+#pragma warning restore RESP010
         await Assert.That(async () => { using var reply = await client.ExecuteAsync(command, args.Select(a => (RespireValue)a).ToArray()); })
             .Throws<RespireServerException>();
         using var ping = await client.ExecuteAsync("PING");

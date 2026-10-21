@@ -42,7 +42,9 @@ public partial class ErrorMetricsTests
     public async Task GroupIteratorOptionsValidationHasOneFinalOwner()
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 6379)] });
+#pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
         await using var reader = client.Streams.ReadGroupAsync(new RespireStreamReadOptions { Count = 0 },
             "events", "group", "consumer").GetAsyncEnumerator();

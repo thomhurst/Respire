@@ -28,7 +28,9 @@ public class FakeServerExpectationTests
     public async Task DifferentFacetsAndClientTransactionsShareWireExpectations()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 1 });
+#pragma warning restore RESP010
         server.Expect("HSET", ["hash", "field", "value"]);
         server.Expect("HGET", ["hash", "field"], response: RespireFakeResponse.Bulk("mocked"));
         server.Expect("RPUSH", ["list", "one", "two"]);
@@ -89,7 +91,9 @@ public class FakeServerExpectationTests
     public async Task ExpectationsAreOptInAndResetClearsRulesAndHistory()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await Assert.That(server.ExpectationMode).IsEqualTo(RespireFakeExpectationMode.Disabled);
         await client.SetAsync("key", "original");
         await Assert.That(server.CommandHistory.Count).IsEqualTo(0);
@@ -114,7 +118,9 @@ public class FakeServerExpectationTests
     public async Task ExactBinaryArgumentsAreOwnedAndCommandNamesIgnoreCase(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         byte[] key = [0, 255, 128, 13, 10];
         byte[] value = [255, 0, 13, 10];
         server.Expect("sEt", [RespireFakeArgument.Exact(key), RespireFakeArgument.Exact(value)]);
@@ -170,7 +176,9 @@ public class FakeServerExpectationTests
     public async Task LooseModeAllowsOtherCommandsAndVerificationExplainsMissingCalls()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         server.Expect("GET", ["expected"], occurrences: 2);
         await client.SetAsync("other", "stored");
         await Assert.That(await client.GetStringAsync("other")).IsEqualTo("stored");
@@ -190,7 +198,9 @@ public class FakeServerExpectationTests
     public async Task ExcessCallsFailVerificationAndStrictModeRejectsTheirMutation(bool strict)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         server.Expect("INCR", ["counter"]);
         server.ExpectationMode = strict ? RespireFakeExpectationMode.Strict : RespireFakeExpectationMode.Loose;
         using (var first = await client.ExecuteAsync("INCR", "counter"))
@@ -214,7 +224,9 @@ public class FakeServerExpectationTests
     public async Task ResponseOverridesPreserveTypesAndOwnBinaryValues(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         byte[] value = [0, 255, 128, 13, 10];
         server.Expect("CUSTOM", [], response: RespireFakeResponse.Array(
             RespireFakeResponse.Simple("OK"), RespireFakeResponse.Bulk(value), RespireFakeResponse.Integer(-42),
@@ -236,7 +248,9 @@ public class FakeServerExpectationTests
     public async Task RulesConsumeInRegistrationOrderAndOverridesDoNotMutateState()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await client.SetAsync("key", "original");
         server.Expect("GET", [RespireFakeArgument.Any], occurrences: 2, response: RespireFakeResponse.Bulk("first"));
         server.Expect("GET", ["key"], response: RespireFakeResponse.Bulk("second"));
@@ -256,7 +270,9 @@ public class FakeServerExpectationTests
     public async Task PrefixedFacetsAndBatchErrorsKeepReplyOrder(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 1, Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         server.Expect("SET", ["tenant:rejected", "bad"], response: RespireFakeResponse.Error("ERR expected failure"));
         server.Expect("SET", ["tenant:accepted", "ok"]);
         server.Expect("GET", ["tenant:accepted"]);
@@ -279,8 +295,10 @@ public class FakeServerExpectationTests
     public async Task ConcurrentConnectionsConsumeEachOccurrenceOnceAndHistoryIsASnapshot()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var first = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 2 });
         await using var second = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 2 });
+#pragma warning restore RESP010
         server.Expect("INCR", ["counter"], occurrences: 32, response: RespireFakeResponse.Integer(10));
         server.Expect("INCR", ["counter"], occurrences: 32, response: RespireFakeResponse.Integer(20));
         server.ExpectationMode = RespireFakeExpectationMode.Strict;
@@ -307,7 +325,9 @@ public class FakeServerExpectationTests
     public async Task FaultRepliesWinOverOverridesButStillCountReceivedExpectations()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         server.Expect("SET", ["key", "value"], response: RespireFakeResponse.Simple("OK"));
         using var fault = server.InjectFault("SET", RespireFakeFault.ReadOnly());
         var error = await Assert.That(async () => await client.SetAsync("key", "value")).Throws<RespireServerException>();
@@ -323,7 +343,9 @@ public class FakeServerExpectationTests
     public async Task StrictRejectionDoesNotConsumeAnInjectedFault()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         server.Expect("SET", ["expected", "value"]);
         server.ExpectationMode = RespireFakeExpectationMode.Strict;
         using var fault = server.InjectFault("SET", RespireFakeFault.Loading());
@@ -370,7 +392,9 @@ public class FakeServerExpectationTests
     {
         await using var server = new RespireFakeServer();
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions());
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var writer = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         server.Expect("SET", ["queued", "value"], response: RespireFakeResponse.Simple("OK"));
         if (watchAbort)
         {

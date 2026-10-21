@@ -10,7 +10,9 @@ public class NameResolutionContractTests
     [Test]
     public async Task PrefixedViews_ExposePhysicalNamesThroughCapability()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create(new RespireOptions { Endpoints = [new("unused.invalid")] });
+#pragma warning restore RESP010
         IRespireClient view = root.WithKeyPrefix("keys:").WithPubSubPrefix("channels:");
         var resolver = (IRespireNameResolver)view;
 
@@ -21,7 +23,9 @@ public class NameResolutionContractTests
     [Test]
     public async Task IntegrationBridge_ForwardsDecoratorCapability()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create(new RespireOptions { Endpoints = [new("unused.invalid")] });
+#pragma warning restore RESP010
         IRespireClient view = root.WithKeyPrefix("keys:").WithPubSubPrefix("channels:");
         var decorator = DispatchProxy.Create<IResolvingClient, ResolvingClientProxy>();
         ((ResolvingClientProxy)(object)decorator).Resolver = (IRespireNameResolver)view;

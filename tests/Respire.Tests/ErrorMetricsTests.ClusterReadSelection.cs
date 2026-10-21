@@ -35,6 +35,7 @@ public partial class ErrorMetricsTests
                 : "$2\r\nok\r\n"u8.ToArray(),
             _ => null,
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
@@ -56,6 +57,7 @@ public partial class ErrorMetricsTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         if (outcome == "cancellation") await cancellation.CancelAsync();
         using var capture = new Capture(throwOnMeasurement: true, commandMetrics: commandMetrics);
@@ -130,12 +132,14 @@ public partial class ErrorMetricsTests
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology
             : command.StartsWith("GET ", StringComparison.Ordinal) ? rejection
                 ? "-WRONGTYPE private-selection\r\n"u8.ToArray() : "$2\r\nok\r\n"u8.ToArray() : null;
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", primary.Port)],
             ReadFrom = RespireReadFrom.ReplicaPreferred,
         });
+#pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
         using var batch = client.CreateBatch();
         var first = batch.GetString("{private}:one");
@@ -183,12 +187,14 @@ public partial class ErrorMetricsTests
             submitted.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", primary.Port)],
             ReadFrom = RespireReadFrom.Replica,
         });
+#pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pending = client.GetStringAsync("private-key", deadline.Token).AsTask();

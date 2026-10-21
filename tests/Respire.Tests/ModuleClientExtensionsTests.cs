@@ -93,7 +93,9 @@ public class ModuleClientExtensionsTests
         var wrapperReference = new WeakReference(wrapper);
         // Dispose the unconnected client before testing the cache's lifetime, so no owned
         // resources survive this helper. Its stack frame must end before the collection test.
+#pragma warning disable RESP009 // Dispose this unconnected client before leaving the no-inline weak-reference helper; an async state machine would retain it.
         client.DisposeAsync().AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
         CollectUnreachableObjects();
         var retainedWhileRooted = clientReference.IsAlive && wrapperReference.IsAlive;
         GC.KeepAlive(wrapper);

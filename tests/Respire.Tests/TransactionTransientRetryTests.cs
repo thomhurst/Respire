@@ -26,7 +26,9 @@ public class TransactionTransientRetryTests
     public async Task WatchFailureReacquiresWatchBeforeRunningCallback(bool disconnect)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         using var fault = server.InjectFault("WATCH", disconnect ? RespireFakeFault.Disconnect() : RespireFakeFault.Loading());
         var callbacks = 0;
         await client.RunTransactionAsync(["result"], (transaction, _) =>
@@ -44,7 +46,9 @@ public class TransactionTransientRetryTests
     public async Task DefinitelyUnwrittenCommitReplaysAccumulatingMemberUnderReadOnlyPolicy()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var callbacks = 0;
         var transactions = new List<RespireWatchedTransaction>();
         var pending = await client.RunTransactionAsync(["result"], async (transaction, _) =>
@@ -67,8 +71,10 @@ public class TransactionTransientRetryTests
     public async Task LostExecReplyRequiresPermissionAndRebuildsReads(bool afterExecution, bool permitted)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server,
             permitted ? RespireCommandRetryCategory.WriteAccumulating : RespireCommandRetryCategory.ReadOnly));
+#pragma warning restore RESP010
         using var fault = server.InjectFault("EXEC", RespireFakeFault.Disconnect(afterExecution));
         var callbacks = 0;
         var inputs = new List<string?>();
@@ -94,7 +100,9 @@ public class TransactionTransientRetryTests
         }
         // A lost reply faults the pending; it never becomes a WATCH abort.
         await Assert.That(pendings[0].Error is RespireConnectionException).IsTrue();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var observer = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await Assert.That(await observer.GetStringAsync("result")).IsEqualTo(
             permitted ? afterExecution ? "2" : "1" : afterExecution ? "1" : null);
     }
@@ -105,8 +113,10 @@ public class TransactionTransientRetryTests
     public async Task EveryQueuedMemberMustPermitReplay(bool unknown)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server,
             unknown ? RespireCommandRetryCategory.ServerAdmin : RespireCommandRetryCategory.WriteLastWins));
+#pragma warning restore RESP010
         using var fault = server.InjectFault("EXEC", RespireFakeFault.Disconnect(true));
         var callbacks = 0;
         await Assert.That(async () => await client.RunTransactionAsync(["result"], (transaction, _) =>
@@ -126,7 +136,9 @@ public class TransactionTransientRetryTests
     public async Task ConflictsAndTransientFailuresUseIndependentBudgets(bool exhaustConflicts)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server, attempts: 2));
+#pragma warning restore RESP010
         var callbacks = 0;
         Exception? failure = null;
         try
@@ -158,7 +170,9 @@ public class TransactionTransientRetryTests
     public async Task ConflictDoesNotResetTransientBudget()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server, attempts: 2));
+#pragma warning restore RESP010
         var callbacks = 0;
         await Assert.That(async () => await client.RunTransactionAsync(["watched"], async (transaction, token) =>
         {
@@ -174,7 +188,9 @@ public class TransactionTransientRetryTests
     public async Task WatchAcquisitionExhaustionDoesNotRunCallback()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server, attempts: 2));
+#pragma warning restore RESP010
         using var fault = server.InjectFault("WATCH", RespireFakeFault.Loading(), occurrences: null);
         var callbacks = 0;
         await Assert.That(async () => await client.RunTransactionAsync(["watched"], (_, _) =>
@@ -190,7 +206,9 @@ public class TransactionTransientRetryTests
     public async Task DirectWatchedCommitDoesNotReplayEvenWithAccumulatingPermission()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteAccumulating));
+#pragma warning restore RESP010
         await using var transaction = await client.CreateTransactionAsync(["result"]);
         _ = transaction.Increment("result");
         using var fault = server.InjectFault("EXEC", RespireFakeFault.Disconnect(true), occurrences: null);
@@ -207,7 +225,9 @@ public class TransactionTransientRetryTests
         // advanced by the test, after the intended callback/backoff has been reached.
         var budget = TimeSpan.FromHours(1);
         var clock = new ClusterRecoveryTestClock();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with { CommandTimeout = budget });
+#pragma warning restore RESP010
         var callbacks = 0;
         var backoffs = new List<int>();
         var deadlines = new List<long>();
@@ -258,10 +278,12 @@ public class TransactionTransientRetryTests
     public async Task CancellationAfterTransientFailureKeepsCallerTokenAndDisposesAttempt()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             RetryPolicy = new() { InitialBackoff = TimeSpan.FromSeconds(1), Jitter = 0 },
         });
+#pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         var returned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         RespireWatchedTransaction? attempt = null;
@@ -308,7 +330,9 @@ public class TransactionTransientRetryTests
         });
         listener.Start();
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteAccumulating, 2));
+#pragma warning restore RESP010
         using var fault = server.InjectFault("EXEC", RespireFakeFault.Disconnect(true), occurrences: exhaust ? null : 1);
         var operation = client.RunTransactionAsync(["result"], (transaction, _) =>
         {
@@ -336,7 +360,9 @@ public class TransactionTransientRetryTests
     public async Task TransientAndConflictAttemptsKeepSameDeadlineAndDisposePreviousWatch()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var deadlines = new List<long>();
         var tokens = new List<CancellationToken>();
         RespireConnection? previous = null;
@@ -362,7 +388,9 @@ public class TransactionTransientRetryTests
         await using var server = new RespireFakeServer();
         var budget = TimeSpan.FromHours(1);
         var clock = new ClusterRecoveryTestClock();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with { CommandTimeout = budget });
+#pragma warning restore RESP010
         var callbacks = 0;
         var backoffs = new List<int>();
         CancellationToken callbackToken = default;
@@ -395,7 +423,9 @@ public class TransactionTransientRetryTests
     public async Task RawQueuedDeclarationParticipatesInWholeCallbackReplay()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteLastWins));
+#pragma warning restore RESP010
         using var fault = server.InjectFault("EXEC", RespireFakeFault.Disconnect(true));
         var callbacks = 0;
         await client.RunTransactionAsync(["result"], (transaction, _) =>

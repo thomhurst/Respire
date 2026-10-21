@@ -19,7 +19,9 @@ public class FakeServerFaultTests
         await Assert.That(() => RespireFakeFault.Delay(TimeSpan.FromMilliseconds(-1))).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => RespireFakeFault.Moved(16384, new("target"))).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => RespireFakeFault.Moved(42, new("target\r\n+OK"))).Throws<ArgumentException>();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await Assert.That(await client.SetAsync("key", "value")).IsTrue();
         await server.DisposeAsync();
         await Assert.That(() => server.InjectFault("SET", RespireFakeFault.Loading())).ThrowsExactly<ObjectDisposedException>();
@@ -31,7 +33,9 @@ public class FakeServerFaultTests
     public async Task RejectionConsumesExactlyOneBatchReply(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 1, Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         using var fault = server.InjectFault("SET", RespireFakeFault.Loading());
         using var batch = client.CreateBatch();
         var rejected = batch.Strings.Set("rejected", "bad");
@@ -51,7 +55,9 @@ public class FakeServerFaultTests
     public async Task RulesMatchOwnedBinaryArgumentsInRegistrationOrderAndReset(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         byte[] key = [0, 255, 65];
         using var first = server.InjectFault("sEt", RespireFakeFault.Loading(), firstArgument: key);
         using var repeated = server.InjectFault("SET", RespireFakeFault.ReadOnly(), occurrences: null, firstArgument: key);
@@ -84,8 +90,10 @@ public class FakeServerFaultTests
     {
         await using var server = new RespireFakeServer();
         var options = server.CreateOptions() with { Connections = 1, Protocol = (RespireProtocol)protocol };
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(options);
         await using var observer = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         var gate = new RespireFakeGate();
         using var fault = server.InjectFault("INCR", RespireFakeFault.Pause(gate, afterExecution));
         using var cancel = new CancellationTokenSource();
@@ -115,8 +123,10 @@ public class FakeServerFaultTests
             Connections = 1, Protocol = (RespireProtocol)protocol,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },
         };
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(options);
         await using var observer = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
@@ -144,7 +154,9 @@ public class FakeServerFaultTests
     public async Task RemovingRuleReleasesPauseOrLatencyWithoutClearingData(bool latency)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 1 });
+#pragma warning restore RESP010
         using var fault = server.InjectFault("SET", latency ? RespireFakeFault.Delay(TimeSpan.FromDays(1)) : RespireFakeFault.Pause(new()));
         var command = client.SetAsync("key", "value").AsTask();
         await fault.Matched.WaitAsync(Limit);
@@ -164,7 +176,9 @@ public class FakeServerFaultTests
     public async Task DisposalAbortsHeldCommandsAndJoinsServerLoops(bool disposeServer, bool afterExecution)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 1 });
+#pragma warning restore RESP010
         using var fault = server.InjectFault("SET", RespireFakeFault.Pause(new(), afterExecution));
         var command = client.SetAsync("key", "value").AsTask();
         await fault.Matched.WaitAsync(Limit);
@@ -178,7 +192,9 @@ public class FakeServerFaultTests
     public async Task OneShotReservationIsAtomicAcrossConnections()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 4 });
+#pragma warning restore RESP010
         using var fault = server.InjectFault("INCR", RespireFakeFault.Loading());
         var calls = Enumerable.Range(0, 32).Select(async _ =>
         {
@@ -198,7 +214,9 @@ public class FakeServerFaultTests
     {
         await using var server = new RespireFakeServer();
         var options = server.CreateOptions() with { Connections = 1, Protocol = (RespireProtocol)protocol };
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         var destination = new RespireEndpoint("other-fake.invalid", 6380);
         using var fault = server.InjectFault("SET", RespireFakeFault.Moved(42, destination));
         var error = await Assert.That(async () => await client.SetAsync("key", "not-applied")).Throws<RespireServerException>();

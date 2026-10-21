@@ -402,8 +402,10 @@ public class ErrorMetricFoundationTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 1_000; i++)
         {
+#pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             var result = RespireTelemetry.ObserveFinalError(new ValueTask<int>(42)).GetAwaiter().GetResult();
             RespireTelemetry.ObserveFinalError(ValueTask.CompletedTask).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             RespireTelemetry.RecordError(error, false, 3);
             if (allocate) Volatile.Write(ref _allocationAnchor, new byte[37]);
             if (result != 42) throw new InvalidOperationException("success result changed");

@@ -22,11 +22,13 @@ public partial class ErrorMetricsTests
         server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n")
             : "-WRONGTYPE injected pop failure\r\n"u8.ToArray();
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var client = prefix ? root.WithKeyPrefix("tenant:") : root;
         RespireKey[] keys = crossSlot ? ["{first}:one", "{second}:two"] : ["{same}:one", "{same}:two"];
         using var capture = new Capture(throwOnMeasurement: true);

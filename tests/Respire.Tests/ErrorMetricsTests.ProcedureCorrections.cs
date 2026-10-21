@@ -13,7 +13,9 @@ public partial class ErrorMetricsTests
     public async Task ClusterScriptTelemetryFallbackSaturatesRetryHistory()
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 1)] });
+#pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
         // Ordinary routes borrow their caller observation. Cover the legacy telemetry-only
         // fallback separately, including counts too large to reach with actual network retries.
@@ -65,11 +67,13 @@ public partial class ErrorMetricsTests
                 return true;
             },
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         var mutationsAtFinal = -1;
         using var capture = new Capture(throwOnMeasurement: true, onMeasurement: item =>

@@ -12,10 +12,12 @@ public partial class ErrorMetricsTests
     public async Task SuccessfulCachedCallersAllocateNothingWithErrorsEnabled()
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         var key = new RespireKey("key");
         var read = cache.BeginRead(in key);
@@ -51,21 +53,29 @@ public partial class ErrorMetricsTests
         for (var index = 0; index < 1_000; index++)
         {
             var start = previous;
+#pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             _ = client.GetAsync<int>("key").GetAwaiter().GetResult();
+#pragma warning restore RESP009
             var current = GC.GetAllocatedBytesForCurrentThread();
             get += current - previous;
             previous = current;
+#pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             _ = client.GetStringAsync("key").GetAwaiter().GetResult();
+#pragma warning restore RESP009
             current = GC.GetAllocatedBytesForCurrentThread();
             getString += current - previous;
             previous = current;
+#pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             _ = client.GetOrSetAsync<int>("key", static _ => throw new InvalidOperationException("Unexpected cache miss."),
                 TimeSpan.FromMinutes(1)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             current = GC.GetAllocatedBytesForCurrentThread();
             getOrSetInt += current - previous;
             previous = current;
+#pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             _ = client.GetOrSetAsync<string>("key", static _ => throw new InvalidOperationException("Unexpected cache miss."),
                 TimeSpan.FromMinutes(1)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             current = GC.GetAllocatedBytesForCurrentThread();
             getOrSetString += current - previous;
             previous = current;

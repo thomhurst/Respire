@@ -12,7 +12,9 @@ public class FakeStreamConfigurationTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "10000-0" }, ("f", "seed"));
         await client.Streams.ConfigureAsync("s", new() { IdempotencyDurationSeconds = 1 });
         var options = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual("p", "message") };
@@ -29,7 +31,9 @@ public class FakeStreamConfigurationTests
     public async Task ConfigurationAndDeduplicationPreserveBoundedReadsAndGroups(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, ("f", "seed"));
         await client.Streams.ConfigureAsync("s", new() { IdempotencyMaxSize = 2 });
         var options = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual("p", "message") };
@@ -59,7 +63,9 @@ public class FakeStreamConfigurationTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await client.Streams.AddAsync("s", ("f", "seed"));
         await client.Streams.ConfigureAsync("s", new() { IdempotencyDurationSeconds = 1 });
         var identity = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual("producer", "message") };
@@ -86,7 +92,9 @@ public class FakeStreamConfigurationTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await client.Streams.AddAsync("s", ("f", "seed"));
         await client.Streams.ConfigureAsync("s", new() { IdempotencyDurationSeconds = 1 });
         for (var index = 0; index < 64; index++)
@@ -128,7 +136,9 @@ public class FakeStreamConfigurationTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         var identity = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual("p", "i") };
         await client.Streams.AddAsync("s", ("f", "seed"));
         await client.Streams.ConfigureAsync("s", new() { IdempotencyDurationSeconds = 1, IdempotencyMaxSize = 1 });
@@ -158,7 +168,9 @@ public class FakeStreamConfigurationTests
     public async Task UnsupportedAppendOptionsDoNotCreateStreams()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         RespireStreamAddOptions[] unsupported = [new() { MaxLength = 10 }, new() { Idempotency = RespireStreamIdempotency.Automatic("p") }];
         foreach (var option in unsupported)
             await Assert.That(async () => await client.Streams.AddAsync("s", option, ("f", "v"))).Throws<RespireServerException>();

@@ -75,10 +75,12 @@ public class BinaryPrefixTests
     [Test]
     public async Task BinaryViewsPreserveCorePoliciesAndDeferredOwnership()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 1)], ReplicaEndpoints = [new("127.0.0.1", 2)], ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var view = (RespireClient)root.WithKeyPrefix((RespireKey)new byte[] { 255, 0 });
         var replica = (RespireClient)view.WithReadFrom(RespireReadFrom.Replica);
         var bypass = (RespireClient)replica.WithoutClientCache();
@@ -103,11 +105,13 @@ public class BinaryPrefixTests
         await using var server = new FakeRespServer(
             "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), FakeRespServer.OkReply,
             FakeRespServer.OkReply, Bulk("old"u8.ToArray()), FakeRespServer.OkReply, Bulk("new"u8.ToArray()));
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var view = root.WithKeyPrefix((RespireKey)new byte[] { 255, 0 });
         var physical = view.ResolveKey("key");
         var invalidated = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -234,7 +238,9 @@ public class BinaryPrefixTests
     [Arguments(true)]
     public async Task PrefixOwnsBytesAndPreservesKeyIdentity(bool binarySuffix)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         byte[] prefix = [255, 0, (byte)':'];
         var view = root.WithKeyPrefix((RespireKey)prefix);
         prefix[0] = 1;
@@ -258,7 +264,9 @@ public class BinaryPrefixTests
     [Arguments("plain:", "{£}:key")]
     public async Task BinaryPrefixClusterSlotMatchesPhysicalBytes(string prefixText, string suffix)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         byte[] prefix = [255, .. Encoding.UTF8.GetBytes(prefixText)];
         var view = root.WithKeyPrefix((RespireKey)prefix);
         byte[] expected = [.. prefix, .. Encoding.UTF8.GetBytes(suffix)];
@@ -269,7 +277,9 @@ public class BinaryPrefixTests
     [Test]
     public async Task MixedViewsComposeWithoutDecodingBinaryPrefixes()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         var view = root.WithKeyPrefix("a:").WithKeyPrefix((RespireKey)new byte[] { 255, 0 }).WithKeyPrefix("b:");
         byte[] expected = [(byte)'a', (byte)':', 255, 0, (byte)'b', (byte)':', (byte)'k'];
         await Assert.That(view.ResolveKey("k").ToBytes().SequenceEqual(expected)).IsTrue();
@@ -279,7 +289,9 @@ public class BinaryPrefixTests
     [Test]
     public async Task BinaryCompositionKeepsTextReplacementBytesAtSurrogateBoundary()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         const string text = "a\uD800";
         byte[] binary = [255, 0];
         var view = root.WithKeyPrefix(text).WithKeyPrefix((RespireKey)binary).WithKeyPrefix("b:");

@@ -15,7 +15,9 @@ public class FakeHashServerTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await client.Hashes.SetAsync("hash", "counter", 1);
         await Number(client, "PEXPIRE", "hash", 1000);
         await client.Hashes.SetAsync("hash", "other", "value");
@@ -42,8 +44,10 @@ public class FakeHashServerTests
     public async Task ConcurrentHashIncrementsAreAtomicAndDoNotCreateKeysOnInvalidNumbers()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var first = await RespireClient.ConnectAsync(server.CreateOptions());
         await using var second = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         var results = await Task.WhenAll(Enumerable.Range(0, 200).Select(async index =>
             await (index % 2 == 0 ? first : second).Hashes.IncrementAsync("hash", "counter")));
         await Assert.That(results.Order()).IsEquivalentTo(Enumerable.Range(1, 200).Select(value => (long)value), CollectionOrdering.Matching);
@@ -62,7 +66,9 @@ public class FakeHashServerTests
     public async Task UnsupportedHashVariantsFailWithoutChangingData()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await client.Hashes.SetAsync("hash", "field", "value");
         foreach (var (command, arguments) in new (string, RespireValue[])[]
         {

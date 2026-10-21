@@ -35,6 +35,7 @@ public partial class ErrorMetricsTests
         var attempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var expected = new SocketException((int)SocketError.ConnectionRefused);
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
@@ -56,6 +57,7 @@ public partial class ErrorMetricsTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var slot = ClusterHash.GetSlot("key");
         var router = client.Core.Cluster!;
@@ -97,10 +99,12 @@ public partial class ErrorMetricsTests
             Groups = RespireMetricGroups.Resiliency | (commandMetrics ? RespireMetricGroups.Command : RespireMetricGroups.None),
         });
         using var unavailable = new ReservedUnavailablePort();
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", unavailable.Port)],
         });
+#pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true, commandMetrics: commandMetrics);
         var error = await Assert.That(() =>
         {

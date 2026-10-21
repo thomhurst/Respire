@@ -21,7 +21,9 @@ public partial class ErrorMetricsTests
     public async Task FunctionEntryOwnsSynchronousPreflight(string route)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 1)] });
+#pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
         Exception? failure = null;
         try
@@ -41,7 +43,7 @@ public partial class ErrorMetricsTests
         await Assert.That(failure is ArgumentException).IsTrue();
         var item = capture.Items.Single();
         await Assert.That(item.Tags["error.type"]).IsEqualTo(failure!.GetType().FullName);
-        await Assert.That(item.Tags["redis.client.errors.internal"]).IsEqualTo(false);
+        await Assert.That((bool)item.Tags["redis.client.errors.internal"]!).IsFalse();
         await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
     }
 
@@ -70,11 +72,13 @@ public partial class ErrorMetricsTests
             $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
             $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         async Task Execute()
         {
@@ -100,7 +104,7 @@ public partial class ErrorMetricsTests
         await Assert.That(failure is RespireException).IsTrue();
         var item = capture.Items.Single();
         await Assert.That(item.Tags["error.type"]).IsEqualTo(failure!.GetType().FullName);
-        await Assert.That(item.Tags["redis.client.errors.internal"]).IsEqualTo(false);
+        await Assert.That((bool)item.Tags["redis.client.errors.internal"]!).IsFalse();
         await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
         await Assert.That(first.ReceivedCommands.Count).IsEqualTo(1);
         await Assert.That(second.ReceivedCommands.Count).IsEqualTo(1);
@@ -185,9 +189,13 @@ public partial class ErrorMetricsTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var index = 0; index < 1000; index++)
         {
+#pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             _ = DispatchResponseSource<long>.Run(42L, static (value, _) => new ValueTask<long>(value)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             var spanOwner = DispatchResponseSource<RespireResult>.Start();
+#pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             spanOwner.Attach(new ValueTask<RespireResult>(default(RespireResult))).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             if (control) GC.KeepAlive(new byte[37]);
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;

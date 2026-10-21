@@ -131,7 +131,9 @@ public class GeneratedHashMutationTests
     [Test]
     public async Task NullBaselineValuesAreNoOpAndPreCanceledUpdateDoesNotConnect()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost:1");
+#pragma warning restore RESP010
         var value = new NullableHashModel(null, null);
         var tracker = NullableHashModelHashMapper.Track(client, value);
         await tracker.UpdateAsync(value);
@@ -202,12 +204,14 @@ public class GeneratedHashMutationTests
         {
             SuppressReply = command => { received.TrySetResult(); return true; },
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = connections,
         });
+#pragma warning restore RESP010
         var first = new StoredHashModel("x", "name", 0, null, null);
         var tracker = StoredHashModelHashMapper.Track(client, first);
         using var cancellation = new CancellationTokenSource();
@@ -262,6 +266,7 @@ public class GeneratedHashMutationTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -272,6 +277,7 @@ public class GeneratedHashMutationTests
             // time out those unsuppressed commands before they were flushed.
             CommandTimeout = TimeSpan.FromSeconds(1),
         });
+#pragma warning restore RESP010
         var first = new ExpiringHashModel("x", "name", "old", null);
         var tracker = ExpiringHashModelHashMapper.Track(client, first, RespireHashExpiryMode.HSetThenExpire);
         var next = first with { Token = "new" };
@@ -301,12 +307,14 @@ public class GeneratedHashMutationTests
     public async Task UnsupportedCapabilityKeepsRevertedBaselineNoOp(int connections)
     {
         await using var server = new FakeRespServer(connections + 3, "*1\r\n$-1\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = connections,
         });
+#pragma warning restore RESP010
         var first = new ExpiringHashModel("x", "name", "old", null);
         var tracker = ExpiringHashModelHashMapper.Track(client, first, RespireHashExpiryMode.HSetThenExpire);
         await Assert.That(async () => await tracker.UpdateAsync(first with { Token = "new" })).Throws<NotSupportedException>();
@@ -329,10 +337,12 @@ public class GeneratedHashMutationTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = connections,
         });
+#pragma warning restore RESP010
         var first = new ExpiringHashModel("x", "name", "old", null);
         var tracker = ExpiringHashModelHashMapper.Track(client, first);
         await Assert.That(async () => await tracker.UpdateAsync(first with { Token = "new" })).Throws<NotSupportedException>();
@@ -353,11 +363,13 @@ public class GeneratedHashMutationTests
         {
             SuppressReply = command => { received.TrySetResult(); return true; },
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
             Connections = connections, CommandTimeout = null,
         });
+#pragma warning restore RESP010
         var first = new ExpiringHashModel("x", "name", "old", null);
         var tracker = ExpiringHashModelHashMapper.Track(client, first, mode);
         using var cancellation = new CancellationTokenSource();
@@ -388,10 +400,12 @@ public class GeneratedHashMutationTests
                 return true;
             },
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = connections,
         });
+#pragma warning restore RESP010
         var first = new ExpiringHashModel("x", "name", "old", null);
         var next = first with { Token = "new" };
         var tracker = ExpiringHashModelHashMapper.Track(client, first);
@@ -420,6 +434,7 @@ public class GeneratedHashMutationTests
         {
             SuppressReply = _ => { received.TrySetResult(); return true; },
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -427,6 +442,7 @@ public class GeneratedHashMutationTests
             Connections = connections,
             CommandTimeout = TimeSpan.FromMilliseconds(200),
         });
+#pragma warning restore RESP010
         var first = new StoredHashModel("x", "name", 0, null, null);
         var tracker = StoredHashModelHashMapper.Track(client, first);
         var pending = tracker.UpdateAsync(first with { Count = 1 }).AsTask();

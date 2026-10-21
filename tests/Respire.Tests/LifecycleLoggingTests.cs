@@ -89,10 +89,12 @@ public partial class LifecycleLoggingTests
     public async Task DisabledLoggingAllocatesNothingAndSkipsFormatting()
     {
         using var factory = new ProbeFactory(enabled: false);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("localhost", 1)], LoggerFactory = factory,
         });
+#pragma warning restore RESP010
         var logger = factory.CreateLogger("Respire.Logging.Allocations");
         var error = new MessageProbeException();
         var endpoint = new RespireEndpoint("redis.example", 6379);
@@ -148,7 +150,9 @@ public partial class LifecycleLoggingTests
     public async Task PubSubKeepsOrdinaryProviderFailuresInsideRecoveryBoundary(bool fromIsEnabled)
     {
         using var factory = new ProbeFactory(providerError: new InvalidOperationException("provider failure"), fromIsEnabled: fromIsEnabled);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("localhost", 1)], LoggerFactory = factory });
+#pragma warning restore RESP010
         client.Core.Hub.LogGapObserverFailure(new InvalidOperationException("observer failure"));
         client.Core.Hub.LogGapObserverFailure(new InvalidOperationException("later observer failure"));
         await Assert.That(factory.ProviderFailures).IsEqualTo(2);
@@ -160,7 +164,9 @@ public partial class LifecycleLoggingTests
     public async Task PubSubStillPropagatesFatalProviderFailures(bool fromIsEnabled)
     {
         using var factory = new ProbeFactory(providerError: new OutOfMemoryException("simulated fatal provider failure"), fromIsEnabled: fromIsEnabled);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("localhost", 1)], LoggerFactory = factory });
+#pragma warning restore RESP010
         await Assert.That(() => client.Core.Hub.LogGapObserverFailure(new Exception("observer failure")))
             .ThrowsExactly<OutOfMemoryException>();
     }

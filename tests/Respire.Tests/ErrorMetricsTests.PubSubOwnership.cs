@@ -36,7 +36,7 @@ public partial class ErrorMetricsTests
         await Assert.That(async () => await pending).Throws<RespireServerException>();
         var item = capture.Items.Single();
         await Assert.That(item.Tags["db.response.status_code"]).IsEqualTo("NOPERM");
-        await Assert.That(item.Tags["redis.client.errors.internal"]).IsEqualTo(false);
+        await Assert.That((bool)item.Tags["redis.client.errors.internal"]!).IsFalse();
         await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
     }
 
@@ -65,12 +65,14 @@ public partial class ErrorMetricsTests
             "SUNSUBSCRIBE one" => "*3\r\n$12\r\nsunsubscribe\r\n$3\r\none\r\n:0\r\n"u8.ToArray(),
             _ => null,
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = attempts },
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeShardedAsync("one").AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         var index = server.ReceivedCommands.ToList().LastIndexOf("SSUBSCRIBE one");
         using var capture = new Capture(throwOnMeasurement: true);
@@ -91,7 +93,7 @@ public partial class ErrorMetricsTests
             for (var attempt = 0; attempt < items.Length; attempt++)
             {
                 await Assert.That(items[attempt].Tags["db.response.status_code"]).IsEqualTo("NOPERM");
-                await Assert.That(items[attempt].Tags["redis.client.errors.internal"]).IsEqualTo(true);
+                await Assert.That((bool)items[attempt].Tags["redis.client.errors.internal"]!).IsTrue();
                 await Assert.That(items[attempt].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(attempt);
             }
         }
@@ -112,12 +114,14 @@ public partial class ErrorMetricsTests
             "SUNSUBSCRIBE one" => "*3\r\n$12\r\nsunsubscribe\r\n$3\r\none\r\n:0\r\n"u8.ToArray(),
             _ => null,
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },
         });
+#pragma warning restore RESP010
         await using var hub = new SubscriptionHub(client.Core);
         await using var subscription = await hub.SubscribeAsync(
             RespireSubscriptionKind.Sharded, ["one"], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
@@ -174,12 +178,14 @@ public partial class ErrorMetricsTests
             "SUNSUBSCRIBE one" => "*3\r\n$12\r\nsunsubscribe\r\n$3\r\none\r\n:0\r\n"u8.ToArray(),
             _ => null,
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = null,
         });
+#pragma warning restore RESP010
         await using var hub = new SubscriptionHub(client.Core);
         await using var subscription = await hub.SubscribeAsync(
             RespireSubscriptionKind.Sharded, ["one"], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
@@ -239,19 +245,21 @@ public partial class ErrorMetricsTests
             _ => null,
         };
         server.SuppressReply = command => command == $"PUNSUBSCRIBE {channel}";
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(1),
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync(channel).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         using var capture = new Capture(throwOnMeasurement: true);
         await subscription.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(server.ReceivedCommands).Contains($"PUNSUBSCRIBE {channel}");
         await Assert.That(client.Core.Disposed).IsFalse();
         var item = capture.Items.Single();
-        await Assert.That(item.Tags["redis.client.errors.internal"]).IsEqualTo(true);
+        await Assert.That((bool)item.Tags["redis.client.errors.internal"]!).IsTrue();
         await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
     }
 

@@ -113,6 +113,7 @@ public class UnixSocketOptionsTests
     [Test]
     public async Task StandaloneReplicaEndpointsCanUseEitherTransport()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [RespireEndpoint.UnixSocket("/tmp/primary.sock")],
@@ -120,6 +121,7 @@ public class UnixSocketOptionsTests
             ReadFrom = RespireReadFrom.Replica,
             TcpKeepAliveTime = TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         await Assert.That(client).IsNotNull();
     }
 }

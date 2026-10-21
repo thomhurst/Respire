@@ -18,7 +18,9 @@ public class PrefixedKeyTests
     [Arguments(true)]
     public async Task CachedDeferredViewAllocatesNothing(bool prefixed)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         var view = prefixed ? (RespireClient)client.WithKeyPrefix("tenant:{fixed}:") : client;
         _ = MeasureDeferredView(view, false);
         _ = MeasureDeferredView(view, true);
@@ -43,12 +45,14 @@ public class PrefixedKeyTests
     [Test]
     public async Task ConcurrentDeferredViewsShareEncodingAndKeepOwnershipPolicyAcrossClones()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 1)],
             ReplicaEndpoints = [new("127.0.0.1", 2)],
             ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var view = (RespireClient)client.WithKeyPrefix("tenant:");
         var siblings = await Task.WhenAll(Enumerable.Range(0, 32).Select(_ => Task.Run(view.ForDeferredBatch)));
         var deferred = siblings[0];
@@ -71,11 +75,13 @@ public class PrefixedKeyTests
     [Test]
     public async Task RootDeferredViewsOwnResolvedPrefixesAndRetainOrdinaryBorrowing()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 1)], ReplicaEndpoints = [new("127.0.0.1", 2)],
             ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var siblings = await Task.WhenAll(Enumerable.Range(0, 32).Select(_ => Task.Run(client.ForDeferredBatch)));
         var deferred = siblings[0];
         await Assert.That(siblings.All(sibling => ReferenceEquals(sibling, deferred))).IsTrue();
@@ -176,7 +182,9 @@ public class PrefixedKeyTests
             15 => ("tenant:{" + new string('£', 512), "𐍈}:unused"),
             _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         var view = (RespireClient)client.WithKeyPrefix(prefix);
         foreach (var binary in new[] { false, true })
         {
@@ -217,7 +225,9 @@ public class PrefixedKeyTests
     [Test]
     public async Task BinarySnapshotOwnsStorageAndChainedViewsComposePrefixes()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         var view = (RespireClient)client.WithKeyPrefix("first:").WithKeyPrefix("second:");
         byte[] bytes = [0, 255, 128];
         RespireKey key = bytes;
@@ -235,7 +245,9 @@ public class PrefixedKeyTests
     [Arguments(true)]
     public async Task PrefixedValuesRetainNumericAndEqualitySemantics(bool binary)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         var view = (RespireClient)client.WithKeyPrefix("1");
         RespireKey key = binary ? new RespireKey("23"u8.ToArray()) : new RespireKey("23");
         var value = view.Key(in key);
@@ -256,7 +268,9 @@ public class PrefixedKeyTests
     [Arguments(true)]
     public async Task PrefixedGetSerializationAllocatesNothing(bool binary)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         var view = (RespireClient)client.WithKeyPrefix("tenant:");
         RespireKey key = binary ? new RespireKey("key"u8.ToArray()) : new RespireKey("key");
         var buffer = new WriteBuffer(256);
@@ -297,7 +311,9 @@ public class PrefixedKeyTests
     [Arguments(true)]
     public async Task ConcurrentFacetAccessReturnsOneInstanceOwnedByItsView(bool arrays)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         var first = client.WithKeyPrefix("first:");
         var second = client.WithKeyPrefix("second:");
         object Facet(IRespireClient view) => arrays ? view.Arrays : view.Strings;
@@ -310,7 +326,9 @@ public class PrefixedKeyTests
     [Test, NotInParallel]
     public async Task CreatingViewDefersFacetAllocations()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         _ = MeasureView(client, false);
         _ = MeasureView(client, true);
         _ = MeasureView(client, false, arraysOnly: true);
@@ -358,7 +376,9 @@ public class PrefixedKeyTests
     [Arguments(true)]
     public async Task ReapplyingPrefixPreservesTextAndBinaryBoundarySemantics(bool binary)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         RespireKey key = binary ? new RespireKey("key"u8.ToArray()) : new RespireKey("key");
         var first = client.WithKeyPrefix("\uDC00").ResolveKey(key);
         var second = client.WithKeyPrefix("\uD800").ResolveKey(first);
@@ -371,7 +391,9 @@ public class PrefixedKeyTests
     [Test]
     public async Task PrefixedBinaryMetadataDoesNotDecodeInvalidUtf8()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         var view = (RespireClient)client.WithKeyPrefix("tenant:");
         RespireKey key = new byte[] { 255 };
         var value = view.Key(in key);
@@ -385,7 +407,9 @@ public class PrefixedKeyTests
     [Test]
     public async Task CompletePrefixTagDoesNotReadBinarySuffix()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         using var suffix = new GuardedSuffix();
         var key = new RespireKey(suffix.Memory);
         suffix.RejectReads = true;
@@ -409,7 +433,9 @@ public class PrefixedKeyTests
     [Test]
     public async Task AsciiFallbackPreservesEarlierFrames()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         var key = client.WithKeyPrefix("tenant:").ResolveKey("ascii-£-𐍈");
         var buffer = new WriteBuffer(16);
         try

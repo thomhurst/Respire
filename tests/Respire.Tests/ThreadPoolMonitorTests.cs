@@ -89,7 +89,9 @@ public class ThreadPoolMonitorTests
         };
         var disabled = RespireClient.Create(options with { ThreadPoolMonitoring = false });
         Require(ThreadPoolMonitor.Latest is null, "Opted-out client started the probe.");
+#pragma warning disable RESP009 // The isolated starvation probe must dispose synchronously while its only pool worker is blocked.
         disabled.DisposeAsync().GetAwaiter().GetResult();
+#pragma warning restore RESP009
         ambient.Value = "request context";
         var throwingClient = RespireClient.Create(options with { LoggerFactory = throwingLogger });
         var client = RespireClient.Create(options);
@@ -115,9 +117,13 @@ public class ThreadPoolMonitorTests
             // Disposal must not wait for a starved callback to run.
             client.WithKeyPrefix("view:").DisposeAsync().GetAwaiter().GetResult();
             Require(ThreadPoolMonitor.Latest is not null, "Disposing a view stopped its root's probe.");
+#pragma warning disable RESP009 // The isolated starvation probe must dispose synchronously while its only pool worker is blocked.
             client.DisposeAsync().GetAwaiter().GetResult();
+#pragma warning restore RESP009
             Require(ThreadPoolMonitor.Latest is not null, "Disposing one client stopped another client's probe.");
+#pragma warning disable RESP009 // The isolated starvation probe must dispose synchronously while its only pool worker is blocked.
             throwingClient.DisposeAsync().GetAwaiter().GetResult();
+#pragma warning restore RESP009
             Require(ThreadPoolMonitor.Latest is null, "Last disposal retained an active sample.");
             Require(snapshot.IsPending, "Published timeout snapshot was mutated during disposal.");
             RespireClient restarted;
@@ -135,13 +141,17 @@ public class ThreadPoolMonitorTests
                     "The restarted monitor did not observe pool recovery.");
                 Require(snapshot.IsPending, "Pool recovery mutated a retained timeout snapshot.");
             }
+#pragma warning disable RESP009 // The isolated starvation probe must dispose synchronously while its only pool worker is blocked.
             finally { restarted.DisposeAsync().GetAwaiter().GetResult(); }
+#pragma warning restore RESP009
         }
         finally
         {
             release.Set();
+#pragma warning disable RESP009 // The isolated starvation probe must dispose synchronously while its only pool worker is blocked.
             client.DisposeAsync().GetAwaiter().GetResult();
             throwingClient.DisposeAsync().GetAwaiter().GetResult();
+#pragma warning restore RESP009
         }
     }
 

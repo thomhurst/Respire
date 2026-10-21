@@ -45,7 +45,9 @@ public class ConnectionStringCompatibilityTests
     public async Task PastedConnectionStringsCreateLazyClients(string connectionString)
     {
         var options = RespireOptions.Parse(connectionString);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(options);
+#pragma warning restore RESP010
         await Assert.That(options.Endpoints.Count).IsEqualTo(1);
         await Assert.That(options.IgnoredConnectionStringOptions.Length).IsEqualTo(0);
     }
@@ -103,7 +105,9 @@ public class ConnectionStringCompatibilityTests
         var options = RespireOptions.Parse($"localhost,{key}=private-value,{key.ToUpperInvariant()}=private-value")
             with { LoggerFactory = logger };
         options.ValidateAndSnapshot();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(options);
+#pragma warning restore RESP010
         _ = client.WithKeyPrefix("tenant:");
         await Assert.That(logger.Messages.Count).IsEqualTo(1);
         await Assert.That(logger.Messages[0]).Contains(key);
@@ -114,7 +118,9 @@ public class ConnectionStringCompatibilityTests
     public async Task AbortConnectTrueWarnsThatTheApiControlsConnectionLifecycle()
     {
         using var logger = new CaptureLoggerFactory();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(RespireOptions.Parse("localhost,abortConnect=true") with { LoggerFactory = logger });
+#pragma warning restore RESP010
         await Assert.That(logger.Messages.Single()).Contains("abortConnect");
     }
 

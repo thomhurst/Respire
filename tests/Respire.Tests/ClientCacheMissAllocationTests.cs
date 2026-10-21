@@ -15,11 +15,13 @@ public class ClientCacheMissAllocationTests
     [NotInParallel]
     public async Task RacingStandaloneMissProducerAllocatesNothingWhenAnotherReadAlreadyFilledTheCache()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 1)],
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         var key = new RespireKey("key");
         var token = cache.BeginRead(in key);
@@ -48,11 +50,13 @@ public class ClientCacheMissAllocationTests
     [Arguments(true)]
     public async Task RacingProducerPreservesAsyncConverterFailureAndCancellation(bool canceled)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 1)],
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         var key = new RespireKey("key");
         var token = cache.BeginRead(in key);
@@ -74,7 +78,7 @@ public class ClientCacheMissAllocationTests
         var control = producer(key, cache, cancellation.Token,
             static (RespireClient _, in RespValue value) => value, true, default);
         await Assert.That(control.IsCompletedSuccessfully).IsTrue();
-        await Assert.That(control.Result.AsString()).IsEqualTo("value");
+        await Assert.That((await control).AsString()).IsEqualTo("value");
         await Assert.That(client.IsConnected).IsFalse();
     }
 
@@ -87,11 +91,13 @@ public class ClientCacheMissAllocationTests
     [Arguments(true)]
     public async Task RacingProducerRestoresConverterChangesToCallerContext(bool throws)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 1)],
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         var key = new RespireKey("key");
         var token = cache.BeginRead(in key);
@@ -143,8 +149,10 @@ public class ClientCacheMissAllocationTests
         {
             var operation = producer(key, cache, default,
                 static (RespireClient _, in RespValue value) => value, true, default);
+#pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             if (!operation.IsCompletedSuccessfully || !operation.Result.AsSpan().SequenceEqual("value"u8))
                 throw new InvalidOperationException("Expected the racing producer to use the published cache entry.");
+#pragma warning restore RESP009
             if (control) GC.KeepAlive(new byte[37]);
         }
         return GC.GetAllocatedBytesForCurrentThread() - start;

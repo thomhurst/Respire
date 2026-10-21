@@ -32,7 +32,9 @@ public class DefaultKeyPrefixTests
     [Arguments("localhost,keyPrefix= a+b ", "a+b")]
     public async Task ConnectionStringsApplyDecodedTextPrefix(string connectionString, string expected)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(RespireOptions.Parse(connectionString));
+#pragma warning restore RESP010
         await Assert.That(client.ResolveKey("key").ToBytes().SequenceEqual(Encoding.UTF8.GetBytes(expected + "key"))).IsTrue();
     }
 
@@ -56,7 +58,9 @@ public class DefaultKeyPrefixTests
         byte[] bytes = [255, 0, (byte)':'];
         var options = Options(server.Port) with { KeyPrefix = bytes };
         var snapshot = options.ValidateAndSnapshot();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = eager ? await RespireClient.ConnectAsync(options) : RespireClient.Create(options);
+#pragma warning restore RESP010
         bytes[0] = 254;
         await Assert.That(snapshot.KeyPrefix.ToBytes().SequenceEqual(new byte[] { 255, 0, (byte)':' })).IsTrue();
         await Assert.That(options.KeyPrefix.ToBytes()[0]).IsEqualTo((byte)254);
@@ -86,7 +90,9 @@ public class DefaultKeyPrefixTests
             3 => ReadOnlyMemory<byte>.Empty,
             _ => default,
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(Options(1) with { KeyPrefix = prefix });
+#pragma warning restore RESP010
         await Assert.That(client.KeyPrefix).IsNull();
         await Assert.That(client.ResolveKey("key")).IsEqualTo((RespireKey)"key");
         await Assert.That(client.WithKeyPrefix("tenant:").ResolveKey("key")).IsEqualTo((RespireKey)"tenant:key");
@@ -96,10 +102,12 @@ public class DefaultKeyPrefixTests
     [Test]
     public async Task RootTextPrefixKeepsSurrogateCompositionAndDerivedPolicies()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create(Options(1) with
         {
             KeyPrefix = "\uD800", ReplicaEndpoints = [new("127.0.0.1", 2)], ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var view = (RespireClient)root.WithKeyPrefix("\uDC00:").WithReadFrom(RespireReadFrom.Replica).WithoutClientCache();
         await Assert.That(view.ResolveKey("key").ToBytes().SequenceEqual(Encoding.UTF8.GetBytes("\uD800\uDC00:key"))).IsTrue();
         await Assert.That(view.GetBatchReadFromPolicy()).IsEqualTo(RespireReadFrom.Replica);
@@ -118,7 +126,9 @@ public class DefaultKeyPrefixTests
         await using var accepted = new FakeRespServer(FakeRespServer.OkReply, BinaryPrefixTests.Bulk("value"u8.ToArray()));
         var first = Options(rejected.Port) with { Password = "secret", KeyPrefix = "wrong:" };
         var second = Options(accepted.Port) with { Password = "secret", KeyPrefix = "chosen:" };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAnyAsync([first, second]);
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(accepted.ReceivedArguments.Single(args => args[0].AsSpan().SequenceEqual("GET"u8))[1]
             .AsSpan().SequenceEqual("chosen:key"u8)).IsTrue();
@@ -137,10 +147,12 @@ public class DefaultKeyPrefixTests
             $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{upper.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
         byte[] prefix = [255, 0, .. "{b}:"u8];
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
             UseCluster = true, KeyPrefix = prefix,
         });
+#pragma warning restore RESP010
         await Assert.That(((RespireKey)"{a}:key").ClusterSlot >= 8192).IsTrue();
         await Assert.That(client.ResolveKey("{a}:key").ClusterSlot < 8192).IsTrue();
         await Assert.That(await client.GetStringAsync("{a}:key")).IsEqualTo("value");
@@ -160,7 +172,9 @@ public class DefaultKeyPrefixTests
             : [BinaryPrefixTests.Bulk("value"u8.ToArray())];
         await using var server = new FakeRespServer(2, replies);
         byte[] prefix = [255, 0, (byte)':'];
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with { KeyPrefix = prefix });
+#pragma warning restore RESP010
         if (watched)
         {
             await using var transaction = await client.CreateTransactionAsync(["key"]);
@@ -190,7 +204,9 @@ public class DefaultKeyPrefixTests
             .. BinaryPrefixTests.Bulk([.. prefix, .. "visible"u8]),
             .. BinaryPrefixTests.Bulk([254, (byte)'*', 0, .. "secret"u8])];
         await using var server = new FakeRespServer(response);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with { KeyPrefix = prefix });
+#pragma warning restore RESP010
         var keys = new List<string>();
         await foreach (var key in client.Keys.ScanAsync()) keys.Add(key);
         await Assert.That(keys).IsEquivalentTo(["visible"]);
@@ -205,10 +221,12 @@ public class DefaultKeyPrefixTests
             "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), FakeRespServer.OkReply,
             FakeRespServer.OkReply, BinaryPrefixTests.Bulk("old"u8.ToArray()), FakeRespServer.OkReply,
             BinaryPrefixTests.Bulk("new"u8.ToArray()), ":1\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
         {
             KeyPrefix = new byte[] { 255, 0 }, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var physical = client.ResolveKey("key");
         var invalidated = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var observer = client.ClientSideCache!.SubscribeInvalidations(physical, _ => invalidated.TrySetResult());
