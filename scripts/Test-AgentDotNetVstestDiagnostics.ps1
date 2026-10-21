@@ -114,9 +114,34 @@ if ($verb -eq $failureVerb) {
                         if (-not $saved.Contains($marker)) { throw "Partial discovery output lost: $marker" }
                     }
                 }
+                Remove-Item -LiteralPath Function:\Add-Content
             }
         }
     }
+
+    # Relative paths follow PowerShell's location even when the process differs.
+    'new' | Set-Content -LiteralPath (Join-Path $scripts 'failure-verb.txt')
+    $processDirectory = [Environment]::CurrentDirectory
+    $failure = $null
+    try {
+        [Environment]::CurrentDirectory = (New-Item -ItemType Directory -Path (Join-Path $testRoot 'process-location')).FullName
+        Set-Location -LiteralPath $testRoot
+        try {
+            & (Join-Path $scripts 'Test-AgentDotNetVstest.ps1') -DiagnosticsDirectory 'relative-diagnostics' *>&1 | Out-Null
+        }
+        catch { $failure = $_ }
+        if ((Get-Location).Path -ne $testRoot) { throw 'Relative-path fixture location was not restored.' }
+    }
+    finally {
+        Set-Location -LiteralPath $originalLocation.Path
+        [Environment]::CurrentDirectory = $processDirectory
+    }
+    if ([string]$failure -notlike '*VSTest fixture creation failed: 124*') { throw "Relative-path failure lost: $failure" }
+    $relativeDiagnostics = Join-Path $testRoot 'relative-diagnostics'
+    $fixture = @(Get-ChildItem -LiteralPath $relativeDiagnostics -Directory)
+    if ($fixture.Count -ne 1) { throw 'Expected diagnostics under the PowerShell location.' }
+    $saved = Get-Content -LiteralPath (Join-Path $fixture[0].FullName 'phases.log') -Raw
+    if (-not $saved.Contains('fixture cleanup started')) { throw 'Relative diagnostics did not retain cleanup.' }
 
     'failure-control' | Set-Content -LiteralPath (Join-Path $scripts 'failure-verb.txt')
     foreach ($mode in @('valid', 'missing', 'aborted', 'wrong-test', 'wrong-outcome', 'wrong-error')) {
@@ -128,6 +153,9 @@ if ($verb -eq $failureVerb) {
         catch { $failure = $_ }
         if ($mode -eq 'valid') {
             if ($failure) { throw "Valid failure-control report was rejected: $failure" }
+            $fixture = @(Get-ChildItem -LiteralPath (Join-Path $testRoot "failure-report-$mode") -Directory)
+            $saved = Get-Content -LiteralPath (Join-Path $fixture[0].FullName 'phases.log') -Raw
+            if (-not $saved.Contains('all VSTest assertions passed')) { throw 'Failure control did not exercise healthy phase logging.' }
         } else {
             $expected = if ($mode -eq 'missing') { 'Expected one failure-control TRX report' } else { 'Expected exactly the failure-control VSTest test' }
             if ([string]$failure -notlike "*$expected*") { throw "Invalid failure-control report ($mode) was not rejected: $failure" }
@@ -201,6 +229,8 @@ if ($verb -eq $failureVerb) {
     $hostPid = [int](Get-Content -LiteralPath (Join-Path $scripts 'host-pid.txt'))
     if (Get-Process -Id $hostPid -ErrorAction SilentlyContinue) { throw "Stalled discovery host survived: $hostPid" }
     $fixture = @(Get-ChildItem -LiteralPath $diagnostics -Directory)
+    $saved = Get-Content -LiteralPath (Join-Path $fixture[0].FullName 'phases.log') -Raw
+    if (-not $saved.Contains('FAILED: VSTest discovery host exceeded 90s timeout.')) { throw 'Stall control did not exercise healthy phase logging.' }
     $saved = Get-Content -LiteralPath (Join-Path $fixture[0].FullName 'discovery.log') -Raw
     if (-not $saved.Contains('partial discovery output control')) { throw 'Timed-out discovery output was lost.' }
     if (Test-Path -LiteralPath (Join-Path ([IO.Path]::GetTempPath()) $fixture[0].Name)) { throw 'Timed-out fixture was not deleted.' }

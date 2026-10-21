@@ -10,7 +10,8 @@ $previousTestRunner = $env:DOTNET_TEST_RUNNER
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 # Keep retained diagnostics outside the disposable fixture, as in the MTP smoke.
 $diagnosticsRoot = if ($DiagnosticsDirectory) {
-    Join-Path ([IO.Path]::GetFullPath($DiagnosticsDirectory)) (Split-Path $testRoot -Leaf)
+    $resolvedDiagnostics = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DiagnosticsDirectory)
+    Join-Path $resolvedDiagnostics (Split-Path $testRoot -Leaf)
 } else {
     Join-Path $testRoot 'diagnostics'
 }
