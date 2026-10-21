@@ -18,6 +18,7 @@ public sealed partial class RespireClient
         public ReadCommandKind ReadKind => command.ReadKind;
         public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
         public int CursorArgumentIndex => command.CursorArgumentIndex;
+        public bool HasOpaqueCursor => command.HasOpaqueCursor;
         public bool IsConnectionProtocol => false;
         // CatalogCommand owns no fence. SendCoreAsync applies MutationCommand outside this decorator,
         // using the forwarded mutation metadata, and retains that fence through native FIFO retirement.

@@ -1,0 +1,34 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IRespirePathHashCommands",
+      "OwnerType": "Respire.PathHashCommands",
+      "Members": [
+        "CountAsync(RespireKey,CancellationToken):ValueTask<long>",
+        "ExistsAsync(RespireKey,RespireKey,CancellationToken):ValueTask<bool>",
+        "GetAllAsync(RespireKey,RespireKey,CancellationToken):ValueTask<RespirePathHashField[]>",
+        "GetAsync`1(RespireKey,RespireKey,RespireKey,CancellationToken):ValueTask<T?>",
+        "GetBytesAsync(RespireKey,RespireKey,RespireKey,CancellationToken):ValueTask<byte[]?>",
+        "GetFieldsAsync(RespireKey,RespireKey,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<byte[]?[]>",
+        "GetFieldsAsync(RespireKey,RespireKey,RespireKey,CancellationToken):ValueTask<byte[]?[]>",
+        "GetManyAsync(RespireKey,ReadOnlySpan<RespirePathHashRead>,CancellationToken):ValueTask<byte[]?[]>",
+        "GetStringAsync(RespireKey,RespireKey,RespireKey,CancellationToken):ValueTask<string?>",
+        "LongestPrefixAsync(RespireKey,RespireKey,CancellationToken):ValueTask<RespirePathHashEntry?>",
+        "PrefixesAsync(RespireKey,RespireKey,long?,long?,CancellationToken):ValueTask<RespirePathHashEntry[]>",
+        "RemoveAsync(RespireKey,RespireKey,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "RemoveAsync(RespireKey,RespireKey,RespireKey,CancellationToken):ValueTask<long>",
+        "RemovePrefixAsync(RespireKey,RespireKey,CancellationToken):ValueTask<long>",
+        "ScanAsync(RespireKey,RespireKey?,int,CancellationToken):IAsyncEnumerable<RespirePathHashEntry>",
+        "ScanPageAsync(RespireKey,ReadOnlyMemory<byte>,RespireKey?,int,CancellationToken):ValueTask<RespirePathHashPage>",
+        "SetAsync(RespireKey,RespireKey,RespireKey,RespireValue,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync`1(RespireKey,RespireKey,RespireKey,T,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetFieldsAsync(RespireKey,RespireKey,ReadOnlySpan<(RespireKeyField,RespireValueValue)>,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetManyAsync(RespireKey,ReadOnlySpan<RespirePathHashWrite>,CancellationToken):ValueTask<bool>",
+        "TryGetAsync`1(RespireKey,RespireKey,RespireKey,CancellationToken):ValueTask<RespireGetResult<T>>"
+      ],
+      "Contract": "Immediate calls own preflight, conversion, and cleanup through DispatchResponseSource. Streaming issues one owned command per page."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

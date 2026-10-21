@@ -54,6 +54,10 @@ public interface IRespireClient : IAsyncDisposable
 
     /// <summary>Redis sparse array commands.</summary>
     IRespireArrayCommands Arrays { get; }
+
+    /// <summary>Valkey 9.2 Path Hash commands, tested against RC1.</summary>
+    IRespirePathHashCommands PathHashes { get; }
+
     /// <summary>Set commands.</summary>
     IRespireSetCommands Sets { get; }
     /// <summary>Sorted-set commands.</summary>

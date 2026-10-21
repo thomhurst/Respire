@@ -76,6 +76,7 @@ public class DeferredApiNamingTests
             "HyperLogLog",
             "Keys",
             "Lists",
+            "PathHashes",
             "Scripts",
             "Server",
             "Sets",
@@ -85,7 +86,9 @@ public class DeferredApiNamingTests
             "VectorSets",
         });
 
+#pragma warning disable RESP010 // This isolated client only constructs deferred queues; the test never connects or sends them.
         await using var client = RespireClient.Create("localhost:6379");
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
 

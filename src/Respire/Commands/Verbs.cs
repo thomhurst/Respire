@@ -15,6 +15,7 @@ internal readonly struct Verb
     public readonly ReadCommandKind ReadKind;
     public readonly RespireCommandRetryCategory RetryCategory;
     public readonly int CursorArgumentIndex;
+    public readonly bool HasOpaqueCursor;
     private readonly ClientCacheCommandMetadata.Cache? _cacheMetadata;
     public ClientCacheCommandMetadata CacheMetadata => _cacheMetadata?.Value ?? default;
 
@@ -47,6 +48,7 @@ internal readonly struct Verb
         ReadKind = allowReadRouting ? metadata.Kind : ReadCommandKind.None;
         RetryCategory = retryCategory;
         CursorArgumentIndex = metadata.CursorArgumentIndex;
+        HasOpaqueCursor = command.Equals("PHSCAN", StringComparison.OrdinalIgnoreCase);
         _cacheMetadata = new(command);
         Tokens = 0;
         var encodedLength = 0;

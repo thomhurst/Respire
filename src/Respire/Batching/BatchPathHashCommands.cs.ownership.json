@@ -1,0 +1,33 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IRespireBatchPathHashCommands",
+      "OwnerType": "Respire.BatchPathHashCommands",
+      "Members": [
+        "Count(RespireKey):RespirePending<long>",
+        "Exists(RespireKey,RespireKey):RespirePending<bool>",
+        "GetAll(RespireKey,RespireKey):RespirePending<RespirePathHashField[]>",
+        "GetBytes(RespireKey,RespireKey,RespireKey):RespirePending<byte[]?>",
+        "GetFields(RespireKey,RespireKey,ReadOnlySpan<RespireKey>):RespirePending<byte[]?[]>",
+        "GetFields(RespireKey,RespireKey,RespireKey):RespirePending<byte[]?[]>",
+        "GetMany(RespireKey,ReadOnlySpan<RespirePathHashRead>):RespirePending<byte[]?[]>",
+        "GetString(RespireKey,RespireKey,RespireKey):RespirePending<string?>",
+        "Get`1(RespireKey,RespireKey,RespireKey):RespirePending<T?>",
+        "LongestPrefix(RespireKey,RespireKey):RespirePending<RespirePathHashEntry?>",
+        "Prefixes(RespireKey,RespireKey,long?,long?):RespirePending<RespirePathHashEntry[]>",
+        "Remove(RespireKey,RespireKey,ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "Remove(RespireKey,RespireKey,RespireKey):RespirePending<long>",
+        "RemovePrefix(RespireKey,RespireKey):RespirePending<long>",
+        "ScanPage(RespireKey,ReadOnlyMemory<byte>,RespireKey?,int):RespirePending<RespirePathHashPage>",
+        "Set(RespireKey,RespireKey,RespireKey,RespireValue,RespireSetWhen):RespirePending<bool>",
+        "SetFields(RespireKey,RespireKey,ReadOnlySpan<(RespireKeyField,RespireValueValue)>,RespireSetWhen):RespirePending<bool>",
+        "SetMany(RespireKey,ReadOnlySpan<RespirePathHashWrite>):RespirePending<bool>",
+        "Set`1(RespireKey,RespireKey,RespireKey,T,RespireSetWhen):RespirePending<bool>",
+        "TryGet`1(RespireKey,RespireKey,RespireKey):RespirePending<RespireGetResult<T>>"
+      ],
+      "Contract": "Queue calls own synchronous validation and serialization. Execution owns transport; each pending owns result conversion and inspection."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

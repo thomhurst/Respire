@@ -396,7 +396,7 @@ Respire.RespireTransaction | constructor RespireTransaction(RespireClient, Respi
 Respire.RespireTransaction | method CommitAsync(CancellationToken) : ValueTask
 Respire.RespireTransaction | method CommitAsync(ReadOnlySpan<RespireCondition>, CancellationToken) : ValueTask<bool>
 Respire.RespireTransaction | method CommitAsync(RespireCondition, CancellationToken) : ValueTask<bool>
-# Count: Respire.RespireTransactionBase | 50
+# Count: Respire.RespireTransactionBase | 51
 Respire.RespireTransactionBase | constructor RespireTransactionBase(RespireClient, RespireConnection?, int?, RespireHashImportSession?)
 Respire.RespireTransactionBase | method CommitConditionalAsync(ReadOnlySpan<RespireCondition>, CancellationToken) : ValueTask<bool>
 Respire.RespireTransactionBase | method CommitCoreAsync(CancellationToken, bool) : ValueTask<bool>
@@ -435,6 +435,7 @@ Respire.RespireTransactionBase | property IPendingSink.DefersSerialization [expl
 Respire.RespireTransactionBase | property IPendingSink.ImportSession [explicit; get] : RespireHashImportSession?
 Respire.RespireTransactionBase | property Keys [public; get] : IRespireBatchKeyCommands
 Respire.RespireTransactionBase | property Lists [public; get] : IRespireBatchListCommands
+Respire.RespireTransactionBase | property PathHashes [public; get] : IRespireBatchPathHashCommands
 Respire.RespireTransactionBase | property Scripts [public; get] : IRespireBatchScriptCommands
 Respire.RespireTransactionBase | property Server [public; get] : IRespireBatchServerCommands
 Respire.RespireTransactionBase | property Sets [public; get] : IRespireBatchSetCommands

@@ -10,6 +10,8 @@ public class DeferredFacetParityTests
 {
     private static readonly HashSet<MethodInfo> ImmediateOnlyMethods =
     [
+        // Path Hash traversal streams multiple opaque-cursor pages; queue only individual pages.
+        .. typeof(IRespirePathHashCommands).GetMethods().Where(method => method.Name == nameof(IRespirePathHashCommands.ScanAsync)),
         // Array scans page by index while streaming; only individual pages can be queued.
         .. typeof(IRespireArrayCommands).GetMethods().Where(method => method.Name == nameof(IRespireArrayCommands.ScanAsync)),
         // Opening an import session acquires a connection and owns its lifetime; it is not a queued command.
@@ -61,6 +63,7 @@ public class DeferredFacetParityTests
     [Arguments("Hashes")]
     [Arguments("Lists")]
     [Arguments("Arrays")]
+    [Arguments("PathHashes")]
     [Arguments("Sets")]
     [Arguments("SortedSets")]
     [Arguments("Bitmaps")]

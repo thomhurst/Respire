@@ -13,7 +13,8 @@ namespace Respire.Commands;
 internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCommandKind readKind,
     int cursorArgumentIndex = -1, ClientCacheCommandMetadata cacheMetadata = default,
     RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
-    RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never) : IRespCommand
+    RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never,
+    bool hasOpaqueCursor = false) : IRespCommand
 {
     public static SnapshotCommand Create<TCommand>(in TCommand command, bool captureCacheMetadata = true)
         where TCommand : struct, IRespCommand
@@ -28,7 +29,7 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCom
             return new SnapshotCommand(buffer.WrittenMemory.ToArray(), slot, command.ReadKind, command.CursorArgumentIndex,
                 captureCacheMetadata ? command.GetClientCacheMetadata(string.Empty) : default,
                 captureCacheMetadata ? command.GetCacheMutation(string.Empty) : RespireCacheMutation.Unknown,
-                command.RetryCategory);
+                command.RetryCategory, command.HasOpaqueCursor);
         }
         finally
         {
@@ -45,6 +46,7 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCom
     public ReadCommandKind ReadKind => readKind;
     public RespireCommandRetryCategory RetryCategory => retryCategory;
     public int CursorArgumentIndex => cursorArgumentIndex;
+    public bool HasOpaqueCursor => hasOpaqueCursor;
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => cacheMetadata;
     public RespireCacheMutation GetCacheMutation(string operation) => cacheMutation;
 
@@ -64,6 +66,7 @@ internal readonly struct Cmd(Verb verb) : IRespCommand
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
+    public bool HasOpaqueCursor => verb.HasOpaqueCursor;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -97,6 +100,7 @@ internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
+    public bool HasOpaqueCursor => verb.HasOpaqueCursor;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -125,6 +129,7 @@ internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRe
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
+    public bool HasOpaqueCursor => verb.HasOpaqueCursor;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -157,6 +162,7 @@ internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, Respi
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
+    public bool HasOpaqueCursor => verb.HasOpaqueCursor;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -192,6 +198,7 @@ internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, Respi
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
+    public bool HasOpaqueCursor => verb.HasOpaqueCursor;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -230,6 +237,7 @@ internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, Respi
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
+    public bool HasOpaqueCursor => verb.HasOpaqueCursor;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -271,6 +279,7 @@ internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
+    public bool HasOpaqueCursor => verb.HasOpaqueCursor;
 
     public bool TryGetArgument(int index, out RespireValue value)
     {
@@ -333,6 +342,25 @@ internal readonly struct Cmd1N(Verb verb, RespireValue a1, RespireValue[] rest) 
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
+    public bool HasOpaqueCursor => verb.HasOpaqueCursor;
+
+    public bool TryGetArgument(int index, out RespireValue value)
+    {
+        if (index == 0)
+        {
+            value = a1;
+            return true;
+        }
+
+        if ((uint)(index - 1) < (uint)rest.Length)
+        {
+            value = rest[index - 1];
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -438,6 +466,7 @@ internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, Resp
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
+    public bool HasOpaqueCursor => verb.HasOpaqueCursor;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
@@ -523,6 +552,7 @@ internal readonly struct DynamicCommand(
     public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
     public ReadCommandKind ReadKind => readKind;
     public int CursorArgumentIndex => cursorArgumentIndex;
+    public bool HasOpaqueCursor => tokens.Length > 0 && tokens[0].EqualsAsciiIgnoreCase("PHSCAN");
 
     public RespireCacheMutation GetCacheMutation(string operation)
         => cacheMutation == RespireCacheMutation.Unknown && !hasExplicitCacheMutation
@@ -744,6 +774,7 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
         ? command.ReadKind : RawCommandDescriptorLookup.GetReadKind(command.Name, args);
     public ReadCommandKind ReadKind => readKind;
     public int CursorArgumentIndex => command.CursorArgumentIndex;
+    public bool HasOpaqueCursor => command.HasOpaqueCursor;
 
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation)
     {
@@ -829,6 +860,7 @@ internal readonly struct MSetExCommand(Verb verb, RespireValue[] args) : IRespCo
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
+    public bool HasOpaqueCursor => verb.HasOpaqueCursor;
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {

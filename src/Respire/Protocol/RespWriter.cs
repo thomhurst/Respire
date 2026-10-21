@@ -481,6 +481,9 @@ internal interface IRespCommand
 
     int CursorArgumentIndex => -1;
 
+    /// <summary>True for PHSCAN, whose cursor is an opaque byte token rather than a number.</summary>
+    bool HasOpaqueCursor => false;
+
     /// <summary>Returns cache mutation metadata for the command.</summary>
     /// <remarks>An empty operation requests classification from the wire command or an explicit declaration,
     /// without trusting a diagnostic name. Unclassified commands must remain unknown.</remarks>

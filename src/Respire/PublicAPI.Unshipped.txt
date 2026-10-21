@@ -1092,3 +1092,122 @@ Respire.RespireSortedSetCombineOptions.Weights.get -> System.ReadOnlyMemory<doub
 Respire.RespireSortedSetCombineOptions.Weights.init -> void
 Respire.RespireSortedSetCombineOptions.Aggregate.get -> Respire.RespireSortedSetAggregate
 Respire.RespireSortedSetCombineOptions.Aggregate.init -> void
+~override Respire.RespirePathHashField.Equals(object obj) -> bool
+~override Respire.RespirePathHashField.ToString() -> string
+~override Respire.RespirePathHashRead.Equals(object obj) -> bool
+~override Respire.RespirePathHashRead.ToString() -> string
+~override Respire.RespirePathHashWrite.Equals(object obj) -> bool
+~override Respire.RespirePathHashWrite.ToString() -> string
+override Respire.RespirePathHashEntry.Equals(object? obj) -> bool
+override Respire.RespirePathHashEntry.GetHashCode() -> int
+override Respire.RespirePathHashEntry.ToString() -> string!
+override Respire.RespirePathHashField.GetHashCode() -> int
+override Respire.RespirePathHashPage.Equals(object? obj) -> bool
+override Respire.RespirePathHashPage.GetHashCode() -> int
+override Respire.RespirePathHashPage.ToString() -> string!
+override Respire.RespirePathHashRead.GetHashCode() -> int
+override Respire.RespirePathHashWrite.GetHashCode() -> int
+Respire.IRespireBatchPathHashCommands
+Respire.IRespireBatchPathHashCommands.Count(Respire.RespireKey key) -> Respire.RespirePending<long>!
+Respire.IRespireBatchPathHashCommands.Exists(Respire.RespireKey key, Respire.RespireKey path) -> Respire.RespirePending<bool>!
+Respire.IRespireBatchPathHashCommands.Get<T>(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field) -> Respire.RespirePending<T?>!
+Respire.IRespireBatchPathHashCommands.GetAll(Respire.RespireKey key, Respire.RespireKey path) -> Respire.RespirePending<Respire.RespirePathHashField[]!>!
+Respire.IRespireBatchPathHashCommands.GetBytes(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field) -> Respire.RespirePending<byte[]?>!
+Respire.IRespireBatchPathHashCommands.GetFields(Respire.RespireKey key, Respire.RespireKey path, System.ReadOnlySpan<Respire.RespireKey> fields) -> Respire.RespirePending<byte[]?[]!>!
+Respire.IRespireBatchPathHashCommands.GetFields(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field) -> Respire.RespirePending<byte[]?[]!>!
+Respire.IRespireBatchPathHashCommands.GetMany(Respire.RespireKey key, System.ReadOnlySpan<Respire.RespirePathHashRead> paths) -> Respire.RespirePending<byte[]?[]!>!
+Respire.IRespireBatchPathHashCommands.GetString(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field) -> Respire.RespirePending<string?>!
+Respire.IRespireBatchPathHashCommands.LongestPrefix(Respire.RespireKey key, Respire.RespireKey query) -> Respire.RespirePending<Respire.RespirePathHashEntry?>!
+Respire.IRespireBatchPathHashCommands.Prefixes(Respire.RespireKey key, Respire.RespireKey query, long? count = null, long? maxPathLength = null) -> Respire.RespirePending<Respire.RespirePathHashEntry![]!>!
+Respire.IRespireBatchPathHashCommands.Remove(Respire.RespireKey key, Respire.RespireKey path, System.ReadOnlySpan<Respire.RespireKey> fields = default(System.ReadOnlySpan<Respire.RespireKey>)) -> Respire.RespirePending<long>!
+Respire.IRespireBatchPathHashCommands.Remove(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field) -> Respire.RespirePending<long>!
+Respire.IRespireBatchPathHashCommands.RemovePrefix(Respire.RespireKey key, Respire.RespireKey prefix) -> Respire.RespirePending<long>!
+Respire.IRespireBatchPathHashCommands.ScanPage(Respire.RespireKey key, System.ReadOnlyMemory<byte> cursor = default(System.ReadOnlyMemory<byte>), Respire.RespireKey? prefix = null, int count = 100) -> Respire.RespirePending<Respire.RespirePathHashPage!>!
+Respire.IRespireBatchPathHashCommands.Set(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field, Respire.RespireValue value, Respire.RespireSetWhen when = Respire.RespireSetWhen.Always) -> Respire.RespirePending<bool>!
+Respire.IRespireBatchPathHashCommands.Set<T>(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field, T value, Respire.RespireSetWhen when = Respire.RespireSetWhen.Always) -> Respire.RespirePending<bool>!
+Respire.IRespireBatchPathHashCommands.SetFields(Respire.RespireKey key, Respire.RespireKey path, System.ReadOnlySpan<(Respire.RespireKey Field, Respire.RespireValue Value)> fields, Respire.RespireSetWhen when = Respire.RespireSetWhen.Always) -> Respire.RespirePending<bool>!
+Respire.IRespireBatchPathHashCommands.SetMany(Respire.RespireKey key, System.ReadOnlySpan<Respire.RespirePathHashWrite> paths) -> Respire.RespirePending<bool>!
+Respire.IRespireBatchPathHashCommands.TryGet<T>(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field) -> Respire.RespirePending<Respire.RespireGetResult<T>>!
+Respire.IRespireClient.PathHashes.get -> Respire.IRespirePathHashCommands!
+Respire.IRespireCommandQueue.PathHashes.get -> Respire.IRespireBatchPathHashCommands!
+Respire.IRespirePathHashCommands
+Respire.IRespirePathHashCommands.CountAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.IRespirePathHashCommands.ExistsAsync(Respire.RespireKey key, Respire.RespireKey path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IRespirePathHashCommands.GetAllAsync(Respire.RespireKey key, Respire.RespireKey path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespirePathHashField[]!>
+Respire.IRespirePathHashCommands.GetAsync<T>(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T?>
+Respire.IRespirePathHashCommands.GetBytesAsync(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<byte[]?>
+Respire.IRespirePathHashCommands.GetFieldsAsync(Respire.RespireKey key, Respire.RespireKey path, System.ReadOnlySpan<Respire.RespireKey> fields, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<byte[]?[]!>
+Respire.IRespirePathHashCommands.GetFieldsAsync(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<byte[]?[]!>
+Respire.IRespirePathHashCommands.GetManyAsync(Respire.RespireKey key, System.ReadOnlySpan<Respire.RespirePathHashRead> paths, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<byte[]?[]!>
+Respire.IRespirePathHashCommands.GetStringAsync(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
+Respire.IRespirePathHashCommands.LongestPrefixAsync(Respire.RespireKey key, Respire.RespireKey query, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespirePathHashEntry?>
+Respire.IRespirePathHashCommands.PrefixesAsync(Respire.RespireKey key, Respire.RespireKey query, long? count = null, long? maxPathLength = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespirePathHashEntry![]!>
+Respire.IRespirePathHashCommands.RemoveAsync(Respire.RespireKey key, Respire.RespireKey path, System.ReadOnlySpan<Respire.RespireKey> fields = default(System.ReadOnlySpan<Respire.RespireKey>), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.IRespirePathHashCommands.RemoveAsync(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.IRespirePathHashCommands.RemovePrefixAsync(Respire.RespireKey key, Respire.RespireKey prefix, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.IRespirePathHashCommands.ScanAsync(Respire.RespireKey key, Respire.RespireKey? prefix = null, int count = 100, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Respire.RespirePathHashEntry!>!
+Respire.IRespirePathHashCommands.ScanPageAsync(Respire.RespireKey key, System.ReadOnlyMemory<byte> cursor = default(System.ReadOnlyMemory<byte>), Respire.RespireKey? prefix = null, int count = 100, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespirePathHashPage!>
+Respire.IRespirePathHashCommands.SetAsync(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field, Respire.RespireValue value, Respire.RespireSetWhen when = Respire.RespireSetWhen.Always, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IRespirePathHashCommands.SetAsync<T>(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field, T value, Respire.RespireSetWhen when = Respire.RespireSetWhen.Always, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IRespirePathHashCommands.SetFieldsAsync(Respire.RespireKey key, Respire.RespireKey path, System.ReadOnlySpan<(Respire.RespireKey Field, Respire.RespireValue Value)> fields, Respire.RespireSetWhen when = Respire.RespireSetWhen.Always, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IRespirePathHashCommands.SetManyAsync(Respire.RespireKey key, System.ReadOnlySpan<Respire.RespirePathHashWrite> paths, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IRespirePathHashCommands.TryGetAsync<T>(Respire.RespireKey key, Respire.RespireKey path, Respire.RespireKey field, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireGetResult<T>>
+Respire.RespireBatch.PathHashes.get -> Respire.IRespireBatchPathHashCommands!
+Respire.RespireClient.PathHashes.get -> Respire.IRespirePathHashCommands!
+Respire.RespirePathHashEntry
+Respire.RespirePathHashEntry.<Clone>$() -> Respire.RespirePathHashEntry!
+Respire.RespirePathHashEntry.Deconstruct(out byte[]! Path, out Respire.RespirePathHashField[]! Fields) -> void
+Respire.RespirePathHashEntry.Equals(Respire.RespirePathHashEntry? other) -> bool
+Respire.RespirePathHashEntry.Fields.get -> Respire.RespirePathHashField[]!
+Respire.RespirePathHashEntry.Fields.init -> void
+Respire.RespirePathHashEntry.Path.get -> byte[]!
+Respire.RespirePathHashEntry.Path.init -> void
+Respire.RespirePathHashEntry.RespirePathHashEntry(byte[]! Path, Respire.RespirePathHashField[]! Fields) -> void
+Respire.RespirePathHashField
+Respire.RespirePathHashField.Deconstruct(out byte[]! Field, out byte[]! Value) -> void
+Respire.RespirePathHashField.Equals(Respire.RespirePathHashField other) -> bool
+Respire.RespirePathHashField.Field.get -> byte[]!
+Respire.RespirePathHashField.Field.init -> void
+Respire.RespirePathHashField.RespirePathHashField() -> void
+Respire.RespirePathHashField.RespirePathHashField(byte[]! Field, byte[]! Value) -> void
+Respire.RespirePathHashField.Value.get -> byte[]!
+Respire.RespirePathHashField.Value.init -> void
+Respire.RespirePathHashPage
+Respire.RespirePathHashPage.<Clone>$() -> Respire.RespirePathHashPage!
+Respire.RespirePathHashPage.Cursor.get -> System.ReadOnlyMemory<byte>
+Respire.RespirePathHashPage.Cursor.init -> void
+Respire.RespirePathHashPage.Deconstruct(out System.ReadOnlyMemory<byte> Cursor, out Respire.RespirePathHashEntry![]! Entries) -> void
+Respire.RespirePathHashPage.Entries.get -> Respire.RespirePathHashEntry![]!
+Respire.RespirePathHashPage.Entries.init -> void
+Respire.RespirePathHashPage.Equals(Respire.RespirePathHashPage? other) -> bool
+Respire.RespirePathHashPage.IsComplete.get -> bool
+Respire.RespirePathHashPage.RespirePathHashPage(System.ReadOnlyMemory<byte> Cursor, Respire.RespirePathHashEntry![]! Entries) -> void
+Respire.RespirePathHashRead
+Respire.RespirePathHashRead.Deconstruct(out Respire.RespireKey Path, out Respire.RespireKey[]! Fields) -> void
+Respire.RespirePathHashRead.Equals(Respire.RespirePathHashRead other) -> bool
+Respire.RespirePathHashRead.Fields.get -> Respire.RespireKey[]!
+Respire.RespirePathHashRead.Fields.init -> void
+Respire.RespirePathHashRead.Path.get -> Respire.RespireKey
+Respire.RespirePathHashRead.Path.init -> void
+Respire.RespirePathHashRead.RespirePathHashRead() -> void
+Respire.RespirePathHashRead.RespirePathHashRead(Respire.RespireKey Path, Respire.RespireKey[]! Fields) -> void
+Respire.RespirePathHashWrite
+Respire.RespirePathHashWrite.Deconstruct(out Respire.RespireKey Path, out (Respire.RespireKey Field, Respire.RespireValue Value)[]! Fields) -> void
+Respire.RespirePathHashWrite.Equals(Respire.RespirePathHashWrite other) -> bool
+Respire.RespirePathHashWrite.Fields.get -> (Respire.RespireKey Field, Respire.RespireValue Value)[]!
+Respire.RespirePathHashWrite.Fields.init -> void
+Respire.RespirePathHashWrite.Path.get -> Respire.RespireKey
+Respire.RespirePathHashWrite.Path.init -> void
+Respire.RespirePathHashWrite.RespirePathHashWrite() -> void
+Respire.RespirePathHashWrite.RespirePathHashWrite(Respire.RespireKey Path, (Respire.RespireKey Field, Respire.RespireValue Value)[]! Fields) -> void
+Respire.RespireTransactionBase.PathHashes.get -> Respire.IRespireBatchPathHashCommands!
+static Respire.RespirePathHashEntry.operator !=(Respire.RespirePathHashEntry? left, Respire.RespirePathHashEntry? right) -> bool
+static Respire.RespirePathHashEntry.operator ==(Respire.RespirePathHashEntry? left, Respire.RespirePathHashEntry? right) -> bool
+static Respire.RespirePathHashField.operator !=(Respire.RespirePathHashField left, Respire.RespirePathHashField right) -> bool
+static Respire.RespirePathHashField.operator ==(Respire.RespirePathHashField left, Respire.RespirePathHashField right) -> bool
+static Respire.RespirePathHashPage.operator !=(Respire.RespirePathHashPage? left, Respire.RespirePathHashPage? right) -> bool
+static Respire.RespirePathHashPage.operator ==(Respire.RespirePathHashPage? left, Respire.RespirePathHashPage? right) -> bool
+static Respire.RespirePathHashRead.operator !=(Respire.RespirePathHashRead left, Respire.RespirePathHashRead right) -> bool
+static Respire.RespirePathHashRead.operator ==(Respire.RespirePathHashRead left, Respire.RespirePathHashRead right) -> bool
+static Respire.RespirePathHashWrite.operator !=(Respire.RespirePathHashWrite left, Respire.RespirePathHashWrite right) -> bool
+static Respire.RespirePathHashWrite.operator ==(Respire.RespirePathHashWrite left, Respire.RespirePathHashWrite right) -> bool

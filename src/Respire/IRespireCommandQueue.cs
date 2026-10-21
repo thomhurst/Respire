@@ -42,6 +42,9 @@ public interface IRespireCommandQueue
     /// <summary>Redis sparse array commands.</summary>
     IRespireBatchArrayCommands Arrays { get; }
 
+    /// <summary>Valkey 9.2 Path Hash commands, tested against RC1.</summary>
+    IRespireBatchPathHashCommands PathHashes { get; }
+
     /// <summary>Set (unordered, unique members) commands.</summary>
     IRespireBatchSetCommands Sets { get; }
 

@@ -1614,6 +1614,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public IRespireKeyCommands Keys => keys ?? inner.Keys;
         public IRespireLockCommands Locks => inner.Locks;
         public IRespireHashCommands Hashes => inner.Hashes;
+        public IRespirePathHashCommands PathHashes => inner.PathHashes;
         public IRespireListCommands Lists => inner.Lists;
         public IRespireArrayCommands Arrays => inner.Arrays;
         public IRespireSetCommands Sets => inner.Sets;

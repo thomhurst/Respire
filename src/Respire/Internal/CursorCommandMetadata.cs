@@ -15,6 +15,8 @@ internal static class CursorCommandMetadata
     {
         var index = command.CursorArgumentIndex;
         if (index < 0 || !command.TryGetArgument(index, out var cursor)) return false;
+        // PHSCAN compares the exact wire payload; SCAN-family arguments remain numeric.
+        if (command.HasOpaqueCursor) return !cursor.Equals((RespireValue)"0");
         return !(cursor.TryGetInt64(out var value) && value == 0);
     }
 

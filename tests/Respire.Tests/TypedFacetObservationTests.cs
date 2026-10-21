@@ -12,6 +12,8 @@ using TUnit.Core;
 
 namespace Respire.Tests;
 
+#pragma warning disable RESP010 // Each telemetry scenario owns an isolated fake server and client configuration.
+
 [NotInParallel]
 public class TypedFacetObservationTests
 {
@@ -22,6 +24,7 @@ public class TypedFacetObservationTests
     [Arguments("string-stream")]
     [Arguments("hash-condition")]
     [Arguments("hash-fields")]
+    [Arguments("path-hash-fields")]
     [Arguments("hash-precision")]
     [Arguments("key-condition")]
     [Arguments("key-database")]
@@ -47,6 +50,7 @@ public class TypedFacetObservationTests
                 case "string-stream": await client.Strings.SetAsync("key", Stream.Null, -1); break;
                 case "hash-condition": await client.Hashes.SetAsync("key", "field", "value", (RespireSetWhen)999); break;
                 case "hash-fields": await client.Hashes.ExpiryTimeAsync("key", Array.Empty<string>()); break;
+                case "path-hash-fields": await client.PathHashes.SetFieldsAsync("key", "path", []); break;
                 case "hash-precision": await client.Hashes.ExpiryTimeAsync("key", (RespireExpiryTimePrecision)999, "field"); break;
                 case "key-condition": await client.Keys.ExpireAsync("key", RespireExpiry.Persist, RespireExpireWhen.NotExists); break;
                 case "key-database": await client.Keys.CopyAsync("key", "other", -1); break;
@@ -69,6 +73,7 @@ public class TypedFacetObservationTests
     [Test]
     [Arguments("string")]
     [Arguments("hash")]
+    [Arguments("path-hash")]
     [Arguments("key")]
     [Arguments("list")]
     [Arguments("sorted")]
@@ -79,7 +84,7 @@ public class TypedFacetObservationTests
         {
             ReplyOverride = (_, command) => !command.Contains("key", StringComparison.Ordinal) ? null
                 : facet == "key" ? ":9223372036854775807\r\n"u8.ToArray()
-                : facet == "list" ? "*1\r\n$3\r\nbad\r\n"u8.ToArray()
+                : facet is "list" or "path-hash" ? "*1\r\n$3\r\nbad\r\n"u8.ToArray()
                 : "$3\r\nbad\r\n"u8.ToArray(),
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
@@ -91,8 +96,9 @@ public class TypedFacetObservationTests
             {
                 case "string": await client.Strings.GetAsync<int>("key"); break;
                 case "hash": await client.Hashes.GetAsync<int>("key", "field"); break;
+                case "path-hash": await client.PathHashes.GetAsync<int>("key", "path", "field"); break;
                 case "key": await client.Keys.IdleTimeAsync("key"); break;
-                case "list": await client.Lists.RangeAsync<int>("key"); break;
+                case "list": await client.Lists.RangeAsync<int>("key", 0, 0); break;
                 default: await client.SortedSets.RandomMemberAsync<int>("key"); break;
             }
         }
@@ -138,7 +144,9 @@ public class TypedFacetObservationTests
         for (var index = 0; index < 1000; index++)
         {
             var pending = client.Strings.GetStringAsync("key");
+#pragma warning disable RESP009 // Consume the synchronous cache hit on the thread whose allocations are measured.
             if (!pending.IsCompletedSuccessfully || pending.GetAwaiter().GetResult() != "value")
+#pragma warning restore RESP009
                 throw new InvalidOperationException("Expected a synchronous cache hit.");
             if (control) GC.KeepAlive(new byte[37]);
         }

@@ -95,6 +95,7 @@ public sealed partial class RespireClient
         public ReadCommandKind ReadKind => command.ReadKind;
         public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
         public int CursorArgumentIndex => command.CursorArgumentIndex;
+        public bool HasOpaqueCursor => command.HasOpaqueCursor;
         public bool IsConnectionProtocol => command.IsConnectionProtocol;
         public ClientSideCacheCoordinator.MutationFence GetMutationFence() => command.GetMutationFence();
         public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);

@@ -134,7 +134,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   server commands; a [command catalog with raw and interpolated execution](guides/raw-commands.md);
   and [source-generated custom commands](guides/generated-commands.md).
 - [Typed Redis 8.10 / Valkey 9.2 RC commands](guides/raw-commands.md#finding-typed-apis), including
-  [sparse arrays](commands/arrays.md) and [hash import sessions](guides/hash-import.md).
+  [sparse arrays](commands/arrays.md), [hash import sessions](guides/hash-import.md), and
+  [Path Hashes](guides/valkey-92.md#path-hashes) with prefix traversal, batches and transactions.
   Availability depends on the server version.
 - [Conditional transactions](guides/batches-and-transactions.md#conditional-transactions-valkey-92)
   with Valkey 9.2+ EXEC IFEQ, IFNE, NX, and XX preconditions.
