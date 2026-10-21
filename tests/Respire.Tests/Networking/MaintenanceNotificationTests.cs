@@ -13,6 +13,8 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
+// Limit concurrent scripted sockets so short watchdog and handoff deadlines have time to run.
+[ParallelLimiter<TimingSensitive>]
 public class MaintenanceNotificationTests
 {
     private static readonly byte[] Hello = "%1\r\n+proto\r\n:3\r\n"u8.ToArray();
@@ -583,25 +585,31 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    [Arguments("standalone")]
-    [Arguments("cluster")]
-    [Arguments("sentinel")]
-    public async Task ReroutedUploadAcquisitionReportsMaintenanceRelaxedTimeout(string mode)
+    [Arguments("standalone", 0)]
+    [Arguments("cluster", 0)]
+    [Arguments("sentinel", 0)]
+    [Arguments("standalone", 1200)]
+    [Arguments("cluster", 1200)]
+    [Arguments("sentinel", 1200)]
+    public async Task ReroutedUploadAcquisitionReportsMaintenanceRelaxedTimeout(string mode, int handshakeDelay)
     {
         await using var source = Server(maxConnections: 4);
+        source.DelayCommand("CLIENT MAINT_NOTIFICATIONS", handshakeDelay);
         await using var target = Server(maxConnections: 4);
         ConfigureMaintenanceRouting(source);
         ConfigureMaintenanceRouting(target);
         await using var sentinel = MaintenanceSentinel(source.Port);
-        var relaxed = TimeSpan.FromSeconds(3);
+        // Allow bounded handshake scheduling before exercising replacement acquisition.
+        var relaxed = TimeSpan.FromSeconds(5);
         var stallAcquisition = false;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, mode) with
         {
-            CommandTimeout = TimeSpan.FromSeconds(1),
+            CommandTimeout = TimeSpan.FromSeconds(3),
             MaintenanceRelaxedTimeout = relaxed,
-            MaintenanceWindowTimeout = TimeSpan.FromSeconds(10),
+            MaintenanceWindowTimeout = TimeSpan.FromSeconds(20),
             ConnectTimeout = TimeSpan.FromSeconds(10),
             TestingStreamFactory = async (host, port, token) =>
             {
@@ -611,11 +619,10 @@ public class MaintenanceNotificationTests
                 catch { socket.Dispose(); throw; }
                 return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
             },
-        });
+        }, timeout.Token);
 #pragma warning restore RESP010
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = await MaintenancePoolAsync(client, "moved-upload");
-        var lease = await originalPool.RentAsync(timeout.Token, kind: DedicatedLeaseKind.Streaming);
+        var lease = await originalPool.RentAsync(timeout.Token, armHandshakeDeadline: false, kind: DedicatedLeaseKind.Streaming);
         // Sentinel catch-up ROLE traffic can arrive on another socket after this rental.
         // Identify the exact upload lease instead of using the most recently active socket.
         using var barrier = await lease.SendAsync(new Cmd1(new Verb(-1, "ECHO"), "maintenance-upload-lease"), timeout.Token);
@@ -1036,29 +1043,40 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    public async Task MovingReroutePreservesMaintenanceRelaxedDeadline()
+    [Arguments(0)]
+    [Arguments(600)]
+    public async Task MovingReroutePreservesMaintenanceRelaxedDeadline(int handoffDelay)
     {
         await using var source = Server(maxConnections: 2);
-        source.DelayReply(2, 450);
+        source.SuppressReply = command => command == "PING";
         await using var target = Server(maxConnections: 2);
-        target.DelayReply(2, 450);
+        target.DelayCommand("PING", 450);
         var connectionOptions = Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
         {
             MaxInflightCommands = 1,
             CommandTimeout = TimeSpan.FromMilliseconds(300),
-            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(2),
-            MaintenanceWindowTimeout = TimeSpan.FromSeconds(4),
+            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(5),
+            MaintenanceWindowTimeout = TimeSpan.FromSeconds(10),
         };
-        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
+        await using var multiplexer = RespireConnectionMultiplexer.Create("127.0.0.1", source.Port,
             options: connectionOptions);
+        using var setup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await multiplexer.EnsureConnectedAsync(setup.Token, armHandshakeDeadline: false);
         var staleSelection = multiplexer.GetConnection();
 
+        await source.SendRawAsync(Start("MIGRATING", 1));
+        await WaitForMaintenance(staleSelection);
         var accepted = staleSelection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await WaitForCommands(source, 3);
         var waitingForCapacity = staleSelection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
-        await source.SendRawAsync(Start("MIGRATING", 1));
-        await WaitForMaintenance(staleSelection);
+        await Task.Delay(handoffDelay);
+        await Assert.That(waitingForCapacity.IsCompleted).IsFalse();
         await source.SendRawAsync(Moving(1, target.Port));
+        await WaitForPort(multiplexer, target.Port);
+        await WaitForRetirement(staleSelection);
+        // Keep ring capacity occupied until admission stops on the source. A fixed reply
+        // delay can let the waiter run there before the MOVING callback gets scheduled.
+        await source.SendRawAsync(FakeRespServer.PongReply);
 
         using var acceptedReply = await accepted.WaitAsync(TimeSpan.FromSeconds(5));
         using var reroutedReply = await waitingForCapacity.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1367,10 +1385,13 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    public async Task MovingRetriesTargetSetupWithinGracePeriod()
+    [Arguments(0)]
+    [Arguments(2600)]
+    public async Task MovingRetriesTargetSetupWithinGracePeriod(int handshakeDelay)
     {
         await using var source = Server(maxConnections: 2);
         await using var target = Server(maxConnections: 4);
+        target.DelayCommand("HELLO", handshakeDelay);
         var targetReply = target.ReplyOverride!;
         var negotiations = 0;
         target.ReplyOverride = (connectionId, command) =>
@@ -1381,7 +1402,9 @@ public class MaintenanceNotificationTests
             options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
 
         await source.SendRawAsync(Moving(1, target.Port, seconds: 10));
-        await WaitForPort(multiplexer, target.Port);
+        // The advertised grace allows ten seconds of failed setup; the observer must not
+        // cancel a valid retry after five seconds when handshakes are slow.
+        await WaitForPort(multiplexer, target.Port, TimeSpan.FromSeconds(15));
 
         await Assert.That(Volatile.Read(ref negotiations)).IsEqualTo(2);
     }
@@ -1391,22 +1414,40 @@ public class MaintenanceNotificationTests
     {
         await using var source = Server(maxConnections: 2);
         await using var target = Server("-ERR maintenance subsystem unavailable\r\n"u8.ToArray(), maxConnections: 64);
+        var negotiationReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFailure = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        target.GateCommand("CLIENT MAINT_NOTIFICATIONS", releaseFailure.Task, () => negotiationReceived.TrySetResult());
+        var logger = new MovingGraceFailureLogger();
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
-            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
+            options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true), logger: logger);
+        var original = multiplexer.GetConnection();
 
         await source.SendRawAsync(Moving(1, target.Port, seconds: 1));
-        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-        {
-            // Wait for more than one setup attempt, then for the grace period to lapse.
-            while (target.ReceivedCommands.Count(command => command == "CLIENT MAINT_NOTIFICATIONS ON") < 2)
-                await Task.Delay(5, timeout.Token);
-        }
+        await negotiationReceived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        // A failed setup may consume the whole grace period. Requiring two attempts in
+        // that period is invalid under load; the separate retry test proves retry behavior.
         await Task.Delay(1200);
+        releaseFailure.TrySetResult();
+        await logger.Failed.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         using var pong = await multiplexer.GetConnection().SendAsync(new RawCommand(FakeRespServer.PingFrame))
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(pong.AsString()).IsEqualTo("PONG");
         await Assert.That(multiplexer.GetConnection().Port).IsEqualTo(source.Port);
+        await Assert.That(ReferenceEquals(multiplexer.GetConnection(), original)).IsTrue();
+        await Assert.That(target.ReceivedCommands.Count(command => command == "CLIENT MAINT_NOTIFICATIONS ON")).IsEqualTo(1);
+    }
+
+    private sealed class MovingGraceFailureLogger : Microsoft.Extensions.Logging.ILogger
+    {
+        internal TaskCompletionSource Failed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (eventId.Name == "MovingGraceAttemptFailed") Failed.TrySetResult();
+        }
     }
 
     [Test]
@@ -1775,9 +1816,9 @@ public class MaintenanceNotificationTests
         while (connection.IsAcceptingCommands) await Task.Delay(5, timeout.Token);
     }
 
-    private static async Task WaitForPort(RespireConnectionMultiplexer multiplexer, int port)
+    private static async Task WaitForPort(RespireConnectionMultiplexer multiplexer, int port, TimeSpan? observationTimeout = null)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeout = new CancellationTokenSource(observationTimeout ?? TimeSpan.FromSeconds(5));
         while (multiplexer.GetConnection().Port != port) await Task.Delay(5, timeout.Token);
     }
 
@@ -2183,9 +2224,12 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    public async Task StreamedSetTimeoutReportsRelaxedDeadline()
+    [Arguments(0)]
+    [Arguments(300)]
+    public async Task StreamedSetTimeoutReportsRelaxedDeadline(int handshakeDelay)
     {
         await using var server = Server();
+        server.DelayCommand("HELLO", handshakeDelay);
         await using var connection = await Connect(server, TimeSpan.FromMilliseconds(150),
             window: TimeSpan.FromSeconds(2), relaxed: TimeSpan.FromMilliseconds(500));
         await server.SendRawAsync(Start("MIGRATING", 1));
@@ -2550,9 +2594,13 @@ public class MaintenanceNotificationTests
         ThreadPoolMonitoring = false,
     };
 
-    private static Task<RespireConnection> Connect(FakeRespServer server, TimeSpan? timeout,
+    private static async Task<RespireConnection> Connect(FakeRespServer server, TimeSpan? timeout,
         TimeSpan? responseTimeout = null, TimeSpan? window = null, int capacity = 16, TimeSpan? relaxed = null)
-        => RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+    {
+        // Bound setup separately from the operation's short command deadline. The receive
+        // watchdog remains controlled by responseTimeout.
+        using var setup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        return await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
             Protocol = RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
@@ -2561,7 +2609,8 @@ public class MaintenanceNotificationTests
             MaintenanceRelaxedTimeout = relaxed ?? TimeSpan.FromSeconds(5),
             MaintenanceWindowTimeout = window ?? TimeSpan.FromSeconds(10),
             MaxInflightCommands = capacity,
-        });
+        }, cancellationToken: setup.Token, armHandshakeDeadline: false);
+    }
 
     private static byte[] Start(string kind, int sequence) => Encoding.UTF8.GetBytes(
         $">3\r\n+{kind}\r\n:{sequence}\r\n" + (kind == "SMIGRATING" ? "+0-10\r\n" : ":1\r\n"));
