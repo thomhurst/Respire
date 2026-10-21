@@ -36,6 +36,11 @@ try {
         throw "Baseline snapshot failed: $snapshot"
     }
     if (($snapshot -join "`n") -match 'exit=0xC0000142|event log=|startup-failure') { throw 'Baseline reported a failure or collected failure-only events.' }
+    $runnerFailure = & $pwshPath -NoProfile -NonInteractive -File $helper -RunnerFailure 2>&1
+    if ($LASTEXITCODE -ne 0 -or ($runnerFailure -join "`n") -notmatch 'runner-action-failure hostPid=\d+' -or
+        ($runnerFailure -join "`n") -match 'exit=0xC0000142' -or ($runnerFailure -join "`n") -notmatch 'event log=Application (records=\d+|unavailable:)') {
+        throw "Runner failure evidence was missing or asserted an unobserved loader status: $runnerFailure"
+    }
     $failureScript = Join-Path $testRoot 'Fail-Startup.ps1'
     @'
 param([int]$ExitCode)

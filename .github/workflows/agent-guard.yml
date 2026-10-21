@@ -7,6 +7,8 @@ on:
       - scripts/Invoke-AgentDotNet.ps1
       - scripts/AgentDotNetWindowsJob.cs
       - scripts/Write-AgentWindowsStartupDiagnostics.ps1
+      - scripts/Write-AgentRunnerProcessDiagnostics.ps1
+      - scripts/Test-AgentRunnerProcessDiagnostics.ps1
       - scripts/Test-AgentWindowsStartupDiagnostics.ps1
       - scripts/Test-AgentWindowsStartupComparison.ps1
       - scripts/Test-AgentWindowsStartupComparisonDiagnostics.ps1
@@ -39,6 +41,8 @@ on:
       - scripts/Invoke-AgentDotNet.ps1
       - scripts/AgentDotNetWindowsJob.cs
       - scripts/Write-AgentWindowsStartupDiagnostics.ps1
+      - scripts/Write-AgentRunnerProcessDiagnostics.ps1
+      - scripts/Test-AgentRunnerProcessDiagnostics.ps1
       - scripts/Test-AgentWindowsStartupDiagnostics.ps1
       - scripts/Test-AgentWindowsStartupComparison.ps1
       - scripts/Test-AgentWindowsStartupComparisonDiagnostics.ps1
@@ -101,6 +105,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Retain runner process exits in the workflow console
+        if: always()
+        shell: pwsh
+        run: |
+          ./scripts/Write-AgentRunnerProcessDiagnostics.ps1
+          if ('${{ job.status }}' -eq 'failure') { ./scripts/Write-AgentWindowsStartupDiagnostics.ps1 -RunnerFailure }
+          exit 0
+
   guard:
     name: Agent Guard (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -138,6 +150,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/Test-AgentWindowsStartupDiagnostics.ps1
+      - name: Verify runner process evidence excludes raw trace data
+        shell: pwsh
+        run: ./scripts/Test-AgentRunnerProcessDiagnostics.ps1
       - name: Verify Windows startup comparison failure propagation
         if: runner.os == 'Windows'
         shell: pwsh
@@ -194,6 +209,13 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: bash .github/scripts/test-claude-request-revision.sh
+      - name: Retain runner process exits in the workflow console
+        if: runner.os == 'Windows' && (failure() || github.event_name == 'workflow_dispatch')
+        shell: pwsh
+        run: |
+          ./scripts/Write-AgentRunnerProcessDiagnostics.ps1
+          if ('${{ job.status }}' -eq 'failure') { ./scripts/Write-AgentWindowsStartupDiagnostics.ps1 -RunnerFailure }
+          exit 0
 
   runner-overrides:
     name: SDK runner overrides (${{ matrix.os }})
@@ -237,3 +259,10 @@ jobs:
           path: ${{ runner.temp }}/agent-guard-mtp
           if-no-files-found: ignore
           retention-days: 7
+      - name: Retain runner process exits in the workflow console
+        if: runner.os == 'Windows' && (failure() || github.event_name == 'workflow_dispatch')
+        shell: pwsh
+        run: |
+          ./scripts/Write-AgentRunnerProcessDiagnostics.ps1
+          if ('${{ job.status }}' -eq 'failure') { ./scripts/Write-AgentWindowsStartupDiagnostics.ps1 -RunnerFailure }
+          exit 0
