@@ -52,6 +52,13 @@ warmup cannot fix:
   methods. The standalone batch start test runs its child with `DOTNET_TieredCompilation=0`.
 - **Shared pools and thread statics.** Rent and return `ArrayPool.Shared` arrays and create
   thread-static scratch buffers on the measuring thread before the counter starts.
+- **Runner process activity.** `NotInParallel` excludes test bodies, but the runner,
+  collector and leftover background work still share the process-wide GC reservation.
+  The 10,000-owner dispatch burst uses a fresh child before runner startup. A handshake
+  regression forces a parent collection while the child's region is open; separate
+  controls require the child to reject an allocating ordinary path and a lost region.
+  The original CI failure did not record a GC reason, so this isolation does not establish
+  which activity interrupted that historical sample (issue #2066).
 
 Child-process rules:
 
