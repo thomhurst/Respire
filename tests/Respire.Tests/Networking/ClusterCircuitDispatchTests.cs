@@ -355,12 +355,15 @@ public class ClusterCircuitDispatchTests
         await using var server = Server();
 #pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         // Compile the selected dispatch path before the 300 ms deadline can start, using
-        // a separate client so warmup does not contribute to the recovery circuit history.
-        await using (var warmup = await RespireClient.ConnectAsync(Options(server) with
+        // a separate client and server so warmup cannot affect circuit history or receipt waits.
+        await using (var warmupServer = Server())
         {
-            CommandTimeout = TimeSpan.FromSeconds(10),
-        }))
+            await using var warmup = await RespireClient.ConnectAsync(Options(warmupServer) with
+            {
+                CommandTimeout = TimeSpan.FromSeconds(10),
+            });
             await Send(warmup, shape, "warm-dispatch");
+        }
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CommandTimeout = timeout ? TimeSpan.FromMilliseconds(300) : TimeSpan.FromSeconds(10),
