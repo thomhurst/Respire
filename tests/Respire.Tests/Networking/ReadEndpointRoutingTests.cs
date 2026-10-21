@@ -13,6 +13,7 @@ namespace Respire.Tests.Networking;
 
 // Each case owns isolated fake endpoints and a client to exercise routing and connection lifetimes.
 #pragma warning disable RESP010
+[ParallelLimiter<TimingSensitive>]
 public class ReadEndpointRoutingTests
 {
     private static readonly byte[] PrimaryRole = "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
