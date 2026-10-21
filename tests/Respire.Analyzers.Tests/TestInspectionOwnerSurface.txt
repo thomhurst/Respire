@@ -59,7 +59,7 @@ Respire.ClientSideCacheCoordinator | property ReuseHashFields [internal; get] : 
 Respire.ClientSideCacheCoordinator | property SharedReadRetirements [internal; get] : long
 Respire.ClientSideCacheCoordinator | property SizeBytes [public; get] : long
 Respire.ClientSideCacheCoordinator | readonly record struct QueryDependencyStamp(QueryDependencyState, long)
-Respire.ClientSideCacheCoordinator | readonly record struct QueryReadToken(ClientCacheCommandKey, RespireKey[], long, long, CacheStore, bool, QueryReadLease?, long)
+Respire.ClientSideCacheCoordinator | readonly record struct QueryReadToken(ClientCacheCommandKey, RespireKey[], long, long, CacheStore, bool, QueryReadLease?, long, long)
 Respire.ClientSideCacheCoordinator | readonly record struct QueryRequest(ClientCacheCommandKey, RespireKey)
 # Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
 Respire.ClientSideCacheCoordinator | readonly ref struct TestInspection(ClientSideCacheCoordinator)
@@ -67,7 +67,7 @@ Respire.ClientSideCacheCoordinator | readonly struct MutationFence()
 Respire.ClientSideCacheCoordinator | readonly struct GetReadResult(RespValue, RespireKey, CacheStore?, CacheEntry?, string?)
 Respire.ClientSideCacheCoordinator | class MutationLease()
 Respire.ClientSideCacheCoordinator | method CompleteMutation(in MutationFence, bool) : void
-Respire.ClientSideCacheCoordinator | readonly record struct ReadToken(InflightRead, long, long, CacheStore, bool)
+Respire.ClientSideCacheCoordinator | readonly record struct ReadToken(InflightRead, long, long, CacheStore, bool, long)
 Respire.ClientSideCacheCoordinator | readonly struct MutationReference(MutationLease?, long)
 # Count: Respire.ClientSideCacheCoordinator.CacheEntry | 6
 Respire.ClientSideCacheCoordinator.CacheEntry | method DecodedSize(string) : long

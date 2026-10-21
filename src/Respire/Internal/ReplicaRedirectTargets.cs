@@ -181,7 +181,7 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
             _initialization.Release();
         }
 
-        internal void Observe(RespireConnection connection, ClientSideCacheCoordinator cache)
+        internal void Observe(RespireConnection connection)
         {
             lock (_observationGate)
             {
@@ -193,12 +193,20 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
                     _observed = connection;
                 }
             }
-            if (!connection.IsConnected) cache.FlushForContinuityLoss();
+            if (!connection.IsConnected) OnPendingCommandsFailing();
         }
 
         private void OnPendingCommandsFailing()
         {
-            if (!_stopping) _cache.FlushForContinuityLoss();
+            if (_stopping) return;
+            // Fence replies synchronously, but never invoke user instrumentation from a
+            // socket/lifecycle callback: a listener can dispose and join that same socket.
+            var removed = _cache.FlushForContinuityLossWithoutMetrics();
+            ThreadPool.UnsafeQueueUserWorkItem(static count =>
+            {
+                try { ClientSideCacheCoordinator.PublishContinuityFlushMetrics(count); }
+                catch (Exception) { /* Listener failures must not escape the diagnostic worker. */ }
+            }, removed, preferLocal: false);
         }
 
         internal Entry(ClientCore core, RespireEndpoint endpoint)
@@ -217,7 +225,7 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
             Node.SlotStateChanged += (_, change) =>
             {
                 if (_stopping) return;
-                if (change.State != RespireConnectionState.Connected) cache.FlushForContinuityLoss();
+                if (change.State != RespireConnectionState.Connected) OnPendingCommandsFailing();
                 // Optional destinations report their own recovery without participating
                 // in aggregate command connection health.
                 core.QueueRecoveryStateChanged(change with { ReconnectSource = RespireReconnectSource.Dedicated });
@@ -232,7 +240,7 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
         internal void UseConnection(RespireConnection connection)
         {
             Connection = connection;
-            entry.Observe(connection, owner._cache);
+            entry.Observe(connection);
         }
         public void Dispose()
         {
