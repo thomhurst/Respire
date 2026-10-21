@@ -166,6 +166,110 @@ if ($IsWindows) {
         foreach ($event in $events) { $event.Dispose() }
     }
     Write-Output 'OK native Job Object query includes both contained children, excludes the caller and preserves kill-on-close.'
+
+    # Keep exact native membership without console-host descendants, 65 managed
+    # runtimes or startup timing. These test-only children are never resumed.
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+public static class CleanupBoundaryChild
+{
+    [StructLayout(LayoutKind.Sequential)]
+    private struct StartupInfo
+    {
+        public uint Size;
+        public IntPtr Reserved, Desktop, Title;
+        public uint X, Y, XSize, YSize, XCountChars, YCountChars, FillAttribute, Flags;
+        public ushort ShowWindow, ReservedSize;
+        public IntPtr ReservedBytes, StandardInput, StandardOutput, StandardError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessInformation
+    {
+        public IntPtr Process, Thread;
+        public uint ProcessId, ThreadId;
+    }
+    [DllImport("kernel32.dll", EntryPoint = "CreateProcessW", ExactSpelling = true,
+        CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int CreateProcess(string application, IntPtr commandLine,
+        IntPtr processAttributes, IntPtr threadAttributes, int inheritHandles, uint flags,
+        IntPtr environment, string directory, ref StartupInfo startup, out ProcessInformation information);
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+    private static extern int AssignProcessToJobObject(IntPtr job, SafeProcessHandle process);
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+    private static extern int TerminateProcess(SafeProcessHandle process, uint exitCode);
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+    private static extern uint WaitForSingleObject(SafeProcessHandle process, uint milliseconds);
+
+    public static Process Create(string executable, IntPtr job)
+    {
+        var startup = new StartupInfo { Size = (uint)Marshal.SizeOf<StartupInfo>() };
+        // CREATE_SUSPENDED | DETACHED_PROCESS: no user code or console host runs.
+        // lpCommandLine is null, so CreateProcessW uses the explicit module name.
+        if (CreateProcess(executable, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0, 0x0000000C,
+            IntPtr.Zero, null, ref startup, out ProcessInformation created) == 0)
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        using var process = new SafeProcessHandle(created.Process, ownsHandle: true);
+        using var thread = new SafeWaitHandle(created.Thread, ownsHandle: true);
+        try
+        {
+            // The borrowed job is closed by the caller. The child cannot escape
+            // before assignment because its only thread stays suspended.
+            if (AssignProcessToJobObject(job, process) == 0)
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            Process result = Process.GetProcessById(checked((int)created.ProcessId));
+            try { _ = result.SafeHandle; return result; }
+            catch { result.Dispose(); throw; }
+        }
+        catch
+        {
+            // Creation succeeded, but the caller has not received ownership yet.
+            if (TerminateProcess(process, 1) == 0)
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            if (WaitForSingleObject(process, 5000) != 0)
+                throw new InvalidOperationException("Suspended boundary fixture did not terminate.");
+            throw;
+        }
+    }
+}
+'@
+    $job = [AgentDotNetWindowsJob]::CreateKillOnClose()
+    $processes = [Collections.Generic.List[Diagnostics.Process]]::new()
+    try {
+        foreach ($index in 1..65) {
+            $processes.Add([CleanupBoundaryChild]::Create(
+                (Join-Path ([Environment]::SystemDirectory) 'cmd.exe'), $job))
+            if ($index -eq 64) {
+                $members = @([AgentDotNetWindowsJob]::GetProcessIds($job) | Sort-Object)
+                if ($members.Count -ne 64 -or
+                    @($processes.Id | Where-Object { $_ -notin $members }).Count -ne 0) {
+                    throw 'Native membership query did not return the complete 64-member boundary.'
+                }
+            }
+        }
+        $unavailable = $false
+        try { $null = [AgentDotNetWindowsJob]::GetProcessIds($job) }
+        catch [ComponentModel.Win32Exception] {
+            # ERROR_MORE_DATA is the native buffer-overflow result.
+            if ($_.Exception.NativeErrorCode -ne 234) { throw }
+            $unavailable = $true
+        }
+        catch [InvalidOperationException] { $unavailable = $true }
+        if (-not $unavailable) { throw 'Native membership query published a partial 65-member boundary.' }
+        if ($processes.HasExited -contains $true) { throw 'A native boundary fixture exited before job closure.' }
+    }
+    finally {
+        [AgentDotNetWindowsJob]::Close($job)
+        foreach ($process in $processes) {
+            try { if (-not $process.WaitForExit(5000)) { throw 'Native boundary fixture survived Job Object closure.' } }
+            finally { $process.Dispose() }
+        }
+    }
+    Write-Output 'OK native Job Object query returns all 64 members and rejects a 65-member partial boundary.'
 }
 Write-Output 'OK cleanup evidence is opt-in, bounded and sanitized; identity skips and diagnostic failures preserve containment.'
 exit 0
