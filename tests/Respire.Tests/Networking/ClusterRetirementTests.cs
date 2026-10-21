@@ -42,11 +42,13 @@ public class ClusterRetirementTests
     [Test]
     public async Task RetirementSnapshotsAreOwnedAndRequireALiveClient()
     {
+#pragma warning disable RESP010 // Test-owned client isolates node generations, retirement leases, and timeout state for this scenario.
         await using var standalone = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new RespireEndpoint("seed.invalid")],
         });
+#pragma warning restore RESP010
         await Assert.That(standalone.GetClusterRetirementSnapshot()).IsNull();
         await using var client = CreateClient();
         var snapshot = client.GetClusterRetirementSnapshot()!;
@@ -1955,6 +1957,7 @@ public class ClusterRetirementTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? hello : FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // Test-owned client isolates node generations, retirement leases, and timeout state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             LibraryName = null, // The fixture injects the held HELLO reply itself.
@@ -1963,6 +1966,7 @@ public class ClusterRetirementTests
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         Publish(router, new("127.0.0.1", primary.Port), "primary", 1);
         var oldNode = router.GetOrCreateNode(new("127.0.0.1", oldTarget.Port));
@@ -2104,6 +2108,7 @@ public class ClusterRetirementTests
         await using var replacementServer = new FakeRespServer(2, FakeRespServer.OkReply);
         oldServer.ReplyOverride = replacementServer.ReplyOverride = (_, command) => command == "HELLO 3"
             ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray() : FakeRespServer.OkReply;
+#pragma warning disable RESP010 // Test-owned client isolates node generations, retirement leases, and timeout state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -2111,6 +2116,7 @@ public class ClusterRetirementTests
             ClientSideCache = new(),
             Endpoints = { new("127.0.0.1", oldServer.Port) },
         });
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(Limit);
         var router = client.Core.Cluster!;
         Publish(router, new("127.0.0.1", oldServer.Port), "old", 1);
@@ -2139,6 +2145,7 @@ public class ClusterRetirementTests
     {
         await using var oldServer = new FakeRespServer(2, FakeRespServer.OkReply);
         await using var replacementServer = new FakeRespServer(2, FakeRespServer.OkReply);
+#pragma warning disable RESP010 // Test-owned client isolates node generations, retirement leases, and timeout state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -2147,6 +2154,7 @@ public class ClusterRetirementTests
             Endpoints = { new("127.0.0.1", oldServer.Port) },
             CommandTimeout = TimeSpan.FromSeconds(1),
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         Publish(router, new("127.0.0.1", oldServer.Port), "old", 1);
         using var source = new RetiringUploadStream(new byte[RespireConnection.StreamChunkSize + 1],
@@ -2221,6 +2229,7 @@ public class ClusterRetirementTests
     {
         // The RESP3 handshake never completes, so selecting the slot owner's connection times out.
         await using var server = new FakeRespServer(8, ":1\r\n"u8.ToArray()) { SuppressReply = _ => true };
+#pragma warning disable RESP010 // Test-owned client isolates node generations, retirement leases, and timeout state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             LibraryName = null, // Only the intentionally suppressed HELLO may consume the timeout.
@@ -2228,6 +2237,7 @@ public class ClusterRetirementTests
             UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             CommandTimeout = TimeSpan.FromMilliseconds(200),
         });
+#pragma warning restore RESP010
         Publish(client.Core.Cluster!, new("127.0.0.1", server.Port), "node", 1);
 
         var error = await Assert.That(async () =>

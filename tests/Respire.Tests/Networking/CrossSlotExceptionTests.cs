@@ -16,12 +16,14 @@ public class CrossSlotExceptionTests
         [Matrix("typed", "batch", "transaction")] string surface)
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // Test-owned client isolates cross-slot admission, key-context policy, and queue state for this scenario.
         await using var root = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             IncludeCrossSlotKeyContext = includeKeys,
         });
+#pragma warning restore RESP010
         var client = root.WithKeyPrefix("private-prefix:");
         byte[] first = [255, .. "{first}:secret"u8];
         byte[] second = [0, 128, .. "{second}:secret"u8];
@@ -69,6 +71,7 @@ public class CrossSlotExceptionTests
         [Matrix("typed", "raw", "batch", "transaction")] string surface)
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // Test-owned client isolates cross-slot admission, key-context policy, and queue state for this scenario.
         await using var root = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
@@ -76,6 +79,7 @@ public class CrossSlotExceptionTests
             IncludeCrossSlotKeyContext = includeKeys,
             ClientSideCache = cache ? new() : null,
         });
+#pragma warning restore RESP010
         var client = root.WithKeyPrefix("private-prefix:");
         byte[] first = [255, .. "{first}:secret"u8];
         byte[] second = [0, 128, .. "{second}:secret"u8];
@@ -133,11 +137,13 @@ public class CrossSlotExceptionTests
             "EXEC" => "*1\r\n+OK\r\n"u8.ToArray(),
             _ => transactional ? "+QUEUED\r\n"u8.ToArray() : "+OK\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // Test-owned client isolates cross-slot admission, key-context policy, and queue state for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         using var batch = transactional ? null : client.CreateBatch();
         await using var transaction = transactional ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;

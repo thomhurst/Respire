@@ -260,15 +260,19 @@ public class ClusterReplicaDiscoveryTests
         if (shared)
         {
             var coordinator = new ClusterReplicaDiscovery(static _ => Task.CompletedTask, static _ => false);
+#pragma warning disable RESP009 // Completed refresh callbacks keep this allocation probe on the measuring thread.
             for (var slot = 0; slot < 256; slot++) coordinator.DiscoverAsync(slot, default).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             GC.KeepAlive(coordinator);
         }
         else
         {
             var routes = new ConcurrentDictionary<int, ClusterReplicaSet>();
             for (var slot = 0; slot < 256; slot++)
+#pragma warning disable RESP009 // Completed refresh callbacks keep this allocation probe on the measuring thread.
                 routes.GetOrAdd(slot, static _ => new([], TimeSpan.Zero))
                     .JoinOrStartRefresh(static () => Task.CompletedTask)!.GetAwaiter().GetResult();
+#pragma warning restore RESP009
             GC.KeepAlive(routes);
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;
@@ -293,7 +297,9 @@ public class ClusterReplicaDiscoveryTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var slot = 0; slot < 1_000; slot++)
         {
+#pragma warning disable RESP009 // Covered-slot discovery completes inline; consume it on the allocation-measurement thread.
             coordinator.DiscoverAsync(slot, default).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             if (allocate) GC.KeepAlive(new byte[37]);
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;

@@ -26,6 +26,7 @@ public class ClusterReplicaRoutingAllocationTests
         await using var replica = new FakeRespServer(32, FakeRespServer.OkReply);
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*4\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{replica.Port}\r\n");
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
+#pragma warning disable RESP010 // Test-owned client prepares isolated replica routes for the allocation measurement.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -35,6 +36,7 @@ public class ClusterReplicaRoutingAllocationTests
             ClusterTopologyRefreshInterval = null,
             ReplicaLatencyTolerance = selection == "Band" ? TimeSpan.Zero : null,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var slot = ClusterHash.GetSlot("ready-replica");
         await router.GetReadConnectionAsync(slot, RespireReadFrom.Replica, default, observation: default);

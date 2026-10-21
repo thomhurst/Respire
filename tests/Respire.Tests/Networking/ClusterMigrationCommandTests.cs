@@ -16,7 +16,9 @@ public class ClusterMigrationCommandTests
     {
         await using var seed = Server(1);
         await using var target = Server(6);
+#pragma warning disable RESP010 // Test-owned client isolates migration command routing and admin admission on the scripted nodes.
         await using var client = RespireClient.Create(Options(seed.Port, protocol));
+#pragma warning restore RESP010
         var node = client.WithKeyPrefix("ignored:").Server.OnNode(new("127.0.0.1", target.Port));
         RespireClusterSlotRange[] ranges = [new(20, 30), new(0, 10), new(16383, 16383)];
         await Assert.That(await node.ClusterMigrationImportAsync(ranges)).IsEqualTo("task");
@@ -49,7 +51,9 @@ public class ClusterMigrationCommandTests
     public async Task ValidRangeCountsReachSelectedNode(int count)
     {
         await using var target = Server(1);
+#pragma warning disable RESP010 // Test-owned client isolates migration command routing and admin admission on the scripted nodes.
         await using var client = RespireClient.Create(Options(target.Port, 2));
+#pragma warning restore RESP010
         var node = client.Server.OnNode(new("127.0.0.1", target.Port));
         RespireClusterSlotRange[] ranges = count == 1
             ? [new(0, 16383)]
@@ -71,7 +75,9 @@ public class ClusterMigrationCommandTests
     public async Task InvalidArgumentsDoNotConnect(string shape)
     {
         await using var target = Server(1);
+#pragma warning disable RESP010 // Test-owned client isolates migration command routing and admin admission on the scripted nodes.
         await using var client = RespireClient.Create(Options(target.Port, 2));
+#pragma warning restore RESP010
         var node = client.Server.OnNode(new("127.0.0.1", target.Port));
         await Assert.That(async () =>
         {
@@ -101,7 +107,9 @@ public class ClusterMigrationCommandTests
     {
         await using var target = Server(1);
         var options = Options(target.Port, 2) with { AllowAdmin = false };
+#pragma warning disable RESP010 // Test-owned client isolates migration command routing and admin admission on the scripted nodes.
         await using var client = RespireClient.Create(options);
+#pragma warning restore RESP010
         var node = client.Server.OnNode(new("127.0.0.1", target.Port));
         await Assert.That(async () => await Mutate(node, operation)).Throws<NotSupportedException>();
         await Assert.That(target.ConnectionAccepted.IsCompleted).IsFalse();
@@ -115,7 +123,9 @@ public class ClusterMigrationCommandTests
     public async Task CancellationBeforeSubmissionDoesNotConnect(string operation)
     {
         await using var target = Server(1);
+#pragma warning disable RESP010 // Test-owned client isolates migration command routing and admin admission on the scripted nodes.
         await using var client = RespireClient.Create(Options(target.Port, 2));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
         var node = client.Server.OnNode(new("127.0.0.1", target.Port));
         await Assert.That(async () => await Mutate(node, operation, cancellation.Token)).Throws<OperationCanceledException>();
@@ -131,7 +141,9 @@ public class ClusterMigrationCommandTests
         await using var seed = Server(1);
         await using var target = Server(1);
         target.ReplyOverride = (_, _) => Encoding.UTF8.GetBytes(error);
+#pragma warning disable RESP010 // Test-owned client isolates migration command routing and admin admission on the scripted nodes.
         await using var client = RespireClient.Create(Options(seed.Port, 2));
+#pragma warning restore RESP010
         var node = client.Server.OnNode(new("127.0.0.1", target.Port));
         await Assert.That(async () => await node.ClusterMigrationImportAsync([new(0, 1)])).Throws<RespireServerException>();
         await Assert.That(target.ReceivedCommands).IsEquivalentTo(["CLUSTER MIGRATION IMPORT 0 1"]);
@@ -158,7 +170,9 @@ public class ClusterMigrationCommandTests
             if (!command.StartsWith("CLUSTER MIGRATION", StringComparison.Ordinal)) return false;
             received.TrySetResult(target.ReceivedConnectionIds[^1]); return true;
         };
+#pragma warning disable RESP010 // Test-owned client isolates migration command routing and admin admission on the scripted nodes.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port, 2) with { ClientSideCache = new() });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         Insert();
         using var cancellation = new CancellationTokenSource();

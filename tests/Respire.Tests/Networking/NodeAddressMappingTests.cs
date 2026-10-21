@@ -100,7 +100,9 @@ public class NodeAddressMappingTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var monitorOptions = SentinelMonitoring.CreateOptions(options, source);
         await Assert.That(monitorOptions.UseMappedHostForTls).IsTrue();
+#pragma warning disable RESP010 // Test-owned client isolates address mapping and captured transport identity for the scripted endpoints.
         await using var monitor = await RespireClient.ConnectAsync(monitorOptions, deadline.Token);
+#pragma warning restore RESP010
         await monitor.PingAsync(deadline.Token);
         await using var admin = await RespireSentinelClient.ConnectAsync(source, options, deadline.Token);
         await Assert.That(admin.Endpoint).IsEqualTo(source);
@@ -169,7 +171,9 @@ public class NodeAddressMappingTests
                 { ["private.internal:6379"] = new("127.0.0.1", first.Port) },
         };
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+#pragma warning disable RESP010 // Test-owned client isolates address mapping and captured transport identity for the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(options, deadline.Token);
+#pragma warning restore RESP010
         await SentinelTestSetup.WaitForStartupAsync(client);
         var router = client.Core.Sentinel!;
         var original = router.Current!;
@@ -370,7 +374,9 @@ public class NodeAddressMappingTests
             },
         };
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+#pragma warning disable RESP010 // Test-owned client isolates address mapping and captured transport identity for the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(options, deadline.Token);
+#pragma warning restore RESP010
         var original = client.Core.Multiplexer.GetConnection();
         if (mode == "cluster")
         {
@@ -502,6 +508,7 @@ public class NodeAddressMappingTests
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null,
         };
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+#pragma warning disable RESP010 // Test-owned client isolates address mapping and captured transport identity for the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = cluster,
@@ -513,6 +520,7 @@ public class NodeAddressMappingTests
                 ["replica.internal:6380"] = new("127.0.0.1", replica.Port),
             },
         }, deadline.Token);
+#pragma warning restore RESP010
         var reader = client.WithReadFrom(RespireReadFrom.Replica);
         await Assert.That(await reader.GetStringAsync("key", deadline.Token)).IsEqualTo("replica");
         if (cluster) await Assert.That(replica.ReceivedCommands).Contains("READONLY");
@@ -532,12 +540,14 @@ public class NodeAddressMappingTests
         await using var seed = new FakeRespServer("*0\r\n"u8.ToArray(),
             Encoding.ASCII.GetBytes($"-{code} {slot} internal:6379\r\n"));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+#pragma warning disable RESP010 // Test-owned client isolates address mapping and captured transport identity for the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true,
             Endpoints = [new("127.0.0.1", seed.Port)], ClusterTopologyRefreshInterval = null,
             NodeAddressMap = new Dictionary<RespireEndpoint, RespireEndpoint> { ["internal:6379"] = new("127.0.0.1", target.Port) },
         }, deadline.Token);
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("mapped-key", deadline.Token)).IsEqualTo("mapped");
         if (code == "ASK") await Assert.That(target.ReceivedCommands).Contains("ASKING");
     }

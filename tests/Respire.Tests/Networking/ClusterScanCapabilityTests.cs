@@ -22,11 +22,13 @@ public class ClusterScanCapabilityTests
         {
             ReplyOverride = (_, command) => command == "COMMAND INFO CLUSTERSCAN" ? metadata : FakeRespServer.PongReply,
         };
+#pragma warning disable RESP010 // Test-owned client isolates scan capability metadata and recovery probe state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
+#pragma warning restore RESP010
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         var cache = new ClusterScanCapabilityCache();
         var round = new ClusterScanCapabilityCache.ProbeRound();

@@ -32,7 +32,9 @@ public class ClusterCircuitDispatchTests
         using var metrics = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
         await using var source = Server();
         await using var target = Server();
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(source));
+#pragma warning restore RESP010
         await Send(client, "string", "{open}warm");
         var router = client.Core.Cluster!;
         router.SetSlotOwner(ClusterHash.GetSlot("{healthy}key"), router.GetMultiplexer(Endpoint(target)));
@@ -59,7 +61,9 @@ public class ClusterCircuitDispatchTests
         await using var primary = Server();
         await using var replica = Server();
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Slots(primary.Port, replica.Port) : Reply(command);
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(primary));
+#pragma warning restore RESP010
         var replicaClient = client.WithReadFrom(RespireReadFrom.Replica);
         await client.GetStringAsync("warm");
         await replicaClient.GetStringAsync("warm");
@@ -95,7 +99,9 @@ public class ClusterCircuitDispatchTests
         using var metrics = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
         await using var source = Server();
         await using var target = Server();
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(source));
+#pragma warning restore RESP010
         await client.GetStringAsync("warm");
         if (targetOpen) Open(client, target);
         var key = "redirect";
@@ -130,7 +136,9 @@ public class ClusterCircuitDispatchTests
     public async Task OpenEndpointRejectsPinnedScan(string operation)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await client.GetStringAsync("warm");
         var connection = await client.Core.Cluster!.GetConnectionAsync(null, default, null, observation: default);
         Open(client, server);
@@ -151,7 +159,9 @@ public class ClusterCircuitDispatchTests
         await using var primary = Server();
         await using var replica = Server();
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Slots(primary.Port, replica.Port) : Reply(command);
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(primary));
+#pragma warning restore RESP010
         await client.GetStringAsync("warm");
         var endpoint = replicaRoute ? Endpoint(replica) : Endpoint(primary);
         var router = client.Core.Cluster!;
@@ -176,7 +186,9 @@ public class ClusterCircuitDispatchTests
     {
         await using var server = Server();
         await using var unavailable = Server();
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await client.GetStringAsync("warm");
         var router = client.Core.Cluster!;
         var slot = ClusterHash.GetSlot("disconnected");
@@ -203,7 +215,9 @@ public class ClusterCircuitDispatchTests
     public async Task GuardedDataFailureOpensEndpoint(string shape)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await client.GetStringAsync("warm");
         await Send(client, shape, "warm-failure");
         server.CloseConnectionAfterCommand = server.CommandsSeen + 1;
@@ -221,12 +235,14 @@ public class ClusterCircuitDispatchTests
         await using var source = Server();
         await using var target = Server();
         await using var replacement = Server();
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
             Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             MaxInflightCommands = tracked ? 4 : 2, CommandTimeout = TimeSpan.FromSeconds(10),
             ClientSideCache = tracked ? new() : null,
         });
+#pragma warning restore RESP010
         await client.GetStringAsync("warm");
         var router = client.Core.Cluster!;
         var targetNode = router.GetMultiplexer(Endpoint(target));
@@ -299,7 +315,9 @@ public class ClusterCircuitDispatchTests
     {
         await using var source = Server();
         await using var target = Server();
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(source));
+#pragma warning restore RESP010
         await client.GetStringAsync("warm");
         if (targetOpen) Open(client, target);
         var router = client.Core.Cluster!;
@@ -333,10 +351,12 @@ public class ClusterCircuitDispatchTests
     public async Task CancelledOrFailedRecoveryReleasesCapacityForFullBatch(string shape, bool timeout)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CommandTimeout = timeout ? TimeSpan.FromMilliseconds(300) : TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         await client.GetStringAsync("warm");
         var circuit = Circuit(client, server);
         var clock = new Clock();
@@ -372,10 +392,12 @@ public class ClusterCircuitDispatchTests
     public async Task TrackedAskingCapacityWaitUsesOriginalDeadline()
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             MaxInflightCommands = 4, CommandTimeout = TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         await client.GetStringAsync("warm");
         var connection = await client.Core.Cluster!.GetConnectionAsync(null, default, null, observation: default);
         server.SuppressReply = command => command.StartsWith("GET hold", StringComparison.Ordinal);
@@ -410,6 +432,7 @@ public class ClusterCircuitDispatchTests
     {
         await using var server = Server();
         var attempts = 0;
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = RespireClient.Create(Options(server) with
         {
             ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero },
@@ -419,6 +442,7 @@ public class ClusterCircuitDispatchTests
                 throw new IOException("Injected initial seed failure.");
             },
         });
+#pragma warning restore RESP010
         await Assert.That(await Failure(() => Send(client, "string", "first"))).IsTypeOf<RespireConnectionException>();
         await Assert.That(Circuit(client, server).Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
         var previousAttempts = attempts;
@@ -433,10 +457,12 @@ public class ClusterCircuitDispatchTests
     {
         await using var openSeed = Server();
         await using var healthySeed = Server();
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = RespireClient.Create(Options(openSeed) with
         {
             Endpoints = [Endpoint(openSeed), Endpoint(healthySeed)],
         });
+#pragma warning restore RESP010
         Open(client, openSeed);
         await Assert.That(await client.GetStringAsync("healthy")).IsEqualTo("value");
         await Assert.That(openSeed.CommandsSeen).IsEqualTo(0);
@@ -452,6 +478,7 @@ public class ClusterCircuitDispatchTests
         RespireClient? client = null;
         var attempts = 0;
         var openDuringConnect = false;
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var ownedClient = client = await RespireClient.ConnectAsync(Options(server) with
         {
             TestingStreamFactory = async (host, port, cancellationToken) =>
@@ -468,6 +495,7 @@ public class ClusterCircuitDispatchTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         await client.GetStringAsync("warm");
         var pool = await client.Core.Cluster!.GetReadDedicatedPoolAsync(ClusterHash.GetSlot("rejected"),
             RespireReadFrom.Primary, default, null, observation: default);
@@ -495,6 +523,7 @@ public class ClusterCircuitDispatchTests
         await using var server = Server();
         var failConnect = false;
         var failedAttempts = 0;
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero },
@@ -515,6 +544,7 @@ public class ClusterCircuitDispatchTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         await client.GetStringAsync("warm");
         failConnect = true;
         await Failure(() => Send(client, shape, "failed"));
@@ -533,7 +563,9 @@ public class ClusterCircuitDispatchTests
         await using var source = Server();
         await using var unrelated = Server();
         await using var healthy = Server();
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(source));
+#pragma warning restore RESP010
         await client.GetStringAsync("warm");
         var router = client.Core.Cluster!;
         var failedOwner = router.GetMultiplexer(Endpoint(source));
@@ -559,7 +591,9 @@ public class ClusterCircuitDispatchTests
     {
         using var metrics = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
         await using var server = Server();
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await client.GetStringAsync("warm");
         var circuit = Circuit(client, server);
         CircuitClock(circuit) = new Clock();
@@ -578,11 +612,13 @@ public class ClusterCircuitDispatchTests
     [Test]
     public async Task LiveClusterNodesKeepOpenHistoryBeyondStandaloneIdleLimit()
     {
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true, Endpoints = [new("127.0.0.1", 9000)], CircuitBreaker = new() { MinimumFailureCount = 1 },
             ThreadPoolMonitoring = false,
         });
+#pragma warning restore RESP010
         var circuits = client.Core.Circuits!;
         var endpoints = Enumerable.Range(0, 32).Select(i => new RespireEndpoint("127.0.0.1", 9000 + i)).ToArray();
         foreach (var endpoint in endpoints)
