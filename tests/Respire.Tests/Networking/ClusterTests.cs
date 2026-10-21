@@ -94,7 +94,9 @@ public class ClusterTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
-            ConnectTimeout = TimeSpan.FromMilliseconds(250), CommandTimeout = TimeSpan.FromMilliseconds(250),
+            // Only the withheld topology reply needs to time out. Cold handshakes and replica
+            // setup must tolerate scheduling/JIT pressure before reconciliation is exercised.
+            ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5),
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
@@ -102,11 +104,14 @@ public class ClusterTests
         await reads.GetStringAsync("key");
         var sibling = ReplicaRoutes(client)[0]!;
         topology = ClusterTopologyWithoutReplicas(promote ? replica.Port : primary.Port);
+        var primaryQueries = primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS");
         primary.SuppressReply = command => command == "CLUSTER SLOTS";
         ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.MarkValidated(TimeSpan.Zero);
         try { await reads.GetStringAsync("key"); } catch (RespireConnectionException) { }
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // The background refresh owns one connect plus one command budget, independent of the read.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         while (ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.Nodes.Length != 0) await Task.Delay(5, timeout.Token);
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsGreaterThan(primaryQueries);
         if (promote)
         {
             await Assert.That(ReplicaRoutes(client)[0]!.Nodes.Length).IsEqualTo(1);
