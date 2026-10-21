@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -18,7 +19,7 @@ public static class RespireIdempotencyExtensions
         ArgumentNullException.ThrowIfNull(configure);
         services.AddOptions<RespireIdempotencyOptions>().Configure(configure)
             .Validate(o => o.CallerScope is not null, "CallerScope is required for response isolation.")
-            .Validate(o => !string.IsNullOrWhiteSpace(o.KeyPrefix), "KeyPrefix must not be empty.")
+            .Validate(o => IsValidKeyPrefix(o.KeyPrefix), "KeyPrefix must be nonblank and contain well-formed UTF-16.")
             .Validate(o => o.TimeToLive >= TimeSpan.FromMilliseconds(1), "TimeToLive must be at least one millisecond.")
             .Validate(o => o.MaxRequestBodyBytes is > 0 and <= 16 * 1024 * 1024
                 && o.MaxResponseBodyBytes is > 0 and <= 16 * 1024 * 1024, "Body limits must be between 1 byte and 16 MiB.")
@@ -26,6 +27,20 @@ public static class RespireIdempotencyExtensions
             .ValidateOnStart();
         services.TryAddSingleton<RespireIdempotency>();
         return services;
+    }
+
+    private static bool IsValidKeyPrefix(string? prefix)
+    {
+        if (string.IsNullOrWhiteSpace(prefix)) return false;
+        try
+        {
+            _ = new UTF8Encoding(false, true).GetByteCount(prefix);
+            return true;
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Adds middleware after routing, authentication, and authorization, and before endpoint execution.</summary>

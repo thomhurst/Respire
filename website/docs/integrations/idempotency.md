@@ -90,7 +90,8 @@ well-formed UTF-16: an unpaired surrogate returns **400** before body fingerprin
 access, or endpoint execution. This includes values supplied by trusted scope providers and
 endpoint names. Valid replacement characters (U+FFFD) and surrogate pairs remain accepted;
 existing Redis keys for well-formed identities are unchanged. Set an application-specific
-`KeyPrefix`; change the prefix or endpoint name when a deployment changes response semantics.
+`KeyPrefix`; it must be nonblank and well-formed UTF-16, otherwise startup validation fails.
+Change the prefix or endpoint name when a deployment changes response semantics.
 Treat it as reserved storage. Options are startup configuration, not mutable per-request state.
 
 ## Outcomes and retention
