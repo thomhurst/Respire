@@ -298,6 +298,124 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         await invalidId.Should().ThrowAsync<ArgumentException>();
     }
 
+    private static readonly string[] MalformedNames =
+        ["\uD800", "\uD801", "\uDC00", "prefix\uD800", "\uD800suffix", "\uD800\uD801", "\uDC00\uD800"];
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task MalformedConversationNamesCannotAccessOrMutateReplacementHistory(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var name = Guid.NewGuid().ToString("N");
+        var store = new RespireChatHistoryStore(redis, new() { StoreName = name });
+        foreach (var invalid in MalformedNames)
+        {
+            var replacement = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(invalid));
+            await store.AppendAsync(replacement, [new(ChatRole.User, "first"), new(ChatRole.User, "second")]);
+            var key = "respire:history:v1:" + Hash(name) + ":" + Hash(replacement);
+            using var expiry = await redis.ExecuteAsync("PEXPIRETIME", [key]);
+            Func<Task>[] operations =
+            [
+                () => store.ReadAsync(invalid).AsTask(),
+                () => store.AppendAsync(invalid, [new(ChatRole.User, "must not be saved")]).AsTask(),
+                () => store.AppendAsync(invalid, []).AsTask(),
+                () => store.TrimAsync(invalid, 1).AsTask(),
+                () => store.TrimAsync(invalid, 0).AsTask(),
+                () => store.ExpireAsync(invalid, TimeSpan.FromMinutes(1)).AsTask(),
+                () => store.ClearAsync(invalid).AsTask(),
+            ];
+            foreach (var operation in operations)
+                await operation.Should().ThrowAsync<ArgumentException>();
+
+            (await store.ReadAsync(replacement)).Select(m => m.Text).Should().Equal("first", "second");
+            using var unchanged = await redis.ExecuteAsync("PEXPIRETIME", [key]);
+            unchanged.AsInteger().Should().Be(expiry.AsInteger());
+            await store.ClearAsync(replacement);
+        }
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task MalformedStoreNamesAreRejectedInsteadOfSharingReplacementNamespace(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var prefix = Guid.NewGuid().ToString("N");
+        foreach (var invalid in MalformedNames)
+        {
+            var replacement = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(invalid));
+            var store = new RespireChatHistoryStore(redis, new() { StoreName = prefix + replacement });
+            await store.AppendAsync("chat", [new(ChatRole.User, "existing")]);
+            Action create = () => _ = new RespireChatHistoryStore(redis, new() { StoreName = prefix + invalid });
+            create.Should().Throw<ArgumentException>();
+            (await store.ReadAsync("chat")).Select(m => m.Text).Should().Equal("existing");
+            await store.ClearAsync("chat");
+        }
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task WrappersRejectMalformedConversationNamesBeforeInvokingOrSaving(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var store = Store(redis);
+        foreach (var invalid in MalformedNames)
+        {
+            var inner = new RecordingChatClient();
+            using var chat = new ChatClientBuilder(inner).UseRespireChatHistory(store, invalid).Build();
+            Func<Task> response = () => chat.GetResponseAsync([new(ChatRole.User, "request")]);
+            await response.Should().ThrowAsync<ArgumentException>();
+            Func<Task> streaming = async () =>
+            {
+                await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "request")])) { }
+            };
+            await streaming.Should().ThrowAsync<ArgumentException>();
+            inner.LastRequest.Should().BeEmpty();
+
+            var provider = new RespireChatHistoryProvider(store, _ => invalid);
+            var agent = new TestAgent();
+            var session = new TestSession();
+            Func<Task> load = async () => { await provider.InvokingAsync(new(agent, session, [])); };
+            await load.Should().ThrowAsync<ArgumentException>();
+            Func<Task> save = async () =>
+            {
+                await provider.InvokedAsync(new(agent, session, [new(ChatRole.User, "request")],
+                    new[] { new ChatMessage(ChatRole.Assistant, "reply") }));
+            };
+            await save.Should().ThrowAsync<ArgumentException>();
+            var replacement = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(invalid));
+            (await store.ReadAsync(replacement)).Should().BeEmpty();
+        }
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task WellFormedNamesKeepCompatibleKeysAndIsolatedHistories(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        string[] names = ["ordinary", "caf\u00E9", "\uFFFD", "\uD83D\uDE00", "\uD83D\uDE01", "e\u0301", "\u00E9"];
+        var prefix = Guid.NewGuid().ToString("N");
+        foreach (var storeName in names)
+        {
+            var store = new RespireChatHistoryStore(redis, new() { StoreName = prefix + storeName });
+            foreach (var conversation in names)
+            {
+                var marker = storeName + ":" + conversation;
+                await store.AppendAsync(conversation, [new(ChatRole.User, marker)]);
+                var key = "respire:history:v1:" + Hash(prefix + storeName) + ":" + Hash(conversation);
+                using var length = await redis.ExecuteAsync("LLEN", [key]);
+                length.AsInteger().Should().Be(1);
+            }
+        }
+
+        // Reading and clearing every identity also detects cross-store and cross-conversation aliases.
+        foreach (var storeName in names)
+        {
+            var store = new RespireChatHistoryStore(redis, new() { StoreName = prefix + storeName });
+            foreach (var conversation in names)
+            {
+                (await store.ReadAsync(conversation)).Select(m => m.Text).Should().Equal(storeName + ":" + conversation);
+                await store.ClearAsync(conversation);
+                (await store.ReadAsync(conversation)).Should().BeEmpty();
+            }
+        }
+    }
+
     private ValueTask<RespireClient> Connect(int protocol)
         => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
 

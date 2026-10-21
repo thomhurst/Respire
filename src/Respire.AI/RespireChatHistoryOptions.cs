@@ -3,7 +3,7 @@ namespace Respire.AI;
 /// <summary>Limits and retention for Redis conversation history.</summary>
 public sealed class RespireChatHistoryOptions
 {
-    /// <summary>Application/tenant namespace. Defaults to "default".</summary>
+    /// <summary>Nonblank, well-formed UTF-16 application/tenant namespace. Defaults to "default".</summary>
     public string StoreName { get; init; } = "default";
 
     /// <summary>Maximum stored messages per conversation. Defaults to 1000.</summary>
