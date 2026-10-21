@@ -1187,14 +1187,21 @@ public class ClientSideCacheTests
     }
 
     [Test]
-    public async Task ClusterAskRedirect_TracksReadOnTarget()
+    [Arguments(int.MaxValue)]
+    [Arguments(1)]
+    public async Task ClusterAskRedirect_TracksReadOnTarget(int maximumBytesPerRead)
     {
         await using var target = new FakeRespServer(
             HelloReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
-            "$5\r\nvalue\r\n"u8.ToArray());
+            "$5\r\nvalue\r\n"u8.ToArray())
+        {
+            // One-byte reads put TRACKING in a separate parse/flush iteration from
+            // HELLO and SETINFO. A setup-wide two-reply gate then deadlocks here.
+            MaximumBytesPerRead = maximumBytesPerRead,
+        };
         target.ReplyOverride = (_, command) =>
         {
             // Setup replies can arrive in separate reads. Gate only the application
@@ -1221,12 +1228,9 @@ public class ClientSideCacheTests
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
 
-        await Assert.That(target.ReceivedCommands.Take(2)).IsEquivalentTo([
-            "HELLO 3", "CLIENT TRACKING ON OPTIN",
-        ]);
-        await Assert.That(target.ReceivedCommands.Skip(2)).IsEquivalentTo([
-            "ASKING", "CLIENT CACHING YES", "GET key",
-        ]);
+        await Assert.That(string.Join("|", target.ReceivedCommands)).IsEqualTo(
+            "HELLO 3|CLIENT TRACKING ON OPTIN|ASKING|CLIENT CACHING YES|GET key");
+        await Assert.That(seed.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
     }
 
     [Test]

@@ -51,6 +51,9 @@ internal sealed class FakeRespServer : IAsyncDisposable
     /// </summary>
     public int MinimumCommandsBeforeReply { get; set; } = 1;
 
+    /// <summary>Bounds each socket read to force command fragmentation independently of TCP coalescing.</summary>
+    public int MaximumBytesPerRead { get; init; } = int.MaxValue;
+
     /// <summary>
     /// Answers initial CLIENT SETINFO without consuming or recording scripted application commands.
     /// Disable for wire tests that explicitly script the library metadata handshake.
@@ -306,7 +309,9 @@ internal sealed class FakeRespServer : IAsyncDisposable
                             throw new InvalidDataException("Fake RESP frame exceeds the 8 MiB fixture limit.");
                         Array.Resize(ref buffer, buffer.Length * 2);
                     }
-                    read = await socket.ReceiveAsync(buffer.AsMemory(end), SocketFlags.None, _cts.Token);
+                    read = await socket.ReceiveAsync(
+                        buffer.AsMemory(end, Math.Min(buffer.Length - end, MaximumBytesPerRead)),
+                        SocketFlags.None, _cts.Token);
                 }
                 catch (SocketException error) when (!_cts.IsCancellationRequested
                     && error.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted)
