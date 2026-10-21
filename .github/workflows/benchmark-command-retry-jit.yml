@@ -1,0 +1,59 @@
+name: Command retry JIT diagnostics
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  collect:
+    if: github.event.label.name == 'run-command-retry-jit-benchmarks'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      redis:
+        image: mirror.gcr.io/library/redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: infrastructure
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 4042e2685f33ac6db413b4109bcb1255c5b19f5b
+          path: baseline
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ffea094441a4542a248c83e0bb656300943f1f73
+          fetch-depth: 2
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Collect original-pair script JIT diagnostics
+        run: python infrastructure/scripts/benchmarks/CommandRetryJit.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: command-retry-jit-net10.0
+          path: jit-results/
+          if-no-files-found: error
+          retention-days: 14
