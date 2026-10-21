@@ -20,7 +20,7 @@ have explicit skip reasons in the test report. A feature skipped by a test is no
 | Garnet 2.1.8 | `ghcr.io/microsoft/garnet:2.1.8` | Lua enabled with `--lua`. |
 | Dragonfly 2.0.0 | `docker.dragonflydb.io/dragonflydb/dragonfly:v2.0.0` | One proactor thread; Cluster uses emulated mode. |
 | KeyDB 6.3.4 | `eqalpha/keydb:x86_64_v6.3.4` | One server thread, persistence disabled; Linux x64. |
-| Valkey 9.2 RC1 | `valkey/valkey:9.2.0-rc1-alpine` | Persistence disabled; includes [missing-key replies and ACL roles](valkey-92.md). |
+| Valkey 9.2 RC1 | `valkey/valkey:9.2.0-rc1-alpine` | Persistence disabled; includes [missing-key replies, ACL roles and typed Path Hashes](valkey-92.md). GA compatibility is unverified. |
 
 Other versions need their own compatibility run. ARM hosts need x64 emulation for the KeyDB image.
 

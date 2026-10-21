@@ -31,6 +31,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     private IRespireHashCommands? _hashes;
     private IRespireListCommands? _lists;
     private IRespireArrayCommands? _arrays;
+    private IRespirePathHashCommands? _pathHashes;
     private IRespireSetCommands? _sets;
     private IRespireSortedSetCommands? _sortedSets;
     private IRespireStreamCommands? _streams;
@@ -266,6 +267,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
     /// <summary>Redis sparse array commands.</summary>
     public IRespireArrayCommands Arrays => Volatile.Read(ref _arrays) ?? InitializeFacet(ref _arrays, static client => new ArrayCommands(client));
+
+    /// <summary>Valkey 9.2 Path Hash commands, tested against RC1.</summary>
+    public IRespirePathHashCommands PathHashes => Volatile.Read(ref _pathHashes) ?? InitializeFacet(ref _pathHashes, static client => new PathHashCommands(client));
+
     /// <inheritdoc/>
     public IRespireSetCommands Sets => Volatile.Read(ref _sets) ?? InitializeFacet(ref _sets, static client => new SetCommands(client));
     /// <inheritdoc/>

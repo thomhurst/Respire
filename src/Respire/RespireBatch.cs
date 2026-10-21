@@ -51,6 +51,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
     private IRespireBatchHashCommands? _hashes;
     private IRespireBatchListCommands? _lists;
     private IRespireBatchArrayCommands? _arrays;
+    private IRespireBatchPathHashCommands? _pathHashes;
     private IRespireBatchSetCommands? _sets;
     private IRespireBatchSortedSetCommands? _sortedSets;
     private IRespireBatchBitmapCommands? _bitmaps;
@@ -111,6 +112,9 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 
     /// <summary>Redis sparse array commands.</summary>
     public IRespireBatchArrayCommands Arrays => _arrays ??= new BatchArrayCommands(this);
+
+    /// <summary>Valkey 9.2 Path Hash commands, tested against RC1.</summary>
+    public IRespireBatchPathHashCommands PathHashes => _pathHashes ??= new BatchPathHashCommands(this);
 
     /// <summary>Set (unordered, unique members) commands. Redis: SADD, SMEMBERS, …</summary>
     public IRespireBatchSetCommands Sets => _sets ??= new BatchSetCommands(this);
