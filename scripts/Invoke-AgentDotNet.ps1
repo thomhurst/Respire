@@ -330,7 +330,10 @@ function Get-LiveProcessIdentity([int]$ProcessId) {
             [AgentDotNetLinuxProcessSnapshot]::CaptureProcess($ProcessId)
         }
 
-        return $process?.StartIdentity
+        if ($null -ne $process) {
+            return $process.StartIdentity
+        }
+        return $null
     }
     catch {
         Write-Verbose "Live identity for process $ProcessId was unavailable: $_"
@@ -358,7 +361,8 @@ function Test-ProcessStartOrder([string]$ParentIdentity, [string]$ChildIdentity)
     return $true
 }
 
-function Get-ProcessTreeState([int]$RootProcessId, [string]$RootStartIdentity) {
+function Get-ProcessTreeState([int]$RootProcessId, [string]$RootStartIdentity,
+    [System.Collections.Generic.Dictionary[int, string]]$TrackedProcesses) {
     $snapshot = @(Get-ProcessSnapshot)
     $byId = @{}
     foreach ($item in $snapshot) { $byId[$item.ProcessId] = $item }
@@ -369,6 +373,16 @@ function Get-ProcessTreeState([int]$RootProcessId, [string]$RootStartIdentity) {
     $root = $byId[$RootProcessId]
     if ($RootStartIdentity -and $null -ne $root -and $root.StartIdentity -eq $RootStartIdentity) {
         $null = $processIds.Add($RootProcessId)
+    }
+    # Previously verified descendants remain roots for discovery after their
+    # ancestors exit. Re-check identity before following any retained PID.
+    if ($null -ne $TrackedProcesses) {
+        foreach ($processId in $TrackedProcesses.Keys) {
+            $current = $byId[$processId]
+            if ($null -ne $current -and $current.StartIdentity -eq $TrackedProcesses[$processId]) {
+                $null = $processIds.Add($processId)
+            }
+        }
     }
 
     do {
@@ -810,7 +824,7 @@ try {
     }
 
     while ($true) {
-        $treeState = Get-ProcessTreeState $process.Id $wrapperStartIdentity
+        $treeState = Get-ProcessTreeState $process.Id $wrapperStartIdentity $trackedProcesses
         Sync-TrackedProcesses $trackedProcesses @($treeState.Snapshot) @($treeState.Processes)
         $workingSetBytes = Get-TrackedWorkingSetBytes $trackedProcesses @($treeState.Snapshot)
         $peakWorkingSetBytes = [math]::Max($peakWorkingSetBytes, $workingSetBytes)
@@ -835,7 +849,7 @@ try {
             $PollIntervalMilliseconds,
             [math]::Max(1, [math]::Ceiling($remaining.TotalMilliseconds)))
         if ($process.WaitForExit([int]$waitMilliseconds)) {
-            $treeState = Get-ProcessTreeState $process.Id $wrapperStartIdentity
+            $treeState = Get-ProcessTreeState $process.Id $wrapperStartIdentity $trackedProcesses
             Sync-TrackedProcesses $trackedProcesses @($treeState.Snapshot) @($treeState.Processes)
 
             if ([DateTimeOffset]::UtcNow -gt $deadline) {

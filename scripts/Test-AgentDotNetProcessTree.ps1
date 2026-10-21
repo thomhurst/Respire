@@ -19,8 +19,9 @@ function New-ProcessRecord([int]$Id, [int]$ParentId, [string]$Identity) {
     [pscustomobject]@{ ProcessId = $Id; ParentProcessId = $ParentId; StartIdentity = $Identity; WorkingSetBytes = 100L }
 }
 function Get-ProcessSnapshot { $script:fixture }
-function Assert-Tree([string]$RootIdentity, [int[]]$Expected) {
-    $state = Get-ProcessTreeState -RootProcessId 10 -RootStartIdentity $RootIdentity
+function Assert-Tree([string]$RootIdentity, [int[]]$Expected,
+    [Collections.Generic.Dictionary[int, string]]$Tracked) {
+    $state = Get-ProcessTreeState -RootProcessId 10 -RootStartIdentity $RootIdentity -TrackedProcesses $Tracked
     $actual = @($state.Processes.ProcessId | Sort-Object)
     if (($actual -join ',') -ne (($Expected | Sort-Object) -join ',')) {
         throw "Unsafe process ancestry: expected $($Expected -join ','); got $($actual -join ',')."
@@ -61,9 +62,44 @@ foreach ($identities in @(
     if (($tracked.Keys | Sort-Object) -join ',' -ne '12,13') {
         throw 'Root exit lost already verified descendants.'
     }
+    # Retained orphans can create new descendants after the root exits. Seed
+    # only identities that still match, even when the root PID is recycled.
+    $script:fixture += New-ProcessRecord 30 12 $childIdentity
+    $state = Assert-Tree $rootIdentity @(12, 13, 30) $tracked
+    Sync-TrackedProcesses $tracked @($state.Snapshot) @($state.Processes)
+    if ((Get-TrackedWorkingSetBytes $tracked @($state.Snapshot)) -ne 300) {
+        throw 'A new orphan descendant escaped the memory budget.'
+    }
     $script:fixture += New-ProcessRecord 10 1 $childIdentity
     $null = Assert-Tree $rootIdentity @()
+    $null = Assert-Tree $rootIdentity @(12, 13, 30) $tracked
+    $script:fixture = @($script:fixture | Where-Object ProcessId -notin @(12, 13, 30))
+    $script:fixture += New-ProcessRecord 12 1 $oldIdentity
+    $script:fixture += New-ProcessRecord 30 12 $oldIdentity
+    $null = Assert-Tree $rootIdentity @() $tracked
     $null = Assert-Tree '' @()
+}
+
+# Exercise the live Unix identity reader independently of the host OS. The
+# platform-native snapshot calls are replaced, while the returned record and
+# property access execute exactly as in production.
+class AgentDotNetIdentityFixture {
+    static [object] $Record
+    static [object] CaptureProcess([int]$ProcessId) { return [AgentDotNetIdentityFixture]::Record }
+}
+$identityDefinition = $ast.Find({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-LiveProcessIdentity'
+}, $false)
+$identityReader = $identityDefinition.Extent.Text.Replace('Get-LiveProcessIdentity', 'Get-FixtureLiveIdentity').
+    Replace('$IsWindows', '$false').Replace('$IsMacOS', '$script:fixtureMacOS').
+    Replace('[AgentDotNetMacProcessSnapshot]', '[AgentDotNetIdentityFixture]').
+    Replace('[AgentDotNetLinuxProcessSnapshot]', '[AgentDotNetIdentityFixture]')
+. ([scriptblock]::Create($identityReader))
+foreach ($script:fixtureMacOS in @($false, $true)) {
+    [AgentDotNetIdentityFixture]::Record = New-ProcessRecord 10 1 '100:20'
+    if ((Get-FixtureLiveIdentity 10) -ne '100:20') { throw 'Live Unix identity was lost.' }
+    [AgentDotNetIdentityFixture]::Record = $null
+    if ($null -ne (Get-FixtureLiveIdentity 10)) { throw 'An exited process retained a live identity.' }
 }
 
 # Timestamp resolution can give a real parent and child the same start time.
