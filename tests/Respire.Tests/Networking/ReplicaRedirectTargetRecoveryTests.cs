@@ -256,6 +256,17 @@ public class ReplicaRedirectTargetRecoveryTests
         lease.UseConnection(connection);
         await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - before).IsEqualTo(1L);
         await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+
+        // Another acquisition observes replacement B before the paused caller uses A.
+        using var replacement = await client.Core.RedirectTargets.AcquireAsync(new("127.0.0.1", target.Port), default);
+        await Assert.That(ReferenceEquals(connection, replacement!.Connection)).IsFalse();
+        await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("value");
+        var afterRecovery = client.ClientSideCache.GetStatistics().ContinuityFlushes;
+        lease.UseConnection(connection);
+        await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes).IsEqualTo(afterRecovery);
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
+        await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("value");
+        await Assert.That(target.ReceivedCommands.Count(command => command == "GET fresh")).IsEqualTo(1);
     }
 
     [Test, NotInParallel]

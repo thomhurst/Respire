@@ -228,11 +228,12 @@ public sealed partial class RespireClient
         CircuitAdmission admission;
         try
         {
+            _core.ValidateReplicaRedirectDestination(endpoint);
             admission = _core.Circuits?.Acquire(endpoint, cancellationToken) ?? default;
         }
         catch
         {
-            // Admission failed before the target owner could fence continuity.
+            // Validation or admission failed before the target owner could fence continuity.
             _core.ClientCache?.FlushForContinuityLoss();
             throw;
         }

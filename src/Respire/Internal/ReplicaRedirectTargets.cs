@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Respire.Infrastructure;
 using Respire.Networking;
 
@@ -120,8 +121,7 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
         private readonly SemaphoreSlim _initialization = new(1, 1);
         private readonly CancellationTokenSource _stop = new();
         private static long _nextRecoveryEpisode;
-        private RespireConnection? _observed;
-        private Action? _observedFailure;
+        private readonly ConditionalWeakTable<RespireConnection, Action> _observations = new();
         private readonly ClientSideCacheCoordinator _cache;
         private volatile bool _stopping;
         internal bool RecoveryExhausted
@@ -195,7 +195,8 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
             lock (_observationGate)
             {
                 _stopping = true;
-                if (_observed is { } connection) connection.PendingCommandsFailing -= _observedFailure;
+                foreach (var observation in _observations)
+                    observation.Key.PendingCommandsFailing -= observation.Value;
             }
         }
 
@@ -215,12 +216,12 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
             lock (_observationGate)
             {
                 if (_stopping) return;
-                if (!ReferenceEquals(_observed, connection))
+                if (!_observations.TryGetValue(connection, out onFailure!))
                 {
                     // This synchronous fence is independent of queued lifecycle observers
                     // and reconnect policy exhaustion, and precedes pending reply completion.
                     var fenced = 0;
-                    _observedFailure = () =>
+                    onFailure = () =>
                     {
                         // Lifetime/MOVING publication already fences the old route before
                         // retiring it, then fences overlapping fills after admission stops.
@@ -228,10 +229,11 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
                         if (Interlocked.Exchange(ref fenced, 1) == 0 && !connection.IsRetired)
                             OnPendingCommandsFailing();
                     };
-                    connection.PendingCommandsFailing += _observedFailure;
-                    _observed = connection;
+                    // A paused acquisition can observe A again after replacement B.
+                    // Keep A's original fence without retaining dead sockets indefinitely.
+                    _observations.Add(connection, onFailure);
+                    connection.PendingCommandsFailing += onFailure;
                 }
-                onFailure = _observedFailure!;
             }
             // Subscription can race peer loss. The socket callback and this check share
             // one fence, including later observations of the same disconnected socket.

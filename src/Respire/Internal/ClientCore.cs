@@ -787,7 +787,7 @@ internal sealed class ClientCore : IAsyncDisposable
     internal DedicatedConnectionPool CreateServerPool(RespireEndpoint endpoint, bool controlConnection = false,
         TimeSpan? commandTimeout = null, bool replicaRedirect = false)
     {
-        // All replica redirect owners pass here for every hop. Run user policy outside
+        // Temporary replica redirect owners pass here for every hop. Run user policy outside
         // internal locks, before constructing options, owning a pool, or connecting.
         if (replicaRedirect) ValidateReplicaRedirectDestination(endpoint);
         lock (_hubGate)
@@ -804,7 +804,7 @@ internal sealed class ClientCore : IAsyncDisposable
         }
     }
 
-    private void ValidateReplicaRedirectDestination(RespireEndpoint endpoint)
+    internal void ValidateReplicaRedirectDestination(RespireEndpoint endpoint)
     {
         if (Options.ReplicaRedirectValidator is not { } validator) return;
         bool allowed;
