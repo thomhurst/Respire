@@ -191,6 +191,9 @@ internal static class JobGroupControls
         if #rows == 0 then
             redis.call('XACK', KEYS[1], ARGV[1], item[1]); removeLease(item[1]); return {cursor, {}}
         end
+        if not current(rows[1][2]) then
+            redis.call('XACK', KEYS[1], ARGV[1], item[1]); removeLease(item[1]); return {cursor, {}}
+        end
         local prefix = groupPrefix(rows[1][2])
         local previousTat = prefix and redis.call('HGET', policy, prefix .. 'tat')
         local function undo()

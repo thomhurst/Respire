@@ -28,7 +28,7 @@ internal static class JobQueueScheduling
     // Duplicate Extend hits only renew their record and return before staging permissions.
     // Redis scripts are atomic, but errors do not undo writes: append/index failures
     // roll back only the new staged entry, leaving the original pending job intact.
-    internal const string Helpers = """
+    internal const string Helpers = JobDeduplication.Lifecycle + """
         local function now()
             local time = redis.call('TIME')
             return tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
@@ -92,7 +92,7 @@ internal static class JobQueueScheduling
         """;
 
     internal static readonly RespireScript Enqueue = RespireScript.Create("local groupOffset = 5\n" + Helpers
-        + "local deduplicationKey = KEYS[4]\n" + JobDeduplication.Duplicate + StagePermissions + """
+        + "local deduplicationKey = KEYS[4]\nlocal deduplicationMode, revision = ARGV[12], ARGV[13]\n" + JobDeduplication.Duplicate + StagePermissions + """
         permit('ZREM', KEYS[3], '0-0')
         permit('SET', KEYS[4], '0-0', 'PX', ARGV[3])
         local clock = now()
@@ -100,9 +100,7 @@ internal static class JobQueueScheduling
         local fields = {'_respire.job.id', ARGV[1], '_respire.job.payload', ARGV[2],
             '_respire.job.priority', ARGV[5], '_respire.job.expires', tostring(expires),
             '_respire.job.attempts', '0'}
-        if ARGV[12] == '1' then
-            table.insert(fields, '_respire.job.deduplication'); table.insert(fields, 'Extend')
-        end
+        envelope(fields)
         if ARGV[9] and ARGV[9] ~= '' then
             table.insert(fields, '_respire.job.group'); table.insert(fields, ARGV[9])
         end
@@ -117,7 +115,7 @@ internal static class JobQueueScheduling
         local due = clock + tonumber(ARGV[4])
         local id = stage(fields, due)
         if type(id) == 'table' then return id end
-        local recorded = redis.pcall('SET', KEYS[4], record(id, ARGV[12], ARGV[3]), 'PX', ARGV[3])
+        local recorded = persist(id)
         if type(recorded) == 'table' and recorded.err then
             unstage(fields, due, id)
             return recorded
@@ -127,7 +125,7 @@ internal static class JobQueueScheduling
 
     private const string WorkerHelpers = "local groupOffset = 4\n" + Helpers;
 
-    internal static readonly RespireScript Promote = RespireScript.Create(WorkerHelpers + """
+    internal static readonly RespireScript Promote = RespireScript.Create("local lifecycleKey = KEYS[4]\n" + WorkerHelpers + """
         permit('XADD', KEYS[1], '*', 'field', 'value')
         permit('XDEL', KEYS[2], '0-0')
         permit('ZREM', KEYS[3], '0-0')
@@ -150,9 +148,11 @@ internal static class JobQueueScheduling
         local promoted = 0
         for _, entry in ipairs(entries) do
             local expires = tonumber(field(entry.fields, '_respire.job.expires', '0'))
-            if expires == 0 or expires > clock then
+            if current(entry.fields) and (expires == 0 or expires > clock) then
                 redis.call('XADD', KEYS[1], '*', unpack(entry.fields))
                 promoted = promoted + 1
+            elseif current(entry.fields) then
+                retire(entry.fields)
             end
             redis.call('ZREM', KEYS[3], entry.id)
             redis.call('XDEL', KEYS[2], entry.id)
@@ -206,13 +206,19 @@ internal static class JobQueueScheduling
 
         """;
 
-    internal static readonly RespireScript Retry = RespireScript.Create(WorkerHelpers + Fence + StagePermissions + Acknowledge + """
+    internal static readonly RespireScript Retry = RespireScript.Create("local lifecycleKey = KEYS[11]\n" + WorkerHelpers + Fence + StagePermissions + Acknowledge + """
         local rows = redis.call('XRANGE', KEYS[1], ARGV[3], ARGV[3])
         if #rows ~= 1 then return acknowledge() end
         local fields = rows[1][2]
         local clock = now()
         local expires = tonumber(field(fields, '_respire.job.expires', '0'))
-        if expires > 0 and expires <= clock then return acknowledge() end
+        if expires > 0 and expires <= clock then
+            local generation = identity(fields)
+            if generation then permit('HDEL', lifecycleKey, generation) end
+            local result = acknowledge()
+            if result == 1 then retire(fields) end
+            return result
+        end
         -- ARGV[4] is both the fenced delivery count and this copy's contribution;
         -- a newly staged copy starts its consumer-group delivery count from zero.
         local attempts = tonumber(field(fields, '_respire.job.attempts', '0')) + tonumber(ARGV[4])

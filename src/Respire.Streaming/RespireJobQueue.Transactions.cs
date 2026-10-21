@@ -29,11 +29,12 @@ public sealed partial class RespireJobQueue<T>
         var window = deduplicationWindow ?? TimeSpan.FromDays(1);
         JobQueueScheduling.ValidateDuration(window, nameof(deduplicationWindow));
         var deduplicationKey = GetTransactionDeduplicationKey(jobId);
-        JobQueueScheduling.ValidateKeys(_client, [StreamKey, deduplicationKey]);
+        JobQueueScheduling.ValidateKeys(_client, [StreamKey, deduplicationKey, JobDeduplication.Key(StreamKey)]);
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");
         var (parent, state) = CaptureTransactionTrace();
-        return QueueEnqueue(sink, EnqueueScript, [StreamKey, deduplicationKey],
-            [jobId, bytes, (long)Math.Ceiling(window.TotalMilliseconds), parent, state, (int)deduplicationMode]);
+        return QueueEnqueue(sink, EnqueueScript, [StreamKey, deduplicationKey, JobDeduplication.Key(StreamKey)],
+            [jobId, bytes, (long)Math.Ceiling(window.TotalMilliseconds), parent, state, (int)deduplicationMode,
+                Guid.NewGuid().ToString("N")]);
     }
 
     /// <summary>Queues a delayed or prioritized job in the caller's transaction.</summary>
@@ -53,6 +54,7 @@ public sealed partial class RespireJobQueue<T>
         string[] keys = options.Group is null
             ? [.. JobQueueScheduling.Keys(StreamKey), deduplicationKey]
             : [.. JobQueueScheduling.Keys(StreamKey), deduplicationKey, .. JobGroupScheduling.Keys(StreamKey).Skip(3)];
+        keys = [.. keys, JobDeduplication.Key(StreamKey)];
         JobQueueScheduling.ValidateKeys(_client, keys);
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");
         var (parent, state) = CaptureTransactionTrace();
@@ -62,7 +64,7 @@ public sealed partial class RespireJobQueue<T>
                 (long)Math.Ceiling(options.TimeToLive?.TotalMilliseconds ?? 0), parent, state,
                 options.Group ?? string.Empty, (long)Math.Ceiling(options.MaximumRuntime?.TotalMilliseconds ?? 0),
                 options.MaximumRuntime is null ? string.Empty : Guid.NewGuid().ToString("N"),
-                (int)options.DeduplicationMode]);
+                (int)options.DeduplicationMode, Guid.NewGuid().ToString("N")]);
     }
 
     private IPendingSink GetTransactionSink(RespireTransactionBase transaction)

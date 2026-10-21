@@ -74,7 +74,8 @@ internal static class JobQueueControls
     internal static readonly RespireScript Claim = Wrap(StreamWorkerScripts.CapabilityClaimSource, "ARGV[4]");
 
     private static RespireScript Wrap(string source, string cursor, int controlKey = 2) => RespireScript.Create(
-        "local control = KEYS[" + controlKey + "]\nlocal cursor = " + cursor + "\n" + AdmissionSource
+        "local lifecycleKey = KEYS[" + (controlKey + 1) + "]\n" + JobDeduplication.Lifecycle
+        + "local control = KEYS[" + controlKey + "]\nlocal cursor = " + cursor + "\n" + AdmissionSource
         + source + "\nend\n" + CompletionSource);
 
     private const string AdmissionSource = """
@@ -104,6 +105,8 @@ internal static class JobQueueControls
     private const string CompletionSource = """
         local page = read()
         if page.err then return page end
+
+        """ + JobDeduplication.Acquire + """
         if limit > 0 and #page[2] == 0 then redis.call('HSET', control, 'count', count) end
         return {page[1], page[2], 0, 0}
         """;

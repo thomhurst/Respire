@@ -16,15 +16,13 @@ public sealed partial class RespireJobQueue<T>
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly RespireScript EnqueueScript = RespireScript.Create(
-        "local deduplicationKey = KEYS[2]\n" + JobDeduplication.Duplicate + """
+        "local deduplicationKey = KEYS[2]\nlocal deduplicationMode, revision = ARGV[6], ARGV[7]\n" + JobDeduplication.Duplicate + """
         -- Lua errors do not roll back writes. Check both mutations and rollback before appending.
         if not redis.acl_check_cmd then
             return redis.error_reply('ERR job enqueue requires Redis 7.0 or later')
         end
         local fields = {'_respire.job.id', ARGV[1], '_respire.job.payload', ARGV[2]}
-        if ARGV[6] == '1' then
-            table.insert(fields, '_respire.job.deduplication'); table.insert(fields, 'Extend')
-        end
+        envelope(fields)
         if ARGV[4] and ARGV[4] ~= '' then
             table.insert(fields, 'traceparent'); table.insert(fields, ARGV[4])
             if ARGV[5] and ARGV[5] ~= '' then table.insert(fields, 'tracestate'); table.insert(fields, ARGV[5]) end
@@ -35,7 +33,7 @@ public sealed partial class RespireJobQueue<T>
             return redis.error_reply('NOPERM job enqueue is not permitted')
         end
         local id = redis.call('XADD', KEYS[1], '*', unpack(fields))
-        local recorded = redis.pcall('SET', KEYS[2], record(id, ARGV[6], ARGV[3]), 'PX', ARGV[3])
+        local recorded = persist(id)
         if type(recorded) == 'table' and recorded.err then
             redis.call('XDEL', KEYS[1], id)
             return recorded
@@ -107,7 +105,10 @@ public sealed partial class RespireJobQueue<T>
     /// <summary>Enqueues with an explicit deduplication policy using the application job ID as identity.</summary>
     /// <remarks>The first successful enqueue fixes the mode and window until that window expires.
     /// Extend renews the original window on duplicates, including after completion, without replacing payload or options.
-    /// Upgrade all producers before opting into Extend. Workers do not renew the window on acquisition or retries.</remarks>
+    /// Replace accepts the latest payload and options until first acquisition, without renewing the window.
+    /// Acquired Replace generations retain their envelope through retries and completion.
+    /// Upgrade all producers before opting into Extend, and all producers and workers before using Replace.
+    /// Workers do not renew the window on acquisition or retries.</remarks>
     public async ValueTask<RespireJobEnqueueResult> EnqueueAsync(RespireJobDeduplicationMode deduplicationMode,
         string jobId, T payload, TimeSpan? deduplicationWindow = null,
         CancellationToken cancellationToken = default)
@@ -120,23 +121,20 @@ public sealed partial class RespireJobQueue<T>
         cancellationToken.ThrowIfCancellationRequested();
         // Hash the ID so user-supplied braces and arbitrarily long IDs cannot change the Redis key's hash tag.
         var deduplicationKey = StreamKey + ":dedup:" + Convert.ToHexString(SHA256.HashData(StrictUtf8.GetBytes(jobId)));
-        var streamKey = _client.ResolveKey(StreamKey).ToBytes();
-        var deduplicationKeyBytes = _client.ResolveKey(deduplicationKey).ToBytes();
-        if (streamKey.AsSpan().SequenceEqual(deduplicationKeyBytes)
-            || ClusterHash.GetSlot(streamKey) != ClusterHash.GetSlot(deduplicationKeyBytes))
-            throw new ArgumentException("Queue keys must resolve to distinct keys in the same Cluster slot.");
+        JobQueueScheduling.ValidateKeys(_client, [StreamKey, deduplicationKey, JobDeduplication.Key(StreamKey)]);
         using var trace = new JobEnqueueTrace();
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");
-        using var result = await _client.Scripts.ExecuteAsync(EnqueueScript, [StreamKey, deduplicationKey],
+        using var result = await _client.Scripts.ExecuteAsync(EnqueueScript, [StreamKey, deduplicationKey, JobDeduplication.Key(StreamKey)],
             [jobId, bytes, (long)Math.Ceiling(window.TotalMilliseconds), trace.Parent, trace.State,
-                (int)deduplicationMode], cancellationToken).ConfigureAwait(false);
+                (int)deduplicationMode, Guid.NewGuid().ToString("N")], cancellationToken).ConfigureAwait(false);
         trace.Succeeded = true;
         return new(new(result[0].AsString()), result[1].AsInteger() == 1);
     }
 
     /// <summary>Enqueues with delay, bounded-batch priority and optional lifetime from enqueue.</summary>
     /// <remarks>The returned ID identifies the staged enqueue; processing receives a new ready-stream ID.
-    /// A registered job worker promotes due jobs using Redis server time. Duplicate calls retain the first options.</remarks>
+    /// A registered job worker promotes due jobs using Redis server time. Duplicate calls retain the first options
+    /// unless the generation uses Replace and has never been acquired.</remarks>
     public async ValueTask<RespireJobEnqueueResult> EnqueueScheduledAsync(string jobId, T payload,
         RespireJobEnqueueOptions options, CancellationToken cancellationToken = default)
     {
@@ -148,6 +146,7 @@ public sealed partial class RespireJobQueue<T>
         string[] keys = options.Group is null
             ? [.. JobQueueScheduling.Keys(StreamKey), deduplicationKey]
             : [.. JobQueueScheduling.Keys(StreamKey), deduplicationKey, .. JobGroupScheduling.Keys(StreamKey).Skip(3)];
+        keys = [.. keys, JobDeduplication.Key(StreamKey)];
         JobQueueScheduling.ValidateKeys(_client, keys);
         using var trace = new JobEnqueueTrace();
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");
@@ -157,7 +156,7 @@ public sealed partial class RespireJobQueue<T>
                 (long)Math.Ceiling(options.TimeToLive?.TotalMilliseconds ?? 0), trace.Parent, trace.State,
                 options.Group ?? string.Empty, (long)Math.Ceiling(options.MaximumRuntime?.TotalMilliseconds ?? 0),
                 options.MaximumRuntime is null ? string.Empty : Guid.NewGuid().ToString("N"),
-                (int)options.DeduplicationMode], cancellationToken).ConfigureAwait(false);
+                (int)options.DeduplicationMode, Guid.NewGuid().ToString("N")], cancellationToken).ConfigureAwait(false);
         trace.Succeeded = true;
         return new(new(result[0].AsString()), result[1].AsInteger() == 1);
     }

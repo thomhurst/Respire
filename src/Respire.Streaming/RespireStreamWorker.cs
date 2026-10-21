@@ -20,7 +20,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     private Task? _consumerDrain;
     private readonly StreamWorkerTelemetry _telemetry = new(options.TelemetryName);
     private readonly RespireKey[]? _groupReadKeys = options.JobQueue is null ? null
-        : [.. JobGroupScheduling.Keys(stream), JobQueueControls.Key(stream)];
+        : [.. JobGroupScheduling.Keys(stream), JobQueueControls.Key(stream), JobDeduplication.Key(stream)];
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -38,6 +38,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             JobQueueScheduling.ValidateKeys(client, JobGroupScheduling.Keys(stream));
         if (options.JobEventsStream is not null)
         {
+            JobQueueScheduling.ValidateKeys(client, [stream, JobDeduplication.Key(stream)]);
             JobQueueScheduling.ValidateKeys(client, [stream, JobQueueControls.Key(stream), options.JobEventsStream, options.DeadLetterStream!]);
             if (options.JobQueue?.MetricsRetentionMinutes > 0)
                 JobQueueScheduling.ValidateKeys(client, [stream, options.JobEventsStream, options.DeadLetterStream!, stream + ":metrics"]);
@@ -132,7 +133,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 if (options.JobQueue is { } queue
                     && (!schedulingClock.IsRunning || schedulingClock.Elapsed >= queue.SchedulingPollInterval))
                 {
-                    await client.Scripts.ExecuteIntegerAsync(JobQueueScheduling.Promote, [.. JobQueueScheduling.Keys(stream)],
+                    await client.Scripts.ExecuteIntegerAsync(JobQueueScheduling.Promote, [.. JobQueueScheduling.Keys(stream), JobDeduplication.Key(stream)],
                         [queue.SchedulingBatchSize], readers.Token).ConfigureAwait(false);
                     schedulingClock.Restart();
                 }
@@ -247,7 +248,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     {
         using var reply = await client.Scripts.ExecuteLeaseAsync(script,
             grouped ? _groupReadKeys
-                : controls ? [stream, JobQueueControls.Key(stream)] : [stream], arguments, token).ConfigureAwait(false);
+                : controls ? [stream, JobQueueControls.Key(stream), JobDeduplication.Key(stream)] : [stream], arguments, token).ConfigureAwait(false);
         var rows = reply[1];
         var deliveries = new Delivery[rows.Count];
         for (var i = 0; i < deliveries.Length; i++)
@@ -367,7 +368,14 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             var expires = delivery.Entry.GetString("_respire.job.expires");
             if (expires is not null)
             {
-                var live = await client.Scripts.ExecuteIntegerAsync(HasGroupLease(delivery) ? JobGroupControls.CheckExpiry : JobQueueScheduling.CheckExpiry, LeaseFenceKeys(delivery, [stream]),
+                var expiryScript = HasGroupLease(delivery) ? JobGroupControls.CheckExpiry : JobQueueScheduling.CheckExpiry;
+                var expiryKeys = LeaseFenceKeys(delivery, [stream]);
+                if (IsReplace(delivery))
+                {
+                    expiryScript = JobDeduplication.Terminal(expiryScript, expiry: true);
+                    expiryKeys = [.. expiryKeys, JobDeduplication.Key(stream)];
+                }
+                var live = await client.Scripts.ExecuteIntegerAsync(expiryScript, expiryKeys,
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, expires,
                         options.DeleteAcknowledgedEntries ? 1 : 0], processingToken).ConfigureAwait(false);
                 if (live != 1) { observation.Outcome = live == -1 ? "expired" : "stale"; return; }
@@ -439,7 +447,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 var yielded = await client.Scripts.ExecuteIntegerAsync(
                     HasGroupLease(delivery) ? JobGroupControls.Retry : JobQueueScheduling.Retry,
-                    LeaseFenceKeys(delivery, [.. JobGroupScheduling.Keys(stream)]),
+                    LeaseFenceKeys(delivery, [.. JobGroupScheduling.Keys(stream), JobDeduplication.Key(stream)]),
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, 0,
                         options.DeleteAcknowledgedEntries ? 1 : 0, "yield"], cleanup.Token).ConfigureAwait(false);
                 observation.Outcome = yielded == 1 ? "yielded" : "stale";
@@ -467,7 +475,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             else if (options.JobQueue is { } queue
                 && (retryDelay ?? queue.GetRetryDelay(totalAttempts)) is { } delay)
             {
-                var retried = await client.Scripts.ExecuteIntegerAsync(HasGroupLease(delivery) ? JobGroupControls.Retry : JobQueueScheduling.Retry, LeaseFenceKeys(delivery, [.. JobGroupScheduling.Keys(stream)]),
+                var retried = await client.Scripts.ExecuteIntegerAsync(HasGroupLease(delivery) ? JobGroupControls.Retry : JobQueueScheduling.Retry, LeaseFenceKeys(delivery, [.. JobGroupScheduling.Keys(stream), JobDeduplication.Key(stream)]),
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, (long)Math.Ceiling(delay.TotalMilliseconds),
                         options.DeleteAcknowledgedEntries ? 1 : 0],
                     processingToken).ConfigureAwait(false);
@@ -522,14 +530,18 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     private RespireKey[] FencedCompletionKeys(Delivery delivery, string events, bool deadLetter)
     {
         var keys = LeaseFenceKeys(delivery, CompletionKeys(delivery, events, deadLetter));
+        if (IsReplace(delivery)) keys = [.. keys, JobDeduplication.Key(stream)];
         return JobCheckpoints.Key(stream, delivery.Entry) is { } checkpoint ? [.. keys, checkpoint] : keys;
     }
 
     private RespireScript CompletionScript(Delivery delivery, bool delete)
     {
         var script = BaseCompletionScript(delivery, delete);
+        if (IsReplace(delivery)) script = JobDeduplication.Terminal(script);
         return JobCheckpoints.Key(stream, delivery.Entry) is null ? script : JobCheckpoints.Complete(script);
     }
+
+    private static bool IsReplace(Delivery delivery) => delivery.Entry.GetString("_respire.job.generation") is not null;
 
     private RespireScript BaseCompletionScript(Delivery delivery, bool delete)
     {

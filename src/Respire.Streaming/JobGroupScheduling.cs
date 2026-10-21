@@ -78,7 +78,10 @@ internal static class JobGroupScheduling
                     local candidate = #rows == 1 and rows[1][2] or nil
                     local rank = candidate and tonumber(field(candidate, '_respire.job.priority', '0')) or math.huge
                     local expires = candidate and tonumber(field(candidate, '_respire.job.expires', '0')) or 0
-                    if expires > 0 and expires <= clock then candidate = nil; rank = math.huge end
+                    if candidate and (not current(candidate) or (expires > 0 and expires <= clock)) then
+                        retire(candidate)
+                        candidate = nil; rank = math.huge
+                    end
                     if not chosen or rank > priority then
                         chosen, fields, id, priority = member, candidate, entryId, rank
                     end
