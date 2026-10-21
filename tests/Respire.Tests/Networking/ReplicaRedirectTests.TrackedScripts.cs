@@ -59,7 +59,7 @@ public partial class ReplicaRedirectTests
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
         {
             ClientSideCache = cache ? new RespireClientSideCacheOptions() : null,
-            CommandTimeout = failure == "timeout" ? TimeSpan.FromSeconds(1) : TimeSpan.FromSeconds(10),
+            CommandTimeout = TimeSpan.FromSeconds(10),
         });
 #pragma warning restore RESP010
         await client.EnsureReliableCorrectionOrderingAsync();
@@ -77,11 +77,16 @@ public partial class ReplicaRedirectTests
             }).AsTask();
         try
         {
-            await submitted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await WaitForPhaseAsync(submitted.Task);
+            await Assert.That(execution.ConnectionIdentity.Endpoint.Port).IsEqualTo(target.Port);
             target.GateCommand("CLIENT KILL ID 99", releaseFence.Task, () => fencing.TrySetResult());
             if (failure == "cancel") caller.Cancel();
+            // The server holds EVAL's reply, so its source stays live while the existing
+            // deadline sweep advances past it. Expiration cannot race redirect setup.
+            if (failure == "timeout")
+                await Assert.That(execution.Connection.ExpireOldestCommandForTesting()).IsTrue();
             if (failure == "lost-reply") target.CloseConnection(0);
-            await fencing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await WaitForPhaseAsync(fencing.Task);
             await Assert.That(response.IsCompleted).IsFalse();
             await Assert.That(corrected).IsFalse();
             // The target pool remains owned while its ordering barrier is unacknowledged.
@@ -101,6 +106,18 @@ public partial class ReplicaRedirectTests
         await Assert.That(source.ReceivedCommands.Contains("CLIENT KILL ID 41")).IsFalse();
         await Assert.That(client.Core.OwnedPools.Count).IsEqualTo(pools);
         await Assert.That(execution.Connection.IsConnected).IsFalse();
+
+        async Task WaitForPhaseAsync(Task phase)
+        {
+            await Task.WhenAny(phase, response).WaitAsync(TimeSpan.FromSeconds(5));
+            if (phase.IsCompleted)
+                await phase;
+            else
+            {
+                using var unexpected = await response;
+                throw new InvalidOperationException("Tracked script completed before the expected wire phase.");
+            }
+        }
     }
 
     [Test]
