@@ -10,10 +10,12 @@ public partial class StandaloneCircuitDispatchTests
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         using var measurements = new CircuitTelemetryTests.Measurements();
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates circuit rejection counts and half-open permit ownership for this telemetry scenario.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CircuitBreaker = Options(server).CircuitBreaker! with { HalfOpenProbeCount = 1 },
         });
+#pragma warning restore RESP010
         var (_, clock) = await Prepare(client, server);
         Open(client, server);
         if (halfOpen) clock.Advance(TimeSpan.FromMinutes(1));

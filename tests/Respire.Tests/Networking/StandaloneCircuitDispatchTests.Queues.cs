@@ -19,10 +19,12 @@ public partial class StandaloneCircuitDispatchTests
     public async Task QueueSelectionFailureOpensCircuitBeforeDispatch(bool transactional)
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates queue admission and half-open circuit permits on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMinutes(1), MaxDelay = TimeSpan.FromMinutes(1) },
         });
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         var connection = client.Core.Multiplexer.GetConnection();
         server.CloseConnections();
@@ -87,10 +89,12 @@ public partial class StandaloneCircuitDispatchTests
         });
         meterListener.Start();
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates WATCH setup telemetry and its dedicated circuit admission.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CircuitBreaker = state == "disabled" ? null : Options(server).CircuitBreaker,
         });
+#pragma warning restore RESP010
         if (state != "disabled")
         {
             var (_, clock) = await Prepare(client, server);
@@ -130,10 +134,12 @@ public partial class StandaloneCircuitDispatchTests
     public async Task WatchCircuitRejectionReturnsDedicatedLease(bool halfOpen)
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates queue admission and half-open circuit permits on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CircuitBreaker = Options(server).CircuitBreaker! with { HalfOpenProbeCount = 1 },
         });
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         var pool = await client.Core.GetDedicatedPoolAsync(default, observation: default);
         var connection = await pool.RentAsync(default);
@@ -170,7 +176,9 @@ public partial class StandaloneCircuitDispatchTests
     public async Task WatchServerErrorDiscardsDedicatedLease()
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates the WATCH server error and disposal of its dedicated connection lease.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await Prepare(client, server);
         var pool = await client.Core.GetDedicatedPoolAsync(default, observation: default);
         var connection = await pool.RentAsync(default);
@@ -189,7 +197,9 @@ public partial class StandaloneCircuitDispatchTests
     public async Task WatchSetupRejectsOpenCircuitAndCompletesHalfOpenProbe()
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates queue admission and half-open circuit permits on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         Open(client, server);
         await Assert.That(await Failure(async () =>
@@ -208,7 +218,9 @@ public partial class StandaloneCircuitDispatchTests
     public async Task QueuedReplyReleasesProbeBeforeCallerConsumesResult()
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates queued reply receipt from caller consumption of the recovery result.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         Open(client, server);
         clock.Advance(TimeSpan.FromMinutes(1));
@@ -239,7 +251,9 @@ public partial class StandaloneCircuitDispatchTests
     public async Task QueuesAcquireAtExecutionAndOpenRejectionWritesNothing(string shape)
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates queue admission and half-open circuit permits on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         // WATCH and the import lease exist before the circuit opens. Queuing itself takes no permit.
         await using var session = shape.StartsWith("import", StringComparison.Ordinal)
@@ -275,7 +289,9 @@ public partial class StandaloneCircuitDispatchTests
     public async Task HalfOpenBatchRejectsOnlyUnadmittedEntriesAndPreservesAcceptedFifo()
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates queue admission and half-open circuit permits on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with { CommandTimeout = TimeSpan.FromSeconds(10) });
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         Open(client, server);
         clock.Advance(TimeSpan.FromMinutes(1));
@@ -303,12 +319,14 @@ public partial class StandaloneCircuitDispatchTests
     public async Task RetryableBatchConsumesAcceptedReplyWhenSecondMemberIsCircuitRejected()
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates the accepted batch reply from a later member rejected by circuit admission.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CommandTimeout = TimeSpan.FromSeconds(5),
             CircuitBreaker = Options(server).CircuitBreaker! with { HalfOpenProbeCount = 1 },
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         for (var round = 0; round < 8; round++)
         {
@@ -344,12 +362,14 @@ public partial class StandaloneCircuitDispatchTests
     public async Task RetryableBatchPreflightReleasesIgnoredHalfOpenProbe()
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates queue admission and half-open circuit permits on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CommandTimeout = TimeSpan.FromSeconds(5),
             CircuitBreaker = Options(server).CircuitBreaker! with { HalfOpenProbeCount = 1 },
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         var attempts = 0;
         server.ReplyOverride = (_, command) =>
@@ -381,7 +401,9 @@ public partial class StandaloneCircuitDispatchTests
     public async Task CanceledQueueReleasesProbesAndLaterRepliesKeepFifo(string shape, bool beforeDispatch)
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates queue admission and half-open circuit permits on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with { CommandTimeout = TimeSpan.FromSeconds(10) });
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         Open(client, server);
         clock.Advance(TimeSpan.FromMinutes(1));
@@ -421,7 +443,9 @@ public partial class StandaloneCircuitDispatchTests
     public async Task ConcurrentTransactionsBoundHalfOpenSequences()
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates queue admission and half-open circuit permits on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with { CommandTimeout = TimeSpan.FromSeconds(10) });
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         Open(client, server);
         clock.Advance(TimeSpan.FromMinutes(1));
@@ -452,7 +476,9 @@ public partial class StandaloneCircuitDispatchTests
     public async Task EmptyQueuesAndFailedDispatchLeaveFullRecoveryCapacity()
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates queue admission and half-open circuit permits on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with { MaxInflightCommands = 3 });
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         Open(client, server);
         clock.Advance(TimeSpan.FromMinutes(1));
@@ -486,7 +512,9 @@ public partial class StandaloneCircuitDispatchTests
     public async Task QueueTimeoutOpensCircuitAndLateReplyAllowsFullRecovery(string shape)
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates queue admission and half-open circuit permits on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
@@ -518,7 +546,9 @@ public partial class StandaloneCircuitDispatchTests
     public async Task CapacityTimeoutBeforeQueueDispatchReleasesIgnoredProbe(string shape)
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates exhausted in-flight capacity and recovery permits before queue dispatch.
         await using var client = await RespireClient.ConnectAsync(Options(server) with { MaxInflightCommands = 4 });
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         Open(client, server);
         clock.Advance(TimeSpan.FromMinutes(1));
@@ -563,11 +593,13 @@ public partial class StandaloneCircuitDispatchTests
     {
         await using var target = QueueServer();
         await using var source = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates transaction handoff and the actual endpoint circuit after maintenance publication.
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
             Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         var (sourceCircuit, _) = await Prepare(client, source);
         var multiplexer = client.Core.Multiplexer;
         var original = multiplexer.GetConnection();
@@ -622,7 +654,9 @@ public partial class StandaloneCircuitDispatchTests
     public async Task QueueConversionFailureCompletesHealthyReplyAdmission(bool transactional)
     {
         await using var server = QueueServer();
+#pragma warning disable RESP010 // Test-owned client isolates healthy reply admission from a deliberately failing queue converter.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         Open(client, server);
         clock.Advance(TimeSpan.FromMinutes(1));

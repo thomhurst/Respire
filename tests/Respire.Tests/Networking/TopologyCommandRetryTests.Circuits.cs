@@ -28,7 +28,9 @@ public partial class TopologyCommandRetryTests
         var sends = 0;
         await using var server = CircuitUnitServer(shape, current =>
             Interlocked.Increment(ref sends) == 1 ? Close(current) : UnitValue(shape));
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuits, recovery probes, and retry admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(CircuitRetryOptions(server, cluster));
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("warm")).IsEqualTo("value");
         var error = await Failure(async () => await ReadCircuitUnitAsync(client, shape, default));
         await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
@@ -58,7 +60,9 @@ public partial class TopologyCommandRetryTests
             && Interlocked.Increment(ref sends) == 1
                 ? shape == "transaction" ? "*1\r\n-TRYAGAIN injected member error\r\n"u8.ToArray() : TryAgain
                 : UnitValue(shape));
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuits, recovery probes, and retry admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(CircuitRetryOptions(server, cluster));
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("warm")).IsEqualTo("value");
         var circuit = CircuitOf(client, server);
         var clock = new CircuitClock();
@@ -101,11 +105,13 @@ public partial class TopologyCommandRetryTests
             return Close(current);
         }, role: () => Volatile.Read(ref failed) == 0 ? "master" : "slave");
         await using var sentinel = Sentinel(() => Volatile.Read(ref failed) == 0 ? former.Port : replacement.Port);
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuits, recovery probes, and retry admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(SentinelOptions(sentinel) with
         {
             CircuitBreaker = CircuitOptions(),
             RetryPolicy = new() { MaxAttempts = 3, InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         await Assert.That(await ReadCircuitUnitAsync(client, shape, default)).IsEqualTo("value");
         await Assert.That(former.ReceivedCommands.Count(command => command == UnitCommand(shape))).IsEqualTo(1);
         await Assert.That(replacement.ReceivedCommands.Count(command => command == UnitCommand(shape))).IsEqualTo(1);
@@ -131,11 +137,13 @@ public partial class TopologyCommandRetryTests
         await using var source = ClusterNode((command, _) => command == "GET key"
             ? Interlocked.Increment(ref reads) == 1 ? TryAgain : Encoding.ASCII.GetBytes($"-MOVED 12539 127.0.0.1:{target.Port}\r\n")
             : command.StartsWith("GET ", StringComparison.Ordinal) ? Value : null);
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuits, recovery probes, and retry admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(source) with
         {
             CircuitBreaker = CircuitOptions(),
             RetryPolicy = new() { MaxAttempts = 3, InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("warm")).IsEqualTo("value");
         if (targetOpen) OpenCircuit(client, target);
         if (targetOpen)
@@ -185,12 +193,14 @@ public partial class TopologyCommandRetryTests
         survivor.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map() : survivorReply(id, command);
         var ownerReply = owner.ReplyOverride!;
         owner.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map() : ownerReply(id, command);
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuits, recovery probes, and retry admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(owner) with
         {
             CommandTimeout = TimeSpan.FromSeconds(10),
             CircuitBreaker = CircuitOptions(),
             RetryPolicy = new() { MaxAttempts = 3, InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         var decisive = UnitCommand(shape);
         if (!slotMoves)
         {
@@ -225,7 +235,9 @@ public partial class TopologyCommandRetryTests
         var ownerReply = server.ReplyOverride!;
         server.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
             ? SplitSlots(survivor.Port, server.Port) : ownerReply(id, command);
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuits, recovery probes, and retry admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(CircuitRetryOptions(server, cluster: true));
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var owner = router.GetKnownSlotOwner(12539)!;
         var clock = new CircuitClock();
@@ -286,7 +298,9 @@ public partial class TopologyCommandRetryTests
         survivor.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map(survivor.Port) : survivorReply(id, command);
         var ownerReply = server.ReplyOverride!;
         server.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map(server.Port) : ownerReply(id, command);
+#pragma warning disable RESP010 // Test-owned client isolates endpoint circuits, recovery probes, and retry admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(CircuitRetryOptions(server, cluster: true));
+#pragma warning restore RESP010
         router = client.Core.Cluster!;
         var owner = router.GetKnownSlotOwner(12539)!;
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

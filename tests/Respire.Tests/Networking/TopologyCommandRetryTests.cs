@@ -24,7 +24,9 @@ public partial class TopologyCommandRetryTests
         var sends = 0;
         await using var server = Standalone((command, _) => command == "MY.READ key" || command == "GET key"
             ? Interlocked.Increment(ref sends) == 1 ? TryAgain : Value : null);
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server));
+#pragma warning restore RESP010
         RespireCommand descriptor = shape switch
         {
             "caller-supplied" => ((RespireCommand)"MY.READ").WithRetryCategory(RespireCommandRetryCategory.ReadOnly),
@@ -43,7 +45,9 @@ public partial class TopologyCommandRetryTests
         var sends = 0;
         await using var server = Standalone((command, _) => command == "GET key"
             ? Count(ref sends, TryAgain) : null);
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server));
+#pragma warning restore RESP010
         await Assert.That(RespireCommand.Create("GET").RetryCategory).IsEqualTo(RespireCommandRetryCategory.Never);
         await Assert.That(async () => { using var result = await client.ExecuteAsync(RespireCommand.Create("GET"), ["key"]); })
             .ThrowsExactly<RespireServerException>();
@@ -62,8 +66,10 @@ public partial class TopologyCommandRetryTests
             if (Interlocked.Increment(ref effects) == 1) { current.CloseConnections(); return null; }
             return ":2\r\n"u8.ToArray();
         });
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum } });
+#pragma warning restore RESP010
         var descriptor = RespireCommand.Create("MY.INCR").WithRetryCategory(RespireCommandRetryCategory.WriteAccumulating);
         if (expectedEffects == 1)
             await Assert.That(async () => { using var result = await client.ExecuteAsync(descriptor, ["counter"]); })
@@ -97,7 +103,9 @@ public partial class TopologyCommandRetryTests
         var sends = 0;
         await using var server = Standalone((command, _) => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
             ? Interlocked.Increment(ref sends) == 1 ? TryAgain : ":7\r\n"u8.ToArray() : null);
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server));
+#pragma warning restore RESP010
         var script = RespireScript.Create("return 7", readOnly: false);
         if (declared) script = script.WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         await Assert.That(RespireScript.Create("return 7", readOnly: true).RetryCategory).IsEqualTo(RespireCommandRetryCategory.Never);
@@ -122,7 +130,9 @@ public partial class TopologyCommandRetryTests
             if (Interlocked.Increment(ref sends) == 1) { current.CloseConnections(); return null; }
             return ":7\r\n"u8.ToArray();
         });
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server));
+#pragma warning restore RESP010
         var result = shape == "script"
             ? await client.Scripts.ExecuteIntegerAsync(
                 RespireScript.Create("return 7").WithRetryCategory(RespireCommandRetryCategory.ReadOnly), ["key"])
@@ -142,7 +152,9 @@ public partial class TopologyCommandRetryTests
             sends.Enqueue(command);
             return sends.Count == 1 ? TryAgain : ":1\r\n"u8.ToArray();
         });
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server));
+#pragma warning restore RESP010
         var argument = "first"u8.ToArray();
         var script = RespireScript.Create("return 1").WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         var pending = client.Scripts.ExecuteIntegerAsync(script, ["key"], [argument]);
@@ -160,7 +172,9 @@ public partial class TopologyCommandRetryTests
         var sends = 0;
         await using var server = Standalone((command, _) => command == "FCALL_RO reader 1 key"
             ? Interlocked.Increment(ref sends) == 1 ? TryAgain : Value : null);
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server));
+#pragma warning restore RESP010
         var function = RespireFunction.Create("reader", readOnly: true);
         if (declared) function = function.WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         if (declared)
@@ -190,6 +204,7 @@ public partial class TopologyCommandRetryTests
         var command = readOnly ? "FCALL_RO reader 1 key" : "FCALL reader 1 key";
         await using var server = Standalone((received, _) => received == command
             ? Count(ref calls, TryAgain) : null);
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server) with
         {
             RetryPolicy = new()
@@ -198,6 +213,7 @@ public partial class TopologyCommandRetryTests
                 MaxCommandRetryCategory = RespireCommandRetryCategory.WriteAccumulating,
             },
         });
+#pragma warning restore RESP010
         var category = readOnly ? RespireCommandRetryCategory.ReadOnly : RespireCommandRetryCategory.WriteAccumulating;
         var function = RespireFunction.Create("reader", readOnly).WithRetryCategory(category);
         await Assert.That(async () =>
@@ -242,8 +258,10 @@ public partial class TopologyCommandRetryTests
             return "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
         });
         await using var sentinel = Sentinel(() => Volatile.Read(ref demoted) == 0 ? former.Port : replacement.Port);
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(SentinelOptions(sentinel) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum } });
+#pragma warning restore RESP010
         if (retries) await Assert.That(await client.SetAsync("key", "value")).IsTrue();
         else await Assert.That(async () => await client.SetAsync("key", "value")).ThrowsExactly<RespireServerException>();
         await Assert.That(former.ReceivedCommands.Count(command => command == "SET key value")).IsEqualTo(1);
@@ -276,8 +294,10 @@ public partial class TopologyCommandRetryTests
             return AppendReply(command, newerFirst);
         });
         await using var sentinel = Sentinel(() => Volatile.Read(ref demoted) == 0 ? former.Port : replacement.Port);
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(SentinelOptions(sentinel) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteChecked } });
+#pragma warning restore RESP010
 
         await client.Streams.AddAsync("s", ("f", "v"));
         await client.Streams.AddAsync("s", ("f", "v"));
@@ -304,7 +324,9 @@ public partial class TopologyCommandRetryTests
         });
         formerServer = former;
         await using var sentinel = Sentinel(() => Volatile.Read(ref failed) == 0 ? former.Port : replacement.Port);
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(SentinelOptions(sentinel));
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(replacement.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
     }
@@ -318,7 +340,9 @@ public partial class TopologyCommandRetryTests
         var reads = 0;
         await using var server = ClusterNode((command, _) => command == "GET key"
             ? Interlocked.Increment(ref reads) == 1 ? TryAgain : Value : null);
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server));
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(reads).IsEqualTo(2);
         await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(1);
@@ -338,7 +362,9 @@ public partial class TopologyCommandRetryTests
         var redirects = 0;
         await using var source = ClusterNode((command, _) => command == "GET key" && Interlocked.Increment(ref redirects) == 1
             ? Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot("key")} 127.0.0.1:{target.Port}\r\n") : null);
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(source));
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(source.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
         await Assert.That(target.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
@@ -358,10 +384,12 @@ public partial class TopologyCommandRetryTests
             current.CloseConnections();
             return null;
         });
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         {
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins },
         });
+#pragma warning restore RESP010
         var descriptor = name == "ZADD" ? RespireCommands.SortedSet.ZADD : RespireCommands.Stream.XADD;
         RespireValue[] arguments = name == "ZADD" ? ["key", "INCR", "1", "member"] : ["key", "*", "field", "value"];
         await Assert.That(descriptor.RetryCategory).IsEqualTo(RespireCommandRetryCategory.WriteAccumulating);
@@ -377,10 +405,12 @@ public partial class TopologyCommandRetryTests
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         using var listener = RetryListener(events);
         await using var server = ClusterNode((command, _) => command.StartsWith("GET ", StringComparison.Ordinal) ? Value : null);
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         {
             CircuitBreaker = new() { MinimumFailureCount = 1, FailureRateThreshold = 0.01, OpenDuration = TimeSpan.FromMinutes(1) },
         });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("warm")).IsEqualTo("value");
         var admission = client.Core.Circuits!.Acquire(new("127.0.0.1", server.Port), default);
         try { admission.Failed(new RespireConnectionException("Injected node failure."), default); }
@@ -395,12 +425,14 @@ public partial class TopologyCommandRetryTests
     {
         var reads = 0;
         await using var server = ClusterNode((command, _) => command == "GET key" ? Count(ref reads, TryAgain) : null);
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         {
             CommandTimeout = TimeSpan.FromMilliseconds(400),
             RetryPolicy = new() { MaxAttempts = 100, InitialBackoff = TimeSpan.FromMilliseconds(50),
                 MaxBackoff = TimeSpan.FromMilliseconds(50), Jitter = 0 },
         });
+#pragma warning restore RESP010
         var elapsed = Stopwatch.StartNew();
         var error = await Failure(async () => await client.GetStringAsync("key"));
         elapsed.Stop();
@@ -436,11 +468,13 @@ public partial class TopologyCommandRetryTests
             owner.CloseConnections();
             return null;
         };
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(owner) with
         {
             CommandTimeout = TimeSpan.FromSeconds(10),
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         var elapsed = Stopwatch.StartNew();
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         elapsed.Stop();
@@ -464,11 +498,13 @@ public partial class TopologyCommandRetryTests
             current.CloseConnections();
             return null;
         });
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         {
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(1500), MaxDelay = TimeSpan.FromMilliseconds(1500), JitterRatio = 0 },
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(reads).IsEqualTo(2);
     }
@@ -481,7 +517,9 @@ public partial class TopologyCommandRetryTests
     public async Task ClusterRetryStartsReplacementForDisconnectedRoute(bool clearSlotOwner, bool cancel)
     {
         await using var server = ClusterNode((command, _) => command == "GET key" ? Value : null);
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with { ClientName = "retry-seed" });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var owner = router.GetKnownSlotOwner(12539)!;
         var connection = owner.GetConnection();
@@ -616,9 +654,11 @@ public partial class TopologyCommandRetryTests
         // Group members have no policy: only the group owns these retries.
         await using var group = topology == "Group"
             ? await RespireFailoverGroup.ConnectAsync([Candidate(server, 0), Candidate(replacement, 1)], GroupOptions() with { RetryPolicy = policy }) : null;
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = group is null
             ? await RespireClient.ConnectAsync((topology == "Cluster" ? ClusterOptions(server) : SentinelOptions(sentinel)) with { RetryPolicy = policy })
             : null;
+#pragma warning restore RESP010
         ValueTask<long> Increment() => group is null ? client!.IncrementAsync("counter")
             : group.ExecuteAsync(async (member, token) =>
             {
@@ -634,7 +674,9 @@ public partial class TopologyCommandRetryTests
         if (allowDuplicate) await Assert.That(await Increment()).IsEqualTo(2L);
         else await Assert.That(async () => await Increment()).Throws<RespireConnectionException>();
         // Read through an independent public client, rather than trusting resend counts.
+#pragma warning disable RESP010 // Independent test-owned observer verifies stored effects without retrying the failed write.
         await using var observer = await RespireClient.ConnectAsync(StandaloneOptions(server) with { RetryPolicy = null });
+#pragma warning restore RESP010
         await Assert.That(await observer.GetStringAsync("counter")).IsEqualTo(allowDuplicate ? "2" : "1");
         await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(allowDuplicate ? 1L : 0L);
         await Assert.That(events.GetValueOrDefault("succeeded")).IsEqualTo(allowDuplicate ? 1L : 0L);
@@ -668,8 +710,10 @@ public partial class TopologyCommandRetryTests
             return Interlocked.Increment(ref calls) % 2 == 1 || exhaust ? TryAgain : Value;
         }
         await using var server = shape == "Cluster" ? ClusterNode((command, _) => Reply(command)) : Standalone((command, _) => Reply(command));
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync((shape == "Cluster" ? ClusterOptions(server) : StandaloneOptions(server)) with
         { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
+#pragma warning restore RESP010
         var script = RespireScript.Create("return redis.call('GET', KEYS[1])").WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         var function = RespireFunction.Create("reader", readOnly: true).WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         async ValueTask<string?> Read()
@@ -708,7 +752,9 @@ public partial class TopologyCommandRetryTests
             return Value;
         }
         await using var server = shape == "Cluster" ? ClusterNode((command, _) => Reply(command)) : Standalone((command, _) => Reply(command));
+#pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(shape == "Cluster" ? ClusterOptions(server) : StandaloneOptions(server));
+#pragma warning restore RESP010
         var script = RespireScript.Create("return redis.call('GET', KEYS[1])").WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         var function = RespireFunction.Create("reader", readOnly: true).WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         async ValueTask<string?> Read(CancellationToken token)

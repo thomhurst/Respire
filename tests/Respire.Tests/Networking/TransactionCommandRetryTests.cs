@@ -18,7 +18,9 @@ public class TransactionCommandRetryTests
     {
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*2\r\n$5\r\nvalue\r\n:1\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var value = transaction.GetString("key");
         var exists = transaction.Exists("key");
@@ -36,11 +38,13 @@ public class TransactionCommandRetryTests
     {
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*1\r\n$5\r\nvalue\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CircuitBreaker = new(),
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var value = transaction.GetString("key");
         await transaction.CommitAsync();
@@ -57,8 +61,10 @@ public class TransactionCommandRetryTests
     {
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*2\r\n$5\r\nvalue\r\n:2\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum } });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var value = transaction.GetString("key");
         var counter = transaction.Increment("counter");
@@ -86,8 +92,10 @@ public class TransactionCommandRetryTests
     {
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*1\r\n+OK\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum } });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var set = transaction.Set("key", "value");
 
@@ -109,7 +117,9 @@ public class TransactionCommandRetryTests
                 : "*1\r\n$5\r\nvalue\r\n"u8.ToArray(),
             queued: command => command == "GET key" && Interlocked.Increment(ref gets) == 1
                 ? "-LOADING Redis is loading the dataset in memory\r\n"u8.ToArray() : null);
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var value = transaction.GetString("key");
         await transaction.CommitAsync();
@@ -131,10 +141,12 @@ public class TransactionCommandRetryTests
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1
             ? System.Text.Encoding.UTF8.GetBytes($"*2\r\n:1\r\n-{code} injected member error\r\n")
             : "*2\r\n:2\r\n$5\r\nvalue\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum },
         });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var counter = transaction.Increment("counter");
         var value = transaction.GetString("key");
@@ -167,11 +179,13 @@ public class TransactionCommandRetryTests
         var execs = 0;
         await using var server = Server(exec: _ => System.Text.Encoding.UTF8.GetBytes(
             $"*2\r\n:{Interlocked.Increment(ref execs)}\r\n-TRYAGAIN injected member error\r\n"));
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero,
                 MaxCommandRetryCategory = RespireCommandRetryCategory.WriteAccumulating },
         });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var counter = transaction.Increment("counter");
         var value = transaction.GetString("key");
@@ -191,7 +205,9 @@ public class TransactionCommandRetryTests
         await using var server = Server(
             exec: _ => "-EXECABORT Transaction discarded because of previous errors.\r\n"u8.ToArray(),
             queued: command => command == "GET key" ? "-BUSY script running\r\n"u8.ToArray() : null);
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var value = transaction.GetString("key");
 
@@ -205,8 +221,10 @@ public class TransactionCommandRetryTests
     {
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*2\r\n$5\r\nvalue\r\n$1\r\nx\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.ServerAdmin } });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         _ = transaction.GetString("key");
         _ = transaction.Execute(RespireCommand.Create("GET"), "other");
@@ -224,7 +242,9 @@ public class TransactionCommandRetryTests
     {
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*1\r\n$1\r\nx\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var value = functionCall
             ? transaction.Functions.Execute(RespireFunction.Create("read", readOnly: true).WithRetryCategory(category), ["key"])
@@ -250,7 +270,9 @@ public class TransactionCommandRetryTests
     {
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*1\r\n$1\r\nx\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var raw = transaction.Execute(RespireCommand.Create("GET").WithRetryCategory(RespireCommandRetryCategory.ReadOnly), "other");
         await transaction.CommitAsync();
@@ -267,8 +289,10 @@ public class TransactionCommandRetryTests
     {
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*1\r\n$5\r\nvalue\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = policyPresent ? new() { MaxAttempts = 1 } : null });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         _ = transaction.GetString("key");
 
@@ -281,7 +305,9 @@ public class TransactionCommandRetryTests
     {
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*1\r\n$5\r\nvalue\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await using var transaction = await client.CreateTransactionAsync(["key"]);
         _ = transaction.GetString("key");
 
@@ -295,8 +321,10 @@ public class TransactionCommandRetryTests
     {
         var execs = 0;
         await using var server = Server(exec: _ => { Interlocked.Increment(ref execs); return null; });
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = new() { MaxAttempts = 3, InitialBackoff = TimeSpan.Zero } });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var first = transaction.GetString("key");
         var second = transaction.Exists("key");
@@ -312,11 +340,13 @@ public class TransactionCommandRetryTests
     {
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*1\r\n$5\r\nvalue\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CommandTimeout = TimeSpan.FromMilliseconds(500),
             RetryPolicy = new() { InitialBackoff = TimeSpan.FromSeconds(5), MaxBackoff = TimeSpan.FromSeconds(5), Jitter = 0 },
         });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         _ = transaction.GetString("key");
 
@@ -334,11 +364,13 @@ public class TransactionCommandRetryTests
             if (Interlocked.Increment(ref execs) == 1) cancellation.CancelAfter(TimeSpan.FromMilliseconds(100));
             return null;
         });
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CommandTimeout = TimeSpan.FromSeconds(30),
             RetryPolicy = new() { InitialBackoff = TimeSpan.FromSeconds(10), MaxBackoff = TimeSpan.FromSeconds(10), Jitter = 0 },
         });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var value = transaction.GetString("key");
 
@@ -373,10 +405,12 @@ public class TransactionCommandRetryTests
         listener.Start();
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*2\r\n$5\r\nvalue\r\n:1\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates MULTI/EXEC retry policy and connection history on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CircuitBreaker = circuitRejectsReplacement ? new() { MinimumFailureCount = 1, OpenDuration = TimeSpan.FromMinutes(1) } : null,
         });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         _ = transaction.GetString("key");
         _ = transaction.Exists("key");
@@ -423,7 +457,9 @@ public class TransactionCommandRetryTests
         listener.Start();
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*1\r\n$5\r\nvalue\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client gives the telemetry listener a dedicated transport gate to inspect during retry publication.
         await using var connected = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         Volatile.Write(ref client, connected);
         await using var transaction = connected.CreateTransaction();
         var value = transaction.GetString("key");

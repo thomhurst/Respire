@@ -17,8 +17,10 @@ public partial class TopologyCommandRetryTests
         var execs = 0;
         await using var server = UnitServer((_, current) => Interlocked.Increment(ref execs) == 1
             ? Close(current) : "*2\r\n$5\r\nvalue\r\n:2\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates batch and transaction replay, slot owners, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum } });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var read = transaction.GetString("{key}:read");
         var increment = transaction.Increment("{key}:counter");
@@ -49,8 +51,10 @@ public partial class TopologyCommandRetryTests
             return Interlocked.Increment(ref queues) == 1 ? TryAgain
                 : Encoding.ASCII.GetBytes($"-{redirect} {ClusterHash.GetSlot("key")} 127.0.0.1:{target.Port}\r\n");
         });
+#pragma warning disable RESP010 // Test-owned client isolates batch and transaction replay, slot owners, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(source) with
         { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var read = transaction.GetString("key");
         if (redirect == "ASK")
@@ -83,8 +87,10 @@ public partial class TopologyCommandRetryTests
             "GET bar" => Value,
             _ => null,
         });
+#pragma warning disable RESP010 // Test-owned client isolates batch and transaction replay, slot owners, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum } });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var read = batch.GetString("{key}:read");
         var write = batch.Set("{key}:write", "value");
@@ -111,8 +117,10 @@ public partial class TopologyCommandRetryTests
         await using var source = ClusterNode((command, _) => command == "SET key first"
             ? Interlocked.Increment(ref writes) == 1 ? TryAgain
                 : Encoding.ASCII.GetBytes($"-{redirect} {ClusterHash.GetSlot("key")} 127.0.0.1:{target.Port}\r\n") : null);
+#pragma warning disable RESP010 // Test-owned client isolates batch and transaction replay, slot owners, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(source) with
         { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins } });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var bytes = "first"u8.ToArray();
         var write = batch.Set("key", bytes);
@@ -147,8 +155,10 @@ public partial class TopologyCommandRetryTests
             owner.CloseConnections();
             return null;
         };
+#pragma warning disable RESP010 // Test-owned client isolates batch and transaction replay, slot owners, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(owner) with
         { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
+#pragma warning restore RESP010
         await Assert.That(await ReadUnitAsync(client, transaction, default)).IsEqualTo("value");
         if (stopping is not null) await stopping;
         await Assert.That(owner.ReceivedCommands.Count(c => c == "GET key")).IsEqualTo(1);
@@ -245,7 +255,9 @@ public partial class TopologyCommandRetryTests
         };
         await using var group = failoverGroup
             ? await RespireFailoverGroup.ConnectAsync([new(options)], GroupOptions()) : null;
+#pragma warning disable RESP010 // Test-owned client isolates batch and transaction replay, slot owners, and retry policy for this scenario.
         await using var cluster = failoverGroup ? null : await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         var client = cluster ?? (RespireClient)group!.ActiveClient;
         // Warm the Cluster owner before opening that endpoint's circuit.
         if (!failoverGroup)
@@ -277,8 +289,10 @@ public partial class TopologyCommandRetryTests
         await using var server = UnitServer((_, _) => TryAgain);
         var reply = server.ReplyOverride!;
         server.ReplyOverride = (id, command) => command == "GET key" && !transaction ? TryAgain : reply(id, command);
+#pragma warning disable RESP010 // Test-owned client isolates batch and transaction replay, slot owners, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
+#pragma warning restore RESP010
         await Assert.That(async () => await ReadUnitAsync(client, transaction, default)).ThrowsExactly<RespireServerException>();
         await Assert.That(evidence.Retries.GetValueOrDefault("attempted")).IsEqualTo(1L);
         await Assert.That(evidence.Retries.GetValueOrDefault("exhausted")).IsEqualTo(1L);
@@ -297,11 +311,13 @@ public partial class TopologyCommandRetryTests
         var reply = server.ReplyOverride!;
         server.ReplyOverride = (id, command) => command == "GET key" && !transaction
             ? Interlocked.Increment(ref attempts) == 1 ? Close(server) : Value : reply(id, command);
+#pragma warning disable RESP010 // Test-owned client isolates batch and transaction replay, slot owners, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         {
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(1500), MaxDelay = TimeSpan.FromMilliseconds(1500), JitterRatio = 0 },
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         await Assert.That(await ReadUnitAsync(client, transaction, default)).IsEqualTo("value");
         await Assert.That(attempts).IsEqualTo(2);
     }
