@@ -16,6 +16,7 @@ exit ([int][IO.File]::ReadAllText((Join-Path $PSScriptRoot 'exit.txt')))
 '@ | Set-Content -LiteralPath $guard
     # Diagnostic failures must not replace the original startup status.
     "throw 'comparison diagnostic failure sentinel'" | Set-Content -LiteralPath (Join-Path $testRoot 'Write-AgentWindowsStartupDiagnostics.ps1')
+    foreach ($consoleMode in @('NoWindow', 'Hidden')) {
     foreach ($case in @(
         @{ Exit = 0; Calls = 2 },
         @{ Exit = 73; Calls = 1 },
@@ -27,7 +28,7 @@ exit ([int][IO.File]::ReadAllText((Join-Path $PSScriptRoot 'exit.txt')))
     )) {
         $expected = $case.Exit
         $mode = if ($case.Calls -eq 0) { 'direct' } else { 'guarded' }
-        $logs = Join-Path $testRoot "logs-$expected-$mode"
+        $logs = Join-Path $testRoot "logs-$expected-$mode-$consoleMode"
         $expected | Set-Content -LiteralPath (Join-Path $testRoot 'exit.txt')
         Remove-Item -LiteralPath (Join-Path $testRoot 'calls.txt') -ErrorAction SilentlyContinue
         $info = [Diagnostics.ProcessStartInfo]::new($pwsh)
@@ -36,7 +37,7 @@ exit ([int][IO.File]::ReadAllText((Join-Path $PSScriptRoot 'exit.txt')))
         $info.RedirectStandardOutput = $true
         $info.RedirectStandardError = $true
         foreach ($argument in @('-NoProfile', '-NonInteractive', '-File', (Join-Path $testRoot 'Test-AgentWindowsStartupComparison.ps1'),
-            '-Iterations', '2', '-DiagnosticsDirectory', $logs)) { $info.ArgumentList.Add($argument) }
+            '-Iterations', '2', '-DirectConsoleMode', $consoleMode, '-DiagnosticsDirectory', $logs)) { $info.ArgumentList.Add($argument) }
         if ($case.Probe) {
             foreach ($argument in @('-ProbeCommand', $case.Probe, '-LaunchTimeoutSeconds', '2')) { $info.ArgumentList.Add($argument) }
         }
@@ -53,6 +54,7 @@ exit ([int][IO.File]::ReadAllText((Join-Path $PSScriptRoot 'exit.txt')))
             if ($expected -eq -1073741502 -and $output -notmatch 'comparison diagnostic failure sentinel') { throw 'Diagnostic failure control did not run.' }
             $saved = Get-Content -LiteralPath (Join-Path $logs 'startup-comparison.log') -Raw
             if ($saved -notmatch "end exit=$expected ") { throw 'Comparison lost its final live/file marker.' }
+            if ($saved -notmatch "directConsoleMode=$consoleMode ") { throw 'Comparison did not record its console creation mode.' }
             if ($saved -match 'childPid=(\d+) childStartTicks=(\d+)') {
                 $identity = $Matches.Clone()
                 $child = Get-Process -Id ([int]$identity[1]) -ErrorAction SilentlyContinue
@@ -64,12 +66,13 @@ exit ([int][IO.File]::ReadAllText((Join-Path $PSScriptRoot 'exit.txt')))
                 }
             }
             else { throw 'Direct probe identity was not retained.' }
-            Write-Output "OK comparison mode=$mode exit=$expected; calls=$calls; no retry, cleanup, live/file evidence."
+            Write-Output "OK comparison console=$consoleMode mode=$mode exit=$expected; calls=$calls; no retry, cleanup, live/file evidence."
         }
         finally {
             if (-not $hostProcess.HasExited) { $hostProcess.Kill($true); $null = $hostProcess.WaitForExit(5000) }
             $hostProcess.Dispose()
         }
+    }
     }
 }
 finally {

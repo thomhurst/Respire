@@ -65,6 +65,69 @@ public static class AgentDotNetWindowsJob
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetCurrentProcess();
 
+    // Read-only, in-process evidence: after a loader failure even diagnostic
+    // executables and the runner's Node artifact action may be unable to start.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PerformanceInformation
+    {
+        public uint Size;
+        public UIntPtr CommitTotal, CommitLimit, CommitPeak;
+        public UIntPtr PhysicalTotal, PhysicalAvailable, SystemCache;
+        public UIntPtr KernelTotal, KernelPaged, KernelNonpaged, PageSize;
+        public uint HandleCount, ProcessCount, ThreadCount;
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "K32GetPerformanceInfo", SetLastError = true)]
+    private static extern int GetPerformanceInfo(out PerformanceInformation information, uint size);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetThreadDesktop(uint threadId);
+
+    [DllImport("user32.dll", EntryPoint = "GetUserObjectInformationW", ExactSpelling = true, SetLastError = true)]
+    private static extern int GetDesktopHeapSize(IntPtr desktop, int index, out uint sizeKb, uint size, out uint needed);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetGuiResources(IntPtr process, uint flags);
+
+    public static string DescribeSystemResources()
+    {
+        if (GetPerformanceInfo(out PerformanceInformation info, (uint)Marshal.SizeOf<PerformanceInformation>()) == 0)
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        ulong pageSize = info.PageSize.ToUInt64();
+        return $"system commitBytes={checked(info.CommitTotal.ToUInt64() * pageSize)} " +
+            $"commitLimitBytes={checked(info.CommitLimit.ToUInt64() * pageSize)} " +
+            $"commitPeakBytes={checked(info.CommitPeak.ToUInt64() * pageSize)} " +
+            $"physicalAvailableBytes={checked(info.PhysicalAvailable.ToUInt64() * pageSize)} " +
+            $"physicalTotalBytes={checked(info.PhysicalTotal.ToUInt64() * pageSize)} " +
+            $"handles={info.HandleCount} processes={info.ProcessCount} threads={info.ThreadCount}";
+    }
+
+    public static string DescribeDesktopResources()
+    {
+        // GetThreadDesktop returns a borrowed handle; do not close it or switch
+        // desktops. UOI_HEAPSIZE is capacity, not free space or measured usage.
+        IntPtr desktop = GetThreadDesktop(GetCurrentThreadId());
+        if (desktop == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (GetDesktopHeapSize(desktop, 5, out uint heapSizeKb, sizeof(uint), out _) == 0)
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        // GR_GLOBAL (-2) counts GUI objects in the current session only.
+        uint gdi = ReadGuiResources(0);
+        uint user = ReadGuiResources(1);
+        return $"desktop heapCapacityKb={heapSizeKb} sessionGdiObjects={gdi} sessionUserObjects={user}";
+    }
+
+    private static uint ReadGuiResources(uint flags)
+    {
+        Marshal.SetLastPInvokeError(0);
+        uint count = GetGuiResources(new IntPtr(-2), flags);
+        int error = Marshal.GetLastWin32Error();
+        if (count == 0 && error != 0) throw new Win32Exception(error);
+        return count;
+    }
+
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern int DuplicateHandle(IntPtr sourceProcess, IntPtr sourceHandle, IntPtr targetProcess,
         out SafeFileHandle targetHandle, uint access, int inherit, uint options);

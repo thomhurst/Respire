@@ -8,6 +8,7 @@ $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-dotnet-mtp-{0}" -f [gui
 $previousMarker = $env:RESPIRE_MTP_GUARD_TEST_MARKER
 $previousHtmlReporter = $env:TUNIT_DISABLE_HTML_REPORTER
 $previousTestRunner = $env:DOTNET_TEST_RUNNER
+$startupFailureHostId = 0
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 # Keep CI diagnostics outside the disposable fixture. Each invocation gets its
 # own directory because the SDK override job runs this script more than once.
@@ -134,12 +135,13 @@ exit $guardExitCode
             Write-MtpPhase "discovery host started (separator=$separator); child pid=$($discoveryHost.Id)"
             try {
                 # Include redirected-output drainage in the host deadline.
-                $discoveryHost.WaitForExitAsync($hostTimeout.Token).GetAwaiter().GetResult()
+                $null = $discoveryHost.WaitForExitAsync($hostTimeout.Token).GetAwaiter().GetResult()
             }
             catch [OperationCanceledException] {
                 throw "MTP discovery host exceeded 90s timeout (separator=$separator)."
             }
             $discoveryExitCode = $discoveryHost.ExitCode
+            if ($IsWindows -and $discoveryExitCode -eq -1073741502) { $startupFailureHostId = $discoveryHost.Id }
             Write-MtpPhase "discovery host returned (separator=$separator); child pid=$($discoveryHost.Id); exit=$discoveryExitCode"
         }
         finally {
@@ -205,6 +207,16 @@ finally {
     $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $resolvedRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "Refusing cleanup outside temp root: $resolvedRoot" }
     Remove-Item -LiteralPath $resolvedRoot -Recurse -Force
+    if ($startupFailureHostId -ne 0) {
+        # The outer host can fail before its entry marker or the guard runs.
+        # Finish child/fixture cleanup and restore state before collecting from
+        # this surviving host. A blocked/throwing helper cannot skip cleanup.
+        try {
+            [Console]::Error.WriteLine("startup-failure discoveryHostPid=$startupFailureHostId exit=0xC0000142")
+            & (Join-Path $PSScriptRoot 'Write-AgentWindowsStartupDiagnostics.ps1')
+        }
+        catch { try { [Console]::Error.WriteLine("Windows discovery startup diagnostics unavailable: $_") } catch { } }
+    }
 }
 
 # All unexpected outcomes throw above. The expected failure/empty-filter native
