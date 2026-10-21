@@ -5181,6 +5181,56 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
         internal TrackedConnectionIdentity ConnectionIdentity { get; set; }
 
+        internal bool RequiresRedirectIdentity { get; init; }
+        internal bool FollowsReplicaRedirects { get; init; }
+        private bool CommandMayBeOutstanding { get; set; } = true;
+        private ClientCore? RedirectOwner { get; set; }
+        private DedicatedConnectionPool? RedirectPool { get; set; }
+        private RespireConnection? RedirectConnection { get; set; }
+        private Task? RedirectCleanup { get; set; }
+
+        internal void RetainRedirectTargetUntil(Task cleanup)
+        {
+            if (FollowsReplicaRedirects) RedirectCleanup = cleanup;
+        }
+
+        internal void HoldRedirectTarget(ClientCore owner, DedicatedConnectionPool pool, RespireConnection? connection)
+        {
+            RedirectOwner = owner;
+            RedirectPool = pool;
+            RedirectConnection = connection;
+        }
+
+        internal async ValueTask ReleaseRedirectTargetAsync()
+        {
+            if (RedirectPool is not { } pool) return;
+            RedirectPool = null;
+            if (RedirectConnection is { } connection) pool.Return(connection);
+            RedirectConnection = null;
+            await RedirectOwner!.ReleaseServerPoolAsync(pool).ConfigureAwait(false);
+        }
+
+        public ValueTask<RespireResult> CompleteResponseAsync(ValueTask<RespireResult> response)
+            => FollowsReplicaRedirects ? CompleteRedirectResponseAsync(response) : response;
+
+        private async ValueTask<RespireResult> CompleteRedirectResponseAsync(ValueTask<RespireResult> response)
+        {
+            try { return await response.ConfigureAwait(false); }
+            finally
+            {
+                if (RedirectCleanup is { IsCompleted: false } cleanup)
+                    CorrectionCoordinator.Observe(ReleaseAfterCleanupAsync(cleanup));
+                else
+                    await ReleaseRedirectTargetAsync().ConfigureAwait(false);
+            }
+        }
+
+        private async Task ReleaseAfterCleanupAsync(Task cleanup)
+        {
+            try { await cleanup.ConfigureAwait(false); }
+            finally { await ReleaseRedirectTargetAsync().ConfigureAwait(false); }
+        }
+
         /// <summary>
         /// When the final attempt was serialized into the connection's write path. It is taken
         /// after any wait for in-flight capacity and before the bytes reach Redis, so it never
@@ -5201,12 +5251,17 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
         internal void RecordAccepted()
         {
+            CommandMayBeOutstanding = true;
             var timestamp = PendingSerializedTimestamp;
             StartedTimestamp = timestamp;
             OnSerialized?.Invoke(timestamp);
         }
 
-        internal void RecordCommandNotApplied() => OnCommandNotApplied?.Invoke();
+        internal void RecordCommandNotApplied()
+        {
+            CommandMayBeOutstanding = false;
+            OnCommandNotApplied?.Invoke();
+        }
 
         private ValueTask<RespireResult> _response;
         internal RespireTelemetry.ErrorObservation ErrorObservation { get; }
@@ -5216,11 +5271,11 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         // Consume once: a direct reader owns the observer; the correction interface borrows
         // the raw response and retains the same lease until its cleanup finishes.
         internal ValueTask<RespireResult> ConsumeResponseAsync()
-            => ErrorObservation.IsEmpty ? _response : RespireTelemetry.ObserveFinalError(_response, ErrorObservation);
+            => CompleteResponseAsync(ErrorObservation.IsEmpty ? _response : RespireTelemetry.ObserveFinalError(_response, ErrorObservation));
         ValueTask<RespireResult> ITrackedCorrectionExecution<RespireResult>.Response => _response;
         RespireTelemetry.ErrorObservation ITrackedCorrectionExecution<RespireResult>.ErrorObservation => ErrorObservation;
         TrackedConnectionIdentity ITrackedCorrectionExecution<RespireResult>.ConnectionIdentity => ConnectionIdentity;
-        bool ITrackedCorrectionExecution<RespireResult>.CommandMayBeOutstanding => true;
+        bool ITrackedCorrectionExecution<RespireResult>.CommandMayBeOutstanding => CommandMayBeOutstanding;
     }
 
     /// <summary>
@@ -5450,7 +5505,11 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
             var identity = GetTrackedConnectionIdentity(
                 connection, core.Cluster is null || ClusterRouter.HasReliableCorrectionOrdering(connection));
-            var execution = new TrackedScriptExecution(connection, identity, onSerialized, onCommandNotApplied, observation);
+            var execution = new TrackedScriptExecution(connection, identity, onSerialized, onCommandNotApplied, observation)
+            {
+                RequiresRedirectIdentity = requiresIdentity,
+                FollowsReplicaRedirects = core.Cluster is null && connection.ReplicaRedirectsEnabled,
+            };
             ValueTask<RespireResult> response;
             telemetryDispatched = true;
             if (core.Cluster is { } router)
@@ -5734,17 +5793,28 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             connection,
             core.Options.Database,
             storedProcedureName: script.Sha1, started: started);
+        var telemetryEndpoint = new RespireEndpoint(connection.Host, connection.Port);
+        RespireConnection? telemetryConnection = connection;
         try
         {
             var result = await ExecuteScriptOnConnectionCoreAsync(
-                    connection, script, tail, cancellationToken, mutationFence, execution.ErrorObservation, execution)
+                    connection, script, tail, cancellationToken, mutationFence, execution.ErrorObservation, execution,
+                    commandDeadline: execution.FollowsReplicaRedirects ? CreateCircuitDeadline() : default,
+                    onEndpointSelected: execution.FollowsReplicaRedirects ? (endpoint, selected) =>
+                    {
+                        telemetryEndpoint = endpoint;
+                        telemetryConnection = selected;
+                        telemetry.UpdateServerEndpoint(endpoint.Host, endpoint.Port);
+                    } : null)
                 .ConfigureAwait(false);
-            telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);
+            telemetry.Complete(script.EvalShaOperation, telemetryEndpoint.Host, telemetryEndpoint.Port,
+                core.Options.Database, script.Sha1, connection: telemetryConnection);
             return result;
         }
         catch (Exception ex)
         {
-            telemetry.Complete(core, script.EvalShaOperation, script.Sha1, ex, connection);
+            telemetry.Complete(script.EvalShaOperation, telemetryEndpoint.Host, telemetryEndpoint.Port,
+                core.Options.Database, script.Sha1, ex, telemetryConnection);
             throw;
         }
     }
@@ -5776,7 +5846,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             if (execution is not null) execution.StartedTimestamp = Stopwatch.GetTimestamp();
             observation.Handled(error);
             reply = await SendScriptCommandAsync(
-                script.EvalOperation, connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]),
+                script.EvalOperation, execution?.Connection ?? connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]),
                 cancellationToken, execution, mutationFence, script.IsCacheReadOnly, observation, commandDeadline,
                 onEndpointSelected).ConfigureAwait(false);
         }
@@ -5795,6 +5865,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         if (!mutationFence.IsRequired)
         {
             var readOnly = ReadOnlyCommand<Cmd2N>.ForAuditedScript(command, cacheReadOnly);
+            if (execution is { FollowsReplicaRedirects: true })
+                return SendWithReplicaRedirectsAsync(operation, connection, readOnly, cancellationToken,
+                    commandDeadline, observation, allowStreamingConnectionReroute: false, instrument: false,
+                    onEndpointSelected: onEndpointSelected, execution: execution);
             if (execution is null && connection.ReplicaRedirectsEnabled)
                 return SendWithReplicaRedirectsAsync(operation, connection, readOnly, cancellationToken,
                     commandDeadline, observation, instrument: false, onEndpointSelected: onEndpointSelected);
@@ -5804,6 +5878,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     new SendTimestampCommand<ReadOnlyCommand<Cmd2N>>(readOnly, execution), cancellationToken, observation: observation, commandDeadline: commandDeadline);
         }
         var bound = new MutationCommand<Cmd2N>(command, mutationFence);
+        if (execution is { FollowsReplicaRedirects: true })
+            return SendWithReplicaRedirectsAsync(operation, connection, bound, cancellationToken,
+                commandDeadline, observation, allowStreamingConnectionReroute: false, instrument: false,
+                onEndpointSelected: onEndpointSelected, execution: execution);
         if (execution is null && connection.ReplicaRedirectsEnabled)
             return SendWithReplicaRedirectsAsync(operation, connection, bound, cancellationToken,
                 commandDeadline, observation, instrument: false, onEndpointSelected: onEndpointSelected);
@@ -5880,6 +5958,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         if (identity.Connection?.Multiplexer is { } originalMultiplexer)
         {
             await originalMultiplexer.RetireConnectionAsync(identity.Connection!).ConfigureAwait(false);
+        }
+        else if (identity.Connection is { } dedicated)
+        {
+            await dedicated.DisposeAsync().ConfigureAwait(false);
         }
         else if (core.Cluster is { } router)
         {
@@ -6168,6 +6250,38 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             }
 
             args.CopyTo(tail, 1 + keys.Length);
+            var command = new MutationCommand<Cmd2N>(new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), mutationFence);
+            if (connectionIdentity.Connection is { Multiplexer: null } redirected)
+            {
+                // A temporary redirect connection has no multiplexer's FIFO or retirement
+                // ledger. Fence its actual peer before running a correction on a control socket.
+                if (connectionIdentity.ServerClientId > 0)
+                {
+                    await FenceCorrectionConnectionAsync(connectionIdentity).ConfigureAwait(false);
+                }
+                else if (redirected.IsConnected)
+                {
+                    // Preserve the existing best-effort, non-cancellable ACL compatibility:
+                    // this exact socket is the only FIFO that can order the original mutation.
+                    using var reply = await redirected.SendAsync(command, CancellationToken.None,
+                        armCommandDeadline: false, pinToConnection: true).ConfigureAwait(false);
+                    if (reply.IsError) throw ResponseReader.ServerError(in reply, "EVAL");
+                    return;
+                }
+                // A convergence retry can also carry an identity whose fence was already
+                // acknowledged and whose ID was cleared by the correction coordinator.
+                await using var lease = core.GetCorrectionLease(connectionIdentity.Endpoint, redirected);
+                var control = await lease.Pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false,
+                    recoverConnection: false).ConfigureAwait(false);
+                try
+                {
+                    using var reply = await control.SendAsync(command, CancellationToken.None,
+                        armCommandDeadline: false, pinToConnection: true).ConfigureAwait(false);
+                    if (reply.IsError) throw ResponseReader.ServerError(in reply, "EVAL");
+                }
+                finally { lease.Pool.Return(control); }
+                return;
+            }
             if (core.Sentinel is not null && connectionIdentity.Connection is null)
                 await core.EnsureConnectedAsync(CancellationToken.None, observation).ConfigureAwait(false);
             var multiplexer = connectionIdentity.Connection?.Multiplexer;
@@ -6187,7 +6301,6 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     multiplexer = core.Multiplexer;
                 }
             }
-            var command = new MutationCommand<Cmd2N>(new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), mutationFence);
             try
             {
                 await multiplexer.SendToAllConnectionsAsync(command,

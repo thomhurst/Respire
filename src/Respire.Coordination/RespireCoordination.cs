@@ -561,9 +561,9 @@ public sealed class RespireCoordination
                     execution,
                     // This correction retains FIFO ordering and owns any required kill barrier.
                     ordering: RespireClient.CorrectionOrdering.OrderedCorrection,
-                    state: (Owner: this, HashKey: hashKey, Field: field, Token: owner, Client: concreteClient),
+                    state: (Owner: this, HashKey: hashKey, Field: field, Token: owner, Client: concreteClient, Execution: execution),
                     correct: static (state, identity) => state.Owner.BestEffortReleaseHashFieldLeaseAsync(
-                        state.HashKey, state.Field, state.Token, state.Client, identity)).ConfigureAwait(false);
+                        state.HashKey, state.Field, state.Token, state.Client, identity, state.Execution)).ConfigureAwait(false);
                 acquired = !response.IsNull && response.AsInteger() != 0;
             }
         }
@@ -644,7 +644,8 @@ public sealed class RespireCoordination
         RespireKey field,
         RespireLockToken owner,
         RespireClient? concreteClient = null,
-        RespireClient.TrackedConnectionIdentity connectionIdentity = default)
+        RespireClient.TrackedConnectionIdentity connectionIdentity = default,
+        RespireClient.TrackedScriptExecution? execution = null)
     {
         using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
         try
@@ -656,7 +657,7 @@ public sealed class RespireCoordination
             }
 
             var correction = CorrectHashFieldLeaseAsync(
-                concreteClient, hashKey, field, owner, connectionIdentity);
+                concreteClient, hashKey, field, owner, connectionIdentity, execution);
             await CorrectionCoordinator.WaitAsync(correction, timeout.Token).ConfigureAwait(false);
         }
         catch
@@ -670,7 +671,8 @@ public sealed class RespireCoordination
         RespireKey hashKey,
         RespireKey field,
         RespireLockToken owner,
-        RespireClient.TrackedConnectionIdentity connectionIdentity)
+        RespireClient.TrackedConnectionIdentity connectionIdentity,
+        RespireClient.TrackedScriptExecution? execution)
     {
         if (connectionIdentity.Connection is null)
         {
@@ -691,6 +693,7 @@ public sealed class RespireCoordination
         {
             originalCorrection = client.ExecuteOnAllConnectionsAsync(
                 ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], connectionIdentity).AsTask();
+            execution?.RetainRedirectTargetUntil(originalCorrection);
         }
         catch (Exception error)
         {

@@ -904,64 +904,73 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         RespireClient.TrackedScriptExecution? trackedExecution = null;
         try
         {
-            var args = new RespireValue[] { returnData ? "1" : "0", now.UtcTicks };
-            if ((trackedWire ?? _wireClient) is { } wire)
-            {
-                // Real-client fallback still borrows this owner. Timestamp-only tracking
-                // preserves best-effort correction when CLIENT ID is unavailable.
-                trackedExecution = await wire.StartTrackedScriptExecutionAsync(
-                        GetAndRefreshScript, [key], args, token,
-                        captureSendTimestampOnly: trackedWire is null, errorObservation: observation)
-                    .ConfigureAwait(false);
-                result = await ((RespireClient.ITrackedCorrectionExecution<RespireResult>)trackedExecution)
-                    .Response.ConfigureAwait(false);
-            }
-            else
-            {
-                result = await ExecuteWrappedScriptAsync(
-                    GetAndRefreshScript, [key], args, token, observation).ConfigureAwait(false);
-            }
-        }
-        catch (Exception ex) when (
-            ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
-        {
-            originalConnection = trackedExecution?.ConnectionIdentity ?? default;
-            // Same hazard as the set path: an abandoned or failed reply wait can leave the
-            // script's execution uncertain, and a delayed send would re-arm the sliding TTL
-            // from a stale "now". The real client completes its exact-connection safety
-            // barrier when an ID was captured; untracked and mock/decorator corrections remain
-            // best-effort as in SetCoreAsync.
             try
             {
-                await CapRefreshedTtlAsync(key, originalConnection, observation).ConfigureAwait(false);
+                var args = new RespireValue[] { returnData ? "1" : "0", now.UtcTicks };
+                if ((trackedWire ?? _wireClient) is { } wire)
+                {
+                    // Real-client fallback still borrows this owner. Timestamp-only tracking
+                    // preserves best-effort correction when CLIENT ID is unavailable.
+                    trackedExecution = await wire.StartTrackedScriptExecutionAsync(
+                            GetAndRefreshScript, [key], args, token,
+                            captureSendTimestampOnly: trackedWire is null, errorObservation: observation)
+                        .ConfigureAwait(false);
+                    result = await ((RespireClient.ITrackedCorrectionExecution<RespireResult>)trackedExecution)
+                        .Response.ConfigureAwait(false);
+                }
+                else
+                {
+                    result = await ExecuteWrappedScriptAsync(
+                        GetAndRefreshScript, [key], args, token, observation).ConfigureAwait(false);
+                }
             }
-            catch (RespireException correctionFailure) when (
-                originalConnection.ServerClientId == 0 && correctionFailure is not RespireServerException)
+            catch (Exception ex) when (
+                ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException
+                && (trackedExecution is null || ((RespireClient.ITrackedCorrectionExecution<RespireResult>)trackedExecution).CommandMayBeOutstanding))
             {
-                observation.Handled(correctionFailure);
+                originalConnection = trackedExecution?.ConnectionIdentity ?? default;
+                // Same hazard as the set path: an abandoned or failed reply wait can leave the
+                // script's execution uncertain, and a delayed send would re-arm the sliding TTL
+                // from a stale "now". The real client completes its exact-connection safety
+                // barrier when an ID was captured; untracked and mock/decorator corrections remain
+                // best-effort as in SetCoreAsync.
+                try
+                {
+                    await CapRefreshedTtlAsync(key, originalConnection, observation).ConfigureAwait(false);
+                }
+                catch (RespireException correctionFailure) when (
+                    originalConnection.ServerClientId == 0 && correctionFailure is not RespireServerException)
+                {
+                    observation.Handled(correctionFailure);
+                }
+
+                throw;
             }
 
-            throw;
-        }
-
-        // The re-arm the script just performed used a "now" stale by however long the send
-        // stalled; past the tolerance, shrink the TTL back to a fresh-clock remainder — but
-        // only when the script says the re-arm had an absolute deadline in play, the one
-        // shape staleness can over-extend. Runs without the caller's token — the entry was
-        // already extended, so undoing the over-extension must not be skippable by
-        // cancellation.
-        try
-        {
-            if (DateTimeOffset.UtcNow - now >= SendDelayTolerance && !result.IsNull && result[0].AsInteger() == 1)
+            // The re-arm the script just performed used a "now" stale by however long the send
+            // stalled; past the tolerance, shrink the TTL back to a fresh-clock remainder — but
+            // only when the script says the re-arm had an absolute deadline in play, the one
+            // shape staleness can over-extend. Runs without the caller's token — the entry was
+            // already extended, so undoing the over-extension must not be skippable by
+            // cancellation.
+            try
             {
-                await CapRefreshedTtlAsync(key, observation: observation).ConfigureAwait(false);
+                if (DateTimeOffset.UtcNow - now >= SendDelayTolerance && !result.IsNull && result[0].AsInteger() == 1)
+                {
+                    await CapRefreshedTtlAsync(key, trackedExecution?.ConnectionIdentity ?? default, observation).ConfigureAwait(false);
+                }
+                return result;
             }
-            return result;
+            catch
+            {
+                result.Dispose();
+                throw;
+            }
         }
-        catch
+        finally
         {
-            result.Dispose();
-            throw;
+            if (trackedExecution is not null)
+                await trackedExecution.ReleaseRedirectTargetAsync().ConfigureAwait(false);
         }
     }
 

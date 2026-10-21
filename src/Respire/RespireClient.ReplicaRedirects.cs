@@ -13,21 +13,23 @@ public sealed partial class RespireClient
         CommandDeadline deadline, RespireTelemetry.ErrorObservation observation, bool sendAsking = false,
         bool tracking = false, bool track = true, bool allowStreamingConnectionReroute = true,
         string? storedProcedureName = null, bool instrument = true,
-        Action<RespireEndpoint, RespireConnection?>? onEndpointSelected = null) where TCommand : struct, IRespCommand
+        Action<RespireEndpoint, RespireConnection?>? onEndpointSelected = null,
+        TrackedScriptExecution? execution = null) where TCommand : struct, IRespCommand
     {
         // Copy borrowed data before the first send or asynchronous routing wait.
         var snapshot = new BacklogCommand<TCommand>(command, operation);
         deadline = CreateCircuitDeadline(deadline);
         return FollowReplicaRedirectsAsync(operation, connection, snapshot, cancellationToken,
             deadline, observation, storedProcedureName, instrument, onEndpointSelected,
-            sendAsking, tracking, track, allowStreamingConnectionReroute);
+            sendAsking, tracking, track, allowStreamingConnectionReroute, execution);
     }
 
     private async ValueTask<RespValue> FollowReplicaRedirectsAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command,
         CancellationToken cancellationToken, CommandDeadline deadline, RespireTelemetry.ErrorObservation observation,
         string? storedProcedureName, bool instrument, Action<RespireEndpoint, RespireConnection?>? onEndpointSelected,
-        bool sendAsking, bool tracking, bool track, bool allowStreamingConnectionReroute)
+        bool sendAsking, bool tracking, bool track, bool allowStreamingConnectionReroute,
+        TrackedScriptExecution? execution)
         where TCommand : struct, IRespCommand
     {
         var acquisition = new CommandAcquisitionScope(cancellationToken, deadline, _core.Options.CommandTimeout);
@@ -47,8 +49,12 @@ public sealed partial class RespireClient
                 RespireServerException error;
                 try
                 {
-                    var reply = await SendReplicaRedirectAttemptAsync(operation, connection, command,
-                        cancellationToken, deadline, observation, sendAsking, tracking, track).ConfigureAwait(false);
+                    var reply = execution is null
+                        ? await SendReplicaRedirectAttemptAsync(operation, connection, command,
+                            cancellationToken, deadline, observation, sendAsking, tracking, track).ConfigureAwait(false)
+                        : await SendReplicaRedirectAttemptAsync(operation, connection,
+                            new SendTimestampCommand<TCommand>(command, execution),
+                            cancellationToken, deadline, observation, sendAsking, tracking, track).ConfigureAwait(false);
                     if (!reply.IsError) return reply;
                     try { error = ResponseReader.ServerError(in reply, operation, new(connection.Host, connection.Port)); }
                     finally { reply.Dispose(); }
@@ -74,6 +80,7 @@ public sealed partial class RespireClient
 
                 if (error.Code != "REDIRECT" || attempt >= ClusterRouter.RedirectLimit
                     || !TryParseReplicaRedirect(error.Message, connection.Host, out var endpoint)) throw error;
+                execution?.RecordCommandNotApplied();
                 // A connected source can grant maintenance time without retiring. Carry
                 // that allowance across the redirect, once, before checking or renting.
                 deadline = connection.GetReroutedCommandDeadline(deadline);
@@ -85,6 +92,9 @@ public sealed partial class RespireClient
                 if (observation.IsEmpty)
                     RespireTelemetry.RecordError(error, internallyHandled: true, attempt, new(connection.Host, connection.Port));
                 else observation.Handled(error, new(connection.Host, connection.Port));
+
+                if (execution is not null)
+                    await execution.ReleaseRedirectTargetAsync().ConfigureAwait(false);
 
                 if (pool is not null)
                 {
@@ -107,6 +117,14 @@ public sealed partial class RespireClient
                 connection = rentedConnection;
                 telemetryConnection = connection;
                 onEndpointSelected?.Invoke(endpoint, connection);
+                if (execution is not null)
+                {
+                    // A redirect is proof that the previous attempt did not run. Capture and
+                    // validate the target's own identity before any mutation can be submitted.
+                    var reliable = await InitializeTrackedRedirectTargetAsync(connection, execution, acquisition.Token).ConfigureAwait(false);
+                    execution.Connection = connection;
+                    execution.ConnectionIdentity = GetTrackedConnectionIdentity(connection, reliable);
+                }
                 acquisition.CheckDeadline(operation, _core, connection);
                 // Release this admission timer; another redirect can re-arm the remaining deadline.
                 acquisition.Dispose();
@@ -138,10 +156,33 @@ public sealed partial class RespireClient
             {
                 if (pool is not null)
                 {
-                    if (rentedConnection is not null) pool.Return(rentedConnection);
-                    await _core.ReleaseServerPoolAsync(pool).ConfigureAwait(false);
+                    if (execution is not null)
+                        execution.HoldRedirectTarget(_core, pool, rentedConnection);
+                    else
+                    {
+                        if (rentedConnection is not null) pool.Return(rentedConnection);
+                        await _core.ReleaseServerPoolAsync(pool).ConfigureAwait(false);
+                    }
                 }
             }
+        }
+    }
+
+    private static async ValueTask<bool> InitializeTrackedRedirectTargetAsync(
+        RespireConnection connection, TrackedScriptExecution execution, CancellationToken cancellationToken)
+    {
+        if (!execution.RequiresRedirectIdentity && execution.ConnectionIdentity.ServerClientId == 0) return false;
+        try
+        {
+            await connection.EnsureServerClientIdAsync(cancellationToken).ConfigureAwait(false);
+            await Infrastructure.RespireConnectionMultiplexer.ValidateClientKillPermissionAsync(connection, cancellationToken)
+                .ConfigureAwait(false);
+            return true;
+        }
+        catch (RespireServerException error) when (!execution.RequiresRedirectIdentity)
+        {
+            execution.ErrorObservation.Handled(error);
+            return false;
         }
     }
 

@@ -222,11 +222,13 @@ public sealed class RespireSemaphore
         {
             var coordinator = wire.Core.Corrections;
             var fence = coordinator.CreateFence(wire, execution.ConnectionIdentity);
-            return WaitForCleanupAsync(coordinator.EnqueueFencedAsync(fence,
+            var cleanup = coordinator.EnqueueFencedAsync(fence,
                 cancellationToken => ReleaseOnceAsync(_client, Key, owner, cancellationToken, observation),
                 BestEffortCleanupTimeout, CleanupRetry,
                 (stage, reason) => ReportAbandoned(_client, stage)(reason),
-                error => RecordCleanupFailure(observation, error)));
+                error => RecordCleanupFailure(observation, error));
+            execution.RetainRedirectTargetUntil(cleanup);
+            return WaitForCleanupAsync(cleanup);
         }
         // Untracked implementations cannot establish a physical connection fence.
         return WaitForCleanupAsync(EnqueueCleanupAsync(_client,
@@ -735,6 +737,11 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                     && Has(PermitState.DisposeReleaseScheduled))
                     ScheduleDisposeReleaseRetry();
                 throw;
+            }
+            finally
+            {
+                if (trackedExecution is not null)
+                    await trackedExecution.ReleaseRedirectTargetAsync().ConfigureAwait(false);
             }
 
             if (!renewed)

@@ -33,6 +33,7 @@
         <Compile Include="..\..\src\Respire.Testing.Containers\ContainerPortCollision.cs" Link="ContainerPortCollision.cs" />
         <Compile Include="..\Respire.IntegrationTests\RedisClusterTestContainer.cs" Link="RedisClusterTestContainer.cs" />
         <Compile Include="..\Respire.Tests\Networking\FakeRespServer.cs" Link="FakeRespServer.cs" />
+        <Compile Include="../ReplicaRedirectTestFixture.cs" Link="ReplicaRedirectTestFixture.cs" />
         <Using Include="Respire.Testing" />
     </ItemGroup>
 
