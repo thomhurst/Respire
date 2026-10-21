@@ -1153,6 +1153,15 @@ failover, persistence and memory eviction settings still determine survival of s
 Use an appropriate persistence policy and protect queue keys from eviction. Do not delete groups,
 expire streams, or trim unprocessed entries. Acknowledged stream bodies are retained by default;
 plan retention deliberately using the worker's acknowledgement/deletion options and stream APIs.
+
+Replace lifecycle tracking has no automatic expiry or background sweep. If an operator deletes
+or trims an unprocessed Replace entry, or deletes its stream, the corresponding field in
+`:dedup-deliveries` can remain indefinitely, even after the deduplication window expires.
+Repeated manual removal can therefore grow the hash without bound. Prefer worker-managed
+completion and expiry. For a full queue reset, stop all producers and workers and remove the
+queue's lifecycle hash together with its ready stream and scheduling state; never expire or
+delete the hash while any pending or active work must survive.
+
 Promotion moves a staged job to the ready stream and removes its scheduling metadata in one Lua
 execution. Retry stages the next attempt and acknowledges the current attempt in one fenced Lua
 execution. A scheduler or consumer process crash cannot interrupt these server-side transitions:
