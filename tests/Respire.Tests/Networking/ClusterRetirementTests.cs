@@ -432,15 +432,21 @@ public class ClusterRetirementTests
     [Arguments("blocking", "READONLY", true)]
     public async Task TerminalRoutingRejectionReportsFailedDiscovery(string path, string code, bool unlimited)
     {
+        var trace = new TerminalRoutingTrace($"path={path}, code={code}, unlimited={unlimited}");
+        trace.Record("fixture starting");
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+        trace.Record("server created");
         await using var client = CreateClient(reconnectPolicy: new()
         {
             InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = unlimited ? null : 5,
         });
+        trace.Record("client created");
         using var timeout = new CancellationTokenSource(Limit);
+        trace.Record("five-second fixture timer armed");
+        using var cancellation = timeout.Token.Register(() => trace.Record("fixture token canceled"));
         var router = client.Core.Cluster!;
-        Publish(router, new("127.0.0.1", server.Port), "owner", 1);
         var attempts = 0;
+        Task? pendingSend = null;
         var slot = ClusterHash.GetSlot("key");
         server.ReplyOverride = (_, command) =>
         {
@@ -455,30 +461,49 @@ public class ClusterRetirementTests
             // The last route still rejects the command, including READONLY after
             // selection no longer has a pending failure.
             var rejection = final ? code : "MOVED";
+            trace.Record($"application rejection {rejection}; attempts={Volatile.Read(ref attempts)}");
             return System.Text.Encoding.ASCII.GetBytes(rejection == "READONLY"
                 ? "-READONLY demoted\r\n" : $"-{rejection} {slot} 127.0.0.1:{server.Port}\r\n");
         };
+        trace.ObserveReplies(server);
         var changes = new System.Collections.Concurrent.ConcurrentQueue<RespireConnectionStateChange>();
         var completed = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
             if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            trace.Record($"discovery {change.SourceState}; attempt={change.ReconnectAttempt}, "
+                + $"episode={change.ReconnectEpisodeId}, terminal={change.NextReconnectDelay is null}, "
+                + $"error={change.Error?.GetType().Name}/{(change.Error as RespireServerException)?.Code}");
             changes.Enqueue(change);
             if (change.NextReconnectDelay is null) completed.TrySetResult(change);
         };
-        var error = await Assert.That(async () => await SendAsync().WaitAsync(timeout.Token))
-            .ThrowsExactly<RespireServerException>();
-        await Assert.That(error!.Code).IsEqualTo(code);
-        var terminal = await completed.Task.WaitAsync(timeout.Token);
-        await Assert.That(terminal.SourceState).IsEqualTo(RespireConnectionState.Disconnected);
-        await Assert.That(terminal.Error).IsSameReferenceAs(error);
-        await Assert.That(terminal.ReconnectAttempt).IsEqualTo(5);
-        await Assert.That(terminal.ReconnectExhausted).IsFalse();
-        await Assert.That(attempts).IsEqualTo(6);
-        await Assert.That(changes.Count).IsEqualTo(5);
-        await Assert.That(changes.Take(4).Select(change => change.ReconnectAttempt)).IsEquivalentTo([2, 3, 4, 5]);
-        await Assert.That(changes.Take(4).All(change => change.SourceState == RespireConnectionState.Reconnecting)).IsTrue();
-        await Assert.That(changes.Select(change => change.ReconnectEpisodeId).Distinct().Count()).IsEqualTo(1);
+        await trace.ObserveAsync(async () =>
+        {
+            Publish(router, new("127.0.0.1", server.Port), "owner", 1);
+            trace.Record("topology published; sending");
+            var error = await Assert.That(async () =>
+                {
+                    pendingSend = SendAsync();
+                    try { await pendingSend.WaitAsync(timeout.Token); }
+                    finally { trace.Record($"send wait finished; task={pendingSend.Status}"); }
+                })
+                .ThrowsExactly<RespireServerException>();
+            await Assert.That(error!.Code).IsEqualTo(code);
+            var terminal = await completed.Task.WaitAsync(timeout.Token);
+            trace.Record("terminal discovery awaited");
+            await Assert.That(terminal.SourceState).IsEqualTo(RespireConnectionState.Disconnected);
+            await Assert.That(terminal.Error).IsSameReferenceAs(error);
+            await Assert.That(terminal.ReconnectAttempt).IsEqualTo(5);
+            await Assert.That(terminal.ReconnectExhausted).IsFalse();
+            await Assert.That(attempts).IsEqualTo(6);
+            await Assert.That(changes.Count).IsEqualTo(5);
+            await Assert.That(changes.Take(4).Select(change => change.ReconnectAttempt)).IsEquivalentTo([2, 3, 4, 5]);
+            await Assert.That(changes.Take(4).All(change => change.SourceState == RespireConnectionState.Reconnecting)).IsTrue();
+            await Assert.That(changes.Select(change => change.ReconnectEpisodeId).Distinct().Count()).IsEqualTo(1);
+        }, () => $"canceled={timeout.IsCancellationRequested}, send={pendingSend?.Status}, "
+            + $"attempts={Volatile.Read(ref attempts)}, discovery-events={changes.Count}, "
+            + $"port={server.Port}, commands=[{string.Join("; ", server.ReceivedCommands)}], "
+            + $"connections=[{string.Join(", ", server.ReceivedConnectionIds)}]");
 
         async Task SendAsync()
         {
@@ -689,6 +714,131 @@ public class ClusterRetirementTests
         await Assert.That(logger.Calls).IsEqualTo(1);
         await Assert.That(first.ReceivedCommands.Count(command => command.StartsWith("BLPOP "))).IsEqualTo(1);
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TerminalRoutingDiagnosticsPreserveCanceledSendBeforeTeardown(bool failReporter)
+    {
+        string? report = null;
+        Exception? original = null;
+        var disposed = false;
+        var reportedBeforeTeardown = false;
+        var trace = new TerminalRoutingTrace("canceled-send control", text =>
+        {
+            report = text;
+            reportedBeforeTeardown = !disposed;
+            if (failReporter) throw new IOException("Diagnostic output unavailable.");
+        });
+
+        var error = await Assert.That(ScenarioAsync).Throws<OperationCanceledException>();
+        await Assert.That(error).IsSameReferenceAs(original);
+        await Assert.That(reportedBeforeTeardown).IsTrue();
+        await Assert.That(disposed).IsTrue();
+        await Assert.That(report).Contains("server received SET key value");
+        await Assert.That(report).Contains("failure snapshot before teardown");
+        await Assert.That(report).Contains("canceled=True");
+        await Assert.That(report!.Split('\n').Length).IsLessThanOrEqualTo(133);
+        await Assert.That(error!.Data[nameof(TerminalRoutingTrace)]).IsEqualTo(report);
+
+        async Task ScenarioAsync()
+        {
+            using var canceled = new CancellationTokenSource();
+            await using var server = new FakeRespServer(FakeRespServer.OkReply)
+            {
+                SuppressReply = command =>
+                {
+                    trace.Record("server received " + command);
+                    if (failReporter)
+                        for (var index = 0; index < 400; index++) trace.Record("timeline overflow control");
+                    canceled.Cancel();
+                    return true;
+                },
+            };
+            await using var client = CreateClient();
+            Publish(client.Core.Cluster!, new("127.0.0.1", server.Port), "owner", 1);
+            using var safety = new CancellationTokenSource(Limit);
+            try
+            {
+                await trace.ObserveAsync(async () =>
+                {
+                    try
+                    {
+                        using var reply = await client.ExecuteAsync(RespireCommands.String.SET,
+                            ["key", "value"], cancellationToken: canceled.Token).AsTask().WaitAsync(safety.Token);
+                    }
+                    catch (Exception failure) { original = failure; throw; }
+                }, () => $"canceled={canceled.IsCancellationRequested}");
+            }
+            finally { disposed = true; }
+        }
+    }
+
+    private sealed class TerminalRoutingTrace(string scenario, Action<string>? reportFailure = null)
+    {
+        private const int Capacity = 128;
+        private readonly long _started = System.Diagnostics.Stopwatch.GetTimestamp();
+        private readonly long _completed = ThreadPool.CompletedWorkItemCount;
+        private readonly int[] _collections = [GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2)];
+        private readonly TimeSpan _pause = GC.GetTotalPauseDuration();
+        private readonly System.Collections.Concurrent.ConcurrentQueue<Entry> _entries = new();
+        private int _recorded;
+
+        public void Record(string phase)
+        {
+            if (Interlocked.Increment(ref _recorded) > Capacity) return;
+            _entries.Enqueue(Capture(phase));
+        }
+
+        private Entry Capture(string phase)
+            => new(DateTime.UtcNow, System.Diagnostics.Stopwatch.GetElapsedTime(_started).TotalMilliseconds,
+                phase, ThreadPool.ThreadCount, ThreadPool.PendingWorkItemCount,
+                ThreadPool.CompletedWorkItemCount - _completed, GC.CollectionCount(0) - _collections[0],
+                GC.CollectionCount(1) - _collections[1], GC.CollectionCount(2) - _collections[2],
+                (GC.GetTotalPauseDuration() - _pause).TotalMilliseconds);
+
+        public void ObserveReplies(FakeRespServer server)
+        {
+            var previous = server.ReplyOverride;
+            server.ReplyOverride = (id, command) =>
+            {
+                Record($"server[{id}] received {command}");
+                var reply = previous?.Invoke(id, command);
+                Record(reply is null ? $"server[{id}] default reply selected"
+                    : $"server[{id}] reply prepared; bytes={reply.Length}");
+                return reply;
+            };
+        }
+
+        public async Task ObserveAsync(Func<Task> action, Func<string> describeState)
+        {
+            try { await action(); }
+            catch (Exception error)
+            {
+                try
+                {
+                    // Snapshot and emit while client/server scopes are still alive. Diagnostic
+                    // formatting/output must never replace the original assertion/send exception.
+                    var boundary = Capture("failure snapshot before teardown");
+                    var text = new System.Text.StringBuilder($"Terminal routing failure ({scenario}): {describeState()}")
+                        .AppendLine().Append("Prepared replies precede socket writes and do not prove client receipt. "
+                            + "GC/thread-pool counters are process-wide observations, not proof of causation.");
+                    foreach (var entry in _entries.Append(boundary).OrderBy(entry => entry.ElapsedMilliseconds))
+                        text.AppendLine().Append(FormattableString.Invariant(
+                            $"{entry.Utc:o} +{entry.ElapsedMilliseconds:F3} ms: {entry.Phase}; workers={entry.Workers}, pending={entry.Pending}, completed-delta={entry.Completed}, gc-delta={entry.Gen0}/{entry.Gen1}/{entry.Gen2}, gc-pause-delta-ms={entry.PauseMilliseconds:F3}"));
+                    text.AppendLine().Append($"Dropped timeline entries: {Math.Max(0, Volatile.Read(ref _recorded) - Capacity)}");
+                    var report = text.ToString();
+                    error.Data[nameof(TerminalRoutingTrace)] = report;
+                    (reportFailure ?? Console.Error.WriteLine)(report);
+                }
+                catch (Exception) { /* Preserve the original failure even if diagnostics fail. */ }
+                throw;
+            }
+        }
+
+        private readonly record struct Entry(DateTime Utc, double ElapsedMilliseconds, string Phase,
+            int Workers, long Pending, long Completed, int Gen0, int Gen1, int Gen2, double PauseMilliseconds);
     }
 
     private static byte[] FullTopology(int port) => System.Text.Encoding.ASCII.GetBytes(
