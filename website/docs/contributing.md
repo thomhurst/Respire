@@ -155,19 +155,37 @@ during the production build.
 
 ### Transitive dependency warnings
 
-The dependency tree checked for [#1984](https://github.com/thomhurst/Respire/issues/1984)
-on October 20, 2026 emits two deprecation warnings during installation. Neither has a
-published replacement within the current parents' supported dependency ranges:
+The dependency tree checked on October 21, 2026 still emits one deprecation
+warning during installation. It has no published replacement within the current
+parent's supported dependency range:
 
 | Warning | Dependency path | Upstream change needed |
 | --- | --- | --- |
 | `whatwg-encoding@3.1.1` | `@easyops-cn/docusaurus-search-local@0.55.3` → `cheerio@1.2.0` → `encoding-sniffer@0.2.1` | A Cheerio release containing [cheerio#5157](https://github.com/cheeriojs/cheerio/pull/5157), which updates `encoding-sniffer` to 1.0.2 and uses `@exodus/bytes`. See [cheerio#4977](https://github.com/cheeriojs/cheerio/issues/4977). |
-| `uuid@8.3.2` | `@docusaurus/core@3.10.2` → `webpack-dev-server@5.2.7` → `sockjs@0.3.24` | A compatible SockJS release containing [sockjs-node#315](https://github.com/sockjs/sockjs-node/pull/315), which removes `uuid`, or a Docusaurus update that supports a development-server version without that dependency. See [sockjs-node#316](https://github.com/sockjs/sockjs-node/issues/316). |
 
 `encoding-sniffer@1` is outside Cheerio 1.2.0's `^0.2.1` range, and
 `webpack-dev-server@6` is outside Docusaurus 3.10.2's `^5.2.2` range. Do not force
-these major upgrades or a newer UUID package through overrides just to silence the
-warnings. Track the parent releases and review their compatibility first.
+these major upgrades through overrides just to silence warnings. Track the parent
+releases and review their compatibility first.
+
+For [#2096](https://github.com/thomhurst/Respire/issues/2096), `package.json` pins
+`uuid@11.1.1` only beneath `sockjs@0.3.24` to remove
+[GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq).
+SockJS's published `lib/transport.js` imports `require('uuid').v4` and calls
+`uuidv4()` without arguments to create connection IDs. It never calls the affected
+v3/v5/v6 functions or supplies output buffers, so this path does not reach the
+advisory's vulnerable operations. The site's Docusaurus configuration also keeps
+webpack-dev-server's default `ws` transport rather than selecting SockJS. UUID 11
+retains the CommonJS named export and argument-free v4 behavior;
+[UUID 12 removes CommonJS support](https://github.com/uuidjs/uuid/releases/tag/v12.0.0). The scoped
+override is covered by output-buffer regression tests and a real SockJS WebSocket
+connection/message test in `scripts/sockjs-uuid.test.mjs`.
+
+Remove this override when a compatible SockJS release includes
+[sockjs-node#315](https://github.com/sockjs/sockjs-node/pull/315), which removes
+`uuid`, or Docusaurus supports a development server without SockJS. The remaining
+braces recursion advisory is tracked separately in
+[#1998](https://github.com/thomhurst/Respire/issues/1998).
 
 When a compatible update is available, update the affected dependency and commit
 `website/package-lock.json`. Check the resolved paths:
