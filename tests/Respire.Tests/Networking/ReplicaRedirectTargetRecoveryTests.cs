@@ -75,7 +75,10 @@ public class ReplicaRedirectTargetRecoveryTests
                 target.CloseConnections();
                 await failedAgain.Task.WaitAsync(Limit);
                 await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - before).IsEqualTo(2L);
-                await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+                // Neither socket read a key. Its known-empty provenance preserves the source.
+                await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
+                await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("value");
+                await Assert.That(source.ReceivedCommands.Count(command => command == "GET fresh")).IsEqualTo(1);
             }
             else
             {
@@ -151,7 +154,10 @@ public class ReplicaRedirectTargetRecoveryTests
             target.CloseConnections();
             await failed.Task.WaitAsync(Limit);
             await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - before).IsEqualTo(2L);
-            await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+            // The recovered socket carried no reads, so only its empty owner is lost.
+            await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
+            await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("value");
+            await Assert.That(source.ReceivedCommands.Count(command => command == "GET fresh")).IsEqualTo(1);
         }
         finally { release.TrySetResult(); }
     }
