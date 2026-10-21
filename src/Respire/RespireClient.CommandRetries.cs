@@ -213,6 +213,7 @@ public sealed partial class RespireClient
                 DedicatedConnectionPool? redirectPool = null;
                 RespireConnection? redirectConnection = null;
                 ReplicaRedirectTargets.Lease? trackedTarget = null;
+                var continuityPending = false;
                 try
                 {
                     // Use the same validated ready route as default dispatch. Healthy Sentinel
@@ -293,6 +294,7 @@ public sealed partial class RespireClient
                             || rejection.Code != "REDIRECT" || redirects >= ClusterRouter.RedirectLimit
                             || !TryParseReplicaRedirect(rejection.Message, connection.Host, out var endpoint)) throw rejection;
 
+                        continuityPending = retainTracking;
                         // Carry the source's maintenance allowance across acquisition and
                         // later sends. IsRelaxed prevents a second hop extending it again.
                         deadline = connection.GetReroutedCommandDeadline(deadline);
@@ -329,7 +331,11 @@ public sealed partial class RespireClient
                         observation.UseEndpoint(endpoint, token);
                         telemetry.UpdateServerEndpoint(endpoint.Host, endpoint.Port);
                         if (retainTracking && _core.RedirectTargets is { } targets)
+                        {
+                            // The acquisition owner now guarantees the failure fence.
+                            continuityPending = false;
                             trackedTarget = await AcquireTrackedReplicaTargetAsync(targets, endpoint, token).ConfigureAwait(false);
+                        }
                         if (trackedTarget is not null)
                         {
                             connection = trackedTarget.Connection;
@@ -337,7 +343,11 @@ public sealed partial class RespireClient
                         }
                         else
                         {
-                            if (retainTracking) _core.ClientCache?.FlushForContinuityLoss();
+                            if (retainTracking)
+                            {
+                                continuityPending = false;
+                                _core.ClientCache?.FlushForContinuityLoss();
+                            }
                             redirectPool = _core.CreateServerPool(endpoint, replicaRedirect: true);
                             redirectConnection = await RentReplicaRedirectTargetAsync(redirectPool, token).ConfigureAwait(false);
                             connection = redirectConnection;
@@ -351,6 +361,12 @@ public sealed partial class RespireClient
                 }
                 catch (Exception error)
                 {
+                    // Fence early handoff failures before retry classification or backoff.
+                    if (continuityPending)
+                    {
+                        continuityPending = false;
+                        _core.ClientCache?.FlushForContinuityLoss();
+                    }
                     admission.Failed(error, token);
                     var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
                     if (!_core.CommandRetries!.TryGetDelay(error, outcome, state.Category, attempt, remaining, token, out var delay))

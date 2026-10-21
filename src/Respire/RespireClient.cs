@@ -2538,7 +2538,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<RespValue> SendTrackedAsync<TCommand>(
+    internal async ValueTask<RespValue> SendTrackedAsync<TCommand>(
         string operation,
         TCommand command,
         CancellationToken cancellationToken,

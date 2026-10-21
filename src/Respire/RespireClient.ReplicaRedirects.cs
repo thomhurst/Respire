@@ -40,6 +40,7 @@ public sealed partial class RespireClient
         RespireConnection? rentedConnection = null;
         ReplicaRedirectTargets.Lease? trackedTarget = null;
         var retainTracking = tracking;
+        var continuityPending = false;
         var telemetryEndpoint = new RespireEndpoint(connection.Host, connection.Port);
         RespireConnection? telemetryConnection = connection;
         Exception? failure = null;
@@ -87,6 +88,7 @@ public sealed partial class RespireClient
 
                 if (error.Code != "REDIRECT" || attempt >= ClusterRouter.RedirectLimit
                     || !TryParseReplicaRedirect(error.Message, connection.Host, out var endpoint)) throw error;
+                continuityPending = retainTracking;
                 execution?.RecordCommandNotApplied();
                 // A connected source can grant maintenance time without retiring. Carry
                 // that allowance across the redirect, once, before checking or renting.
@@ -121,7 +123,11 @@ public sealed partial class RespireClient
                 observation.UseEndpoint(endpoint, cancellationToken);
                 onEndpointSelected?.Invoke(endpoint, null);
                 if (retainTracking && _core.RedirectTargets is { } targets)
+                {
+                    // The acquisition owner now guarantees the failure fence.
+                    continuityPending = false;
                     trackedTarget = await AcquireTrackedReplicaTargetAsync(targets, endpoint, acquisition.Token).ConfigureAwait(false);
+                }
                 if (trackedTarget is not null)
                 {
                     connection = trackedTarget.Connection;
@@ -131,7 +137,11 @@ public sealed partial class RespireClient
                 }
                 else
                 {
-                    if (retainTracking) _core.ClientCache?.FlushForContinuityLoss();
+                    if (retainTracking)
+                    {
+                        continuityPending = false;
+                        _core.ClientCache?.FlushForContinuityLoss();
+                    }
                     pool = _core.CreateServerPool(endpoint, replicaRedirect: true);
                     // The logical command owns the deadline, including any maintenance allowance.
                     rentedConnection = await RentReplicaRedirectTargetAsync(pool, acquisition.Token).ConfigureAwait(false);
@@ -171,6 +181,9 @@ public sealed partial class RespireClient
             acquisition.Dispose();
             try
             {
+                // An accepted REDIRECT is a continuity signal even when cancellation,
+                // deadline or cleanup prevents handing it to the acquisition owner.
+                if (continuityPending) _core.ClientCache?.FlushForContinuityLoss();
                 telemetry.Complete(operation, telemetryEndpoint.Host, telemetryEndpoint.Port, _core.Options.Database,
                     storedProcedureName, error: failure, connection: telemetryConnection);
             }

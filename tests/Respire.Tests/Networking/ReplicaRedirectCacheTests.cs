@@ -1,5 +1,7 @@
 using System.Text;
+using Respire.Commands;
 using Respire.Internal;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -9,6 +11,54 @@ namespace Respire.Tests.Networking;
 public class ReplicaRedirectCacheTests
 {
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RedirectCancellationBeforeTargetHandoffFencesContinuity(bool retry)
+    {
+        await using var target = Target();
+        await using var source = Source(target.Port);
+        var redirected = 0;
+        var value = "old";
+        source.ReplyOverride = (_, command) =>
+        {
+            if (command == "GET cached") return Bytes($"$3\r\n{value}\r\n");
+            if (command != "GET redirected") return Handshake(command);
+            Volatile.Write(ref redirected, 1);
+            return Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n");
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(source.Port, retry));
+        await Assert.That(await client.GetStringAsync("cached")).IsEqualTo("old");
+        var flushes = client.ClientSideCache!.GetStatistics().ContinuityFlushes;
+        value = "new";
+        using var caller = new CancellationTokenSource();
+        var command = new RedirectCancellationCommand(() => Volatile.Read(ref redirected) != 0, caller);
+
+        // Keep the accepted source reply independent of caller cancellation. The admission
+        // callback cancels only after REDIRECT was received, before the handoff's deadline check.
+        var error = await Assert.That(async () =>
+        {
+            using var reply = await client.SendTrackedAsync("GET", command, caller.Token);
+        }).Throws<OperationCanceledException>();
+
+        await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+        await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - flushes).IsEqualTo(1L);
+        await Assert.That(await client.GetStringAsync("cached")).IsEqualTo("new");
+        await Assert.That(target.ReceivedCommands.Count).IsEqualTo(0);
+    }
+
+    private readonly struct RedirectCancellationCommand(Func<bool> redirected, CancellationTokenSource caller) : IRespCommand
+    {
+        public ReadCommandKind ReadKind => ReadCommandKind.Read;
+        public RespireCommandRetryCategory RetryCategory => RespireCommandRetryCategory.ReadOnly;
+        public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.Get.CacheMetadata;
+        public RespireCacheMutation GetCacheMutation(string operation) => Verbs.Get.CacheMetadata.Policy;
+        public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => default;
+        public void ValidateAdmission() { if (redirected()) caller.Cancel(); }
+        public void Write(ref RespWriter writer) => new Cmd1(Verbs.Get, "redirected").Write(ref writer);
+    }
 
     [Test]
     [Arguments(false)]
