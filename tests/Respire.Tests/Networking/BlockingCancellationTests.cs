@@ -24,12 +24,14 @@ public class BlockingCancellationTests
                 ? "%2\r\n+proto\r\n:3\r\n+id\r\n:123\r\n"u8.ToArray()
                 : command == "CLIENT ID" ? "-NOPERM denied\r\n"u8.ToArray() : null,
         };
+#pragma warning disable RESP010 // Test-owned client isolates HELLO identity negotiation from dedicated cancellation settings.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = protocol, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             DedicatedPool = new() { UnblockOnCancel = enabled },
         });
+#pragma warning restore RESP010
         var connection = client.Core.Multiplexer.GetConnection();
         await Assert.That(connection.ServerClientId).IsEqualTo(0);
         await Assert.That(async () => await connection.EnsureServerClientIdAsync()).Throws<RespireServerException>();
@@ -116,6 +118,7 @@ public class BlockingCancellationTests
                 ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${server.Port.ToString().Length}\r\n{server.Port}\r\n")
                 : "*0\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // Test-owned client pins the dedicated connection and control route across cancelled pops.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = protocol, Connections = 1,
@@ -123,6 +126,7 @@ public class BlockingCancellationTests
             UseCluster = mode == "cluster", SentinelPrimaryName = mode == "sentinel" ? "primary" : null,
             DedicatedPool = new() { UnblockOnCancel = true },
         });
+#pragma warning restore RESP010
         for (var index = 0; index < iterations; index++)
         {
             received = NewSignal();
@@ -216,12 +220,14 @@ public class BlockingCancellationTests
                 ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${primaryPort.ToString().Length}\r\n{primaryPort}\r\n")
                 : "*0\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // Test-owned client controls Sentinel failover while an old-primary pop is outstanding.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, SentinelPrimaryName = "primary",
             Endpoints = [new("127.0.0.1", sentinel.Port)],
             DedicatedPool = new() { UnblockOnCancel = true },
         });
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var pending = client.Lists.LeftPopAsync("jobs", waitFor: null, cancellation.Token).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -267,12 +273,14 @@ public class BlockingCancellationTests
             }
             return null;
         };
+#pragma warning disable RESP010 // Test-owned client isolates the redirected pop and its target-node unblock identity.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
             Endpoints = [new("127.0.0.1", source.Port)],
             DedicatedPool = new() { UnblockOnCancel = true },
         });
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var pending = client.Lists.LeftPopAsync("jobs", waitFor: null, cancellation.Token).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(10));

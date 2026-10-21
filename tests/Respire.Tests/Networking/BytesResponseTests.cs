@@ -267,6 +267,7 @@ public class BytesResponseTests
             ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal)
                 ? reply : command == "HELLO 3" ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // Test-owned client isolates cached and uncached byte-array ownership on the scripted connection.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -274,6 +275,7 @@ public class BytesResponseTests
             Connections = 1,
             ClientSideCache = cached ? new() : null,
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pending = Read(view, mode, deadline.Token).AsTask();

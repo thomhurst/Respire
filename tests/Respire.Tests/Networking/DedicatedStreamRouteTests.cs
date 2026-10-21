@@ -27,11 +27,13 @@ public class DedicatedStreamRouteTests
         server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? System.Text.Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n")
             : FakeRespServer.OkReply;
+#pragma warning disable RESP010 // Test-owned client supplies stable standalone and cluster owners for the route allocation probe.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = mode != "standalone",
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var slot = ClusterHash.GetSlot("key");
         var cluster = client.Core.Cluster;
         var pool = cluster is null ? client.Core.DedicatedPool

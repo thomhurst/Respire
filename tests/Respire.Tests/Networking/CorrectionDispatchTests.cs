@@ -10,7 +10,9 @@ public class CorrectionDispatchTests
     [Test, NotInParallel]
     public async Task CompletedDispatchDoesNotAllocateIdentityClosures()
     {
+#pragma warning disable RESP010 // Test-owned client supplies the core for the synchronous correction-dispatch allocation probe.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 6379)] });
+#pragma warning restore RESP010
         var execution = new Execution { Response = ValueTask.FromResult(true) };
         for (var i = 0; i < 20; i++)
         {
@@ -30,10 +32,14 @@ public class CorrectionDispatchTests
         for (var i = 0; i < 1_000; i++)
         {
             var response = client.ExecuteWithCorrectionAsync(execution, RespireClient.CorrectionOrdering.FenceFirst);
+#pragma warning disable RESP009 // Short-circuit completion checks prove these synthetic responses cannot block the allocation probe.
             if (!response.IsCompletedSuccessfully || !response.Result) throw new InvalidOperationException();
+#pragma warning restore RESP009
             var withState = client.ExecuteWithCorrectionAsync(execution, RespireClient.CorrectionOrdering.OrderedCorrection,
                 state: (Client: client, Key: "key"), correct: static (_, _) => throw new InvalidOperationException());
+#pragma warning disable RESP009 // Preserve the synchronous fast-path probe; Result is read only after successful completion.
             if (!withState.IsCompletedSuccessfully || !withState.Result) throw new InvalidOperationException();
+#pragma warning restore RESP009
             if (control) GC.KeepAlive(CreateIdentityAccessor(execution));
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;
@@ -48,7 +54,9 @@ public class CorrectionDispatchTests
     [Arguments(true)]
     public async Task SuccessfulOrDefinitiveOutcomeDoesNotCorrect(bool serverError)
     {
+#pragma warning disable RESP010 // Test-owned client isolates definitive outcomes that must not trigger correction.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 6379)] });
+#pragma warning restore RESP010
         var execution = new Execution
         {
             Response = serverError ? ValueTask.FromException<bool>(new RespireServerException("ERR definite")) : ValueTask.FromResult(true),
@@ -67,7 +75,9 @@ public class CorrectionDispatchTests
     [Arguments(true)]
     public async Task ProvenUnsubmittedOperationDoesNotCorrect(bool submissionFlag)
     {
+#pragma warning disable RESP010 // Test-owned client isolates operations proven not to have been submitted.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 6379)] });
+#pragma warning restore RESP010
         var execution = new Execution
         {
             CommandMayBeOutstanding = !submissionFlag,
@@ -86,7 +96,9 @@ public class CorrectionDispatchTests
     [Test]
     public async Task CorrectionReadsFinalIdentityAndNotifiesBeforeWaiting()
     {
+#pragma warning disable RESP010 // Test-owned client isolates final-identity observation and correction notification ordering.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 6379)] });
+#pragma warning restore RESP010
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -118,7 +130,9 @@ public class CorrectionDispatchTests
     [Test]
     public async Task MissingIdentityCannotRunFenceDependentCorrection()
     {
+#pragma warning disable RESP010 // Test-owned client exercises missing-identity rejection before any dependent correction.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 6379)] });
+#pragma warning restore RESP010
         var execution = new Execution { Response = ValueTask.FromException<bool>(new IOException("lost reply")) };
         var corrected = false;
         await Assert.That(async () => await client.ExecuteWithCorrectionAsync(execution,
@@ -134,10 +148,12 @@ public class CorrectionDispatchTests
         {
             ReplyOverride = (_, command) => command.StartsWith("CLIENT KILL ID ") ? "-NOPERM fence denied\r\n"u8.ToArray() : null,
         };
+#pragma warning disable RESP010 // Test-owned client isolates the rejected fence from dependent correction dispatch.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var execution = new Execution
         {
             Response = ValueTask.FromException<bool>(new IOException("lost reply")),

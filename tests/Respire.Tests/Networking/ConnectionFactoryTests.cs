@@ -53,7 +53,9 @@ public class ConnectionFactoryTests
             },
         };
         using var cancellation = new CancellationTokenSource(Limit);
+#pragma warning disable RESP010 // Test-owned client exercises write-through factory streams without a flush.
         await using var client = await RespireClient.ConnectAsync(options, cancellation.Token);
+#pragma warning restore RESP010
         await client.PingAsync(cancellation.Token);
         await Assert.That(server.ReceivedCommands).Contains("CLIENT SETNAME write-through");
         await Assert.That(server.ReceivedCommands).Contains("PING");
@@ -95,6 +97,7 @@ public class ConnectionFactoryTests
     {
         using var configuration = new MetricConfigurationScope();
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
+#pragma warning disable RESP010 // Test-owned client makes live connection metric registration and disposal observable.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
@@ -109,6 +112,7 @@ public class ConnectionFactoryTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         long connections = 0;
         var poolPrefix = $"127.0.0.1:{server.Port}/";
         using var listener = new MeterListener();
@@ -143,6 +147,7 @@ public class ConnectionFactoryTests
         var factory = options.ConnectionFactory!;
         var opened = 0;
         using var cancellation = new CancellationTokenSource(Limit);
+#pragma warning disable RESP010 // Test-owned client isolates factory acquisition for command and subscription sockets.
         await using var client = await RespireClient.ConnectAsync(options with
         {
             ConnectionFactory = (endpoint, token) =>
@@ -153,6 +158,7 @@ public class ConnectionFactoryTests
                 return factory(endpoint, token);
             },
         }, cancellation.Token);
+#pragma warning restore RESP010
         await client.SetAsync("key", "value", cancellationToken: cancellation.Token);
         await Assert.That(await client.GetStringAsync("key", cancellation.Token)).IsEqualTo("value");
         await using var subscription = await client.SubscribeAsync("factory-channel", cancellationToken: cancellation.Token);

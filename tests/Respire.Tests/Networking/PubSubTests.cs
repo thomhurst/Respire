@@ -117,6 +117,8 @@ public class PubSubTests
         string retainedMessage)
     {
         await using var server = new FakeRespServer(SubscribeConfirmation);
+        // A test-owned client isolates subscription routes and the configured buffer policy.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -124,6 +126,7 @@ public class PubSubTests
             SubscriptionBufferSize = 1,
             SubscriptionOverflow = overflow,
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
 
         await server.SendRawAsync(
@@ -159,6 +162,8 @@ public class PubSubTests
     public async Task PerSubscriptionOptions_OverrideClientBufferPolicy()
     {
         await using var server = new FakeRespServer(SubscribeConfirmation);
+        // A test-owned client isolates subscription routes and the configured buffer policy.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -166,6 +171,7 @@ public class PubSubTests
             SubscriptionBufferSize = 8,
             SubscriptionOverflow = RespireSubscriptionOverflow.DropOldest,
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync(
             "ch",
             new RespireSubscriptionOptions(BufferSize: 1, Overflow: RespireSubscriptionOverflow.DropNewest),

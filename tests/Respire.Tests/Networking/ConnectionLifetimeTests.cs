@@ -388,11 +388,13 @@ public class ConnectionLifetimeTests
         var completed = NewSignal();
         await using var server = EchoServer(2);
         server.GateCommand("PING", release.Task, () => entered.TrySetResult());
+#pragma warning disable RESP010 // Test-owned client is synchronously stopped by an old reply continuation after lifetime rotation.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
             ConnectionMaxLifetime = Lifetime, ConnectionLifetimeTimeProvider = clock,
         });
+#pragma warning restore RESP010
         var multiplexer = client.Core.Multiplexer;
         var original = multiplexer.GetConnection();
         var awaiter = original.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();
@@ -696,11 +698,13 @@ public class ConnectionLifetimeTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // Test-owned client isolates tracked-cache invalidation and late replies across lifetime rotation.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp3,
             ClientSideCache = new(), ConnectionMaxLifetime = Lifetime, ConnectionLifetimeTimeProvider = clock,
         });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("cached")).IsEqualTo("old");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
         var original = client.Core.Multiplexer.GetConnection();

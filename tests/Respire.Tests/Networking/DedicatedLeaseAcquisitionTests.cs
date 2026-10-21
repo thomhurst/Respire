@@ -83,11 +83,13 @@ public class DedicatedLeaseAcquisitionTests
     public async Task OpenCircuitOnStoppedOrStalePoolDoesNotRejectHealthyReplacement(bool stalePublication)
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // Test-owned client isolates stale pool selection from the healthy replacement circuit.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], UseCluster = true,
             CircuitBreaker = new() { MinimumFailureCount = 1 }, ThreadPoolMonitoring = false,
         });
+#pragma warning restore RESP010
         await using var replacement = new DedicatedConnectionPool(
             "127.0.0.1", server.Port, RespireConnectionOptions.Default, null);
         var endpoint = new RespireEndpoint("127.0.0.1", 9000);
@@ -236,10 +238,12 @@ public class DedicatedLeaseAcquisitionTests
     public async Task WarmRentalHasNoStrategyAllocation(bool cluster)
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // Test-owned client keeps a warmed dedicated pool for the rental allocation probe.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, UseCluster = cluster,
         });
+#pragma warning restore RESP010
         var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
         var connection = await pool.RentAsync(CancellationToken.None);
         pool.Return(connection);
@@ -261,7 +265,9 @@ public class DedicatedLeaseAcquisitionTests
                 ? cluster.RentDedicatedConnectionAsync(pool, slot: null, CancellationToken.None, discovery: null, observation: default)
                 : core.RentDedicatedConnectionAsync(pool, CancellationToken.None, observation: default);
             if (!pending.IsCompletedSuccessfully) throw new InvalidOperationException("Warm idle rental must complete synchronously.");
+#pragma warning disable RESP009 // The preceding completion guard proves the warmed rental cannot block this allocation measurement.
             var lease = pending.Result;
+#pragma warning restore RESP009
             lease.Pool.Return(lease.Connection);
             if (control) GC.KeepAlive(new byte[37]);
         }

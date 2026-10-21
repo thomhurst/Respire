@@ -347,17 +347,21 @@ public class DedicatedReconnectTests
     public async Task PublicEventsPreserveCommandHealthAndAllowSynchronousDisposal()
     {
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply) { CloseConnectionAfterCommand = 2 };
+#pragma warning disable RESP010 // Test-owned client exercises synchronous disposal from a dedicated reconnect event.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
             Database = 1, ReconnectPolicy = Policy(milliseconds: 30_000),
         });
+#pragma warning restore RESP010
         var disposed = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
             if (change.ReconnectSource != RespireReconnectSource.Dedicated) return;
+#pragma warning disable RESP009 // Deliberately probe synchronous disposal inside the reconnect callback for self-join deadlocks.
             client.DisposeAsync().AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
             disposed.TrySetResult(change);
         };
         var pending = client.Core.DedicatedPool.RentAsync(CancellationToken.None).AsTask();

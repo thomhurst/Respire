@@ -33,11 +33,14 @@ public class PubSubGapTests
         var data = $"{prefix}{(kind == RespireSubscriptionKind.Pattern ? 4 : 3)}\r\n${messageVerb.Length}\r\n{messageVerb}\r\n{pattern}$2\r\nch\r\n$5\r\nhello\r\n";
         await using var server = new FakeRespServer(2, Encoding.ASCII.GetBytes(confirmation + data));
         server.SuppressReply = command => command == "SUBSCRIBE stalled";
+        // A test-owned client isolates subscription epochs and delivery gaps for these scripted replies.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync(((RespireChannel)"ch").WithKind(kind));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
@@ -71,11 +74,14 @@ public class PubSubGapTests
             $"*3\r\n$9\r\nsubscribe\r\n$1\r\n{name}\r\n:1\r\n*3\r\n$7\r\nmessage\r\n$1\r\n{name}\r\n$1\r\n{name}\r\n");
         await using var server = new FakeRespServer(2, Reply("a"), Reply("b"));
         server.SuppressReply = command => command == "SUBSCRIBE stalled";
+        // A test-owned client isolates subscription epochs and delivery gaps for these scripted replies.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync(["a", "b"]);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
@@ -230,11 +236,14 @@ public class PubSubGapTests
     public async Task RoutingRejectsSupersededEpochAndInvokesObserversOutsideGates()
     {
         await using var server = new FakeRespServer("*3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n"u8.ToArray());
+        // A test-owned client isolates subscription epochs and delivery gaps for these scripted replies.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch", new RespireSubscriptionOptions(BufferSize: 1), CancellationToken.None);
         var hub = client.Core.Hub;
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;

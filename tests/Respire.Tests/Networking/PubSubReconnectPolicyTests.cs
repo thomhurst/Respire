@@ -52,7 +52,10 @@ public class PubSubReconnectPolicyTests
                 : null,
         };
         var policy = diagnostic == RecoveryDiagnostic.UnconfiguredRetry ? null : Policy();
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, policy) with { LoggerFactory = logger });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
@@ -127,11 +130,14 @@ public class PubSubReconnectPolicyTests
         await using var server = new FakeRespServer(2, Confirmation);
         var failure = new InvalidOperationException("Injected metric listener failure.");
         using var logger = new ThrowingTelemetryLogger(failure);
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)) with
         {
             LoggerFactory = logger,
             ReconnectTelemetryScope = scoped ? "sentinel-monitor" : null,
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         using var listener = ThrowOnReconnectMeasurements(new("127.0.0.1", server.Port), failure);
@@ -208,10 +214,13 @@ public class PubSubReconnectPolicyTests
     {
         await using var server = new FakeRespServer(4, Confirmation) { CloseConnectionAfterCommand = 1 };
         var episodes = 0;
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy(), database: 1) with
         {
             ReconnectEpisodeStarted = () => Interlocked.Increment(ref episodes),
         });
+#pragma warning restore RESP010
         await Assert.That(async () => await client.SubscribeAsync("ch")).Throws<RespireConnectionException>();
         await Assert.That(Volatile.Read(ref episodes)).IsEqualTo(0);
     }
@@ -224,6 +233,8 @@ public class PubSubReconnectPolicyTests
         await using var server = new FakeRespServer(4, Confirmation);
         var episodes = 0;
         var secondEpisode = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy(milliseconds: 100)) with
         {
             ReconnectEpisodeStarted = () =>
@@ -232,6 +243,7 @@ public class PubSubReconnectPolicyTests
                 if (throwingObserver) throw new InvalidOperationException("Injected episode observer failure.");
             },
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         server.SuppressReply = _ => true;
@@ -247,7 +259,10 @@ public class PubSubReconnectPolicyTests
                 // Hold promotion until resubscription has passed its last IsConnected check
                 // and released the control gate. Deliver the close on this same thread so
                 // its observer can enter the reentrant state gate before promotion.
+                // The callback must retain the reentrant state gate while sending confirmation to force this promotion race.
+#pragma warning disable RESP009
                 server.SendRawAsync(Confirmation, server.ReceivedConnectionIds[^1]).GetAwaiter().GetResult();
+#pragma warning restore RESP009
                 if (!SpinWait.SpinUntil(() => recovery.IsControlIdle, Deadline))
                     throw new TimeoutException("Recovery did not reach the promotion boundary.");
                 cleanup = recovery.CloseCurrentConnection();
@@ -267,6 +282,8 @@ public class PubSubReconnectPolicyTests
         var episodes = 0;
         var publication = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task? captured = null;
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy()) with
         {
             ReconnectEpisodeStarted = () =>
@@ -275,6 +292,7 @@ public class PubSubReconnectPolicyTests
                 Interlocked.Increment(ref episodes);
             },
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         server.SuppressReply = _ => true;
@@ -301,7 +319,10 @@ public class PubSubReconnectPolicyTests
     public async Task FailedResubscriptionsShareOneBudgetAndExhaustionEndsLiveSubscriptions()
     {
         await using var server = new FakeRespServer(3, Confirmation) { CloseConnectionAfterCommand = 2 };
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy()));
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
@@ -368,10 +389,13 @@ public class PubSubReconnectPolicyTests
             + "*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$5\r\nhello\r\n");
         await using var server = new FakeRespServer(3, reply) { CloseConnectionAfterCommand = 2 };
         var episodes = 0;
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)) with
         {
             ReconnectEpisodeStarted = () => Interlocked.Increment(ref episodes),
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
@@ -407,7 +431,10 @@ public class PubSubReconnectPolicyTests
     public async Task ConcurrentChangesCannotBypassBackoffOrRetainRemovedRoutes()
     {
         await using var server = new FakeRespServer(2, Confirmation) { CloseConnectionAfterCommand = 3 };
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy(milliseconds: 500)));
+#pragma warning restore RESP010
         var clock = new GatedRecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
         using var deadline = new CancellationTokenSource(Deadline);
@@ -449,7 +476,10 @@ public class PubSubReconnectPolicyTests
     public async Task SocketClosureRacingSubscriptionsPreservesExistingRouteRecovery()
     {
         await using var server = new FakeRespServer(2, Confirmation);
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy(milliseconds: 100, attempts: 1)));
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
@@ -494,7 +524,10 @@ public class PubSubReconnectPolicyTests
     {
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply, Confirmation)
             { CloseConnectionAfterCommand = 3 };
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy(milliseconds: handshake ? 1 : 30_000), database: 1));
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -515,7 +548,10 @@ public class PubSubReconnectPolicyTests
         {
             SuppressReply = command => command == "SUBSCRIBE stalled",
         };
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy() with { JitterRatio = 0.25 }));
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         using var caller = new CancellationTokenSource();
@@ -546,7 +582,10 @@ public class PubSubReconnectPolicyTests
         var cleanupError = new IOException("Injected replacement cleanup failure");
         using var logger = new CleanupLogger(() => throw cleanupError);
         await using var server = new FakeRespServer(3, Confirmation) { CloseConnectionAfterCommand = 2 };
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy()) with { LoggerFactory = logger });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         try
@@ -579,7 +618,10 @@ public class PubSubReconnectPolicyTests
             if (!releaseCleanup.Wait(Deadline)) throw new TimeoutException("Test did not release replacement cleanup.");
         });
         await using var server = new FakeRespServer(2, Confirmation) { CloseConnectionAfterCommand = 2 };
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)) with { LoggerFactory = logger });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         try
@@ -609,7 +651,10 @@ public class PubSubReconnectPolicyTests
         var cleanupError = new IOException("Injected prior connection cleanup failure");
         using var logger = new CleanupLogger(() => throw cleanupError, cleanupNumber: 1);
         await using var server = new FakeRespServer(2, Confirmation);
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)) with { LoggerFactory = logger });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
@@ -663,7 +708,10 @@ public class PubSubReconnectPolicyTests
     public async Task DisposalPreservesQueuedExhaustionMeasurements(bool holdClientDisposal)
     {
         await using var server = new FakeRespServer(2, Confirmation) { CloseConnectionAfterCommand = 2 };
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)));
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         var hub = client.Core.Hub;
@@ -757,7 +805,10 @@ public class PubSubReconnectPolicyTests
     [Arguments(RespireReconnectSource.SentinelMonitor)]
     public async Task ClientDisposalSuppressesRecoveryAlreadyQueuedForLifecycleDelivery(RespireReconnectSource source)
     {
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(6379, Policy()));
+#pragma warning restore RESP010
         using var releaseObserver = new ManualResetEventSlim();
         var observing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
@@ -800,13 +851,19 @@ public class PubSubReconnectPolicyTests
     public async Task RecoveryObserverCanDisposeSynchronously()
     {
         await using var server = new FakeRespServer(Confirmation) { CloseConnectionAfterCommand = 2 };
+        // A test-owned client isolates the subscription recovery budget and lifecycle observers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy(milliseconds: 30_000)));
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
             if (change.NextReconnectDelay is null) return;
+            // The lifecycle observer must synchronously dispose to exercise reentrant pub/sub recovery cleanup.
+#pragma warning disable RESP009
             client.DisposeAsync().AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
             disposed.TrySetResult();
         };
         await Assert.That(async () => await client.SubscribeAsync("lost")).Throws<RespireConnectionException>();

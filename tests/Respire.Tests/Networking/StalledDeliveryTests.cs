@@ -255,8 +255,11 @@ public class StalledDeliveryTests
                 // Sync-over-async on the same connection: this reply is delivered behind the
                 // continuation that is waiting for it.
                 // Bounded so a regression fails the test instead of hanging connection teardown.
+                // Blocking on the same connection is the stalled-delivery scenario this test must reproduce.
+#pragma warning disable RESP009
                 using var second = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame))
                     .AsTask().WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
                 completed.TrySetResult();
             }
             catch (Exception error) { completed.TrySetException(error); }
@@ -403,7 +406,10 @@ public class StalledDeliveryTests
             {
                 using var first = awaiter.GetResult();
                 blocked.TrySetResult();
+                // Blocking this continuation keeps the already parsed second reply queued until teardown rescues it.
+#pragma warning disable RESP009
                 using var value = second.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
                 completed.TrySetResult();
             }
             catch (Exception error) { completed.TrySetException(error); }
@@ -463,7 +469,10 @@ public class StalledDeliveryTests
             try
             {
                 using var value = second.GetResult();
+                // Each continuation must synchronously wait for the next reply to exercise chained teardown rescue.
+#pragma warning disable RESP009
                 using var last = third.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
                 secondDone.TrySetResult();
             }
             catch (Exception error) { secondDone.TrySetException(error); }

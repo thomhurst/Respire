@@ -25,11 +25,14 @@ public class OwnerExceptionEndpointTests
             new("first replacement failed") { Endpoint = firstEndpoint },
             new("second replacement failed") { Endpoint = secondEndpoint },
         ];
+        // A test-owned client isolates the endpoint and failure history being asserted.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 2, Endpoints = [new("127.0.0.1", server.Port)],
             ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
         });
+#pragma warning restore RESP010
         var multiplexer = client.Core.Multiplexer;
         var first = multiplexer.GetConnection(0);
         var second = multiplexer.GetConnection(1);
@@ -83,11 +86,14 @@ public class OwnerExceptionEndpointTests
         var primary = new RespireEndpoint("primary.example");
         RespireEndpoint[] replicas = additionalCandidates ? [new("first.example"), new("second.example")] : [];
         var original = new RespireTimeoutException("GET", TimeSpan.FromSeconds(1)) { Endpoint = primary };
+        // A test-owned client isolates the endpoint and failure history being asserted.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [primary], ReplicaEndpoints = replicas.ToList(),
             TestingStreamFactory = (_, _, _) => ValueTask.FromException<Stream>(new IOException("unavailable")),
         });
+#pragma warning restore RESP010
         var attempt = new ReadAttempt();
         attempt.TryAdd(primary, original);
         var router = client.Core.ReadRouter;
@@ -122,7 +128,10 @@ public class OwnerExceptionEndpointTests
                 return ValueTask.FromException<Stream>(timeout);
             },
         };
+        // A test-owned client isolates the endpoint and failure history being asserted.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(options);
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var disconnected = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         router.DiscoveryStateChanged += change =>
@@ -173,10 +182,13 @@ public class OwnerExceptionEndpointTests
             ReplyOverride = (_, command) => command == "CLIENT ID" ? ":42\r\n"u8.ToArray()
                 : command.StartsWith("CLIENT KILL", StringComparison.Ordinal) ? "-NOPERM fence denied\r\n"u8.ToArray() : null,
         };
+        // A test-owned client isolates the endpoint and failure history being asserted.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var first = await Assert.That(async () => await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync())
             .ThrowsExactly<RespireServerException>();
         var second = await Assert.That(async () => await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync())
@@ -227,6 +239,8 @@ public class OwnerExceptionEndpointTests
         await using var second = new FakeRespServer("-NOPERM second ROLE denied\r\n"u8.ToArray());
         RespireEndpoint[] endpoints = candidates == 1
             ? [new("127.0.0.1", first.Port)] : [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)];
+        // A test-owned client isolates the endpoint and failure history being asserted.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -234,6 +248,7 @@ public class OwnerExceptionEndpointTests
             Endpoints = [new("127.0.0.1", first.Port)],
             ReplicaEndpoints = endpoints,
         });
+#pragma warning restore RESP010
         var error = await Assert.That(async () => await client.WithReadFrom(RespireReadFrom.Replica).GetStringAsync("key"))
             .ThrowsExactly<RespireConnectionException>();
         await Assert.That(error!.Endpoint).IsNull();
@@ -348,7 +363,10 @@ public class OwnerExceptionEndpointTests
     {
         var source = new RespireEndpoint("source.example", 6379);
         var target = new RespireEndpoint("target.example", 6380);
+        // A test-owned client isolates the endpoint and failure history being asserted.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions { UseCluster = true, Endpoints = [source] });
+#pragma warning restore RESP010
         var round = new ClusterRouter.DiscoveryRound(client.Core.Cluster!, new() { MaxAttempts = 0 });
         var rejection = new RespireServerException("MOVED 1 target.example:6380", "GET") { Endpoint = source };
         try

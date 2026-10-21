@@ -71,6 +71,7 @@ public sealed class GatheredWriteWatchdogTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray() : null,
         };
+#pragma warning disable RESP010 // Test-owned client isolates maintenance timeout relaxation during a stalled gathered write.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp3, Connections = 1, ThreadPoolMonitoring = false,
@@ -81,6 +82,7 @@ public sealed class GatheredWriteWatchdogTests
             MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(3),
             MaintenanceWindowTimeout = TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         var connection = client.Core.Multiplexer.GetConnection();
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await server.SendRawAsync(">3\r\n+FAILING_OVER\r\n:1\r\n:1\r\n"u8.ToArray());
