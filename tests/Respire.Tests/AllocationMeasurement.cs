@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Runtime;
 using System.Runtime.CompilerServices;
 
 namespace Respire.Tests;
@@ -20,6 +22,9 @@ internal static class AllocationMeasurement
             throw new InvalidOperationException("Could not establish the allocation measurement's no-GC region.");
         TResult result;
         InvalidOperationException? regionError = null;
+        var started = RegionSnapshot.Capture();
+        var prepared = started;
+        var finished = started;
         try
         {
             // Starting the region runs a blocking full GC. The finalizer thread can then
@@ -27,17 +32,34 @@ internal static class AllocationMeasurement
             // that pass, then refill the cache so the measured thread does not pay for it.
             GC.WaitForPendingFinalizers();
             PrimeRuntimeCastCache(CastCachePrimer);
+            prepared = RegionSnapshot.Capture();
             result = measure();
         }
         finally
         {
+            finished = RegionSnapshot.Capture();
             try { GC.EndNoGCRegion(); }
             catch (InvalidOperationException error) { regionError = error; }
         }
         // Preserve a measurement exception; otherwise surface failed region cleanup.
         if (regionError is not null)
-            throw new InvalidOperationException("The allocation measurement's no-GC region was not retained.", regionError);
+            throw new InvalidOperationException($"The allocation measurement's no-GC region was not retained. " +
+                $"Reservation={NoGcReservationBytes}; preparation: {prepared.DescribeSince(started)}; " +
+                $"measurement: {finished.DescribeSince(prepared)}.", regionError);
         return result;
+    }
+
+    private readonly record struct RegionSnapshot(long Allocated, long ThreadAllocated, long Timestamp,
+        int Gen0, int Gen1, int Gen2, GCLatencyMode Mode)
+    {
+        internal static RegionSnapshot Capture() => new(GC.GetTotalAllocatedBytes(precise: true),
+            GC.GetAllocatedBytesForCurrentThread(), Stopwatch.GetTimestamp(),
+            GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), GCSettings.LatencyMode);
+
+        internal string DescribeSince(RegionSnapshot before) =>
+            $"process bytes={Allocated - before.Allocated}, thread bytes={ThreadAllocated - before.ThreadAllocated}, " +
+            $"GC counts={Gen0 - before.Gen0}/{Gen1 - before.Gen1}/{Gen2 - before.Gen2}, " +
+            $"mode={before.Mode}->{Mode}, elapsed ms={Stopwatch.GetElapsedTime(before.Timestamp, Timestamp).TotalMilliseconds:F3}";
     }
 
     // After a flush this cast misses the cache and stores its result, which reallocates
