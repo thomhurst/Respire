@@ -2560,7 +2560,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         if (CanRetryImmediate(in command))
             return await SendImmediateWithRetriesAsync(operation, command, cancellationToken, observation,
                 NeedsCachingPrelude(track), optOut: _optOutTracking, onTrackingReady: onRedirect,
-                retainTracking: true).ConfigureAwait(false);
+                retainTracking: true, cacheRead: track).ConfigureAwait(false);
 
         RespValue response;
         for (var attempt = 0; ; attempt++)
@@ -3114,8 +3114,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         var response = default(RespValue);
         try
         {
-            response = await SendTrackedAsync(
-                operation, snapshot, cancellationToken, onRedirect, token.CanCache, observation).ConfigureAwait(false);
+            response = await SendQuerySnapshotAsync(
+                operation, snapshot, request, cancellationToken, onRedirect, token.CanCache, observation).ConfigureAwait(false);
             var currentToken = redirect is null ? token : redirect.Token;
             cache.CompleteRead(in currentToken, in response, allowInsert: true);
             completed = true;
@@ -3129,6 +3129,40 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 cache.CompleteRead(in currentToken, in response, allowInsert: false);
                 response.Dispose();
             }
+        }
+    }
+
+    private ValueTask<RespValue> SendQuerySnapshotAsync(string operation, SnapshotCommand snapshot,
+        ClientSideCacheCoordinator.QueryRequest request, CancellationToken cancellationToken,
+        Action? onRedirect, bool track, RespireTelemetry.ErrorObservation observation)
+        => _core.RedirectTargets is null
+            ? SendTrackedAsync(operation, snapshot, cancellationToken, onRedirect, track, observation)
+            : SendTrackedAsync(operation, new CacheQueryCommand(snapshot,
+                new(request.Query.Snapshot(), request.PrimaryKey.Snapshot())),
+                cancellationToken, onRedirect, track, observation);
+
+    // Keep the query's owned physical-key metadata alongside its wire snapshot. Both
+    // ordinary redirects and retries need it to attribute the fill to a tracking socket.
+    private readonly struct CacheQueryCommand(SnapshotCommand snapshot, ClientSideCacheCoordinator.QueryRequest request) : IRespCommand
+    {
+        public int GetWriteSizeHint() => snapshot.GetWriteSizeHint();
+        public void Write(ref RespWriter writer) => snapshot.Write(ref writer);
+        public ReadCommandKind ReadKind => snapshot.ReadKind;
+        public RespireCommandRetryCategory RetryCategory => snapshot.RetryCategory;
+        public int CursorArgumentIndex => snapshot.CursorArgumentIndex;
+        public bool HasOpaqueCursor => snapshot.HasOpaqueCursor;
+        public bool TryGetClusterSlot(out int slot) => snapshot.TryGetClusterSlot(out slot);
+        public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => snapshot.GetClientCacheMetadata(operation);
+        public RespireCacheMutation GetCacheMutation(string operation) => snapshot.GetCacheMutation(operation);
+        public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+        {
+            key = request.Query;
+            return operation == key.Operation;
+        }
+        public bool TryGetPrimaryKey(out RespireValue key)
+        {
+            key = request.PrimaryKey.AsValue();
+            return true;
         }
     }
 

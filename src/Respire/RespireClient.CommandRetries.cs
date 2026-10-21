@@ -27,7 +27,7 @@ public sealed partial class RespireClient
     // uses the snapshot. Each transport source still retains its own fence until FIFO retirement.
     private ValueTask<RespValue> SendImmediateWithRetriesAsync<TCommand>(string operation, TCommand command,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool track = false, bool optOut = false,
-        Action? onTrackingReady = null, bool retainTracking = false)
+        Action? onTrackingReady = null, bool retainTracking = false, bool cacheRead = false)
         where TCommand : struct, IRespCommand
     {
         if (ShouldSkipTracking(operation, in command))
@@ -45,20 +45,20 @@ public sealed partial class RespireClient
         {
             // Capture alongside the wire frame, before backlog waits or user observers
             // can reuse borrowed keys. The option-off async state machine stays unchanged.
-            trackingRead = retainTracking && _core.Options.EnableReplicaRedirects
+            trackingRead = cacheRead && retainTracking && _core.Options.EnableReplicaRedirects
                 ? retryCommand.SnapshotTrackingRead(operation) : null;
         }
         catch { state.Return(); throw; }
         if (UsesPrimaryBacklog && backlogConnection is null)
             return SendBackloggedImmediateRetryAsync(operation, retryCommand,
-                state, cancellationToken, deadline, observation, track, onTrackingReady, retainTracking, trackingRead);
+                state, cancellationToken, deadline, observation, track, onTrackingReady, retainTracking, cacheRead, trackingRead);
         return SendImmediateRetryCoreAsync(operation, retryCommand,
-            state, cancellationToken, deadline, observation, track, backlogConnection, onTrackingReady, retainTracking, trackingRead);
+            state, cancellationToken, deadline, observation, track, backlogConnection, onTrackingReady, retainTracking, cacheRead, trackingRead);
     }
 
     private async ValueTask<RespValue> SendBackloggedImmediateRetryAsync<TCommand>(string operation, ImmediateRetryCommand<TCommand> command,
         ImmediateRetryState state, CancellationToken token, CommandDeadline deadline,
-        RespireTelemetry.ErrorObservation observation, bool track, Action? onTrackingReady, bool retainTracking,
+        RespireTelemetry.ErrorObservation observation, bool track, Action? onTrackingReady, bool retainTracking, bool cacheRead,
         ClientSideCacheCoordinator.QueryRequest? trackingRead) where TCommand : struct, IRespCommand
     {
         var dispatched = false;
@@ -68,7 +68,7 @@ public sealed partial class RespireClient
             {
                 dispatched = true;
                 return SendImmediateRetryCoreAsync(operation, command, state, token, originalDeadline,
-                    observation, track, connection, onTrackingReady, retainTracking, trackingRead);
+                    observation, track, connection, onTrackingReady, retainTracking, cacheRead, trackingRead);
             }, observation).ConfigureAwait(false);
         }
         finally { if (!dispatched) state.Return(); }
@@ -79,11 +79,11 @@ public sealed partial class RespireClient
     private ValueTask<RespValue> SendImmediateRetryCoreAsync<TCommand>(string operation, ImmediateRetryCommand<TCommand> command,
         ImmediateRetryState state, CancellationToken callerToken, CommandDeadline deadline,
         RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection = null,
-        Action? onTrackingReady = null, bool retainTracking = false,
+        Action? onTrackingReady = null, bool retainTracking = false, bool cacheRead = false,
         ClientSideCacheCoordinator.QueryRequest? trackingRead = null) where TCommand : struct, IRespCommand
         => _core.Options.EnableReplicaRedirects
             ? SendImmediateRedirectRetryCoreAsync(operation, command, state, callerToken, deadline, observation, track,
-                backlogConnection, onTrackingReady, retainTracking, trackingRead)
+                backlogConnection, onTrackingReady, retainTracking, cacheRead, trackingRead)
             : SendImmediateRetryWithoutRedirectsAsync(operation, command, state, callerToken, deadline, observation, track, backlogConnection);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -194,7 +194,7 @@ public sealed partial class RespireClient
     private async ValueTask<RespValue> SendImmediateRedirectRetryCoreAsync<TCommand>(string operation, ImmediateRetryCommand<TCommand> command,
         ImmediateRetryState state, CancellationToken callerToken, CommandDeadline deadline,
         RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection,
-        Action? onTrackingReady, bool retainTracking,
+        Action? onTrackingReady, bool retainTracking, bool cacheRead,
         ClientSideCacheCoordinator.QueryRequest? trackingRead) where TCommand : struct, IRespCommand
     {
         CancellationTokenSource? timeout = null;
@@ -255,7 +255,8 @@ public sealed partial class RespireClient
                         // The connection enforces the send deadline and can relax it for
                         // maintenance. The acquisition timer must not cancel that allowance.
                         var useTracking = redirects == 0 || trackedTarget is not null;
-                        if (retainTracking) trackedTarget?.RegisterRead(trackingRead);
+                        // Cache eligibility is independent of OPTIN/OPTOUT prelude selection.
+                        if (retainTracking && cacheRead) trackedTarget?.RegisterRead(trackingRead);
                         var result = await connection.SendAttemptAsync(useTracking ? command : command.WithoutTracking(),
                             connection.ReplicaRedirectsEnabled ? callerToken : token, operation, deadline,
                             repliesBeforeFinal: useTracking && track ? 1 : 0,

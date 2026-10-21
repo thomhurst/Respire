@@ -1,11 +1,12 @@
-# Reviewed source-declared member signatures: 436 total; per-type counts include owner, derived and accessible nested declarations.
-# Count: Respire.ClientSideCacheCoordinator | 67
+# Reviewed source-declared member signatures: 444 total; per-type counts include owner, derived and accessible nested declarations.
+# Count: Respire.ClientSideCacheCoordinator | 68
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
 Respire.ClientSideCacheCoordinator | class InflightRead(RespireKey, bool)
 Respire.ClientSideCacheCoordinator | class QueryCacheEntry(RespValue, RespireKey[], long, long)
 Respire.ClientSideCacheCoordinator | class QueryDependencyState()
 Respire.ClientSideCacheCoordinator | class QueryReadLease(int)
+Respire.ClientSideCacheCoordinator | class TrackingProvenance()
 Respire.ClientSideCacheCoordinator | constructor ClientSideCacheCoordinator(RespireClientSideCacheOptions)
 Respire.ClientSideCacheCoordinator | delegate GetReadConverter`2(TState, in GetReadResult) : TResult
 Respire.ClientSideCacheCoordinator | enum CacheRemoval : int
@@ -134,6 +135,13 @@ Respire.ClientSideCacheCoordinator.QueryReadLease | method Capture(QueryDependen
 Respire.ClientSideCacheCoordinator.QueryReadLease | method ClearDependencies() : void
 Respire.ClientSideCacheCoordinator.QueryReadLease | method GetDependency(int) : QueryDependencyStamp
 Respire.ClientSideCacheCoordinator.QueryReadLease | property Capacity [internal; get] : int
+# Count: Respire.ClientSideCacheCoordinator.TrackingProvenance | 6
+Respire.ClientSideCacheCoordinator.TrackingProvenance | field MaximumKeyBytes : int
+Respire.ClientSideCacheCoordinator.TrackingProvenance | field MaximumKeys : int
+Respire.ClientSideCacheCoordinator.TrackingProvenance | method Fence(ClientSideCacheCoordinator) : int
+Respire.ClientSideCacheCoordinator.TrackingProvenance | method Forget() : void
+Respire.ClientSideCacheCoordinator.TrackingProvenance | method Register(QueryRequest?) : void
+Respire.ClientSideCacheCoordinator.TrackingProvenance | method Register`1(string, in TCommand) : void
 # Count: Respire.Networking.BulkStreamPendingResponseSource | 27
 Respire.Networking.BulkStreamPendingResponseSource | constructor BulkStreamPendingResponseSource(string?, bool, Action<Exception?>?, CancellationToken, Action?)
 Respire.Networking.BulkStreamPendingResponseSource | constructor BulkStreamPendingResponseSource(string?, int, Action<Exception?>?, CancellationToken, Action?)
