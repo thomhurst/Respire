@@ -780,11 +780,15 @@ command before executing it. When a retry policy is configured, each attempt can
 redirects within the original command deadline; transport failures still use the policy's
 write-safety rules. Cluster continues to use its existing `MOVED`/`ASK` handling.
 
-Redirect targets use temporary connections without persistent client tracking. Redirected
-reads therefore bypass client-side cache publication and invalidate existing cache continuity;
-repeated redirected reads still reach the server. Configure the primary endpoint directly
-to retain client-side caching. Persistent tracked redirect targets are planned in
-[#1910](https://github.com/thomhurst/Respire/issues/1910).
+With client-side caching enabled, redirected cache reads retain RESP3 tracking connections
+and can populate the cache. Repeated reads can hit the cache while the target continues to
+deliver invalidations. The client retains up to eight tracked destinations, shared by its
+views. A new destination, target disconnection, credential renewal, or eviction flushes
+cache continuity before entries can be published without invalidation coverage. Unused
+destinations are evicted when capacity is needed; if all retained destinations are serving
+reads, an additional destination uses a temporary connection and bypasses publication.
+Disposing the client closes its retained targets. Other redirected commands continue to
+use temporary connections.
 
 Read-policy connections send `READONLY` after successful capability negotiation. Read-only
 commands, including `SCAN` and `RANDOMKEY`, can therefore keep using replicas and accept

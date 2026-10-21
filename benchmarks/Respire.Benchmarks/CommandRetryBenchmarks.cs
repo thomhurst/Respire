@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Text.Json;
 using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Configs;
+using BenchmarkDotNet.Diagnosers;
 
 namespace Respire.Benchmarks;
 
@@ -8,6 +10,13 @@ namespace Respire.Benchmarks;
 [MemoryDiagnoser]
 public class CommandRetryBenchmarks
 {
+    // Diagnose ordinary dispatch separately so tracing does not affect the timing samples.
+    public sealed class RetryTraceConfig : ManualConfig
+    {
+        public RetryTraceConfig() => AddDiagnoser(new EventPipeProfiler(EventPipeProfile.CpuSampling,
+            performExtraBenchmarksRun: true));
+    }
+
     private RespireClient _client = null!;
     private RespireFailoverGroup _group = null!;
     private readonly RespireKey _key = "retry:acceptance";
@@ -97,3 +106,7 @@ public class CommandRetryBenchmarks
         }));
     }
 }
+
+/// <summary>Issue #2065 diagnostic fixture; the regular comparison excludes profiling.</summary>
+[Config(typeof(CommandRetryBenchmarks.RetryTraceConfig))]
+public class CommandRetryScriptProfileBenchmarks : CommandRetryBenchmarks;

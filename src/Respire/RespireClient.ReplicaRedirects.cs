@@ -14,14 +14,14 @@ public sealed partial class RespireClient
         bool tracking = false, bool track = true, bool allowStreamingConnectionReroute = true,
         string? storedProcedureName = null, bool instrument = true,
         Action<RespireEndpoint, RespireConnection?>? onEndpointSelected = null,
-        TrackedScriptExecution? execution = null) where TCommand : struct, IRespCommand
+        TrackedScriptExecution? execution = null, Action? onTrackingReady = null) where TCommand : struct, IRespCommand
     {
         // Copy borrowed data before the first send or asynchronous routing wait.
         var snapshot = new BacklogCommand<TCommand>(command, operation);
         deadline = CreateCircuitDeadline(deadline);
         return FollowReplicaRedirectsAsync(operation, connection, snapshot, cancellationToken,
             deadline, observation, storedProcedureName, instrument, onEndpointSelected,
-            sendAsking, tracking, track, allowStreamingConnectionReroute, execution);
+            sendAsking, tracking, track, allowStreamingConnectionReroute, execution, onTrackingReady);
     }
 
     private async ValueTask<RespValue> FollowReplicaRedirectsAsync<TCommand>(
@@ -29,7 +29,7 @@ public sealed partial class RespireClient
         CancellationToken cancellationToken, CommandDeadline deadline, RespireTelemetry.ErrorObservation observation,
         string? storedProcedureName, bool instrument, Action<RespireEndpoint, RespireConnection?>? onEndpointSelected,
         bool sendAsking, bool tracking, bool track, bool allowStreamingConnectionReroute,
-        TrackedScriptExecution? execution)
+        TrackedScriptExecution? execution, Action? onTrackingReady)
         where TCommand : struct, IRespCommand
     {
         var acquisition = new CommandAcquisitionScope(cancellationToken, deadline, _core.Options.CommandTimeout);
@@ -38,6 +38,9 @@ public sealed partial class RespireClient
                 storedProcedureName: storedProcedureName) : default;
         DedicatedConnectionPool? pool = null;
         RespireConnection? rentedConnection = null;
+        ReplicaRedirectTargets.Lease? trackedTarget = null;
+        var retainTracking = tracking;
+        var continuityPending = false;
         var telemetryEndpoint = new RespireEndpoint(connection.Host, connection.Port);
         RespireConnection? telemetryConnection = connection;
         Exception? failure = null;
@@ -64,6 +67,11 @@ public sealed partial class RespireClient
                 {
                     observation.Handled(retired, new(connection.Host, connection.Port));
                     connection = target;
+                    if (trackedTarget is not null)
+                    {
+                        trackedTarget.UseConnection(connection);
+                        onTrackingReady?.Invoke();
+                    }
                     telemetryEndpoint = new(connection.Host, connection.Port);
                     telemetryConnection = connection;
                     deadline = rerouted;
@@ -80,13 +88,14 @@ public sealed partial class RespireClient
 
                 if (error.Code != "REDIRECT" || attempt >= ClusterRouter.RedirectLimit
                     || !TryParseReplicaRedirect(error.Message, connection.Host, out var endpoint)) throw error;
+                continuityPending = retainTracking;
                 execution?.RecordCommandNotApplied();
                 // A connected source can grant maintenance time without retiring. Carry
                 // that allowance across the redirect, once, before checking or renting.
                 deadline = connection.GetReroutedCommandDeadline(deadline);
                 acquisition.Dispose();
                 acquisition = new CommandAcquisitionScope(cancellationToken, deadline, _core.Options.CommandTimeout);
-                _core.ClientCache?.FlushForContinuityLoss();
+                if (!retainTracking) _core.ClientCache?.FlushForContinuityLoss();
                 command.ValidateAdmission();
                 acquisition.CheckDeadline(operation, _core);
                 if (observation.IsEmpty)
@@ -104,6 +113,8 @@ public sealed partial class RespireClient
                     rentedConnection = null;
                     await _core.ReleaseServerPoolAsync(completedPool).ConfigureAwait(false);
                 }
+                trackedTarget?.Dispose();
+                trackedTarget = null;
                 // Acquisition can fail before a connection exists. Attribute it to the
                 // selected destination without attaching the previous hop's socket.
                 telemetryEndpoint = endpoint;
@@ -111,10 +122,31 @@ public sealed partial class RespireClient
                 telemetry.UpdateServerEndpoint(endpoint.Host, endpoint.Port);
                 observation.UseEndpoint(endpoint, cancellationToken);
                 onEndpointSelected?.Invoke(endpoint, null);
-                pool = _core.CreateServerPool(endpoint, replicaRedirect: true);
-                // The logical command owns the deadline, including any maintenance allowance.
-                rentedConnection = await RentReplicaRedirectTargetAsync(pool, acquisition.Token).ConfigureAwait(false);
-                connection = rentedConnection;
+                if (retainTracking && _core.RedirectTargets is { } targets)
+                {
+                    // The acquisition owner now guarantees the failure fence.
+                    continuityPending = false;
+                    trackedTarget = await AcquireTrackedReplicaTargetAsync(targets, endpoint, acquisition.Token).ConfigureAwait(false);
+                }
+                if (trackedTarget is not null)
+                {
+                    connection = trackedTarget.Connection;
+                    // Tracking is part of the completed handshake. Register the fill before
+                    // its send, so a subsequent invalidation/disconnect fences publication.
+                    onTrackingReady?.Invoke();
+                }
+                else
+                {
+                    if (retainTracking)
+                    {
+                        continuityPending = false;
+                        _core.ClientCache?.FlushForContinuityLoss();
+                    }
+                    pool = _core.CreateServerPool(endpoint, replicaRedirect: true);
+                    // The logical command owns the deadline, including any maintenance allowance.
+                    rentedConnection = await RentReplicaRedirectTargetAsync(pool, acquisition.Token).ConfigureAwait(false);
+                    connection = rentedConnection;
+                }
                 telemetryConnection = connection;
                 onEndpointSelected?.Invoke(endpoint, connection);
                 if (execution is not null)
@@ -129,8 +161,8 @@ public sealed partial class RespireClient
                 // Release this admission timer; another redirect can re-arm the remaining deadline.
                 acquisition.Dispose();
                 sendAsking = false;
-                tracking = false;
-                allowStreamingConnectionReroute = false;
+                tracking = trackedTarget is not null;
+                allowStreamingConnectionReroute = trackedTarget is not null;
             }
         }
         catch (OperationCanceledException error) when (acquisition.IsDeadlineCancellation(error))
@@ -149,11 +181,15 @@ public sealed partial class RespireClient
             acquisition.Dispose();
             try
             {
+                // An accepted REDIRECT is a continuity signal even when cancellation,
+                // deadline or cleanup prevents handing it to the acquisition owner.
+                if (continuityPending) _core.ClientCache?.FlushForContinuityLoss();
                 telemetry.Complete(operation, telemetryEndpoint.Host, telemetryEndpoint.Port, _core.Options.Database,
                     storedProcedureName, error: failure, connection: telemetryConnection);
             }
             finally
             {
+                trackedTarget?.Dispose();
                 if (pool is not null)
                 {
                     if (execution is not null)
@@ -184,6 +220,26 @@ public sealed partial class RespireClient
             execution.ErrorObservation.Handled(error);
             return false;
         }
+    }
+
+    private async ValueTask<ReplicaRedirectTargets.Lease?> AcquireTrackedReplicaTargetAsync(
+        ReplicaRedirectTargets targets, RespireEndpoint endpoint, CancellationToken cancellationToken)
+    {
+        CircuitAdmission admission;
+        try
+        {
+            _core.ValidateReplicaRedirectDestination(endpoint);
+            admission = _core.Circuits?.Acquire(endpoint, cancellationToken) ?? default;
+        }
+        catch
+        {
+            // Validation or admission failed before the target owner could fence continuity.
+            _core.ClientCache?.FlushForContinuityLoss();
+            throw;
+        }
+        try { return await targets.AcquireAsync(endpoint, cancellationToken).ConfigureAwait(false); }
+        catch (Exception error) { admission.ConnectionFailed(error, cancellationToken); throw; }
+        finally { admission.Dispose(); }
     }
 
 #if NET

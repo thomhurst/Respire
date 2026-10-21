@@ -62,7 +62,7 @@ internal sealed partial class DedicatedConnectionPool
         }
     }
 
-    private static bool IsRetryableAcquisitionFailure(Exception error) => error switch
+    internal static bool IsRetryableAcquisitionFailure(Exception error) => error switch
     {
         // Handshake errors retain the server response as the connection exception's cause.
         // Credentials, ACLs, invalid databases, and other permanent rejections fail promptly.

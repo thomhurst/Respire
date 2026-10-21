@@ -7,6 +7,8 @@ internal sealed class ClusterRecoveryTestClock : TimeProvider
     private readonly List<ManualTimer> _timers = [];
     private long _ticks;
 
+    internal int ActiveTimers { get { lock (_gate) return _timers.Count; } }
+
     public override long TimestampFrequency => TimeSpan.TicksPerSecond;
     public override long GetTimestamp() { lock (_gate) return _ticks; }
 

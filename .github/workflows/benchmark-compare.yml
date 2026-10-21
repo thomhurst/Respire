@@ -270,11 +270,25 @@ jobs:
                                   '--exporters', 'json', 'markdown',
                                   '--artifacts', str(workspace / 'results' / phase)],
                                  cwd=source, stdout=log, stderr=subprocess.STDOUT, check=True)
+      - name: Prepare portable profile artifact names
+        if: always() && inputs.require-eventpipe-traces
+        shell: python
+        run: |
+          import re
+          from pathlib import Path
+          # BDN's Linux trace names retain quotes that upload-artifact rejects.
+          # Run even after failed measurement so partial diagnostic evidence survives.
+          for path in Path('results').rglob('*'):
+              if path.is_file():
+                  target = path.with_name(re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', path.name))
+                  if target != path:
+                      assert not target.exists(), f'Profile artifact name collision: {target}'
+                      path.rename(target)
       - name: Require separate profile traces
         if: inputs.require-eventpipe-traces
         shell: python
         run: |
-          import json, os
+          import json, os, re
           from pathlib import Path
           for phase in ('baseline-a', 'candidate', 'baseline-b'):
               cases = []
@@ -283,6 +297,9 @@ jobs:
               expected = int(os.environ['EXPECTED_COUNT'])
               names = {case['FullName'] for case in cases}
               assert len(cases) == len(names) == expected, f'Incomplete profile identities: {phase}'
+              # Match the portable filenames, preserving distinct parameter identities.
+              names = {re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name) for name in names}
+              assert len(names) == expected, f'Profile identity name collision: {phase}'
               traces = list(Path('results', phase).rglob('*.nettrace'))
               profiles = list(Path('results', phase).rglob('*.speedscope.json'))
               assert len(traces) == len(profiles) == expected, f'Missing or duplicate EventPipe profiles: {phase}'

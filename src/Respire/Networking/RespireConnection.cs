@@ -213,8 +213,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal void RequestMetricCloseReason(string reason) => _connectionMetrics?.RequestClose(reason);
     internal void RecordConnectionWait(long started) => _connectionMetrics?.Waited(started);
     internal void RecordConnectionHandoff() => _connectionMetrics?.HandedOff();
+    internal bool IsRetired => Volatile.Read(ref _retired);
     /// <summary>False as soon as <see cref="RetireAsync"/> starts; <see cref="IsConnected"/> stays true while accepted work drains.</summary>
-    internal bool IsAcceptingCommands => IsConnected && !Volatile.Read(ref _retired) && _generation?.IsRetired != true;
+    internal bool IsAcceptingCommands => IsConnected && !IsRetired && _generation?.IsRetired != true;
     internal int WriteBufferCapacity => Math.Max(_activeBuffer.Capacity, _spareBuffer.Capacity);
     internal bool DrainedSuccessfully => Volatile.Read(ref _drainedSuccessfully);
 

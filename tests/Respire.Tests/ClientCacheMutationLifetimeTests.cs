@@ -433,6 +433,32 @@ public class ClientCacheMutationLifetimeTests
         await Assert.That(cache.Count).IsEqualTo(suppressed ? 0 : 1);
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RedirectPreservesInvalidationAfterWriterRetires(bool unknown)
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var key = new RespireKey("key");
+        var request = new ClientSideCacheCoordinator.QueryRequest(new ClientCacheCommandKey("STRLEN", "key"), "key");
+        var originalGet = cache.BeginRead(in key);
+        var originalQuery = cache.BeginRead("STRLEN", in request);
+        var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
+        var fence = unknown ? cache.BeginUnknownMutation() : cache.BeforeCommand("SET", in command);
+        cache.CompleteMutation(in fence);
+        // A target handshake may restore continuity after the mutation has completed.
+        cache.FlushForContinuityLoss();
+        var redirectedGet = cache.RebaseRead(in originalGet);
+        var redirectedQuery = cache.RebaseRead(in originalQuery);
+        await Assert.That(redirectedGet.CanCache).IsFalse();
+        await Assert.That(redirectedQuery.CanCache).IsFalse();
+        using var response = RespValue.BulkString("stale"u8.ToArray());
+        cache.CompleteRead(in redirectedGet, in response, allowInsert: true);
+        cache.CompleteRead(in redirectedQuery, in response, allowInsert: true);
+        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(cache.InspectForTests().PendingQueryDependencyCount).IsEqualTo(0);
+    }
+
     [Test, NotInParallel]
     public async Task WarmedKnownMutationAndNativeRetirementAllocateNothing()
     {

@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 435 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 436 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 67
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -59,7 +59,7 @@ Respire.ClientSideCacheCoordinator | property ReuseHashFields [internal; get] : 
 Respire.ClientSideCacheCoordinator | property SharedReadRetirements [internal; get] : long
 Respire.ClientSideCacheCoordinator | property SizeBytes [public; get] : long
 Respire.ClientSideCacheCoordinator | readonly record struct QueryDependencyStamp(QueryDependencyState, long)
-Respire.ClientSideCacheCoordinator | readonly record struct QueryReadToken(ClientCacheCommandKey, RespireKey[], long, long, CacheStore, bool, QueryReadLease?, long)
+Respire.ClientSideCacheCoordinator | readonly record struct QueryReadToken(ClientCacheCommandKey, RespireKey[], long, long, CacheStore, bool, QueryReadLease?, long, long)
 Respire.ClientSideCacheCoordinator | readonly record struct QueryRequest(ClientCacheCommandKey, RespireKey)
 # Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
 Respire.ClientSideCacheCoordinator | readonly ref struct TestInspection(ClientSideCacheCoordinator)
@@ -67,7 +67,7 @@ Respire.ClientSideCacheCoordinator | readonly struct MutationFence()
 Respire.ClientSideCacheCoordinator | readonly struct GetReadResult(RespValue, RespireKey, CacheStore?, CacheEntry?, string?)
 Respire.ClientSideCacheCoordinator | class MutationLease()
 Respire.ClientSideCacheCoordinator | method CompleteMutation(in MutationFence, bool) : void
-Respire.ClientSideCacheCoordinator | readonly record struct ReadToken(InflightRead, long, long, CacheStore, bool)
+Respire.ClientSideCacheCoordinator | readonly record struct ReadToken(InflightRead, long, long, CacheStore, bool, long)
 Respire.ClientSideCacheCoordinator | readonly struct MutationReference(MutationLease?, long)
 # Count: Respire.ClientSideCacheCoordinator.CacheEntry | 6
 Respire.ClientSideCacheCoordinator.CacheEntry | method DecodedSize(string) : long
@@ -246,7 +246,7 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 112
+# Count: Respire.Networking.RespireConnection | 113
 # Production shutdown operation: releases an inline completion before owner workers are joined.
 Respire.Networking.RespireConnection | method ReleaseCompletionRunner() : void
 Respire.Networking.RespireConnection | method RecordConnectionRecycle() : void
@@ -345,6 +345,7 @@ Respire.Networking.RespireConnection | property Host [public; get] : string
 Respire.Networking.RespireConnection | property IsAcceptingCommands [internal; get] : bool
 Respire.Networking.RespireConnection | property IsConnected [public; get] : bool
 Respire.Networking.RespireConnection | property IsFlushLoopWaiting [internal; get] : bool
+Respire.Networking.RespireConnection | property IsRetired [internal; get] : bool
 Respire.Networking.RespireConnection | property IsStreamingWriteActive [internal; get] : bool
 Respire.Networking.RespireConnection | property LastMovingAnnouncement [internal; get] : Respire.Infrastructure.MovingAnnouncement?
 Respire.Networking.RespireConnection | property Multiplexer [internal; get, set] : Respire.Infrastructure.RespireConnectionMultiplexer?

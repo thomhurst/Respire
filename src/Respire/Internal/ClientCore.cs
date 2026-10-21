@@ -72,6 +72,7 @@ internal sealed class ClientCore : IAsyncDisposable
     public DedicatedConnectionPool DedicatedPool => TestingDedicatedPoolOverride ?? Sentinel?.Current?.Pool ?? Volatile.Read(ref _dedicatedPool);
     internal readonly SentinelRouter? Sentinel;
     internal readonly ReadEndpointRouter ReadRouter;
+    internal readonly ReplicaRedirectTargets? RedirectTargets;
 
     /// <summary>Preserves the logical cache owner on every data, replica and dedicated transport.</summary>
     internal RespireConnectionOptions CreateConnectionOptions(RespirePushHandler? pushHandler = null,
@@ -130,6 +131,8 @@ internal sealed class ClientCore : IAsyncDisposable
             ? new ClientSideCacheCoordinator(cacheOptions)
             : null;
         var clientCache = ClientCache;
+        RedirectTargets = clientCache is not null && options.EnableReplicaRedirects && !options.UseCluster
+            ? new ReplicaRedirectTargets(this) : null;
         RespirePushHandler? pushHandler = clientCache is null ? null : clientCache.HandlePush;
         var connectionOptions = CreateConnectionOptions(
             pushHandler,
@@ -390,6 +393,17 @@ internal sealed class ClientCore : IAsyncDisposable
             QueueEndpointStateLocked(change);
         }
         PublishQueuedStates();
+    }
+
+    internal void QueueRecoveryStateChanged(RespireConnectionStateChange change)
+    {
+        lock (_stateGate)
+        {
+            if (Disposed) return;
+            QueueEndpointStateLocked(change);
+        }
+        // Acquisition holds ownership gates; observers may synchronously dispose the client.
+        ThreadPool.UnsafeQueueUserWorkItem(static core => core.PublishQueuedStates(), this, preferLocal: false);
     }
 
     internal void NotifySubscriptionStateChanged(
@@ -773,7 +787,7 @@ internal sealed class ClientCore : IAsyncDisposable
     internal DedicatedConnectionPool CreateServerPool(RespireEndpoint endpoint, bool controlConnection = false,
         TimeSpan? commandTimeout = null, bool replicaRedirect = false)
     {
-        // All replica redirect owners pass here for every hop. Run user policy outside
+        // Temporary replica redirect owners pass here for every hop. Run user policy outside
         // internal locks, before constructing options, owning a pool, or connecting.
         if (replicaRedirect) ValidateReplicaRedirectDestination(endpoint);
         lock (_hubGate)
@@ -790,7 +804,7 @@ internal sealed class ClientCore : IAsyncDisposable
         }
     }
 
-    private void ValidateReplicaRedirectDestination(RespireEndpoint endpoint)
+    internal void ValidateReplicaRedirectDestination(RespireEndpoint endpoint)
     {
         if (Options.ReplicaRedirectValidator is not { } validator) return;
         bool allowed;
@@ -850,6 +864,8 @@ internal sealed class ClientCore : IAsyncDisposable
         else commandEndpoints = [Endpoint];
         // Replica endpoints used by read views are command endpoints too; report their terminal state.
         commandEndpoints = commandEndpoints.Concat(ReadRouter.GetOpenEndpoints()).Distinct().ToArray();
+        if (RedirectTargets is { } targets)
+            commandEndpoints = commandEndpoints.Concat(targets.GetOpenEndpoints()).Distinct().ToArray();
         lock (_stateGate)
         {
             if (_subscriptionStates is not null)
@@ -878,6 +894,8 @@ internal sealed class ClientCore : IAsyncDisposable
         List<Exception>? disposeErrors = null;
         // Disposed already gates RefreshStandaloneDedicatedPool, so an early abort cannot publish another pool.
         await DisposeOwnerAsync(() => new(_ownedPools.DisposeAllAsync())).ConfigureAwait(false);
+        if (RedirectTargets is { } redirectTargets)
+            await DisposeOwnerAsync(redirectTargets.DisposeAsync).ConfigureAwait(false);
         if (hub is not null) await DisposeOwnerAsync(hub.DisposeAsync).ConfigureAwait(false);
         if (Sentinel is { } sentinel) await DisposeOwnerAsync(sentinel.DisposeAsync).ConfigureAwait(false);
         await DisposeOwnerAsync(ReadRouter.DisposeAsync).ConfigureAwait(false);
