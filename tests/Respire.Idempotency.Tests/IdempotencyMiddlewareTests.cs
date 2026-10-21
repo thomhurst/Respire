@@ -262,6 +262,85 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
     }
 
     [Test]
+    [Arguments("caller")]
+    [Arguments("endpoint")]
+    [Arguments("method")]
+    [Arguments("host")]
+    [Arguments("pathBase")]
+    [Arguments("path")]
+    [Arguments("query")]
+    [Arguments("key")]
+    public async Task MalformedIdentityComponentsCannotClaimOrReplayReplacementCharacterScope(string component)
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var (wrapped, scripts) = WrapScripts(client);
+        var executions = 0;
+        RequestDelegate endpoint = context => context.Response.WriteAsync(Interlocked.Increment(ref executions).ToString());
+        // Seed a completed response first: malformed values must not replay it or access Redis.
+        foreach (var (suffix, malformed) in new[]
+        {
+            ("\uFFFD", false), ("\uD800", true), ("\uD801", true),
+            ("\uDC00", true), ("\uD800x", true), ("\U0001F600", false),
+        })
+        {
+            var value = "tenant-" + suffix;
+            var beginCalls = scripts.BeginCalls;
+            var previousExecutions = executions;
+            using var server = CreateServer(wrapped, endpoint,
+                options =>
+                {
+                    options.CallerScope = _ => component == "caller" ? value : "alice";
+                    options.VerifyRequestBody = true;
+                    options.MaxRequestBodyBytes = 9;
+                },
+                routes: routes => routes.MapPost("/orders", endpoint)
+                    .WithRespireIdempotency(component == "endpoint" ? value : "orders"),
+                prepareRequest: context =>
+                {
+                    switch (component)
+                    {
+                        case "method": context.Request.Method = value; break;
+                        case "host": context.Request.Headers.Host = value; break;
+                        case "pathBase": context.Request.PathBase = "/" + value; break;
+                        case "path": context.Request.Path = "/" + value; break;
+                        case "query": context.Request.QueryString = new QueryString("?" + value); break;
+                        case "key": context.Request.Headers["Idempotency-Key"] = value; break;
+                    }
+                });
+            using var http = server.CreateClient();
+            using var first = await SendAsync(http, body: "same body");
+            using var retry = await SendAsync(http, body: "same body");
+            if (malformed)
+            {
+                // Identity rejection must also precede body fingerprinting's 413 response.
+                using var oversized = await SendAsync(http, body: "oversized body");
+                await Assert.That(oversized.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+                await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+                await Assert.That(retry.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+                await Assert.That(await first.Content.ReadAsStringAsync()).IsEqualTo("");
+                await Assert.That(await retry.Content.ReadAsStringAsync()).IsEqualTo("");
+                await Assert.That(scripts.BeginCalls).IsEqualTo(beginCalls);
+                await Assert.That(executions).IsEqualTo(previousExecutions);
+            }
+            else
+            {
+                await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(retry.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(await first.Content.ReadAsStringAsync()).IsEqualTo((previousExecutions + 1).ToString());
+                await Assert.That(await retry.Content.ReadAsStringAsync()).IsEqualTo(await first.Content.ReadAsStringAsync());
+                await Assert.That(scripts.BeginCalls).IsEqualTo(beginCalls + 2);
+                await Assert.That(executions).IsEqualTo(previousExecutions + 1);
+                if (component == "caller" && suffix == "\uFFFD")
+                {
+                    // Golden key from the original length-prefixed UTF-8 format.
+                    await Assert.That(await client.Keys.ExistsAsync("respire:http-idempotency:v1:"
+                        + "8E2F9A8BE5374A7ECB0772B9491931D60AB2506ABB851C17AAEA671EC47D24FF")).IsTrue();
+                }
+            }
+        }
+    }
+
+    [Test]
     public async Task MissingKeyAndUnmarkedEndpointsBypassStorage()
     {
         await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
@@ -709,7 +788,8 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
 
     private static TestApplication CreateServer(IRespireClient client, RequestDelegate endpoint,
         Action<RespireIdempotencyOptions>? configure = null, Action<IEndpointRouteBuilder>? routes = null,
-        Action<IApplicationBuilder>? before = null, bool kestrel = false, bool compression = false)
+        Action<IApplicationBuilder>? before = null, bool kestrel = false, bool compression = false,
+        Action<HttpContext>? prepareRequest = null)
         => new(new HostBuilder().ConfigureWebHost(web => ConfigureTransport(web, kestrel).ConfigureServices(services =>
         {
             services.AddRouting();
@@ -724,6 +804,11 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         {
             before?.Invoke(app);
             app.UseRouting();
+            if (prepareRequest is not null) app.Use((context, next) =>
+            {
+                prepareRequest(context);
+                return next(context);
+            });
             app.UseRespireIdempotency();
             if (compression) app.UseResponseCompression();
             app.UseEndpoints(endpoints =>
@@ -758,6 +843,7 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         public Action? AfterBegin { get; set; }
         public bool FailComplete { get; set; }
         public bool AcceptCompleteBeforeFailure { get; set; }
+        public int BeginCalls;
 
         protected override object? Invoke(MethodInfo? method, object?[]? arguments)
             => method!.Name == nameof(IRespireScriptCommands.ExecuteLeaseAsync)
@@ -766,6 +852,7 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         private async ValueTask<RespireResult> ExecuteAsync(MethodInfo method, object?[] arguments)
         {
             var source = ((RespireScript)arguments[0]!).Source;
+            if (source.Contains("'EXISTS'", StringComparison.Ordinal)) Interlocked.Increment(ref BeginCalls);
             var complete = source.Contains("'HDEL'", StringComparison.Ordinal);
             if (complete && FailComplete && !AcceptCompleteBeforeFailure)
                 throw new IOException("Completion rejected before Redis executes it.");

@@ -38,7 +38,7 @@ public static class RespireIdempotencyExtensions
             app.ApplicationServices.GetRequiredService<ILogger<RespireIdempotencyMiddleware>>()).InvokeAsync);
     }
 
-    /// <summary>Enables buffering and replay for an endpoint under an application-unique stable name.</summary>
+    /// <summary>Enables buffering and replay for an endpoint under an application-unique stable name. Malformed UTF-16 names reject keyed requests with 400.</summary>
     public static TBuilder WithRespireIdempotency<TBuilder>(this TBuilder builder, string endpointName)
         where TBuilder : IEndpointConventionBuilder
     {

@@ -85,7 +85,11 @@ when every caller in that scope is allowed to see every stored response.
 
 The Redis key hashes the endpoint name, caller scope, HTTP method, host, path base, concrete
 path, raw query string, and idempotency key with unambiguous component boundaries. Different
-route values and query strings therefore have separate claims. Set an application-specific
+route values and query strings therefore have separate claims. Each hashed component must be
+well-formed UTF-16: an unpaired surrogate returns **400** before body fingerprinting, Redis
+access, or endpoint execution. This includes values supplied by trusted scope providers and
+endpoint names. Valid replacement characters (U+FFFD) and surrogate pairs remain accepted;
+existing Redis keys for well-formed identities are unchanged. Set an application-specific
 `KeyPrefix`; change the prefix or endpoint name when a deployment changes response semantics.
 Treat it as reserved storage. Options are startup configuration, not mutable per-request state.
 
