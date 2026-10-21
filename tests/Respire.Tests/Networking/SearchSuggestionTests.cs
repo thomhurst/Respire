@@ -26,7 +26,9 @@ public class SearchSuggestionTests
             + (scores ? protocol == 3 ? ",2\r\n" : "$1\r\n2\r\n" : "")
             + (payloads ? "$-1\r\n" : "");
         await using var server = Server(command => command.StartsWith("FT.SUGGET") ? Encoding.Latin1.GetBytes(reply) : ":2\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This suggestion scenario owns its client and fixed fake score/payload replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var key = new RespireKey(new byte[] { 0, 255, 32 });
         var result = await client.Search.GetSuggestionsAsync(key, "hel ü", new()
         { Fuzzy = true, WithScores = scores, WithPayloads = payloads, Max = 7 });
@@ -54,7 +56,9 @@ public class SearchSuggestionTests
     public async Task AddDeleteAndLengthUseExactWireForms(int protocol)
     {
         await using var server = Server(_ => ":1\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This suggestion scenario owns its client and fixed fake score/payload replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var search = client.Search;
         await Assert.That(await search.AddSuggestionAsync("dictionary", "hello ü", -0.5,
             new() { Increment = true, Payload = new byte[] { 0, 255 } })).IsEqualTo(1L);
@@ -80,7 +84,9 @@ public class SearchSuggestionTests
     public async Task MalformedSuggestionsAreRejected(string reply)
     {
         await using var server = Server(_ => Encoding.UTF8.GetBytes(reply));
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Search.GetSuggestionsAsync("key", "", new() { WithScores = true, WithPayloads = true }))
             .Throws<InvalidOperationException>();
     }
@@ -90,7 +96,9 @@ public class SearchSuggestionTests
     {
         await using var server = Server(command => command.Contains("WITHSCORES")
             ? "*3\r\n$1\r\nx\r\n$3\r\ninf\r\n$0\r\n\r\n"u8.ToArray() : "*0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This suggestion scenario owns its client and fixed fake score/payload replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         await Assert.That((await client.Search.GetSuggestionsAsync("key", "")).Count).IsEqualTo(0);
         var entry = (await client.Search.GetSuggestionsAsync("key", "", new() { WithScores = true, WithPayloads = true }))[0];
         await Assert.That(entry.Score).IsEqualTo(double.PositiveInfinity);
@@ -102,7 +110,9 @@ public class SearchSuggestionTests
     public async Task InvalidArgumentsDoNotSendCommands()
     {
         await using var server = Server(_ => ":0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         var search = client.Search;
         Func<Task>[] calls = [
             () => search.AddSuggestionAsync("key", null!, 1).AsTask(),
@@ -122,7 +132,9 @@ public class SearchSuggestionTests
     public async Task MalformedCountsAreRejected(string reply)
     {
         await using var server = Server(_ => Encoding.UTF8.GetBytes(reply));
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Search.AddSuggestionAsync("key", "text", 1)).Throws<InvalidOperationException>();
         await Assert.That(async () => await client.Search.DeleteSuggestionAsync("key", "text")).Throws<InvalidOperationException>();
         await Assert.That(async () => await client.Search.GetSuggestionCountAsync("key")).Throws<InvalidOperationException>();
@@ -132,7 +144,9 @@ public class SearchSuggestionTests
     public async Task InvalidDeletionFlagIsRejected()
     {
         await using var server = Server(_ => ":2\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This deletion parser scenario owns its client and an invalid fake response flag.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Search.DeleteSuggestionAsync("key", "text")).Throws<InvalidOperationException>();
     }
 
@@ -151,7 +165,9 @@ public class SearchSuggestionTests
     {
         var reply = Encoding.UTF8.GetBytes("*2\r\n$1\r\nx\r\n$" + token.Length + "\r\n" + token + "\r\n");
         await using var server = Server(_ => reply);
+#pragma warning disable RESP010 // This suggestion scenario owns its client and fixed fake score/payload replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         var result = await client.Search.GetSuggestionsAsync("key", "x", new() { WithScores = true });
         var score = result[0].Score!.Value;
         if (double.IsNaN(expected)) await Assert.That(double.IsNaN(score)).IsTrue();
@@ -162,7 +178,9 @@ public class SearchSuggestionTests
     public async Task InvalidMaxNamesThePropertyAndIncludesItsValue()
     {
         await using var server = Server(_ => "*0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         var error = await Assert.That(async () => await client.Search.GetSuggestionsAsync("key", "x", new() { Max = -1 }))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(error!.ParamName).IsEqualTo("options");

@@ -22,7 +22,9 @@ public class SearchProfileTests
         {
             await using var server = Server(command => Frame(command.StartsWith("FT.PROFILE", StringComparison.Ordinal)
                 ? Envelope(protocol, mode, Profile(protocol)) : QueryResult(protocol, mode), protocol));
+#pragma warning disable RESP010 // This profile scenario owns its client and bounded fake profile tree.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             var search = client.Search;
             var query = new RespireSearchQuery(RespireSearchExpression.FromRaw("@title:{$term}"), new()
             {
@@ -75,7 +77,9 @@ public class SearchProfileTests
     public async Task ProfileOwnsNestedIteratorsMetricsAndUnknownFields(int protocol)
     {
         await using var server = Server(_ => Frame(Envelope(protocol, "SEARCH", Profile(protocol)), protocol));
+#pragma warning disable RESP010 // This profile scenario owns its client and bounded fake profile tree.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var result = await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }));
         var shard = result.Profile.Children[0];
         await Assert.That(shard.Metrics["Total profile time"]).IsEqualTo(1.25);
@@ -103,7 +107,9 @@ public class SearchProfileTests
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
             await using var server = Server(_ => Frame(Envelope(protocol, "SEARCH", Profile(protocol)), protocol));
+#pragma warning disable RESP010 // This culture scenario owns its client and fixed numeric profile replies.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             var result = await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }));
             var shard = result.Profile.Children[0];
             await Assert.That(shard.Metrics["Total profile time"]).IsEqualTo(1.25);
@@ -139,7 +145,9 @@ public class SearchProfileTests
                 "Shard #+1", new object[] { "raw", "signed" }),
         }, "Coordinator", Object("Time", 3d));
         await using var server = Server(_ => Frame(Envelope(protocol, mode, profile), protocol));
+#pragma warning disable RESP010 // This profile scenario owns its client and bounded fake profile tree.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         async Task<RespireSearchProfileNode> ReadAsync()
             => mode switch
             {
@@ -180,7 +188,9 @@ public class SearchProfileTests
         var profile = Object("Shards", new object[] { Object("SEARCH", Object("Time", 1d), "VSIM", Object("Time", 2d)) },
             "Coordinator", Object("Result processors profile", new object[] { Object("Type", "Hybrid Merger", "Results processed", 1L) }));
         await using var server = Server(_ => Frame(Envelope(protocol, "HYBRID", profile), protocol));
+#pragma warning disable RESP010 // This profile scenario owns its client and bounded fake profile tree.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var result = await client.Search.ProfileHybridSearchAsync("idx", Hybrid());
         await Assert.That(result.Result.Warnings).IsEquivalentTo(["slow"], CollectionOrdering.Matching);
         await Assert.That(result.Profile.Children[0].Children.Select(child => child.Name).ToArray())
@@ -198,7 +208,9 @@ public class SearchProfileTests
             var result = protocol == 3 || mode == "HYBRID"
                 ? (object)Object("total_results", 0L, "results", Array.Empty<object>()) : new object[] { 0L };
             await using var server = Server(_ => Frame(Envelope(protocol, mode, Profile(protocol), result), protocol));
+#pragma warning disable RESP010 // This profile scenario owns its client and bounded fake profile tree.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             if (mode == "SEARCH") await Assert.That((await client.Search.ProfileSearchAsync("idx", new(All))).Result.Documents.Count).IsEqualTo(0);
             else if (mode == "AGGREGATE") await Assert.That((await client.Search.ProfileAggregateAsync("idx", All)).Result.Rows.Count).IsEqualTo(0);
             else await Assert.That((await client.Search.ProfileHybridSearchAsync("idx", Hybrid())).Result.Documents.Count).IsEqualTo(0);
@@ -213,7 +225,9 @@ public class SearchProfileTests
         var reply = protocol == 2 ? (object)new object[] { QueryResult(protocol, "HYBRID"), Profile(protocol) }
             : Object("Results", QueryResult(protocol, "HYBRID"), "Profile", Profile(protocol));
         await using var server = Server(_ => Frame(reply, protocol));
+#pragma warning disable RESP010 // This profile scenario owns its client and bounded fake profile tree.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var result = await client.Search.ProfileHybridSearchAsync("idx", Hybrid());
         await Assert.That(result.Result.Total).IsEqualTo(1);
         await Assert.That(result.Result.Documents[0].Score).IsEqualTo(0.5);
@@ -241,7 +255,9 @@ public class SearchProfileTests
         foreach (var reply in invalid)
         {
             await using var server = Server(_ => Frame(reply, protocol));
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             await Assert.That(async () => await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true })))
                 .Throws<InvalidOperationException>();
         }
@@ -270,7 +286,9 @@ public class SearchProfileTests
         };
         var count = kind == "scalar" ? 0 : 4;
         await using var server = Server(_ => Frame(envelope, protocol));
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var error = await Assert.That(async () => await client.Search.ProfileHybridSearchAsync("idx", Hybrid()))
             .Throws<InvalidOperationException>();
         await Assert.That(error!.Message).Contains($"type {type}, element count {count}");
@@ -299,7 +317,9 @@ public class SearchProfileTests
 
         var replies = new Queue<object>([Nested(64), Nested(65), Object("Time", 2d)]);
         await using var server = Server(_ => Frame(Envelope(protocol, "SEARCH", replies.Dequeue()), protocol));
+#pragma warning disable RESP010 // This depth-limit scenario owns its client and finite 64/65-level profile replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var accepted = await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }));
         var owned = accepted.Profile.Properties.Values.Single();
         for (var i = 1; i < 64; i++) owned = owned.Items[unknown ? 0 : 1];
@@ -317,7 +337,9 @@ public class SearchProfileTests
         var fields = ((Fields)QueryResult(2, "HYBRID")).Values;
         var envelope = fields.Concat(new object[] { Profile(2), Object(), Object() }).ToArray();
         await using var server = Server(_ => Frame(envelope, 2));
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         var error = await Assert.That(async () => await client.Search.ProfileHybridSearchAsync("idx", Hybrid()))
             .Throws<InvalidOperationException>();
         await Assert.That(error!.Message).Contains("unsupported HYBRID profile layout");
@@ -339,7 +361,9 @@ public class SearchProfileTests
         {
             var replies = new Queue<object>([Object(field, "1.25"), Object(field, "not numeric")]);
             await using var server = Server(_ => Frame(Envelope(protocol, "SEARCH", replies.Dequeue()), protocol));
+#pragma warning disable RESP010 // Each metric case owns its client and two scripted valid/invalid profile replies.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             var result = await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }));
             await Assert.That(result.Profile.Metrics[field]).IsEqualTo(1.25);
             var error = await Assert.That(async () => await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true })))
@@ -354,7 +378,9 @@ public class SearchProfileTests
     public async Task ValidationCancellationAndPrefixesSendNoProfileCommand(int protocol)
     {
         await using var server = Server(_ => Frame(Envelope(protocol, "SEARCH", Profile(protocol)), protocol));
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Search.ProfileSearchAsync(" ", new(All))).Throws<ArgumentException>();
         await Assert.That(async () => await client.Search.ProfileSearchAsync("idx", null!)).Throws<ArgumentNullException>();
         await Assert.That(async () => await client.Search.ProfileAggregateAsync("idx", default)).Throws<ArgumentException>();
@@ -378,7 +404,9 @@ public class SearchProfileTests
         foreach (var mode in new[] { "SEARCH", "AGGREGATE", "HYBRID" })
         {
             await using var server = Server(_ => "-NOPERM denied\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This error scenario owns its client and scripted errors/capability responses.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             var error = await Assert.That(async () => await RunAsync(client.Search, mode)).Throws<RespireServerException>();
             await Assert.That(error!.Code).IsEqualTo("NOPERM");
             await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("COMMAND", StringComparison.Ordinal))).IsFalse();
@@ -402,7 +430,9 @@ public class SearchProfileTests
                 written.TrySetResult();
                 return true;
             };
+#pragma warning disable RESP010 // This cancellation probe owns its client and withheld reply to verify FIFO draining.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             using var cancelled = new CancellationTokenSource();
             var pending = RunAsync(client.Search, mode, cancelled.Token);
             await written.Task.WaitAsync(TimeSpan.FromSeconds(5));

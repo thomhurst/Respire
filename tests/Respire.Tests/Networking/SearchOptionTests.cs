@@ -33,7 +33,9 @@ public class SearchOptionTests
             _ => (new() { WithSortKeys = true }, ["WITHSORTKEYS"]),
         };
         await using var server = Server(Array(Integer(0)));
+#pragma warning disable RESP010 // This Search option scenario owns its client and bounded fake result frames.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         await client.Search.SearchAsync("idx", new(RespireSearchQueryBuilder.MatchAll(), options));
         await Assert.That(LastArguments(server)).IsEquivalentTo(new[] { "FT.SEARCH", "idx", "*" }.Concat(expected).ToArray(), CollectionOrdering.Matching);
     }
@@ -42,7 +44,9 @@ public class SearchOptionTests
     public async Task InKeysPreservesEmptyAndBinaryKeys()
     {
         await using var server = Server(Array(Integer(0)));
+#pragma warning disable RESP010 // This Search option scenario owns its client and bounded fake result frames.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         byte[] binary = [0, 255, 128];
         await client.Search.SearchAsync("idx", new(RespireSearchQueryBuilder.MatchAll(), new() { InKeys = [RespireKey.Empty, binary] }));
         var arguments = server.ReceivedArguments.Last();
@@ -68,7 +72,9 @@ public class SearchOptionTests
             _ => (definition with { Fields = [new("title", RespireSearchFieldType.Text) { Phonetic = RespireSearchPhoneticMatcher.English }] }, []),
         };
         await using var server = Server("+OK\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This Search option scenario owns its client and bounded fake result frames.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         await client.Search.CreateIndexAsync("idx", selected);
         var suffix = option == 7 ? new[] { "SCHEMA", "title", "TEXT", "PHONETIC", "dm:en" } : ["SCHEMA", "title", "TEXT"];
         await Assert.That(LastArguments(server)).IsEquivalentTo(new[] { "FT.CREATE", "idx", "ON", "HASH" }.Concat(expected).Concat(suffix).ToArray(), CollectionOrdering.Matching);
@@ -91,7 +97,9 @@ public class SearchOptionTests
                 ? Map(Bulk("id"), Bulk("doc:1"), Bulk("score"), score, Bulk("payload"), Bulk(payload), Bulk("sortkey"), Bulk("#5"))
                 : Map(Bulk("id"), Bulk("doc:1"), Bulk("score"), score, Bulk("payload"), Bulk(payload), Bulk("sortkey"), Bulk("#5"), Bulk("extra_attributes"), fields)));
         await using var server = Server(reply, profile: entryPoint == 2);
+#pragma warning disable RESP010 // This Search option scenario owns its client and bounded fake result frames.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var query = new RespireSearchQuery(RespireSearchQueryBuilder.Text("dogs"), new()
         {
             NoContent = noContent, WithScores = true, ExplainScore = true, WithPayloads = true, WithSortKeys = true,
@@ -138,7 +146,9 @@ public class SearchOptionTests
             _ => new() { Highlight = new() { Fields = [""] } },
         };
         await using var server = Server(Array(Integer(0)));
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Search.SearchAsync("idx", new(RespireSearchQueryBuilder.MatchAll(), options))).Throws<ArgumentException>();
         await Assert.That(server.ReceivedArguments.Any(args => Encoding.UTF8.GetString(args[0]) == "FT.SEARCH")).IsFalse();
     }
@@ -148,7 +158,9 @@ public class SearchOptionTests
     {
         var top = Array(Array(Bulk("title"), Bulk("dogs"), Bulk("rating"), Bulk("5")));
         await using var server = Server(Array(Integer(1), Array(Bulk("top"), top)));
+#pragma warning disable RESP010 // This Search option scenario owns its client and bounded fake result frames.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         var result = await client.Search.AggregateAsync("idx", RespireSearchQueryBuilder.MatchAll(), new()
         {
             Stages = [RespireSearchAggregateStage.GroupBy([], RespireSearchReducer.Collect(new()
@@ -204,7 +216,9 @@ public class SearchOptionTests
             var reply = protocol == 2 ? Array([Integer(2), .. rows])
                 : Map(Bulk("total_results"), Integer(2), Bulk("results"), Array(rows.ToArray()));
             await using var server = Server(reply);
+#pragma warning disable RESP010 // This Search option scenario owns its client and bounded fake result frames.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             var result = await client.Search.SearchAsync("idx", new(RespireSearchQueryBuilder.MatchAll(), options));
             await Assert.That(result.Documents.Select(document => document.Id).ToArray()).IsEquivalentTo(["doc:0", "doc:1"], CollectionOrdering.Matching);
             await Assert.That(result.Documents[1].Score).IsEqualTo(options.WithScores ? 0.5 : (double?)null);
@@ -230,7 +244,9 @@ public class SearchOptionTests
         };
         keys.Clear(); fields[0] = "body";
         await using var server = Server(Array(Integer(0)));
+#pragma warning disable RESP010 // This Search option scenario owns its client and bounded fake result frames.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         await client.Search.SearchAsync("idx", new(RespireSearchQueryBuilder.MatchAll(), options with { }));
         await Assert.That(server.ReceivedArguments.Last()[5]).IsEquivalentTo(new byte[] { 0, 255 }, CollectionOrdering.Matching);
         await Assert.That(options.InFields[0]).IsEqualTo("title");
@@ -253,7 +269,9 @@ public class SearchOptionTests
             _ => valid with { Fields = [new("title", RespireSearchFieldType.Text) { Phonetic = (RespireSearchPhoneticMatcher)99 }] },
         };
         await using var server = Server("+OK\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Search.CreateIndexAsync("idx", invalid)).Throws<ArgumentException>();
         await Assert.That(server.ReceivedArguments.Any(args => Encoding.UTF8.GetString(args[0]) == "FT.CREATE")).IsFalse();
     }
@@ -281,7 +299,9 @@ public class SearchOptionTests
         var reply = protocol == 2 ? Array(Integer(1), Bulk("doc:1"), badScore)
             : Map(Bulk("total_results"), Integer(1), Bulk("results"), Array(Map(Bulk("id"), Bulk("doc:1"), Bulk("score"), badScore)));
         await using var server = Server(reply);
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Search.SearchAsync("idx", new(RespireSearchQueryBuilder.MatchAll(),
             new() { NoContent = true, WithScores = true, ExplainScore = true }))).Throws<InvalidOperationException>();
     }
@@ -294,7 +314,9 @@ public class SearchOptionTests
         var reply = protocol == 2 ? Array(Integer(1), Bulk("doc:1"), fields)
             : Map(Bulk("total_results"), Integer(1), Bulk("results"), Array(Map(Bulk("id"), Bulk("doc:1"), Bulk("extra_attributes"), fields)));
         await using var server = Server(reply);
+#pragma warning disable RESP010 // This Search option scenario owns its client and bounded fake result frames.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var result = await client.Search.SearchAsync("idx", new(RespireSearchQueryBuilder.MatchAll(), new() { Highlight = new(), Summarize = new() }));
         await Assert.That(result.Documents[0].TextResults["title"]).IsEqualTo(new RespireSearchTextResult("<b>dogs</b>...", true, true));
         await Assert.That(result.Documents[0].TextResults.ContainsKey("items")).IsFalse();
@@ -309,7 +331,9 @@ public class SearchOptionTests
     public async Task PhoneticMatchersUseServerTokens(RespireSearchPhoneticMatcher matcher, string token)
     {
         await using var server = Server("+OK\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This Search option scenario owns its client and bounded fake result frames.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         await client.Search.CreateIndexAsync("idx", new() { Fields = [new("title", RespireSearchFieldType.Text) { Phonetic = matcher }] });
         await Assert.That(LastArguments(server)[^2..]).IsEquivalentTo(new[] { "PHONETIC", token }, CollectionOrdering.Matching);
     }

@@ -51,7 +51,9 @@ public class SearchClientTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = client.Search;
 
         var result = await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"), new()
@@ -74,7 +76,9 @@ public class SearchClientTests
                 ? "*2\r\n:1\r\n*2\r\n$5\r\nitems\r\n*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n"u8.ToArray()
                 : null,
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var result = await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"));
@@ -95,7 +99,9 @@ public class SearchClientTests
                 _ => "%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%1\r\n$16\r\nextra_attributes\r\n%1\r\n$5\r\nitems\r\n*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n"u8.ToArray(),
             },
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var result = await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"));
@@ -112,7 +118,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyAggregate,
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"), new()
@@ -139,7 +147,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyAggregate,
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"), new()
@@ -171,7 +181,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyAggregate,
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"), new()
@@ -213,7 +225,9 @@ public class SearchClientTests
                     _ => null,
                 },
             };
+#pragma warning disable RESP010 // This cursor scenario owns its client and finite fake pages, errors and cleanup replies.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             var search = new RespireSearchClient(client);
 
             var first = await search.AggregateWithCursorAsync("idx", RespireSearchExpression.FromRaw("*"),
@@ -242,7 +256,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : null,
         };
+#pragma warning disable RESP010 // This cursor validation scenario owns its client and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.ReadCursorAsync("idx", 0)).Throws<ArgumentOutOfRangeException>();
@@ -265,7 +281,9 @@ public class SearchClientTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // This cursor scenario owns its client and finite fake pages, errors and cleanup replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var values = new List<string?>();
@@ -290,7 +308,9 @@ public class SearchClientTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // This cursor scenario owns its client and finite fake pages, errors and cleanup replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await foreach (var _ in search.AggregatePagesAsync("idx", RespireSearchExpression.FromRaw("*"), cursor: new() { Count = 1 }))
@@ -315,7 +335,9 @@ public class SearchClientTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // This cursor scenario owns its client and finite fake pages, errors and cleanup replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
         var pages = 0;
 
@@ -346,7 +368,9 @@ public class SearchClientTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // This cursor scenario owns its client and finite fake pages, errors and cleanup replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.AggregateWithCursorAsync("idx", RespireSearchExpression.FromRaw("*"))).Throws<InvalidOperationException>();
@@ -374,7 +398,9 @@ public class SearchClientTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // This cursor scenario owns its client and finite fake pages, errors and cleanup replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var first = await search.AggregateWithCursorAsync("books", RespireSearchExpression.FromRaw("*"));
@@ -410,12 +436,14 @@ public class SearchClientTests
             ? Encoding.ASCII.GetBytes(
                 $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n")
             : null;
+#pragma warning disable RESP010 // This routing scenario owns its client and isolated fake cluster topology.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var page = await search.ReadCursorAsync(index, 42, count: 5);
@@ -442,7 +470,9 @@ public class SearchClientTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // This error scenario owns its client and scripted errors/capability responses.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var exception = await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)))
@@ -464,7 +494,9 @@ public class SearchClientTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // This error scenario owns its client and scripted errors/capability responses.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)))
@@ -483,7 +515,9 @@ public class SearchClientTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // This error scenario owns its client and scripted errors/capability responses.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)))
@@ -502,7 +536,9 @@ public class SearchClientTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // This error scenario owns its client and scripted errors/capability responses.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         for (var attempt = 0; attempt < 2; attempt++)
@@ -523,7 +559,9 @@ public class SearchClientTests
                 ? "-NOPERM this user has no permissions to run the 'ft.hybrid' command\r\n"u8.ToArray()
                 : null,
         };
+#pragma warning disable RESP010 // This error scenario owns its client and scripted errors/capability responses.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)))
@@ -561,7 +599,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyAggregate,
         };
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.AggregateAsync("idx", default)).Throws<ArgumentException>();
@@ -595,7 +635,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : "*1\r\n:0\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var exception = await Assert.That(async () => await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("@name:$name"), new()
@@ -624,7 +666,9 @@ public class SearchClientTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var plan = await search.ExplainAsync("idx", RespireSearchExpression.FromRaw("query"), new() { Cli = true });
@@ -639,7 +683,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : "$4\r\nplan\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await search.ExplainAsync("idx", RespireSearchExpression.FromRaw("*=>[KNN 1 @embedding $vector]"), new() { Dialect = 2 });
@@ -686,7 +732,9 @@ public class SearchClientTests
                 ? "*3\r\n:1\r\n$3\r\ndoc\r\n*2\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n"u8.ToArray()
                 : null,
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var result = await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("query"), new() { Limit = (0, 1) }));
@@ -705,7 +753,9 @@ public class SearchClientTests
                 ? "*3\r\n:1\r\n$3\r\ndoc\r\n*3\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n$4\r\nlost\r\n"u8.ToArray()
                 : null,
         };
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("*")))).Throws<InvalidOperationException>();
@@ -720,7 +770,9 @@ public class SearchClientTests
                 ? Hello
                 : [.. "*3\r\n:1\r\n$3\r\n"u8, 0, 255, 128, .. "\r\n*2\r\n$6\r\nvector\r\n$4\r\n"u8, 0, 255, 128, 1, .. "\r\n"u8],
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var result = await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("*")));
@@ -739,7 +791,9 @@ public class SearchClientTests
                 ? Hello
                 : [.. "%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%1\r\n$2\r\nid\r\n$3\r\n"u8, 0, 255, 128, .. "\r\n"u8],
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var result = await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("*")));
@@ -763,7 +817,9 @@ public class SearchClientTests
                     _ => null,
                 },
             };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             var search = new RespireSearchClient(client);
 
             var result = await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("*"), "embedding", new byte[] { 1, 2 }, 3));
@@ -783,7 +839,9 @@ public class SearchClientTests
                 _ => "%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%3\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$7\r\n__score\r\n$3\r\n0.5\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n"u8.ToArray(),
             },
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var result = await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3));
@@ -804,7 +862,9 @@ public class SearchClientTests
                 ? "*8\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n*4\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n$8\r\nwarnings\r\n*1\r\n$4\r\nslow\r\n$14\r\nexecution_time\r\n$3\r\n0.1\r\n"u8.ToArray()
                 : null,
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var result = await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:$term"), "embedding", new byte[] { 1, 2 }, 3)
@@ -837,7 +897,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : null,
         };
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)
@@ -854,7 +916,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : null,
         };
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var exception = await Assert.That(async () => await search.VectorSearchAsync(
@@ -871,7 +935,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : null,
         };
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.VectorSearchAsync(
@@ -890,7 +956,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyResp3Search,
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await search.VectorSearchAsync("idx", new("embedding", new byte[] { 1, 2 }, 3));
@@ -912,7 +980,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyResp3Search,
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await search.VectorSearchAsync("idx",
@@ -950,7 +1020,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : EmptyResp3Search,
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await search.VectorSearchAsync("idx", new("embedding-v2", new byte[] { 1, 2 }, 3) { ScoreField = "distance-score" });
@@ -968,7 +1040,9 @@ public class SearchClientTests
                 ? "*4\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n*8\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$7\r\n__score\r\n$3\r\n0.5\r\n$2\r\nid\r\n$5\r\nother\r\n$5\r\nscore\r\n$4\r\nhigh\r\n"u8.ToArray()
                 : null,
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         var result = await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)
@@ -999,7 +1073,9 @@ public class SearchClientTests
                     _ => null,
                 },
             };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             var search = new RespireSearchClient(client);
 
             var result = await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)
@@ -1019,7 +1095,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : "+OK\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.CreateIndexAsync("idx", new()
@@ -1050,7 +1128,9 @@ public class SearchClientTests
         {
             ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : "+OK\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
         await search.CreateIndexAsync("idx", new()
@@ -1096,7 +1176,9 @@ public class SearchClientTests
                     _ => null,
                 },
             };
+#pragma warning disable RESP010 // This Search wire-format scenario owns its client and scripted RESP replies.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             var search = new RespireSearchClient(client);
 
             var info = await search.GetIndexInfoAsync("idx");
@@ -1136,7 +1218,9 @@ public class SearchClientTests
                 return true;
             },
         };
+#pragma warning disable RESP010 // This cancellation probe owns its client and withheld reply to verify FIFO draining.
         await using var client = await RespireClient.ConnectAsync(Options(server, (RespireProtocol)protocol));
+#pragma warning restore RESP010
         var search = new RespireSearchClient(client);
         using var cancellation = new CancellationTokenSource();
         var all = RespireSearchExpression.FromRaw("*");
