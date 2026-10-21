@@ -1,4 +1,4 @@
-param([int]$WrapperProcessId, [long]$PeakWorkingSetBytes, [switch]$SnapshotOnly)
+param([int]$WrapperProcessId, [long]$PeakWorkingSetBytes, [switch]$SnapshotOnly, [switch]$RunnerFailure)
 
 # Run in the surviving guard host: after STATUS_DLL_INIT_FAILED even the
 # runner's Node-based artifact action may be unable to start. Never launch a
@@ -10,7 +10,13 @@ function Write-StartupEvidence([string]$Message) {
 }
 
 if (-not $SnapshotOnly) {
-    Write-StartupEvidence "exit=0xC0000142 guardPid=$PID wrapperPid=$WrapperProcessId peakWorkingSetBytes=$PeakWorkingSetBytes os=$([Environment]::OSVersion.Version)"
+    if ($RunnerFailure) {
+        # A failed action alone does not establish a native loader status.
+        Write-StartupEvidence "runner-action-failure hostPid=$PID os=$([Environment]::OSVersion.Version)"
+    }
+    else {
+        Write-StartupEvidence "exit=0xC0000142 guardPid=$PID wrapperPid=$WrapperProcessId peakWorkingSetBytes=$PeakWorkingSetBytes os=$([Environment]::OSVersion.Version)"
+    }
 }
 try {
     $current = [Diagnostics.Process]::GetCurrentProcess()
