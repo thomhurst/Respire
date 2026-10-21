@@ -1000,6 +1000,8 @@ public class ReadEndpointRoutingTests
     [Arguments(false, 1000)]
     [Arguments(false, 30000)]
     [Arguments(true, null)]
+    // Short real-time budgets must run apart from allocating Cluster wire fixtures.
+    [NotInParallel]
     public async Task FunctionPropagationHonorsBudgetAndCallerCancellation(bool cancel, int? timeoutMilliseconds)
     {
         const string source = "#!lua name=readlib\nredis.register_function{function_name='readfn', callback=function() return 1 end, flags={'no-writes'}}";
@@ -1029,6 +1031,13 @@ public class ReadEndpointRoutingTests
             FunctionPropagationLimit = FunctionPropagationLimit,
         });
         using var cancellation = new CancellationTokenSource();
+        // Exercise propagation deadlines after both handshakes and replica role validation.
+        // Cold setup can otherwise exhaust the receipt wait before propagation even starts.
+        using (var setup = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            await client.Core.EnsureConnectedAsync(setup.Token);
+            await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, setup.Token, default);
+        }
         var function = RespireFunctionLibrary.Create(source).Function("readfn", readOnly: true);
         var execution = client.WithReadFrom(RespireReadFrom.Replica).Functions
             .ExecuteAsync(function, cancellationToken: cancellation.Token).AsTask();
