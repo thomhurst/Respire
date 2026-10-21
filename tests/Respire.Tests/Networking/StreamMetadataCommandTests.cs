@@ -85,11 +85,13 @@ public class StreamMetadataCommandTests
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
+#pragma warning disable RESP010 // This test owns the cluster client and topology to isolate prefixed stream metadata routing.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("{tenant}:");
         await Assert.That(await view.Streams.CreateConsumerAsync("events", "group", "consumer")).IsTrue();
         await view.Streams.SetLastIdAsync("events", "9-0", 3, "2-0");

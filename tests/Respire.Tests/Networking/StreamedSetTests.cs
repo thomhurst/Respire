@@ -28,10 +28,12 @@ public sealed class StreamedSetTests
             SuppressReply = command => command == "ASKING",
         };
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // This test owns the client and dedicated pool so retiring an ASK route cannot affect other uploads.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", oldTarget.Port)],
         });
+#pragma warning restore RESP010
         var pool = client.Core.DedicatedPool;
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", oldTarget.Port,
             new() { Protocol = RespireProtocol.Resp2, CommandTimeout = TimeSpan.FromSeconds(10) });
@@ -64,12 +66,14 @@ public sealed class StreamedSetTests
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
         server.ReplyOverride = (_, command) => command == "HELLO 3"
             ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray() : FakeRespServer.OkReply;
+#pragma warning disable RESP010 // This test owns the client and seeded cache entry to isolate streamed SET invalidation.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
             ClientSideCache = new(),
             ThreadPoolMonitoring = false,
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         RespireKey key = "cached";
         var read = cache.BeginRead(in key);
@@ -98,6 +102,7 @@ public sealed class StreamedSetTests
             : FakeRespServer.OkReply;
         var stall = mode != "cluster-rent";
         var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+#pragma warning disable RESP010 // This test owns the lazy client and stalled transport factory to isolate upload acquisition deadlines.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
@@ -119,6 +124,7 @@ public sealed class StreamedSetTests
                 return new NetworkStream(socket, ownsSocket: true);
             },
         });
+#pragma warning restore RESP010
         if (mode == "cluster-rent")
         {
             await client.PingAsync();
@@ -168,12 +174,14 @@ public sealed class StreamedSetTests
             else secondReceived.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // This test owns the client and dedicated pool to compare canceled and replacement upload sockets.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
             Protocol = RespireProtocol.Resp2,
             CommandTimeout = TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         var pool = await client.Core.GetDedicatedPoolAsync(timeout.Token, observation: default);
         var connection = await pool.RentAsync(timeout.Token, kind: Respire.Internal.DedicatedLeaseKind.Streaming);
         using (await connection.SendCheckedAsync(new Cmd(new Verb("PING")), timeout.Token)) { }
@@ -237,6 +245,7 @@ public sealed class StreamedSetTests
     public async Task SetReadOnlySequenceWritesEverySegment()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and counting peer to verify the segmented SET payload on the wire.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -245,6 +254,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
 
         var first = new BufferSegment(new byte[] { 1, 2 });
         var last = first.Append(new byte[] { 3, 4, 5 });
@@ -271,6 +281,7 @@ public sealed class StreamedSetTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // This test owns the client to compare a stalled dedicated upload with multiplexed command progress.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -280,6 +291,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
         const int length = RespireConnection.StreamChunkSize + 1;
         using var cancellation = new CancellationTokenSource();
         var source = new PartialThenBlockedStream(new byte[length], RespireConnection.StreamChunkSize,
@@ -343,6 +355,7 @@ public sealed class StreamedSetTests
     public async Task SetReadOnlySequenceHandlesEmptySegmentsAndEmptyPayload()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and counting peer to isolate empty sequence and payload framing.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -351,6 +364,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
 
         var first = new BufferSegment(Array.Empty<byte>());
         var last = first.Append(new byte[] { 1, 2 }).Append(Array.Empty<byte>()).Append(new byte[] { 3 })
@@ -547,6 +561,7 @@ public sealed class StreamedSetTests
     public async Task SurplusSourceBytesAreLeftUnread()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and counting peer to verify that SET consumes only the declared source length.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -555,6 +570,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
         using var source = new MemoryStream(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 });
 
         await Assert.That(await client.Strings.SetAsync("prefix", source, 4)).IsTrue();
@@ -567,6 +583,7 @@ public sealed class StreamedSetTests
     public async Task SeekableStreamWithUnsupportedLengthFallsBackToStreaming()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client to isolate streaming fallback when a seekable source cannot report its length.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -575,6 +592,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
         using var source = new UnknownLengthSeekableStream(new byte[] { 7, 8, 9 });
 
         await Assert.That(await client.Strings.SetAsync("wrapped", source, 3)).IsTrue();
@@ -586,6 +604,7 @@ public sealed class StreamedSetTests
     public async Task UndefinedSetWhenIsRejectedBeforeAnyFrameIsSent()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and counting peer to prove invalid SET conditions cannot write a frame.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -594,6 +613,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
         const RespireSetWhen undefined = (RespireSetWhen)3;
         using var source = new MemoryStream(new byte[] { 1 });
         RespireValue value = "v";
@@ -635,6 +655,7 @@ public sealed class StreamedSetTests
     public async Task WarmClientStreamsSetPayloads()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client so explicit warm-up and subsequent streamed SET frames are isolated.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -643,6 +664,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
         await client.PingAsync();
         using var source = new MemoryStream(new byte[] { 1, 2, 3 });
         await Assert.That(await client.Strings.SetAsync("stream", source, 3)).IsTrue();
@@ -679,6 +701,7 @@ public sealed class StreamedSetTests
     public async Task StreamedSetSupportsCommandTimeoutsLongerThanTimerRange()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client with its deliberately long command timeout to isolate timer-range handling.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -688,6 +711,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
         using var source = new MemoryStream(new byte[] { 1, 2, 3 });
 
         await Assert.That(await client.Strings.SetAsync("long-timeout", source, 3)).IsTrue();
@@ -698,6 +722,7 @@ public sealed class StreamedSetTests
     public async Task EarlyEndOfStreamAfterFirstChunkClosesConnectionBeforeAnotherFrameCanFollow()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and dedicated lease to verify socket disposal after a truncated upload frame.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -706,6 +731,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
 
         // The first chunk is sent, so the frame is open on the wire when the source ends.
         var source = new GeneratedStream(RespireConnection.StreamChunkSize + 50);
@@ -720,6 +746,7 @@ public sealed class StreamedSetTests
     public async Task EarlyEndOfStreamWithinFirstChunkDiscardsLeaseWithoutSendingHeader()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and counting peer to verify failed prefetch sends no SET header.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -728,6 +755,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
 
         // The first chunk is read before the header is queued, so nothing reaches the wire.
         var source = new GeneratedStream(50);
@@ -742,6 +770,7 @@ public sealed class StreamedSetTests
     public async Task ShortSeekableStreamIsRejectedBeforeAnyFrameIsSent()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and counting peer to verify short seekable sources fail before SET framing.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -750,6 +779,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
 
         var source = new MemoryStream(new byte[50]) { Position = 10 };
         await Assert.That(async () => await client.Strings.SetAsync("short", source, 41))
@@ -763,6 +793,7 @@ public sealed class StreamedSetTests
     public async Task EmptySetCanUseSeekableStreamPositionedAtEnd()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and counting peer to isolate an empty SET at the source's end position.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -771,6 +802,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
         var source = new MemoryStream([1, 2]) { Position = 2 };
 
         await Assert.That(await client.Strings.SetAsync("empty", source, 0)).IsTrue();
@@ -898,6 +930,7 @@ public sealed class StreamedSetTests
     public async Task CancellationDuringPayloadWriteClosesConnection()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and paused source to verify cancellation closes a partially written upload.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -906,6 +939,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
 
         using var cancellation = new CancellationTokenSource();
         // The first chunk is sent before the source pauses, so the frame is open on the wire.
@@ -961,6 +995,7 @@ public sealed class StreamedSetTests
     public async Task CancellationDuringFirstChunkReadDiscardsLeaseWithoutSendingHeader()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and paused source to verify canceled prefetch leaves the next command usable.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -969,6 +1004,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
 
         using var cancellation = new CancellationTokenSource();
         var source = new PausedStream();
@@ -1080,6 +1116,7 @@ public sealed class StreamedSetTests
     public async Task ConcurrentCommandRunsWhileStreamedSetIsStalled()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and paused source to isolate ordinary command progress during an upload.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -1088,6 +1125,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
         var source = new PausedStream();
         var set = client.Strings.SetAsync("ordered", source, 4).AsTask();
         await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1159,6 +1197,7 @@ public sealed class StreamedSetTests
     public async Task NonCooperativeSourceReadCannotOutlastCommandTimeout()
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and noncooperative source to isolate upload timeout and buffer cleanup.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
@@ -1168,6 +1207,7 @@ public sealed class StreamedSetTests
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
+#pragma warning restore RESP010
         var source = new NonCooperativeStream();
         var set = client.Strings.SetAsync("stalled-source", source, 1).AsTask();
         try
@@ -1288,11 +1328,13 @@ public sealed class StreamedSetTests
     public async Task SourceReadThatIgnoresTheDeadlineDoesNotQueueTheHeader(bool routeRetires)
     {
         await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and pool used by the explicit route to verify a late source read cannot queue a header.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var pool = client.Core.DedicatedPool;
         if (routeRetires) await pool.DisposeAsync();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()

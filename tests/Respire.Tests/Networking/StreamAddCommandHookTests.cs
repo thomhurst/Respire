@@ -17,7 +17,9 @@ public class StreamAddCommandHookTests
     {
         await using var server = Server();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This test owns the client and hook to isolate rejected and pre-canceled XADD admission.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook, automatic));
+#pragma warning restore RESP010
         var rejected = new InvalidOperationException("Rejected XADD");
         hook.Before = _ => throw rejected;
         await Assert.That(async () => await Add(client, optional)).ThrowsExactly<InvalidOperationException>();
@@ -52,7 +54,9 @@ public class StreamAddCommandHookTests
                 return "-ERR Invalid stream ID specified as stream command argument\r\n"u8.ToArray();
             return fail ? "-ERR final failure\r\n"u8.ToArray() : "$3\r\n1-0\r\n"u8.ToArray();
         };
+#pragma warning disable RESP010 // This test owns the client so identity fallback and final hook outcomes cannot leak between scenarios.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         await Assert.That(await Add(client, optional)).IsEqualTo((RespireStreamId?)"1-0");
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
         await Assert.That(hook.Completed.Single().Context.Command).IsEqualTo("XADD");
@@ -77,7 +81,9 @@ public class StreamAddCommandHookTests
                 ? "-ERR Invalid stream ID specified as stream command argument\r\n"u8.ToArray()
                 : "$-1\r\n"u8.ToArray();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This test owns the client and hook to compare required and optional null XADD conversion.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         await Assert.That(async () => await Add(client, optional: false)).ThrowsExactly<RespireProtocolException>();
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Failed);
         await Assert.That(hook.Completed.Single().Error is RespireProtocolException).IsTrue();
@@ -93,7 +99,9 @@ public class StreamAddCommandHookTests
     {
         await using var server = Server();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This test owns the client to isolate ordinary and explicit-identity XADD hook conversion.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook, automatic: false));
+#pragma warning restore RESP010
         var options = new RespireStreamAddOptions
         {
             Idempotency = explicitIdentity ? RespireStreamIdempotency.Manual("producer", "message") : null,
@@ -120,7 +128,9 @@ public class StreamAddCommandHookTests
             return "-ERR Invalid stream ID specified as stream command argument\r\n"u8.ToArray();
         };
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This test owns the client and cancellation hook to isolate the identity probe/fallback boundary.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         await Assert.That(async () => await Add(client, false, canceled.Token)).Throws<OperationCanceledException>();
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Canceled);
         await Assert.That(hook.Completed.Single().Context.CancellationToken).IsEqualTo(canceled.Token);
@@ -140,10 +150,12 @@ public class StreamAddCommandHookTests
         if (timeout) server.SuppressReply = command => command.StartsWith("XADD ", StringComparison.Ordinal)
             && !command.Contains(" IDMP ", StringComparison.Ordinal);
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This test owns the client and deadline settings to isolate fallback hook completion.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         {
             CommandTimeout = timeout ? TimeSpan.FromMilliseconds(500) : null,
         });
+#pragma warning restore RESP010
         if (timeout)
         {
             await Assert.That(async () => await Add(client, false)).ThrowsExactly<RespireTimeoutException>();
@@ -164,7 +176,9 @@ public class StreamAddCommandHookTests
     {
         await using var server = Server();
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This test owns the client and reentrant hook so nested command scopes remain isolated.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         Task<RespireStreamId?>? nested = null;
         var entered = 0;
         hook.Before = _ =>
@@ -184,11 +198,13 @@ public class StreamAddCommandHookTests
     {
         await using var server = new RespireFakeServer();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This test owns the retry-enabled client and injected lost reply to verify one XADD hook scope.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
         {
             CommandHook = hook,
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteChecked },
         });
+#pragma warning restore RESP010
         using var fault = server.InjectFault("XADD", RespireFakeFault.Disconnect(afterExecution: true));
         await Add(client, false).WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);

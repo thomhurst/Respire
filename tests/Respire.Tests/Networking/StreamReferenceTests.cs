@@ -75,7 +75,9 @@ public class StreamReferenceTests
     public async Task InvalidArgumentsFailBeforeIoOrEnqueue()
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // This test owns a lazy client to verify invalid stream reference policies and IDs fail before I/O or enqueueing.
         await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         RespireStreamId[][] invalid = [[], ["$"], ["-"], ["+"], ["1-*"], ["1-"], ["18446744073709551616-0"]];
@@ -136,7 +138,9 @@ public class StreamReferenceTests
     public async Task CancellationBeforeDispatchDoesNotSendWrites()
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // This test owns a lazy client to verify pre-canceled stream reference writes never reach the peer.
         await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.That(async () => await client.Streams.RemoveAsync("events", RespireStreamReferencePolicy.DeleteReferences,
@@ -153,8 +157,10 @@ public class StreamReferenceTests
         var slot = ClusterHash.GetSlot("{tenant}:events");
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
+#pragma warning disable RESP010 // This test owns the cluster client and scripted owner to isolate prefixed stream reference deletion routing.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
             { Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("{tenant}:");
         await view.Streams.RemoveAsync("events", RespireStreamReferencePolicy.KeepReferences, "1-0");
         await view.Streams.AcknowledgeAndRemoveAsync("events", "group", RespireStreamReferencePolicy.DeleteReferences, "1-0");

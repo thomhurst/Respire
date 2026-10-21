@@ -37,11 +37,15 @@ public sealed class StreamedSetAllocationTests
         {
             var before = GC.GetAllocatedBytesForCurrentThread();
             var fill = reader.StartRead(CancellationToken.None);
+            if (!fill.IsCompletedSuccessfully) throw new InvalidOperationException("Exact MemoryStream fill suspended.");
+#pragma warning disable RESP009 // The successful-completion guard makes this read nonblocking and keeps the allocation probe on its measuring thread.
+            var chunk = fill.Result;
+#pragma warning restore RESP009
             // Recreating the completed Task is also a causal control for the removed site.
-            var anchor = recreateTaskControl ? Task.FromResult(fill.Result) : null;
+            var anchor = recreateTaskControl ? Task.FromResult(chunk) : null;
             allocated += GC.GetAllocatedBytesForCurrentThread() - before;
             GC.KeepAlive(anchor);
-            if (!fill.IsCompletedSuccessfully || fill.Result.Length != RespireConnection.StreamChunkSize)
+            if (chunk.Length != RespireConnection.StreamChunkSize)
                 throw new InvalidOperationException("Unexpected exact MemoryStream chunk.");
         }
         return allocated;
@@ -57,14 +61,14 @@ public sealed class StreamedSetAllocationTests
         using var source = new MemoryStream(payload);
         using var reader = new RespireConnection.StreamPayloadReader(source, payload.Length);
         var first = reader.StartRead(CancellationToken.None);
-        await Assert.That(first.Result.ToArray()).IsEquivalentTo(payload[..RespireConnection.StreamChunkSize]);
+        await Assert.That((await first).ToArray()).IsEquivalentTo(payload[..RespireConnection.StreamChunkSize]);
         var second = reader.StartRead(CancellationToken.None);
         await Assert.That(ReferenceEquals(first, second)).IsTrue();
-        await Assert.That(second.Result.ToArray()).IsEquivalentTo(
+        await Assert.That((await second).ToArray()).IsEquivalentTo(
             payload[RespireConnection.StreamChunkSize..(2 * RespireConnection.StreamChunkSize)]);
         var tail = reader.StartRead(CancellationToken.None);
         await Assert.That(ReferenceEquals(second, tail)).IsFalse();
-        await Assert.That(tail.Result.ToArray()).IsEquivalentTo(payload[(2 * RespireConnection.StreamChunkSize)..]);
+        await Assert.That((await tail).ToArray()).IsEquivalentTo(payload[(2 * RespireConnection.StreamChunkSize)..]);
         await Assert.That(reader.IsComplete).IsTrue();
         await Assert.That(reader.ConsumedPrefix.Length).IsEqualTo(17);
         await Assert.That(reader.UnknownPositionReadError).IsNull();
