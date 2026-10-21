@@ -1193,9 +1193,14 @@ public class ClientSideCacheTests
             HelloReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
-            "$5\r\nvalue\r\n"u8.ToArray())
+            FakeRespServer.OkReply,
+            "$5\r\nvalue\r\n"u8.ToArray());
+        target.ReplyOverride = (_, command) =>
         {
-            MinimumCommandsBeforeReply = 2,
+            // Setup replies can arrive in separate reads. Gate only the application
+            // batch so tracking setup never waits for ASKING before it can complete.
+            if (command == "ASKING") target.MinimumCommandsBeforeReply = 3;
+            return null;
         };
         var slot = ClusterHash.GetSlot("key");
         await using var seed = new FakeRespServer(

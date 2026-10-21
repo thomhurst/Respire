@@ -40,8 +40,8 @@ function Write-ComparisonHost {
 # Invoke-AgentDotNet. Compare that boundary with the exact same harmless payload
 # inside containment, in one surviving host. DirectOnly never invokes containment;
 # use a separate fresh runner so its direct launches cannot follow guard cleanup.
-# This is an opt-in investigation,
-# never a retry of a failed smoke test and never a substitute for those tests.
+# This is an opt-in investigation, never a retry of a failed smoke test and never
+# a substitute for those tests.
 $pwsh = (Get-Process -Id $PID).Path
 $arguments = @('-NoProfile', '-NonInteractive', '-Command', $ProbeCommand)
 $clock = [Diagnostics.Stopwatch]::StartNew()
