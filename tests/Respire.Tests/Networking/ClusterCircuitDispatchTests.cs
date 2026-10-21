@@ -183,12 +183,21 @@ public class ClusterCircuitDispatchTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task DisconnectedRouteRecordsFailureAndRejectsFurtherReconnect()
+    {
+        // Compile the cold backlog/discovery/failure paths before exercising the five-second
+        // budget. Separate clients and servers keep warmup circuit and wire history isolated.
+        await AssertDisconnectedRouteRecoveryAsync(TimeSpan.FromSeconds(10));
+        await AssertDisconnectedRouteRecoveryAsync(TimeSpan.FromSeconds(5));
+    }
+
+    private static async Task AssertDisconnectedRouteRecoveryAsync(TimeSpan commandTimeout)
     {
         await using var server = Server();
         await using var unavailable = Server();
 #pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
-        await using var client = await RespireClient.ConnectAsync(Options(server));
+        await using var client = await RespireClient.ConnectAsync(Options(server) with { CommandTimeout = commandTimeout });
 #pragma warning restore RESP010
         await client.GetStringAsync("warm");
         var router = client.Core.Cluster!;
