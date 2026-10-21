@@ -99,6 +99,7 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
         private readonly CancellationTokenSource _stop = new();
         private static long _nextRecoveryEpisode;
         private RespireConnection? _observed;
+        private Action? _observedFailure;
         private readonly ClientSideCacheCoordinator _cache;
         private volatile bool _stopping;
         internal bool RecoveryExhausted
@@ -172,7 +173,7 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
             _stopping = true;
             lock (_observationGate)
             {
-                if (_observed is { } connection) connection.PendingCommandsFailing -= OnPendingCommandsFailing;
+                if (_observed is { } connection) connection.PendingCommandsFailing -= _observedFailure;
             }
             await _stop.CancelAsync().ConfigureAwait(false);
             await Node.DisposeAsync().ConfigureAwait(false);
@@ -183,17 +184,26 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
 
         internal void Observe(RespireConnection connection)
         {
+            Action onFailure;
             lock (_observationGate)
             {
                 if (!ReferenceEquals(_observed, connection))
                 {
                     // This synchronous fence is independent of queued lifecycle observers
                     // and reconnect policy exhaustion, and precedes pending reply completion.
-                    connection.PendingCommandsFailing += OnPendingCommandsFailing;
+                    var fenced = 0;
+                    _observedFailure = () =>
+                    {
+                        if (Interlocked.Exchange(ref fenced, 1) == 0) OnPendingCommandsFailing();
+                    };
+                    connection.PendingCommandsFailing += _observedFailure;
                     _observed = connection;
                 }
+                onFailure = _observedFailure!;
             }
-            if (!connection.IsConnected) OnPendingCommandsFailing();
+            // Subscription can race peer loss. The socket callback and this check share
+            // one fence, including later observations of the same disconnected socket.
+            if (!connection.IsConnected) onFailure();
         }
 
         private void OnPendingCommandsFailing()
@@ -225,7 +235,8 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
             Node.SlotStateChanged += (_, change) =>
             {
                 if (_stopping) return;
-                if (change.State != RespireConnectionState.Connected) OnPendingCommandsFailing();
+                // PendingCommandsFailing owns the synchronous fence. Slot transitions
+                // can repeat for that same socket as recovery progresses or exhausts.
                 // Optional destinations report their own recovery without participating
                 // in aggregate command connection health.
                 core.QueueRecoveryStateChanged(change with { ReconnectSource = RespireReconnectSource.Dedicated });

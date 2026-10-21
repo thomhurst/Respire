@@ -1,5 +1,9 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text;
+using Respire.Commands;
+using Respire.Networking;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -9,6 +13,86 @@ namespace Respire.Tests.Networking;
 public class ReplicaRedirectTargetRecoveryTests
 {
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DisconnectFencesContinuityOncePerObservedSocket(bool retry)
+    {
+        await using var target = new FakeRespServer(8) { ReplyOverride = (_, command) => TargetReply(command) };
+        await using var source = Source(target.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(source.Port, retry));
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        using var lease = await client.Core.RedirectTargets!.AcquireAsync(new("127.0.0.1", target.Port), default);
+        var connection = lease!.Connection;
+        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        connection.PendingCommandsFailing += () => failed.TrySetResult();
+        var before = client.ClientSideCache!.GetStatistics().ContinuityFlushes;
+
+        target.CloseConnections();
+        await failed.Task.WaitAsync(Limit);
+        // Re-observing the failed selection must not fence the same loss a second time.
+        lease.UseConnection(connection);
+        await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - before).IsEqualTo(1L);
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+    }
+
+    [Test, NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetainedTargetMovingRefreshesExpiredAcquisitionToken(bool circuit)
+    {
+        await using var replacement = new FakeRespServer(8) { ReplyOverride = (_, command) => TargetReply(command) };
+        await using var target = new FakeRespServer(8)
+        {
+            ReplyOverride = (_, command) => TargetReply(command),
+            SuppressReply = command => command == "PING",
+        };
+        await using var source = Source(target.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(source.Port, retry: true) with
+        {
+            CommandTimeout = TimeSpan.FromSeconds(1), MaintenanceRelaxedTimeout = Limit,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            CircuitBreaker = circuit ? new() : null, MaxInflightCommands = 2,
+        });
+        await Assert.That(await client.GetStringAsync("seed")).IsEqualTo("value");
+        var activities = new ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static activitySource => activitySource.Name == "Respire",
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => activities.Enqueue(activity),
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var lease = await client.Core.RedirectTargets!.AcquireAsync(new("127.0.0.1", target.Port), default);
+        var original = lease!.Connection;
+        await target.SendRawAsync(Bytes(">3\r\n+MIGRATING\r\n:1\r\n:10\r\n"));
+        using var timeout = new CancellationTokenSource(Limit + Limit);
+        while (!original.HasMaintenanceWindow) await Task.Delay(10, timeout.Token);
+        var accepted = original.SendAsync(new RawCommand(RespCommands.Ping)).AsTask();
+        while (!target.ReceivedCommands.Contains("PING")) await Task.Delay(10, timeout.Token);
+
+        // A tracked GET needs two ring slots, so it waits behind the accepted PING.
+        var pending = client.GetStringAsync("key", timeout.Token).AsTask();
+        while (!source.ReceivedCommands.Contains("GET key")) await Task.Delay(10, timeout.Token);
+        await Task.Delay(TimeSpan.FromMilliseconds(1500), timeout.Token);
+        await Assert.That(pending.IsCompleted).IsFalse();
+        var node = original.Multiplexer!;
+        var announcement = node.CaptureMovingAnnouncement(0, original,
+            new MaintenanceNotification("MOVING", 1, 10, new("127.0.0.1", replacement.Port)));
+        var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        node.MovingHandoffPublished += () => published.TrySetResult();
+        node.QueueDedicatedMovingHandoff(original, announcement, static () => true);
+        await published.Task.WaitAsync(Limit);
+        await target.SendRawAsync(FakeRespServer.PongReply);
+        using var reply = await accepted.WaitAsync(Limit);
+
+        await Assert.That(await pending.WaitAsync(Limit)).IsEqualTo("value");
+        await Assert.That(target.ReceivedCommands.Contains("GET key")).IsFalse();
+        await Assert.That(replacement.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+        var trace = activities.Single(activity => Equals(activity.GetTagItem("db.operation.name"), "GET"));
+        await Assert.That(trace.GetTagItem("server.port")).IsEqualTo(replacement.Port);
+    }
 
     [Test]
     [Arguments(false)]

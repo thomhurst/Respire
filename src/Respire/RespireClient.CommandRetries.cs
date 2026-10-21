@@ -67,9 +67,11 @@ public sealed partial class RespireClient
     // Pool misses allocate the entire state machine, including fields for branches never taken.
     private ValueTask<RespValue> SendImmediateRetryCoreAsync<TCommand>(string operation, ImmediateRetryCommand<TCommand> command,
         ImmediateRetryState state, CancellationToken callerToken, CommandDeadline deadline,
-        RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection = null) where TCommand : struct, IRespCommand
+        RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection = null,
+        Action? onTrackingReady = null, bool retainTracking = false) where TCommand : struct, IRespCommand
         => _core.Options.EnableReplicaRedirects
-            ? SendImmediateRedirectRetryCoreAsync(operation, command, state, callerToken, deadline, observation, track, backlogConnection)
+            ? SendImmediateRedirectRetryCoreAsync(operation, command, state, callerToken, deadline, observation, track,
+                backlogConnection, onTrackingReady, retainTracking)
             : SendImmediateRetryWithoutRedirectsAsync(operation, command, state, callerToken, deadline, observation, track, backlogConnection);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -270,6 +272,15 @@ public sealed partial class RespireClient
                             admission = default;
                             connection = replacement;
                             deadline = rerouted;
+                            timeout?.Dispose();
+                            timeout = deadline.IsSet
+                                ? CommandTimeoutCancellation.Create(callerToken,
+                                    TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
+                                : null;
+                            token = timeout?.Token ?? callerToken;
+                            telemetryEndpoint = new(connection.Host, connection.Port);
+                            observation.UseEndpoint(telemetryEndpoint, token);
+                            telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                             trackedTarget.UseConnection(connection);
                             onTrackingReady?.Invoke();
                             if (_core.Circuits is not null) admission = AcquireCircuit(connection, token);
