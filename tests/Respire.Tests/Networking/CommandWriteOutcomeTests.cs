@@ -232,7 +232,9 @@ public class CommandWriteOutcomeTests
                 transport = await GatedTransport.ConnectAsync(host, port, 0, token) });
         var selected = connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await transport!.WriteEntered.Task.WaitAsync(Guard);
+#pragma warning disable RESP010 // This client only owns the transaction context for the gated transport fixture and is disposed with the test.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = { new("127.0.0.1", server.Port) } });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var accepted = 0;
         var queued = connection.SendTransactionAttemptAsync(FakeRespServer.PingFrame, 1,
