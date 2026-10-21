@@ -30,7 +30,9 @@ public class ReplicaDispatchReviewTests
         await Assert.That(RespireTelemetry.IsOperationEnabled("STRLEN")).IsFalse();
         await using var primary = StandaloneReplicaReadyTests.Server();
         await using var replica = StandaloneReplicaReadyTests.Server();
+#pragma warning disable RESP010 // This dispatch scenario owns and disposes its client to isolate backlog publication and hedge deadlines.
         await using var client = await RespireClient.ConnectAsync(StandaloneReplicaReadyTests.Options(primary, replica));
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         var connection = await router.GetConnectionAsync(policy, default, default);
         var view = client.WithReadFrom(policy);
@@ -107,7 +109,9 @@ public class ReplicaDispatchReviewTests
             RetryPolicy = null,
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(100), MaximumExtraLoadPercent = 100 },
         };
+#pragma warning disable RESP010 // This dispatch scenario owns and disposes its client to isolate backlog publication and hedge deadlines.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         // Prepare the physical sockets without recording successful dispatch selection.
         var selected = await router.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), default, default);

@@ -39,12 +39,14 @@ public class MGetRoutingTests
         {
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : SetupReply(command),
         };
+#pragma warning disable RESP010 // This MGET scenario owns and disposes its client to isolate slot routing, caching, and hedging state.
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
             Endpoints = [new("127.0.0.1", seed.Port)],
             ClientSideCache = cacheMode == 0 ? null : new() { CoalesceConcurrentMisses = cacheMode == 2 },
         });
+#pragma warning restore RESP010
         var client = owner.WithKeyPrefix("tenant:");
         await Assert.That(await client.Strings.GetManyAsync("{route}a", "{route}b", "{route}a"))
             .IsEquivalentTo(new string?[] { "a", "b", "a" }, CollectionOrdering.Matching);
@@ -73,6 +75,7 @@ public class MGetRoutingTests
                 ? "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray() : SetupReply(command),
             SuppressReply = command => command.StartsWith("MGET ", StringComparison.Ordinal),
         };
+#pragma warning disable RESP010 // This MGET scenario owns and disposes its client to isolate slot routing, caching, and hedging state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
@@ -82,6 +85,7 @@ public class MGetRoutingTests
             ClientSideCache = new(),
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(10), MaximumExtraLoadPercent = 100 },
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await Assert.That(await client.Strings.GetManyAsync(["one", "two"], deadline.Token))
             .IsEquivalentTo(new string?[] { "a", "b" }, CollectionOrdering.Matching);

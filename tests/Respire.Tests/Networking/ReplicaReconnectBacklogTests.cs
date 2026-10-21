@@ -45,6 +45,7 @@ public class ReplicaReconnectBacklogTests
         };
         var blockPrimary = false;
         var resumePrimary = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
@@ -63,6 +64,7 @@ public class ReplicaReconnectBacklogTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         await using var view = client.WithReadFrom(RespireReadFrom.ReplicaPreferred);
         using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"])) { }
@@ -124,6 +126,7 @@ public class ReplicaReconnectBacklogTests
         await using var primary = Server();
         await using var first = Server();
         await using var second = Server();
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -131,6 +134,7 @@ public class ReplicaReconnectBacklogTests
             Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         await using var view = client.WithReadFrom(policy);
         using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"])) { }
@@ -173,6 +177,7 @@ public class ReplicaReconnectBacklogTests
         await using var primary = Server();
         await using var first = Server();
         await using var second = Server();
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -180,6 +185,7 @@ public class ReplicaReconnectBacklogTests
             Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         var original = new ReadAffinity();
         await router.GetCursorConnectionAsync(RespireReadFrom.Replica, original, false, default, default);
@@ -227,6 +233,7 @@ public class ReplicaReconnectBacklogTests
         var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var commandTimeout = TimeSpan.FromMilliseconds(500);
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -249,6 +256,7 @@ public class ReplicaReconnectBacklogTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         await using var view = client.WithReadFrom(RespireReadFrom.Replica);
         var pending = ExecuteAsync((RespireClient)view, surface, "first");
         try
@@ -424,6 +432,7 @@ public class ReplicaReconnectBacklogTests
             ReplyOverride = (_, command) => command.StartsWith("SENTINEL REPLICAS ", StringComparison.Ordinal)
                 ? ReplicasReply([replica.Port]) : "*0\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
@@ -431,6 +440,7 @@ public class ReplicaReconnectBacklogTests
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
             ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0 },
         });
+#pragma warning restore RESP010
         await using var view = client.WithReadFrom(RespireReadFrom.Replica);
         await view.GetStringAsync("warm");
         var router = client.Core.ReadRouter;
@@ -469,6 +479,7 @@ public class ReplicaReconnectBacklogTests
         await using var primary = Server();
         await using var first = Server();
         await using var second = Server();
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -476,6 +487,7 @@ public class ReplicaReconnectBacklogTests
             Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
         await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
@@ -526,11 +538,13 @@ public class ReplicaReconnectBacklogTests
     public async Task StrictReplicaWithNoConfiguredReplicasFailsAfterPrimaryFallback()
     {
         await using var primary = Server();
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [],
             Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null,
         });
+#pragma warning restore RESP010
         // The public view API already rejects an empty configured set. Exercise the
         // router boundary directly so its recovery gate cannot wait on a static empty set.
         var router = client.Core.ReadRouter;
@@ -546,11 +560,13 @@ public class ReplicaReconnectBacklogTests
     {
         await using var primary = Server();
         using var unavailable = new ReservedUnavailablePort();
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", unavailable.Port)],
             Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
         });
+#pragma warning restore RESP010
         await client.WithReadFrom(RespireReadFrom.ReplicaPreferred).GetStringAsync("fallback");
         await Assert.That(async () => await client.Core.ReadRouter.SelectForDispatchAsync(
             RespireReadFrom.Replica, default, default).AsTask().WaitAsync(Limit))
@@ -566,6 +582,7 @@ public class ReplicaReconnectBacklogTests
         await using var primary = Server();
         await using var cold = Server();
         await using var healthy = Server();
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -573,6 +590,7 @@ public class ReplicaReconnectBacklogTests
             Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         var endpoints = ReadEndpointRouter.Order(client.Core.Options.ReplicaEndpoints);
         var rotation = typeof(ReadEndpointRouter).GetField("_nextReplica",
@@ -606,11 +624,13 @@ public class ReplicaReconnectBacklogTests
     {
         await using var primary = Server();
         await using var cold = Server();
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", cold.Port)],
             Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
         });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         await router.GetConnectionAsync(RespireReadFrom.Primary, default, default);
         var validating = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -647,12 +667,14 @@ public class ReplicaReconnectBacklogTests
             if (validated.Count == 2) bothSockets.TrySetResult();
             return ReplicaRole;
         };
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             Protocol = RespireProtocol.Resp2, Connections = 2, CommandTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(5),
         });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
         await Assert.That(validated.Count).IsEqualTo(1);
@@ -679,11 +701,13 @@ public class ReplicaReconnectBacklogTests
     {
         await using var primary = Server();
         await using var replica = Server();
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
         });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
         var selected = await router.SelectForDispatchAsync(RespireReadFrom.PrimaryPreferred, default, default).AsTask().WaitAsync(Limit);
@@ -697,12 +721,14 @@ public class ReplicaReconnectBacklogTests
     {
         await using var primary = Server();
         await using var replica = Server();
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
         var pending = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -724,12 +750,14 @@ public class ReplicaReconnectBacklogTests
     {
         await using var primary = Server();
         await using var replica = Server();
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         var warm = await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
         var entry = (await router.SelectAsync(RespireReadFrom.Replica, default, default)).Replica!;
@@ -782,6 +810,7 @@ public class ReplicaReconnectBacklogTests
         var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var replacementDials = 0;
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
@@ -804,6 +833,7 @@ public class ReplicaReconnectBacklogTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         var view = client.WithReadFrom(RespireReadFrom.Replica);
         await view.GetStringAsync("warm");
         Volatile.Write(ref ports, [replacement.Port]);
@@ -839,12 +869,14 @@ public class ReplicaReconnectBacklogTests
             ReplyOverride = (_, command) => command.StartsWith("SENTINEL REPLICAS ", StringComparison.Ordinal)
                 ? ReplicasReply(Volatile.Read(ref ports)) : "*0\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
             Protocol = RespireProtocol.Resp2, Connections = 1, ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
             CommandTimeout = null, ConnectTimeout = Limit,
         });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         var fresh = new ReadAffinity();
         var continuation = new ReadAffinity();
@@ -962,6 +994,7 @@ public class ReplicaReconnectBacklogTests
             ReplyOverride = (_, command) => command.StartsWith("SENTINEL REPLICAS ", StringComparison.Ordinal)
                 ? ReplicasReply(Volatile.Read(ref ports)) : "*0\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
@@ -969,6 +1002,7 @@ public class ReplicaReconnectBacklogTests
             CommandTimeout = Limit, ConnectTimeout = Limit,
             CircuitBreaker = circuitOpen ? new() { MinimumFailureCount = 1, MaximumSampleCount = 1, OpenDuration = Limit } : null,
         });
+#pragma warning restore RESP010
         var view = client.WithReadFrom(RespireReadFrom.Replica);
         await Assert.That(await view.GetStringAsync("warm")).IsEqualTo("value");
         Volatile.Write(ref ports, []);

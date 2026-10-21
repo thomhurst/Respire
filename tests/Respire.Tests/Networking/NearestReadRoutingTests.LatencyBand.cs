@@ -33,11 +33,13 @@ public partial class NearestReadRoutingTests
                 ? Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{primary.Port}\r\n")
                 : "$7\r\nreplica\r\n"u8.ToArray()
             : replicaReply(id, command);
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica) with
         {
             UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null,
             ReadFrom = policy, ClientAvailabilityZone = "local", ReplicaLatencyTolerance = TimeSpan.Zero,
         });
+#pragma warning restore RESP010
         client.Core.Cluster!.NearestLatency = new((_, _) => ValueTask.FromResult(10L), () => 0);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         string? value;
@@ -71,11 +73,13 @@ public partial class NearestReadRoutingTests
         var original = primary.ReplyOverride!;
         primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383, replica.Port, replacement.Port) : original(id, command);
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica) with
         {
             UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null,
             ReadFrom = policy, ClientAvailabilityZone = "local", ReplicaLatencyTolerance = TimeSpan.Zero,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         router.NearestLatency = new((connection, _) => ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L), () => 0);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -112,11 +116,13 @@ public partial class NearestReadRoutingTests
         var original = primary.ReplyOverride!;
         primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383, replica.Port) : original(id, command);
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica) with
         {
             UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null,
             ReadFrom = policy, ClientAvailabilityZone = "local", ReplicaLatencyTolerance = TimeSpan.Zero,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         router.NearestLatency = new((_, _) => ValueTask.FromResult(10L), () => 0);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -154,10 +160,12 @@ public partial class NearestReadRoutingTests
         var changedReplica = replicas[changeSelected ? 1 : 0];
         var remaining = replicas[changeSelected ? 0 : 1];
         var trigger = replicas[2];
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = await RespireClient.ConnectAsync(Options(primary, replicas) with
         {
             ReplicaLatencyTolerance = TimeSpan.Zero, ClientAvailabilityZone = "local",
         });
+#pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         var changed = false;
         var sampled = new List<int>();
@@ -206,12 +214,14 @@ public partial class NearestReadRoutingTests
         var original = primary.ReplyOverride!;
         primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383, replica.Port) : original(id, command);
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica) with
         {
             UseCluster = cluster, ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
             ClusterTopologyRefreshInterval = null, ReadFrom = policy,
             ClientAvailabilityZone = "local", ReplicaLatencyTolerance = TimeSpan.Zero,
         });
+#pragma warning restore RESP010
         var primarySamples = 0;
         var sampler = new ReadLatencySampler<RespireConnection>((connection, _) =>
         {
@@ -258,6 +268,7 @@ public partial class NearestReadRoutingTests
         seed.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383, replica.Port) : original(id, command);
         var attempts = 0;
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = RespireClient.Create(Options(cluster ? seed : primary, replica) with
         {
             UseCluster = cluster, ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
@@ -275,6 +286,7 @@ public partial class NearestReadRoutingTests
                 return tcp.GetStream();
             },
         });
+#pragma warning restore RESP010
         if (cluster)
             client.Core.Cluster!.NearestLatency = new((_, _) => ValueTask.FromResult(10L), () => 0);
         else
@@ -314,11 +326,13 @@ public partial class NearestReadRoutingTests
         var original = primary.ReplyOverride!;
         primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383, removed.Port, remaining.Port, trigger.Port) : original(id, command);
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = await RespireClient.ConnectAsync(Options(primary, removed, remaining, trigger) with
         {
             UseCluster = cluster, ClusterTopologyRefreshInterval = null, ReplicaLatencyTolerance = TimeSpan.Zero,
             ReplicaEndpoints = cluster ? [] : replicas.Select(server => new RespireEndpoint("127.0.0.1", server.Port)).ToArray(),
         });
+#pragma warning restore RESP010
         var changed = false;
         var sampled = new List<int>();
         var sampler = new ReadLatencySampler<RespireConnection>(async (connection, _) =>
@@ -367,6 +381,7 @@ public partial class NearestReadRoutingTests
         var original = primary.ReplyOverride!;
         primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383, replica.Port) : original(id, command);
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica) with
         {
             UseCluster = cluster, ClusterTopologyRefreshInterval = null,
@@ -374,6 +389,7 @@ public partial class NearestReadRoutingTests
             ReadFrom = RespireReadFrom.AzAffinityReplicasAndPrimary, ClientAvailabilityZone = "local",
             ReplicaLatencyTolerance = TimeSpan.Zero,
         });
+#pragma warning restore RESP010
         var primarySamples = 0;
         var sampler = new ReadLatencySampler<RespireConnection>((connection, _) =>
         {
@@ -398,6 +414,7 @@ public partial class NearestReadRoutingTests
         var original = primary.ReplyOverride!;
         primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383, replica.Port) : original(id, command);
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica) with
         {
             UseCluster = cluster, ClusterTopologyRefreshInterval = null,
@@ -412,6 +429,7 @@ public partial class NearestReadRoutingTests
                 return tcp.GetStream();
             },
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("primary");
     }
@@ -428,6 +446,7 @@ public partial class NearestReadRoutingTests
         seed.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383, replica.Port) : original(id, command);
         var attempts = 0;
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = RespireClient.Create(Options(cluster ? seed : primary, replica) with
         {
             UseCluster = cluster, ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
@@ -445,6 +464,7 @@ public partial class NearestReadRoutingTests
                 return tcp.GetStream();
             },
         });
+#pragma warning restore RESP010
         if (cluster)
             client.Core.Cluster!.NearestLatency = new((_, _) => ValueTask.FromResult(10L), () => 0);
         else
@@ -471,12 +491,14 @@ public partial class NearestReadRoutingTests
                 ? Encoding.ASCII.GetBytes($"*2\r\n+127.0.0.1\r\n+{primary.Port}\r\n")
                 : command.StartsWith("SENTINEL REPLICAS ") ? SentinelReplicaReply(replica.Port) : "*0\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = await RespireClient.ConnectAsync(Options(cluster ? primary : sentinel) with
         {
             UseCluster = cluster, SentinelPrimaryName = cluster ? null : "mymaster",
             ClusterTopologyRefreshInterval = null, ReadFrom = RespireReadFrom.AzAffinityReplicasAndPrimary,
             ClientAvailabilityZone = "local", ReplicaLatencyTolerance = TimeSpan.Zero,
         });
+#pragma warning restore RESP010
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (cluster)
@@ -538,6 +560,7 @@ public partial class NearestReadRoutingTests
                         $"*6\r\n+ip\r\n+127.0.0.1\r\n+port\r\n+{node.Port}\r\n+flags\r\n+slave\r\n")))
                     : "*0\r\n"u8.ToArray(),
         };
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = await RespireClient.ConnectAsync(Options(topology == 2 ? sentinel : primary, replicas) with
         {
             UseCluster = topology == 1, SentinelPrimaryName = topology == 2 ? "mymaster" : null,
@@ -545,6 +568,7 @@ public partial class NearestReadRoutingTests
             ClusterTopologyRefreshInterval = null, ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
             ReadFrom = policy, ClientAvailabilityZone = "local", ReplicaLatencyTolerance = TimeSpan.FromTicks(5),
         });
+#pragma warning restore RESP010
         var zoneAware = ReadFallbackPolicy.UsesAvailabilityZone(policy);
         var sampler = new ReadLatencySampler<RespireConnection>((connection, _) => ValueTask.FromResult(
             connection.Port == primary.Port ? 100L : connection.Port == fast.Port ? 10L
@@ -591,6 +615,7 @@ public partial class NearestReadRoutingTests
         var original = primary.ReplyOverride!;
         primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383, replica.Port) : original(id, command);
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica) with
         {
             UseCluster = cluster, ClusterTopologyRefreshInterval = null,
@@ -598,6 +623,7 @@ public partial class NearestReadRoutingTests
             ReadFrom = RespireReadFrom.AzAffinityReplicasAndPrimary, ClientAvailabilityZone = "local",
             ReplicaLatencyTolerance = TimeSpan.MaxValue,
         });
+#pragma warning restore RESP010
         var sampler = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == primary.Port ? 1_000L : 1L));
         if (cluster) client.Core.Cluster!.NearestLatency = sampler;
@@ -631,10 +657,12 @@ public partial class NearestReadRoutingTests
                     : SlotReply(primary.Port, 0, 16383, promoted.Port, remaining.Port)
                 : original(id, command);
         }
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = await RespireClient.ConnectAsync(Options(primary) with
         {
             UseCluster = true, ClusterTopologyRefreshInterval = null, ReplicaLatencyTolerance = TimeSpan.FromTicks(5),
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var promotedNode = KnownReplicaRoutes(router, 1)!.Nodes.Single(node => node.ActiveConnectionEndpoint.Port == promoted.Port);
         router.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
@@ -666,11 +694,13 @@ public partial class NearestReadRoutingTests
                     : SlotReply(primary.Port, 0, 16383, promoted.Port, remaining.Port)
                 : original(id, command);
         }
+#pragma warning disable RESP010 // This latency-band scenario owns and disposes its client to isolate measured candidates and routing policy.
         await using var client = await RespireClient.ConnectAsync(Options(primary) with
         {
             UseCluster = true, ClusterTopologyRefreshInterval = null, ClientAvailabilityZone = "local",
             ReplicaLatencyTolerance = TimeSpan.Zero,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var promotedNode = KnownReplicaRoutes(router, 1)!.Nodes.Single(node => node.ActiveConnectionEndpoint.Port == promoted.Port);
         router.NearestLatency = new ReadLatencySampler<RespireConnection>(async (connection, _) =>

@@ -15,11 +15,13 @@ public partial class ReadDedicatedRoutingTests
         await using var replica = Node("replica", true);
         var original = new IOException("Original dedicated acquisition failure.");
         var newer = new IOException("Newer replica selection failure.");
+#pragma warning disable RESP010 // This progress scenario owns and disposes its client to isolate candidate failures and endpoint aliases.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], RespireReadFrom.Primary) with
         {
             TestingStreamFactory = (host, port, token) => port == replica.Port
                 ? ValueTask.FromException<Stream>(newer) : OpenSocketAsync(host, port, token),
         });
+#pragma warning restore RESP010
         var attempt = new ReadAttempt();
         await Assert.That(attempt.TryAdd(client.Core.Multiplexer.ActiveConnectionEndpoint, original)).IsTrue();
         using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -49,7 +51,9 @@ public partial class ReadDedicatedRoutingTests
             Endpoints = [new("localhost", primary.Port)],
             TestingStreamFactory = OpenStreamAsync,
         };
+#pragma warning disable RESP010 // This progress scenario owns and disposes its client to isolate candidate failures and endpoint aliases.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         var core = client.Core;
         var original = core.TestingDedicatedPoolOverride;
         // Model selection and acquisition observing different endpoint identities while
