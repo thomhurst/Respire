@@ -28,6 +28,9 @@ public interface IRespirePathHashCommands
     /// <summary>Gets owned values in requested field order, retaining missing fields as null. Valkey: PHGET.</summary>
     ValueTask<byte[]?[]> GetFieldsAsync(RespireKey key, RespireKey path, ReadOnlySpan<RespireKey> fields, CancellationToken cancellationToken = default);
 
+    /// <summary>Gets one owned value in an array, retaining a missing field as null. Valkey: PHGET.</summary>
+    ValueTask<byte[]?[]> GetFieldsAsync(RespireKey key, RespireKey path, RespireKey field, CancellationToken cancellationToken = default);
+
     /// <summary>Gets a flat array of owned values in requested path-group and field order. Valkey: PHMGET.</summary>
     ValueTask<byte[]?[]> GetManyAsync(RespireKey key, ReadOnlySpan<RespirePathHashRead> paths, CancellationToken cancellationToken = default);
 
@@ -43,6 +46,9 @@ public interface IRespirePathHashCommands
     /// <summary>Deletes specified fields and returns their count; no fields deletes the entire path and returns 0 or 1. Valkey: PHDEL.</summary>
     ValueTask<long> RemoveAsync(RespireKey key, RespireKey path, ReadOnlySpan<RespireKey> fields = default, CancellationToken cancellationToken = default);
 
+    /// <summary>Deletes one field and returns its count. Valkey: PHDEL.</summary>
+    ValueTask<long> RemoveAsync(RespireKey key, RespireKey path, RespireKey field, CancellationToken cancellationToken = default);
+
     /// <summary>Deletes paths whose bytes start with the prefix; empty prefix removes all paths. Valkey: PHDELPREFIX.</summary>
     ValueTask<long> RemovePrefixAsync(RespireKey key, RespireKey prefix, CancellationToken cancellationToken = default);
 
@@ -52,7 +58,7 @@ public interface IRespirePathHashCommands
     /// <summary>Gets ancestor byte prefixes from shortest to longest; count retains deepest matches after the byte-length limit. Valkey: PHPREFIXES.</summary>
     ValueTask<RespirePathHashEntry[]> PrefixesAsync(RespireKey key, RespireKey query, long? count = null, long? maxPathLength = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Traverses lexicographic paths with an opaque cursor; count is a server hint, and cursor 0 ends traversal. Valkey: PHSCAN.</summary>
+    /// <summary>Traverses lexicographic paths with an opaque cursor; count is a server hint, and cursor 0 ends traversal. Manual paging does not guarantee replica affinity; use ScanAsync to pin an enumeration. Valkey: PHSCAN.</summary>
     ValueTask<RespirePathHashPage> ScanPageAsync(RespireKey key, string cursor = "0", RespireKey? prefix = null, int count = 100, CancellationToken cancellationToken = default);
 
     /// <summary>Serializes one field and applies a field condition. Valkey: PHSET.</summary>
@@ -77,6 +83,12 @@ public interface IRespirePathHashCommands
 
 internal sealed class PathHashCommands(RespireClient client) : IRespirePathHashCommands
 {
+    public ValueTask<byte[]?[]> GetFieldsAsync(RespireKey key, RespireKey path, RespireKey field, CancellationToken cancellationToken = default)
+        => GetFieldsAsync(key, path, [field], cancellationToken);
+
+    public ValueTask<long> RemoveAsync(RespireKey key, RespireKey path, RespireKey field, CancellationToken cancellationToken = default)
+        => RemoveAsync(key, path, [field], cancellationToken);
+
     public ValueTask<bool> SetAsync(RespireKey key, RespireKey path, RespireKey field, RespireValue value, RespireSetWhen when = RespireSetWhen.Always, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();

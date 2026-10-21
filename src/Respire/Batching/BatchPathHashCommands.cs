@@ -28,6 +28,9 @@ public interface IRespireBatchPathHashCommands
     /// <summary>Gets owned values in requested field order, retaining missing fields as null. Valkey: PHGET.</summary>
     RespirePending<byte[]?[]> GetFields(RespireKey key, RespireKey path, ReadOnlySpan<RespireKey> fields);
 
+    /// <summary>Gets one owned value in an array, retaining a missing field as null. Valkey: PHGET.</summary>
+    RespirePending<byte[]?[]> GetFields(RespireKey key, RespireKey path, RespireKey field);
+
     /// <summary>Gets a flat array of owned values in requested path-group and field order. Valkey: PHMGET.</summary>
     RespirePending<byte[]?[]> GetMany(RespireKey key, ReadOnlySpan<RespirePathHashRead> paths);
 
@@ -42,6 +45,9 @@ public interface IRespireBatchPathHashCommands
 
     /// <summary>Deletes specified fields and returns their count; no fields deletes the entire path and returns 0 or 1. Valkey: PHDEL.</summary>
     RespirePending<long> Remove(RespireKey key, RespireKey path, ReadOnlySpan<RespireKey> fields = default);
+
+    /// <summary>Deletes one field and returns its count. Valkey: PHDEL.</summary>
+    RespirePending<long> Remove(RespireKey key, RespireKey path, RespireKey field);
 
     /// <summary>Deletes paths whose bytes start with the prefix; empty prefix removes all paths. Valkey: PHDELPREFIX.</summary>
     RespirePending<long> RemovePrefix(RespireKey key, RespireKey prefix);
@@ -104,6 +110,9 @@ internal sealed class BatchPathHashCommands(IPendingSink sink) : IRespireBatchPa
             Command(RespireCommands.PathHash.PHGET, key, PathHashCodec.Get(path, fields)),
             static (client, reply) => PathHashCodec.Values(in reply));
 
+    public RespirePending<byte[]?[]> GetFields(RespireKey key, RespireKey path, RespireKey field)
+        => GetFields(key, path, [field]);
+
     public RespirePending<byte[]?[]> GetMany(RespireKey key, ReadOnlySpan<RespirePathHashRead> paths)
         => sink.Add<Cmd1N, byte[]?[]>("PHMGET",
             Command(RespireCommands.PathHash.PHMGET, key, PathHashCodec.GetMany(paths)),
@@ -128,6 +137,9 @@ internal sealed class BatchPathHashCommands(IPendingSink sink) : IRespireBatchPa
         => sink.Add<Cmd1N, long>("PHDEL",
             Command(RespireCommands.PathHash.PHDEL, key, PathHashCodec.Get(path, fields, allowEmpty: true)),
             static (client, reply) => ResponseReader.Integer(in reply));
+
+    public RespirePending<long> Remove(RespireKey key, RespireKey path, RespireKey field)
+        => Remove(key, path, [field]);
 
     public RespirePending<long> RemovePrefix(RespireKey key, RespireKey prefix)
         => sink.Add<Cmd1N, long>("PHDELPREFIX",

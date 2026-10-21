@@ -12,6 +12,30 @@ public class PathHashCommandTests
     private const string Path = "$2\r\n/a\r\n";
 
     [Test]
+    public async Task SingleFieldOverloadsPreserveArrayResultsAndCancellation()
+    {
+        await using var server = new FakeRespServer(
+            "*1\r\n$1\r\nv\r\n"u8.ToArray(), "*1\r\n$-1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var paths = client.WithKeyPrefix("tenant:").PathHashes;
+        using var cancellation = new CancellationTokenSource();
+        var found = await paths.GetFieldsAsync("tree", "/a", "f", cancellation.Token);
+        await Assert.That(found.Length).IsEqualTo(1);
+        await Assert.That(found[0]!).IsEquivalentTo("v"u8.ToArray());
+        var missing = await paths.GetFieldsAsync("tree", "/a", "missing", cancellation.Token);
+        await Assert.That(missing.Length).IsEqualTo(1);
+        await Assert.That(missing[0]).IsNull();
+        await Assert.That(await paths.RemoveAsync("tree", "/a", "f", cancellation.Token)).IsEqualTo(1);
+        cancellation.Cancel();
+        await Assert.That(async () => await paths.GetFieldsAsync("tree", "/a", "f", cancellation.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(async () => await paths.RemoveAsync("tree", "/a", "f", cancellation.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "PHGET tenant:tree /a f", "PHGET tenant:tree /a missing", "PHDEL tenant:tree /a f"]);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ImmediateRepliesAndWireShapes(bool resp3)
@@ -121,7 +145,8 @@ public class PathHashCommandTests
     {
         var entry = "*2\r\n" + Path + Map;
         byte[][] results = [FakeRespServer.OkReply, "*1\r\n$1\r\nv\r\n"u8.ToArray(),
-            Encoding.ASCII.GetBytes(entry), Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n" + entry), ":1\r\n"u8.ToArray()];
+            Encoding.ASCII.GetBytes(entry), Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n" + entry), ":1\r\n"u8.ToArray(),
+            "*1\r\n$1\r\nv\r\n"u8.ToArray(), ":1\r\n"u8.ToArray()];
         var replies = transaction
             ? new[] { FakeRespServer.OkReply }.Concat(Enumerable.Repeat("+QUEUED\r\n"u8.ToArray(), results.Length))
                 .Append(Encoding.ASCII.GetBytes($"*{results.Length}\r\n").Concat(results.SelectMany(value => value)).ToArray()).ToArray()
@@ -138,6 +163,8 @@ public class PathHashCommandTests
         var match = queue.PathHashes.LongestPrefix(key, "/abc");
         var page = queue.PathHashes.ScanPage(key, prefix: path, count: 1);
         var deleted = queue.PathHashes.Remove(key, path);
+        var fieldRead = queue.PathHashes.GetFields(key, path, field);
+        var fieldDeleted = queue.PathHashes.Remove(key, path, field);
         key[0] = (byte)'X'; path[0] = (byte)'X'; field[0] = (byte)'X'; value[0] = (byte)'X';
         if (tx is not null) await tx.CommitAsync(); else await batch!.ExecuteAsync();
         await Assert.That(write.Result).IsTrue();
@@ -145,9 +172,13 @@ public class PathHashCommandTests
         await Assert.That(match.Result!.Path).IsEquivalentTo("/a"u8.ToArray());
         await Assert.That(page.Result.Cursor).IsEqualTo("0");
         await Assert.That(deleted.Result).IsEqualTo(1);
+        await Assert.That(fieldRead.Result.Length).IsEqualTo(1);
+        await Assert.That(fieldRead.Result[0]!).IsEquivalentTo("v"u8.ToArray());
+        await Assert.That(fieldDeleted.Result).IsEqualTo(1);
         await Assert.That(server.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC")).IsEquivalentTo([
             "PHSET tenant:tree /a FXX FIELDS 1 f v", "PHGET tenant:tree /a f",
-            "PHLONGEST tenant:tree /abc WITHVALUES", "PHSCAN tenant:tree 0 PREFIX /a COUNT 1 WITHVALUES", "PHDEL tenant:tree /a"]);
+            "PHLONGEST tenant:tree /abc WITHVALUES", "PHSCAN tenant:tree 0 PREFIX /a COUNT 1 WITHVALUES", "PHDEL tenant:tree /a",
+            "PHGET tenant:tree /a f", "PHDEL tenant:tree /a f"]);
     }
 
     [Test]
