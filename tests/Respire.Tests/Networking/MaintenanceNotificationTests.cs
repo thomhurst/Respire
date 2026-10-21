@@ -2052,19 +2052,44 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    public async Task ReceiveWatchdogRelaxesAndRestoresOnCompletion()
+    [Arguments(null)]
+    [Arguments("HELLO")]
+    [Arguments("CLIENT MAINT_NOTIFICATIONS")]
+    [ParallelLimiter<TimingSensitive>]
+    public async Task ReceiveWatchdogRelaxesAndRestoresOnCompletion(string? delayedSetupCommand)
     {
         await using var server = Server();
+        if (delayedSetupCommand is not null) server.DelayCommand(delayedSetupCommand, 350);
         server.SuppressReply = command => command == "PING";
-        await using var connection = await Connect(server, null, responseTimeout: TimeSpan.FromMilliseconds(150));
+        using var initialization = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespireProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            ResponseTimeout = TimeSpan.FromSeconds(10),
+            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(5),
+            MaintenanceWindowTimeout = TimeSpan.FromSeconds(10),
+        }, cancellationToken: initialization.Token);
         await server.SendRawAsync(Start("FAILING_OVER", 1));
         await WaitForMaintenance(connection);
+
+        // Setup has its own allowance. Change only this fixture's receive budget while idle,
+        // then wake the existing watchdog so its setup sleep cannot mask the short deadline.
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        typeof(RespireConnection).GetField("_responseTimeout", flags)!.SetValue(connection, TimeSpan.FromMilliseconds(150));
+        var wake = (SemaphoreSlim)typeof(RespireConnection).GetField("_watchdogWake", flags)!.GetValue(connection)!;
+        if (wake.CurrentCount == 0) wake.Release();
+        await Assert.That(connection.HasRelaxedTimeoutAllowance).IsTrue();
         var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await WaitForCommands(server, 3);
         await Task.Delay(350);
         await Assert.That(connection.IsConnected).IsTrue();
+        await Assert.That(pending.IsCompleted).IsFalse();
         await server.SendRawAsync(Finish("FAILED_OVER", 1));
-        await Assert.That(async () => { using var _ = await pending.WaitAsync(TimeSpan.FromSeconds(3)); }).Throws<RespireConnectionException>();
+        var error = await Assert.That(async () => { using var _ = await pending.WaitAsync(TimeSpan.FromSeconds(3)); })
+            .Throws<RespireConnectionException>();
+        await Assert.That(error!.Message).Contains("received no data for 00:00:00.1500000");
+        await Assert.That(connection.HasMaintenanceWindow).IsFalse();
         await connection.Closed.WaitAsync(TimeSpan.FromSeconds(3));
     }
 
