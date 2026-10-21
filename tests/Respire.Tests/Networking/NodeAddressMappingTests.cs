@@ -219,7 +219,10 @@ public class NodeAddressMappingTests
         var expectedHost = useMappedHost ? "localhost" : "sentinel.internal";
         using var certificate = TestTlsCertificate.Create(expectedHost);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var listener = FakeRespServer.StartListener();
+        // The mapped destination stays "localhost" for TLS identity checks. Accept both
+        // loopback families so an IPv6-first answer cannot consume the handshake budget
+        // in Windows' refusal delay before IPv4 fallback.
+        var listener = FakeRespServer.StartListener(() => TcpListener.Create(0));
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         string? serverName = null;
         var errors = SslPolicyErrors.None;
@@ -257,7 +260,7 @@ public class NodeAddressMappingTests
 
         async Task ServeAsync()
         {
-            using var socket = await listener.AcceptSocketAsync(deadline.Token);
+            using var socket = await AcceptLoopbackSocketAsync(listener, deadline.Token);
             await using var stream = new SslStream(new NetworkStream(socket, ownsSocket: false));
             await stream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
             {
@@ -282,7 +285,9 @@ public class NodeAddressMappingTests
         var expectedHost = explicitHost ?? (useMappedHost ? "localhost" : "redis.internal");
         using var certificate = TestTlsCertificate.Create(expectedHost);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var listener = FakeRespServer.StartListener();
+        // Cover hostname/SNI selection without spending the ten-second budget on a
+        // refused IPv6 localhost connection before either native or factory TLS starts.
+        var listener = FakeRespServer.StartListener(() => TcpListener.Create(0));
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var serverNames = new List<string?>();
         var certificateErrors = new List<SslPolicyErrors>();
@@ -344,7 +349,7 @@ public class NodeAddressMappingTests
 
         async Task ServeAsync()
         {
-            using var socket = await listener.AcceptSocketAsync(deadline.Token);
+            using var socket = await AcceptLoopbackSocketAsync(listener, deadline.Token);
             await using var stream = new SslStream(new NetworkStream(socket, ownsSocket: false));
             await stream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
             {
@@ -353,6 +358,18 @@ public class NodeAddressMappingTests
             var request = new byte[FakeRespServer.PingFrame.Length];
             await stream.ReadExactlyAsync(request, deadline.Token);
             await stream.WriteAsync(FakeRespServer.PongReply, deadline.Token);
+        }
+    }
+
+    private static async ValueTask<Socket> AcceptLoopbackSocketAsync(TcpListener listener, CancellationToken token)
+    {
+        // Dual-mode listeners bind all interfaces. Unrelated peers must not consume
+        // a scripted connection or enter TLS authentication.
+        while (true)
+        {
+            var socket = await listener.AcceptSocketAsync(token);
+            if (FakeRespServer.IsLoopbackPeer(socket.RemoteEndPoint)) return socket;
+            socket.Dispose();
         }
     }
 
