@@ -134,11 +134,121 @@ public class IdempotencyTests(RedisTestContainer fixture)
             .IsEqualTo(RespireIdempotencyState.Started);
     }
 
-    private async Task<RespireClient> ConnectAsync(int protocol)
+    [Test]
+    [Arguments(2, "hset")]
+    [Arguments(3, "hset")]
+    [Arguments(2, "pexpire")]
+    [Arguments(3, "pexpire")]
+    public async Task AcquisitionPermissionFailureLeavesNoClaimAndCanBeRetried(int protocol, string deniedCommand)
+    {
+        await using var admin = await ConnectAsync(protocol, allowAdmin: true);
+        var username = $"idempotency-{Guid.NewGuid():N}";
+        const string password = "idempotency-test-password";
+        await admin.Server.AclSetUserAsync(username, ["reset", "on", $">{password}", "~*", "+@all", "-acl", $"-{deniedCommand}"]);
+        try
+        {
+            await using var restricted = await ConnectAsync(protocol, username, password);
+            var store = new RespireIdempotency(restricted);
+            var key = Guid.NewGuid().ToString("N");
+            var error = await Assert.That(async () => await store.TryBeginAsync(key, Ttl, "request"))
+                .Throws<RespireServerException>();
+            await Assert.That(error!.Message).Contains("NOPERM");
+            using (var exists = await admin.ExecuteAsync("EXISTS", key))
+                await Assert.That(exists.AsInteger()).IsEqualTo(0L);
+            await Assert.That(await TtlMilliseconds(admin, key)).IsEqualTo(-2L);
+
+            await admin.Server.AclSetUserAsync(username, [$"+{deniedCommand}"]);
+            var owner = await store.TryBeginAsync(key, Ttl, "request");
+            await Assert.That(owner.State).IsEqualTo(RespireIdempotencyState.Started);
+            await Assert.That(owner.OwnerToken).IsNotNull();
+            var ttl = await TtlMilliseconds(admin, key);
+            await Assert.That(ttl > 0 && ttl <= Ttl.TotalMilliseconds).IsTrue();
+        }
+        finally
+        {
+            await admin.Server.AclDeleteUsersAsync([username]);
+        }
+    }
+
+    [Test]
+    [Arguments(2, "hset")]
+    [Arguments(3, "hset")]
+    [Arguments(2, "hdel")]
+    [Arguments(3, "hdel")]
+    [Arguments(2, "pexpire")]
+    [Arguments(3, "pexpire")]
+    public async Task CompletionPermissionFailurePreservesClaimAndCanBeRetried(int protocol, string deniedCommand)
+    {
+        await using var admin = await ConnectAsync(protocol, allowAdmin: true);
+        var username = $"idempotency-{Guid.NewGuid():N}";
+        const string password = "idempotency-test-password";
+        await admin.Server.AclSetUserAsync(username, ["reset", "on", $">{password}", "~*", "+@all", "-acl", $"-{deniedCommand}"]);
+        try
+        {
+            await using var restricted = await ConnectAsync(protocol, username, password);
+            var store = new RespireIdempotency(restricted);
+            var key = Guid.NewGuid().ToString("N");
+            var owner = await new RespireIdempotency(admin).TryBeginAsync(key, TimeSpan.FromMinutes(10), "request");
+            await admin.Keys.ExpireAsync(key, RespireExpiry.In(Ttl));
+            var expiry = await ExpiryMilliseconds(admin, key);
+            // Compare the complete stored hash, including the absent result, without relying on field order.
+            var before = await ClaimFields(admin, key);
+            byte[] payload = [0, 255, 128, 13, 10];
+
+            await Assert.That(await store.CompleteAsync(key, "wrong-owner", payload)).IsFalse();
+            var error = await Assert.That(async () => await store.CompleteAsync(key, owner.OwnerToken!, payload))
+                .Throws<RespireServerException>();
+            await Assert.That(error!.Message).Contains("NOPERM");
+            await Assert.That((await ClaimFields(admin, key)).SequenceEqual(before)).IsTrue();
+            await Assert.That(await ExpiryMilliseconds(admin, key)).IsEqualTo(expiry);
+            var pending = await store.TryBeginAsync(key, Ttl, "request");
+            await Assert.That(pending.State).IsEqualTo(RespireIdempotencyState.InProgress);
+            await Assert.That(pending.OwnerToken is null && pending.Result.IsEmpty).IsTrue();
+            await Assert.That((await store.TryBeginAsync(key, Ttl, "different")).State)
+                .IsEqualTo(RespireIdempotencyState.FingerprintMismatch);
+
+            await admin.Server.AclSetUserAsync(username, [$"+{deniedCommand}"]);
+            await Assert.That(await store.CompleteAsync(key, owner.OwnerToken!, payload)).IsTrue();
+            using (var hasOwner = await admin.ExecuteAsync("HEXISTS", key, "owner"))
+                await Assert.That(hasOwner.AsInteger()).IsEqualTo(0L);
+            var ttl = await TtlMilliseconds(admin, key);
+            await Assert.That(ttl > Ttl.TotalMilliseconds && ttl <= 600_000).IsTrue();
+
+            // Read-only outcomes and stale-owner checks must not require mutation permissions.
+            await admin.Server.AclSetUserAsync(username, ["-hset", "-hdel", "-pexpire"]);
+            var replay = await store.TryBeginAsync(key, Ttl, "request");
+            await Assert.That(replay.State).IsEqualTo(RespireIdempotencyState.Completed);
+            await Assert.That(replay.Result.ToArray().SequenceEqual(payload)).IsTrue();
+            await Assert.That((await store.TryBeginAsync(key, Ttl, "different")).State)
+                .IsEqualTo(RespireIdempotencyState.FingerprintMismatch);
+            await Assert.That(await store.CompleteAsync(key, owner.OwnerToken!, ReadOnlyMemory<byte>.Empty)).IsFalse();
+            await Assert.That(await store.AbandonAsync(key, owner.OwnerToken!)).IsFalse();
+        }
+        finally
+        {
+            await admin.Server.AclDeleteUsersAsync([username]);
+        }
+    }
+
+    private static async Task<string?[]> ClaimFields(IRespireClient client, RespireKey key)
+    {
+        using var result = await client.ExecuteAsync("HMGET", (RespireValue)key, "state", "owner", "fingerprint", "ttl", "result");
+        return Enumerable.Range(0, result.Count).Select(i => result[i].IsNull ? null : result[i].AsString()).ToArray();
+    }
+
+    private static async Task<long> ExpiryMilliseconds(IRespireClient client, RespireKey key)
+    {
+        using var result = await client.ExecuteAsync("PEXPIRETIME", (RespireValue)key);
+        return result.AsInteger();
+    }
+
+    private async Task<RespireClient> ConnectAsync(int protocol, string? username = null, string? password = null,
+        bool allowAdmin = false)
         => await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
             Connections = 1, Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
+            Username = username, Password = password, AllowAdmin = allowAdmin,
         });
 
     private static async Task<long> TtlMilliseconds(IRespireClient client, RespireKey key)

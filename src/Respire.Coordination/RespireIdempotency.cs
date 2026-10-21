@@ -40,6 +40,14 @@ public sealed class RespireIdempotency
 
     private static readonly RespireScript Begin = RespireScript.Create("""
         if redis.call('EXISTS', KEYS[1]) == 0 then
+            -- Lua errors do not roll back writes. Check every command before creating the claim.
+            if not redis.acl_check_cmd then
+                return redis.error_reply('ERR idempotency mutations require Redis 7.0+ ACL preflight support')
+            end
+            if not redis.acl_check_cmd('HSET', KEYS[1], 'state', 'pending', 'owner', ARGV[1], 'fingerprint', ARGV[2], 'ttl', ARGV[3])
+                or not redis.acl_check_cmd('PEXPIRE', KEYS[1], ARGV[3]) then
+                return redis.error_reply('NOPERM idempotency acquisition requires HSET and PEXPIRE permissions')
+            end
             redis.call('HSET', KEYS[1], 'state', 'pending', 'owner', ARGV[1], 'fingerprint', ARGV[2], 'ttl', ARGV[3])
             redis.call('PEXPIRE', KEYS[1], ARGV[3])
             return {0}
@@ -61,6 +69,15 @@ public sealed class RespireIdempotency
         if redis.call('HGET', KEYS[1], 'state') ~= 'pending' then return 0 end
         if redis.call('HGET', KEYS[1], 'owner') ~= ARGV[1] then return 0 end
         local ttl = redis.call('HGET', KEYS[1], 'ttl')
+        -- Keep failed completion pending with its owner, result and expiry untouched.
+        if not redis.acl_check_cmd then
+            return redis.error_reply('ERR idempotency mutations require Redis 7.0+ ACL preflight support')
+        end
+        if not redis.acl_check_cmd('HSET', KEYS[1], 'state', 'completed', 'result', ARGV[2])
+            or not redis.acl_check_cmd('HDEL', KEYS[1], 'owner')
+            or not redis.acl_check_cmd('PEXPIRE', KEYS[1], ttl) then
+            return redis.error_reply('NOPERM idempotency completion requires HSET, HDEL and PEXPIRE permissions')
+        end
         redis.call('HSET', KEYS[1], 'state', 'completed', 'result', ARGV[2])
         redis.call('HDEL', KEYS[1], 'owner')
         redis.call('PEXPIRE', KEYS[1], ttl)

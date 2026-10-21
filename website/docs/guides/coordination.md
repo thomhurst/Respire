@@ -114,7 +114,8 @@ the lock alone cannot prevent an expired client from continuing external work.
 ## Idempotency claims and result replay
 
 `RespireIdempotency` stores a pending claim and then a binary result in a single Redis hash.
-It works with RESP2 and RESP3, including Redis 7. Each transition executes one Lua script;
+It works with RESP2 and RESP3 on Redis 7.0+ or a compatible server providing Lua
+`redis.acl_check_cmd`. Each transition executes one Lua script;
 the normal script cache fallback may send `EVALSHA` followed by `EVAL` on a cache miss.
 Single-key scripts support Cluster routing and the client's configured key prefix.
 
@@ -161,6 +162,14 @@ the pending claim, allowing recovery after a crash. Successful completion restar
 for the saved result. Pending and completed lookups, including mismatches, do not refresh expiry;
 the TTL supplied by a losing caller does not change the original claim's TTL. After expiry, a new
 caller can claim the key, and the old token cannot complete or abandon that replacement.
+
+Acquisition requires `HSET` and `PEXPIRE` permissions; completion also requires `HDEL`.
+The scripts check all commands for the selected mutation path before changing the hash, so a
+denied permission leaves an absent key absent, or a pending claim's fields and expiry unchanged.
+After permissions are restored, retry acquisition or retry completion with the original owner
+token. Existing-claim lookups and stale-owner completion checks do not require these write
+permissions. Servers without Lua ACL preflight support reject acquisition and completion before
+writing; abandonment uses a single `DEL` after checking ownership.
 
 `AbandonAsync(key, ownerToken)` removes only a pending claim owned by that token. Use it for work
 that is safe to retry or a response you deliberately do not want to retain. Do not automatically
