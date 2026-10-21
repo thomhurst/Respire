@@ -62,8 +62,121 @@ public sealed partial class RespireClient
         finally { if (!dispatched) state.Return(); }
     }
 
+    // Keep redirect ownership and its asynchronous cleanup out of the option-off state machine.
+    // Pool misses allocate the entire state machine, including fields for branches never taken.
+    private ValueTask<RespValue> SendImmediateRetryCoreAsync<TCommand>(string operation, ImmediateRetryCommand<TCommand> command,
+        ImmediateRetryState state, CancellationToken callerToken, CommandDeadline deadline,
+        RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection = null) where TCommand : struct, IRespCommand
+        => _core.Options.EnableReplicaRedirects
+            ? SendImmediateRedirectRetryCoreAsync(operation, command, state, callerToken, deadline, observation, track, backlogConnection)
+            : SendImmediateRetryWithoutRedirectsAsync(operation, command, state, callerToken, deadline, observation, track, backlogConnection);
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<RespValue> SendImmediateRetryCoreAsync<TCommand>(string operation, ImmediateRetryCommand<TCommand> command,
+    private async ValueTask<RespValue> SendImmediateRetryWithoutRedirectsAsync<TCommand>(string operation, TCommand command,
+        ImmediateRetryState state, CancellationToken callerToken, CommandDeadline deadline,
+        RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection) where TCommand : struct, IRespCommand
+    {
+        CancellationTokenSource? timeout = null;
+        var token = callerToken;
+        RespireConnection? connection = null;
+        RespireTelemetry.OperationScope telemetry = default;
+        try
+        {
+            if (RespireTelemetry.IsOperationEnabled(operation))
+                telemetry = RespireTelemetry.StartOperation(operation, _core.Endpoint, _core.Options.Database);
+        }
+        catch (Exception) { /* A tracing listener cannot prevent application dispatch. */ }
+        Exception? finalError = null;
+        try
+        {
+            if (deadline.IsSet)
+            {
+                timeout = CommandTimeoutCancellation.Create(callerToken,
+                    TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)));
+                token = timeout.Token;
+            }
+            for (var attempt = 1; ; attempt++)
+            {
+                ThrowIfRetryStopped(operation, token, deadline);
+                ObjectDisposedException.ThrowIf(_core.Disposed, this);
+                var outcome = CommandWriteOutcome.DefinitelyUnwritten;
+                CircuitAdmission admission = default;
+                try
+                {
+                    // Match redirect-aware admission: resolve the current primary on each attempt,
+                    // then acquire its circuit and preserve the attempt-local transport evidence.
+                    if (!_core.TryGetReadyPrimaryMultiplexer(out var multiplexer))
+                    {
+                        await _core.EnsureConnectedAsync(token, observation).ConfigureAwait(false);
+                        multiplexer = _core.Multiplexer;
+                    }
+                    if (attempt > 1 && _core.Circuits is not null) RejectOpenCircuit(token);
+                    connection = attempt > 1
+                        ? await multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false)
+                        : backlogConnection ?? GetCircuitAwareConnection(multiplexer, token);
+                    observation.UseEndpoint(new(connection.Host, connection.Port), token);
+                    telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                    connection.ThrowIfRetired();
+                    if (_core.Circuits is not null) admission = AcquireCircuit(connection, token);
+                    ThrowIfRetryStopped(operation, token, deadline);
+                    state.IsRetry = attempt > 1;
+                    var result = await connection.SendAttemptAsync(command, token, operation, deadline,
+                        repliesBeforeFinal: track ? 1 : 0, errorObservation: observation).ConfigureAwait(false);
+                    if (state.IsRetry && state.AcceptedAttempt)
+                        RespireTelemetry.RecordCommandRetry(state.Category, "attempted");
+                    outcome = result.WriteOutcome;
+                    var response = result.GetResult();
+                    if (response.IsError)
+                    {
+                        try { throw ResponseReader.ServerError(in response, operation, new(connection.Host, connection.Port)); }
+                        finally { response.Dispose(); }
+                    }
+                    admission.Success();
+                    if (state.Retries != 0) RespireTelemetry.RecordCommandRetry(state.Category, "succeeded");
+                    return response;
+                }
+                catch (Exception error)
+                {
+                    admission.Failed(error, token);
+                    var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
+                    if (!_core.CommandRetries!.TryGetDelay(error, outcome, state.Category, attempt, remaining, token, out var delay))
+                        throw;
+                    observation.Handled(error);
+                    admission.Dispose();
+                    admission = default;
+                    if (delay != TimeSpan.Zero) await Task.Delay(delay, token).ConfigureAwait(false);
+                    ThrowIfRetryStopped(operation, token, deadline);
+                    state.AcceptedAttempt = false;
+                }
+                finally { admission.Dispose(); }
+            }
+        }
+        catch (OperationCanceledException error) when (callerToken.IsCancellationRequested
+            && error.CancellationToken == token)
+        {
+            finalError = new OperationCanceledException(error.Message, error, callerToken);
+            throw finalError;
+        }
+        catch (OperationCanceledException error) when (timeout is not null && timeout.IsCancellationRequested
+            && error.CancellationToken == token)
+        {
+            finalError = new RespireTimeoutException(operation, _core.Options.CommandTimeout!.Value, error);
+            throw finalError;
+        }
+        catch (Exception error) { finalError = error; throw; }
+        finally
+        {
+            if (finalError is not null && state.Retries != 0)
+                RespireTelemetry.RecordCommandRetry(state.Category, "exhausted");
+            try { telemetry.Complete(_core, operation, error: finalError, connection: connection); }
+            catch (Exception) { /* A listener cannot replace the logical command outcome. */ }
+            try { timeout?.Dispose(); }
+            finally { state.Return(); }
+        }
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespValue> SendImmediateRedirectRetryCoreAsync<TCommand>(string operation, ImmediateRetryCommand<TCommand> command,
         ImmediateRetryState state, CancellationToken callerToken, CommandDeadline deadline,
         RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection = null) where TCommand : struct, IRespCommand
     {
