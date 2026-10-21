@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Respire/Respire.csproj" />
+    <PackageReference Include="BenchmarkDotNet" />
+    <PackageReference Include="Microsoft.Diagnostics.NETCore.Client" />
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" />
+    <Compile Include="../../benchmarks/Respire.Benchmarks/CommandRetryBenchmarks.cs" Link="CommandRetryBenchmarks.cs" />
+  </ItemGroup>
+</Project>
