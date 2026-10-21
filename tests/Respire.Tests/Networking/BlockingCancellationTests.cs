@@ -68,12 +68,72 @@ public class BlockingCancellationTests
     }
 
     [Test]
+    [NotInParallel] // All 1,000 cleanups must finish inside the production one-second budget.
     [Arguments("standalone", RespireProtocol.Resp2)]
     [Arguments("standalone", RespireProtocol.Resp3)]
     [Arguments("cluster", RespireProtocol.Resp2)]
     [Arguments("sentinel", RespireProtocol.Resp2)]
     public async Task ThousandCancelledPopsReuseOneDedicatedConnection(string mode, RespireProtocol protocol)
         => await CancelledPopsReuseOneDedicatedConnection(mode, protocol, 1000);
+
+    [Test]
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task ExpiredUnblockAcknowledgementDiscardsDrainedConnection(RespireProtocol protocol)
+    {
+        await using var server = new FakeRespServer(3, FakeRespServer.PongReply);
+        var received = NewSignal();
+        var controlReceived = NewSignal();
+        var releaseControl = NewSignal();
+        var blockedId = -1;
+        server.SuppressReply = command => command.StartsWith("BLPOP", StringComparison.Ordinal);
+        server.GateCommand("BLPOP", Task.CompletedTask, id =>
+        {
+            blockedId = id;
+            received.TrySetResult();
+        });
+        server.GateCommand("CLIENT UNBLOCK", releaseControl.Task, () => controlReceived.TrySetResult());
+        server.ReplyOverride = (id, command) =>
+        {
+            if (command.StartsWith("HELLO", StringComparison.Ordinal))
+                return Encoding.ASCII.GetBytes($"%2\r\n+proto\r\n:3\r\n+id\r\n:{id + 100}\r\n");
+            if (command == "CLIENT ID") return Encoding.ASCII.GetBytes($":{id + 100}\r\n");
+            if (command.StartsWith("CLIENT UNBLOCK", StringComparison.Ordinal)) return ":1\r\n"u8.ToArray();
+            if (command.StartsWith("BLPOP", StringComparison.Ordinal)) return "*-1\r\n"u8.ToArray();
+            return null;
+        };
+#pragma warning disable RESP010 // Test-owned client exercises cleanup expiry on a drained dedicated socket.
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = protocol, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            DedicatedPool = new() { UnblockOnCancel = true },
+        });
+#pragma warning restore RESP010
+        using var cancellation = new CancellationTokenSource();
+        var pending = client.Lists.LeftPopAsync("jobs", waitFor: null, cancellation.Token).AsTask();
+        try
+        {
+            await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            cancellation.Cancel();
+            await controlReceived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await server.SendRawAsync("*-1\r\n"u8.ToArray(), blockedId);
+            // Keep acknowledgement gated until cleanup expires. Draining alone cannot
+            // authorize reuse: a late UNBLOCK could cancel the next renter's command.
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+            await server.PeerClosed.WaitAsync(TimeSpan.FromSeconds(10));
+            var discardedId = blockedId;
+            releaseControl.TrySetResult();
+            server.SuppressReply = null;
+            using var next = await client.ExecuteAsync("BLPOP", ["jobs", "0.001"]);
+            await Assert.That(next.IsNull).IsTrue();
+            await Assert.That(server.ReceivedConnectionIds[^1]).IsNotEqualTo(discardedId);
+            await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(3);
+        }
+        finally { releaseControl.TrySetResult(); }
+    }
 
     [Test]
     public async Task SentinelRoleBetweenPopReceiptAndCallbackPreservesDedicatedConnection()
