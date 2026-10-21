@@ -6,6 +6,7 @@ on:
     paths:
       - scripts/Invoke-AgentDotNet.ps1
       - scripts/Test-AgentDotNetProcessTree.ps1
+      - scripts/Test-AgentDotNetCleanupDiagnostics.ps1
       - scripts/AgentDotNetWindowsJob.cs
       - scripts/Write-AgentWindowsStartupDiagnostics.ps1
       - scripts/Write-AgentRunnerProcessDiagnostics.ps1
@@ -41,6 +42,7 @@ on:
     paths:
       - scripts/Invoke-AgentDotNet.ps1
       - scripts/Test-AgentDotNetProcessTree.ps1
+      - scripts/Test-AgentDotNetCleanupDiagnostics.ps1
       - scripts/AgentDotNetWindowsJob.cs
       - scripts/Write-AgentWindowsStartupDiagnostics.ps1
       - scripts/Write-AgentRunnerProcessDiagnostics.ps1
@@ -74,6 +76,10 @@ on:
 
 permissions:
   contents: read
+
+env:
+  # Opt-in evidence for #2044. PR/push validation keeps ordinary guard output.
+  RESPIRE_AGENT_CLEANUP_DIAGNOSTICS: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
 
 concurrency:
   # A newer commit on the same PR or branch supersedes older runs. Every main commit still runs.
@@ -196,6 +202,9 @@ jobs:
       - name: Verify process ancestry excludes recycled parent PIDs
         shell: pwsh
         run: ./scripts/Test-AgentDotNetProcessTree.ps1
+      - name: Verify bounded cleanup evidence preserves containment
+        shell: pwsh
+        run: ./scripts/Test-AgentDotNetCleanupDiagnostics.ps1
       - name: Verify PR review gate heuristics
         shell: pwsh
         run: ./scripts/Test-AssertPrGreenReviewHeuristics.ps1

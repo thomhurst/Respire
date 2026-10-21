@@ -309,6 +309,38 @@ public static class AgentDotNetWindowsJob
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern int QueryInformationJobObject(IntPtr job, int informationClass,
+        IntPtr information, uint length, out uint returnedLength);
+
+    public static int[] GetProcessIds(IntPtr job)
+    {
+        // Borrow this guard's handle, never query the caller's enclosing job
+        // (which QueryInformationJobObject would do for a null handle).
+        if (job == IntPtr.Zero) throw new ArgumentException("A guard job is required.", nameof(job));
+        // JOBOBJECT_BASIC_PROCESS_ID_LIST: two DWORDs followed by ULONG_PTR IDs.
+        // One fixed query bounds cost. Failure or overflow is unavailable evidence,
+        // never a partial list that could be mistaken for the containment boundary.
+        const int memberLimit = 64;
+        int size = 8 + memberLimit * IntPtr.Size;
+        IntPtr buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (QueryInformationJobObject(job, 3, buffer, (uint)size, out uint returnedLength) == 0)
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            if (returnedLength < 8) throw new InvalidOperationException("Missing job membership header.");
+            uint assigned = unchecked((uint)Marshal.ReadInt32(buffer));
+            uint count = unchecked((uint)Marshal.ReadInt32(buffer, 4));
+            if (count > memberLimit || count != assigned || returnedLength < 8 + count * IntPtr.Size)
+                throw new InvalidOperationException("Incomplete job membership snapshot.");
+            var ids = new int[count];
+            for (int index = 0; index < ids.Length; index++)
+                ids[index] = checked((int)Marshal.ReadIntPtr(buffer, 8 + index * IntPtr.Size).ToInt64());
+            return ids;
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
     public static IntPtr CreateKillOnClose()
     {
         IntPtr job = CreateJobObject(IntPtr.Zero, null);
