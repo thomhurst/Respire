@@ -4,6 +4,8 @@ $guardScript = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("agent-dotnet-guard-{0}" -f [guid]::NewGuid())
 $captureScript = Join-Path $testRoot 'Capture-Invocation.ps1'
 $timeoutScript = Join-Path $testRoot 'Spawn-Child.ps1'
+$boundedTimeoutScript = Join-Path $testRoot 'Bounded-Timeout.ps1'
+$boundedCompletionPath = Join-Path $testRoot 'bounded-completed'
 $orphanParentScript = Join-Path $testRoot 'Spawn-OrphanParent.ps1'
 $orphanIntermediateScript = Join-Path $testRoot 'Spawn-OrphanIntermediate.ps1'
 $capturePath = Join-Path $testRoot 'capture.json'
@@ -237,20 +239,43 @@ Start-Sleep -Seconds 60
         }
     }
 
-    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    @'
+param([string]$CompletionPath)
+
+Start-Sleep -Seconds 2
+Set-Content -LiteralPath $CompletionPath -Value 'completed'
+'@ | Set-Content -LiteralPath $boundedTimeoutScript
+
+    # Prove the fixture reaches its completion marker with an ample deadline.
+    # The short-deadline case must interrupt it, even with a longer poll interval.
+    $guardExitCode = Invoke-Guard `
+        -TimeoutSeconds 30 `
+        -MemoryLimitMb 512 `
+        -PollIntervalMilliseconds 10000 `
+        -Arguments @('-NoProfile', '-File', $boundedTimeoutScript, $boundedCompletionPath)
+
+    if ($guardExitCode -ne 0 -or
+        -not (Test-Path -LiteralPath $boundedCompletionPath)) {
+        throw "Bounded-timeout positive control did not complete (exit $guardExitCode)."
+    }
+    Remove-Item -LiteralPath $boundedCompletionPath
+
+    # An outer stopwatch also measures fresh host startup, Add-Type compilation,
+    # and cleanup. Observe interruption instead: without the remaining-deadline
+    # wait clamp, the child exits naturally and writes the marker before the
+    # guard reports 124 for noticing an expired deadline after WaitForExit.
     $guardExitCode = Invoke-Guard `
         -TimeoutSeconds 1 `
         -MemoryLimitMb 512 `
         -PollIntervalMilliseconds 10000 `
-        -Arguments @('-NoProfile', '-Command', 'Start-Sleep -Seconds 2')
-    $stopwatch.Stop()
+        -Arguments @('-NoProfile', '-File', $boundedTimeoutScript, $boundedCompletionPath)
 
     if ($guardExitCode -ne 124) {
         throw "Bounded timeout returned $guardExitCode instead of 124."
     }
 
-    if ($stopwatch.Elapsed -ge [TimeSpan]::FromSeconds(3)) {
-        throw "Bounded timeout took too long: $($stopwatch.Elapsed)."
+    if (Test-Path -LiteralPath $boundedCompletionPath) {
+        throw 'Bounded timeout allowed the child to complete before interruption.'
     }
 
     $guardExitCode = Invoke-Guard `
