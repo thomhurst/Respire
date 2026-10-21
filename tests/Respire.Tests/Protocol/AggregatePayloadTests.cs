@@ -184,10 +184,12 @@ public class AggregatePayloadTests
     [Arguments(true)]
     public async Task BorrowedDeserializationMaterializesChildren(bool fragmented)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 1)],
         });
+#pragma warning restore RESP010
         var value = await ParseAggregateAsync("*3\r\n$3\r\none\r\n$2\r\n42\r\n$7\r\n[1,2,3]\r\n"u8.ToArray(), fragmented);
         string? text;
         byte[]? bytes;

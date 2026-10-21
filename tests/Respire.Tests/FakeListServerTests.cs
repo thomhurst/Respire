@@ -14,7 +14,9 @@ public class FakeListServerTests
     public async Task PushOwnsTheRequestKeyAndElementBuffers(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         byte[] key = [255, 0, 1], first = [254, 0, 2], second = [253, 0, 3];
         await Number(client, "LPUSH", key, first, second);
         System.Array.Fill(key, (byte)0);
@@ -33,7 +35,9 @@ public class FakeListServerTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await client.Lists.RightPushAsync("list", "a", "b", "c");
         await Number(client, "PEXPIRE", "list", 1000);
         await client.Lists.LeftPushAsync("list", "first");
@@ -76,8 +80,10 @@ public class FakeListServerTests
     public async Task ConcurrentPushesAndPopsOwnEachElementExactlyOnce()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var first = await RespireClient.ConnectAsync(server.CreateOptions());
         await using var second = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         var counts = await Task.WhenAll(Enumerable.Range(1, 100).Select(async value =>
             await (value % 2 == 0 ? first : second).Lists.RightPushAsync("list", value)));
         await Assert.That(counts.Order()).IsEquivalentTo(Enumerable.Range(1, 100).Select(value => (long)value), CollectionOrdering.Matching);
@@ -91,7 +97,9 @@ public class FakeListServerTests
     public async Task UnsupportedBlockingAndMultiKeyListCommandsFailWithoutMutation()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await client.Lists.RightPushAsync("list", "value");
         foreach (var (command, args) in new (string, RespireValue[])[]
         {

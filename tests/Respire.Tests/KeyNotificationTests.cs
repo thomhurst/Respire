@@ -218,7 +218,9 @@ public class KeyNotificationTests
     [Test]
     public async Task PublishingDescriptorsFailsBeforeNetworkWork()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost:1");
+#pragma warning restore RESP010
         var descriptor = RespireChannel.KeySpaceSingleKey("key", 0);
         await Assert.That(async () => await client.PublishAsync(descriptor, "set")).Throws<ArgumentException>();
         await Assert.That(async () => await client.PublishShardedAsync(descriptor, "set")).Throws<ArgumentException>();

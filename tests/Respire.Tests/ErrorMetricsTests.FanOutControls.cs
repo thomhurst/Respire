@@ -23,11 +23,13 @@ public partial class ErrorMetricsTests
             $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
             $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
         await using var seed = new FakeRespServer(16, topology);
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 2, UseCluster = true,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null, observation: default);
         foreach (var connection in connections) _ = connection.Multiplexer!.GetConnection();
         var operation = route == "function" ? "FUNCTION FLUSH" : "SCRIPT FLUSH";

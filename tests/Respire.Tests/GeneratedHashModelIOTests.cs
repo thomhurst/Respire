@@ -14,7 +14,9 @@ public class GeneratedHashModelIOTests
     public async Task FakeRoundTrips(RespireProtocol protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = protocol });
+#pragma warning restore RESP010
         await GeneratedHashModelScenarios.RoundTripAsync(client);
     }
 
@@ -125,7 +127,9 @@ public class GeneratedHashModelIOTests
     [Test]
     public async Task InvalidSelectionsAndRequiredNullFailBeforeIO()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost:1");
+#pragma warning restore RESP010
         foreach (string[] fields in new[] { Array.Empty<string>(), new[] { "unknown" }, new[] { "id" }, new[] { "Id", "Id" }, new[] { (string)null! } })
             await Assert.That(async () => await StoredHashModelHashMapper.GetPartialAsync(client, "key", fields)).Throws<ArgumentException>();
         await Assert.That(async () => await StoredHashModelHashMapper.SetAsync(client, new StoredHashModel("id", null!, 0, null, null))).Throws<ArgumentException>();
@@ -135,7 +139,9 @@ public class GeneratedHashModelIOTests
     [Test]
     public async Task PreCanceledOperationsDoNotConnect()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost:1");
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.That(async () => await StoredHashModelHashMapper.SetAsync(client, new StoredHashModel("x", "", 0, null, null), cancellation.Token)).Throws<OperationCanceledException>();

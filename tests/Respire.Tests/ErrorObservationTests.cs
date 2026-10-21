@@ -456,7 +456,9 @@ public class ErrorObservationTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 1_000; i++)
         {
+#pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             var result = ObserveWithOwnerAsync(new ValueTask<int>(42)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             if (result != 42) throw new InvalidOperationException();
             if (allocate) Volatile.Write(ref _allocationAnchor, new byte[37]);
         }

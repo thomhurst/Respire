@@ -22,12 +22,14 @@ public partial class ErrorMetricsTests
                 : command == "GET warm" ? "$2\r\nok\r\n"u8.ToArray() : null,
             SuppressReply = command => command.StartsWith("GET failed", StringComparison.Ordinal),
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             ReadFrom = RespireReadFrom.Replica,
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await Assert.That(await client.GetStringAsync("warm", deadline.Token)).IsEqualTo("ok");
         using var capture = new Capture(throwOnMeasurement: true);
@@ -66,6 +68,7 @@ public partial class ErrorMetricsTests
         var attempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var expected = new SocketException((int)SocketError.ConnectionRefused);
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
@@ -89,6 +92,7 @@ public partial class ErrorMetricsTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var capture = new Capture(throwOnMeasurement: true, commandMetrics: commandMetrics);
         try

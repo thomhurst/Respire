@@ -38,6 +38,7 @@ public class TypedSerializationAllocationTests
     {
         await using var server = new FakeRespServer("+OK\r\n"u8.ToArray());
         PausedWriteStream? transport = null;
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2, Connections = 1,
@@ -52,6 +53,7 @@ public class TypedSerializationAllocationTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         var payload = new Payload(42);
         var pending = new ValueTask<bool>[Count + 2];
         var serialized = client.Serialize(payload);

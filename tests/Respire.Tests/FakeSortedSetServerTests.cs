@@ -14,7 +14,9 @@ public class FakeSortedSetServerTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await client.SortedSets.AddAsync("key", ("a", 1), ("b", 2));
         using (var expiry = await client.ExecuteAsync("PEXPIRE", "key", 1000)) { }
         await client.SortedSets.AddAsync("key", "a", 3);
@@ -49,8 +51,10 @@ public class FakeSortedSetServerTests
     public async Task ConcurrentIncrementsAndPopsHaveSingleOwners()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var first = await RespireClient.ConnectAsync(server.CreateOptions());
         await using var second = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         var increments = await Task.WhenAll(Enumerable.Range(0, 100).Select(index =>
             (index % 2 == 0 ? first : second).SortedSets.IncrementAsync("counter", "member", 1).AsTask()));
         await Assert.That(increments.Order()).IsEquivalentTo(Enumerable.Range(1, 100).Select(value => (double)value));
@@ -65,7 +69,9 @@ public class FakeSortedSetServerTests
     public async Task UnsupportedSortedSetVariantsFailWithoutChangingMembers()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await client.SortedSets.AddAsync("key", "member", 1);
         foreach (var (command, args) in new (string, RespireValue[])[]
         {

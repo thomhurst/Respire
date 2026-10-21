@@ -25,12 +25,14 @@ public partial class ErrorMetricsTests
                     ? "-NOPERM denied\r\n"u8.ToArray() : null,
             SuppressReply = command => response == "canceled" && command.StartsWith("SET ", StringComparison.Ordinal),
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp3, Connections = 1, ClientSideCache = new(),
             CircuitBreaker = circuitEnabled ? new() : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, publishedListener) =>
         {

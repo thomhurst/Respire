@@ -80,12 +80,14 @@ public class TelemetryTests
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.PongReply);
         using var capture = new TelemetryCapture();
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Database = 4,
         });
+#pragma warning restore RESP010
 
         await client.PingAsync();
 
@@ -166,12 +168,14 @@ public class TelemetryTests
             $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
         using var capture = new TelemetryCapture();
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
+#pragma warning restore RESP010
 
         await client.ExecuteFireAndForgetAsync("SET", "key", "value");
 
@@ -197,12 +201,14 @@ public class TelemetryTests
             $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
         using var capture = new TelemetryCapture();
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
+#pragma warning restore RESP010
 
         await client.ExecuteFireAndForgetAsync(
             RespireCommands.Scripting.FUNCTION_LOAD, "#!lua name=library");
@@ -286,11 +292,13 @@ public class TelemetryTests
     public async Task EmptyPipeline_EmitsBatchSizeZeroWithoutConnecting()
     {
         using var capture = new TelemetryCapture();
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("empty-pipeline.example") },
         });
+#pragma warning restore RESP010
 
         await client.CreateBatch().ExecuteAsync();
 
@@ -333,6 +341,7 @@ public class TelemetryTests
             "+QUEUED\r\n"u8.ToArray(),
             "*1\r\n$3\r\nbad\r\n"u8.ToArray());
         using var capture = new TelemetryCapture();
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -340,6 +349,7 @@ public class TelemetryTests
             Connections = 1,
             Serializer = new FailingDeserializer(),
         });
+#pragma warning restore RESP010
         var transaction = client.CreateTransaction();
         var pending = transaction.Get<Payload>("key");
 
@@ -355,11 +365,13 @@ public class TelemetryTests
     public async Task EmptyTransaction_EmitsBatchSizeZeroWithoutConnecting()
     {
         using var capture = new TelemetryCapture();
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("empty-transaction.example") },
         });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
 
         await transaction.CommitAsync();
@@ -380,12 +392,14 @@ public class TelemetryTests
         // Endpointless operations carry no unique port, and concurrent tests emit PIPELINE and
         // MULTI too. Only telemetry recorded inside this test's trace belongs to it.
         using var trace = TelemetryCapture.StartTestTrace();
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             SentinelPrimaryName = "mymaster",
             Endpoints = { new RespireEndpoint("empty-sentinel.example") },
         });
+#pragma warning restore RESP010
 
         await client.CreateBatch().ExecuteAsync();
         await using (var transaction = client.CreateTransaction())

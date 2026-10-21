@@ -101,11 +101,13 @@ public class CommandDurationTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
         await using var server = new FakeRespServer { SuppressReply = command => command.StartsWith("GET ") || command.StartsWith("STRLEN ") };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
+#pragma warning restore RESP010
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var first = client.GetStringAsync("first", limit.Token).AsTask();
         while (!server.ReceivedCommands.Contains("GET first")) await Task.Delay(1, limit.Token);
@@ -177,6 +179,7 @@ public class CommandDurationTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
         await using var server = new FakeRespServer { SuppressReply = command => command.StartsWith("GET ") || command.StartsWith("STRLEN ") };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -184,6 +187,7 @@ public class CommandDurationTests
             CommandTimeout = failure == "deadline" ? TimeSpan.FromMilliseconds(250) : TimeSpan.FromSeconds(10),
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
+#pragma warning restore RESP010
         using var capture = new DurationCapture(throwFromListener: true);
         using var cancellation = new CancellationTokenSource();
         var pending = Send(client, shape, cancellation.Token);
@@ -221,12 +225,14 @@ public class CommandDurationTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
         await using var server = new FakeRespServer(":42\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
             Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
             CircuitBreaker = circuitEnabled ? new() : null,
         });
+#pragma warning restore RESP010
         using var capture = new DurationCapture(throwFromListener);
         var expected = new InvalidOperationException("custom conversion failed");
         var pending = client.ConvertResponseAsync<Respire.Commands.Cmd1,
@@ -251,11 +257,13 @@ public class CommandDurationTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Database = 7, Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
+#pragma warning restore RESP010
         using var listener = new MeterListener();
         listener.InstrumentPublished = static (instrument, owner) =>
         {

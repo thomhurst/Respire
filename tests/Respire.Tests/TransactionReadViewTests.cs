@@ -19,7 +19,9 @@ public class TransactionReadViewTests
     public async Task UnsupportedCustomViewDisposesWatchWithoutRetry(bool rejectCacheView, bool generic)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         var client = DispatchProxy.Create<IRespireClient, UnsupportedViewClient>();
         var proxy = (UnsupportedViewClient)client;
         proxy.Root = root;
@@ -80,6 +82,7 @@ public class TransactionReadViewTests
             ReplyOverride = (_, command) => Reply(command, "replica", true),
         };
         var serializer = new RespireSystemTextJsonSerializer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -87,6 +90,7 @@ public class TransactionReadViewTests
             ReadFrom = RespireReadFrom.Replica, Database = 3, Serializer = serializer,
             ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var client = root.WithKeyPrefix("tenant:");
         await Assert.That(await client.GetStringAsync("balance")).IsEqualTo("replica");
         var cached = client.WithReadFrom(RespireReadFrom.Primary);
@@ -122,7 +126,9 @@ public class TransactionReadViewTests
     public async Task RetriesReadFreshInputsAndKeepPrefixes(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         var client = root.WithKeyPrefix("tenant:");
         await client.SetAsync("balance", "1");
         var attempts = 0;
@@ -150,7 +156,9 @@ public class TransactionReadViewTests
     public async Task CallbackFailureOrCancellationDoesNotCommit(bool cancel)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var attempts = 0;
         var expected = new InvalidOperationException("callback");
@@ -178,7 +186,9 @@ public class TransactionReadViewTests
     public async Task LostCommitReplyIsNotReplayed(bool afterExecution)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         using var fault = server.InjectFault("EXEC", RespireFakeFault.Disconnect(afterExecution));
         var attempts = 0;
         await Assert.That(async () => await client.RunTransactionWithReadsAsync(["result"], (_, transaction, _) =>
@@ -188,14 +198,18 @@ public class TransactionReadViewTests
             return ValueTask.CompletedTask;
         })).Throws<RespireConnectionException>();
         await Assert.That(attempts).IsEqualTo(1);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var observer = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await Assert.That(await observer.GetStringAsync("result")).IsEqualTo(afterExecution ? "1" : null);
     }
 
     [Test]
     public async Task CrossSlotWatchFailsBeforeCallback()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 1)], UseCluster = true });
+#pragma warning restore RESP010
         var calls = 0;
         await Assert.That(async () => await client.RunTransactionWithReadsAsync(["slot-a", "slot-b"], (_, _, _) =>
         {
@@ -208,7 +222,9 @@ public class TransactionReadViewTests
     [Test]
     public async Task ValidationRemainsSynchronous()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("127.0.0.1:1");
+#pragma warning restore RESP010
         // Void callbacks deliberately discard ValueTask: only synchronous validation can satisfy these assertions.
         await Assert.That(() => { _ = client.RunTransactionWithReadsAsync([], null!); }).Throws<ArgumentNullException>();
         await Assert.That(() => { _ = client.RunTransactionAsync([], null!); }).Throws<ArgumentNullException>();

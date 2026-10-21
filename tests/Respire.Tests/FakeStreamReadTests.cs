@@ -13,7 +13,9 @@ public class FakeStreamReadTests
     public async Task ExplicitMaximumCountIsNotTreatedAsUnspecified(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("f", "value"));
         await Assert.That(async () =>
         {
@@ -29,7 +31,9 @@ public class FakeStreamReadTests
     public async Task LimitsPreservePendingEntriesAndQueuedReads(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         foreach (var key in new[] { "one", "two" })
         {
             for (var i = 1; i <= 3; i++) await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = $"{i}-0" }, ("f", new string('x', 100)));
@@ -55,7 +59,9 @@ public class FakeStreamReadTests
     public async Task BlockingReadWakesAndCancellationDoesNotStallOtherTraffic(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol, Connections = 1 });
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var options = new RespireStreamReadOptions { MaxCount = 1, MaxSize = 1, WaitFor = Timeout.InfiniteTimeSpan };
         var read = client.Streams.ReadAsync(options, "events", cancellationToken: timeout.Token).AsTask();

@@ -26,6 +26,7 @@ public class ByteMemorySerializationTests
         byte[] expected = [0, 255, 128, 13, 10];
         byte[] reply = [.. "$5\r\n"u8, .. expected, .. "\r\n"u8];
         await using var server = new FakeRespServer(FakeRespServer.OkReply, reply, reply);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -33,6 +34,7 @@ public class ByteMemorySerializationTests
             Connections = 1,
             Serializer = new RejectingSerializer(),
         });
+#pragma warning restore RESP010
         object value = typeof(T) == typeof(ReadOnlyMemory<byte>) ? (object)new ReadOnlyMemory<byte>(expected)
             : typeof(T) == typeof(Memory<byte>) ? (object)new Memory<byte>(expected)
             : new ArraySegment<byte>(expected);
@@ -90,7 +92,9 @@ public class ByteMemorySerializationTests
     [Test]
     public async Task TypedReadsCopyBorrowedResponseStorage()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         byte[] payload = [0, 255, 128, 13, 10];
         var expected = payload.ToArray();
         using var response = RespValue.BulkString(payload);
@@ -118,7 +122,9 @@ public class ByteMemorySerializationTests
         await using var server = new RespireFakeServer();
         var options = server.CreateOptions();
         if (customSerializer) options = options with { Serializer = new RejectingSerializer() };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         byte[] buffer = [99, 0, 255, 128, 13, 10, 98];
         var memory = length < 0 ? default : buffer.AsMemory(1, length);
         var segment = length < 0 ? default : new ArraySegment<byte>(buffer, 1, length);

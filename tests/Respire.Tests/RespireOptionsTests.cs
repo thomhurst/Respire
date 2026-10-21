@@ -44,22 +44,26 @@ public class RespireOptionsTests
     {
         await Assert.That(() => RespireClient.Create(ValidOptions() with { ReadFrom = RespireReadFrom.Replica }))
             .ThrowsExactly<RespireConfigurationException>();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var clusterClient = RespireClient.Create(ValidOptions() with
         {
             UseCluster = true,
             ReadFrom = RespireReadFrom.Replica,
         });
+#pragma warning restore RESP010
         await Assert.That(clusterClient.WithReadFrom(RespireReadFrom.Replica)).IsNotNull();
         await Assert.That(() => RespireClient.Create(ValidOptions() with
         {
             Endpoints = [new("primary"), new("replica")],
         })).ThrowsExactly<RespireConfigurationException>();
 
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(ValidOptions() with
         {
             ReplicaEndpoints = [new("replica")],
             ReadFrom = RespireReadFrom.Replica,
         });
+#pragma warning restore RESP010
         await Assert.That(client.WithReadFrom(RespireReadFrom.Primary)).IsNotNull();
     }
 
@@ -71,11 +75,13 @@ public class RespireOptionsTests
         await Assert.That(() => RespireClient.Create(ValidOptions() with { ReplicaRefreshInterval = TimeSpan.FromHours(2) }))
             .ThrowsExactly<RespireConfigurationException>();
 
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(ValidOptions() with
         {
             ReplicaEndpoints = [new("replica")],
             ReplicaRefreshInterval = TimeSpan.Zero,
         });
+#pragma warning restore RESP010
         await Assert.That(client.Core.ReadRouter.RoleRevalidationInterval).IsEqualTo(TimeSpan.Zero);
         await Assert.That(client.Core.ReadRouter.SentinelRefreshInterval).IsEqualTo(TimeSpan.Zero);
         await Assert.That(client.Core.ReadRouter.FailedReplicaCooldown).IsEqualTo(TimeSpan.Zero);
@@ -119,12 +125,14 @@ public class RespireOptionsTests
     [Test]
     public async Task ClientSideCache_PromotesValidatedSnapshotToResp3()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(ValidOptions() with
         {
             Protocol = RespireProtocol.Resp2,
             ClientSideCache = new(),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
         });
+#pragma warning restore RESP010
 
         await Assert.That(client.Core.Options.Protocol).IsEqualTo(RespireProtocol.Resp3);
         await Assert.That(client.Core.Options.MaintenanceNotifications)
@@ -315,7 +323,9 @@ public class RespireOptionsTests
     {
         List<RespireEndpoint> endpoints = [new RespireEndpoint("first", 6379)];
         var options = new RespireOptions { Endpoints = endpoints };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(options);
+#pragma warning restore RESP010
 
         endpoints[0] = new RespireEndpoint("second", 6380);
 

@@ -86,7 +86,9 @@ public class TypedSearchQueryTests
     public async Task SearchAndAggregateMatchHandWrittenWireCommands(int protocol)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var query = SearchJsonModelSearchSchema.Query("live-products").Where(f => f.Rating.GreaterThan(30))
             .OrderByDescending(f => f.Rating).Skip(4).Take(6).Select(f => [f.Title, f.Category]);
         await query.SearchAsync(client.Search);
@@ -101,7 +103,9 @@ public class TypedSearchQueryTests
     public async Task VectorQueryPreservesBinaryParameterAndHybridFilter(int protocol)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var query = SearchHashModelSearchSchema.Query().Where(f => f.Category.EqualTo("tools"));
         var vector = new byte[] { 0, 255, 0, 128, 0, 0, 0, 0 };
         await query.VectorSearchAsync(client.Search, f => f.Embedding, vector, 3);

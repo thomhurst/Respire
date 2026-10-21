@@ -25,12 +25,14 @@ public partial class ErrorMetricsTests
             "SUNSUBSCRIBE one" => "*3\r\n$12\r\nsunsubscribe\r\n$3\r\none\r\n:0\r\n"u8.ToArray(),
             _ => null,
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeShardedAsync("one").AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         var index = server.ReceivedCommands.ToList().LastIndexOf("SSUBSCRIBE one");
         using var capture = new Capture(throwOnMeasurement: true);
@@ -60,8 +62,10 @@ public partial class ErrorMetricsTests
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         await using var primary = StandaloneReplicaReadyTests.Server();
         await using var replica = StandaloneReplicaReadyTests.Server();
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(StandaloneReplicaReadyTests.Options(primary, replica)
             with { Password = "test-password" });
+#pragma warning restore RESP010
         await client.WithReadFrom(RespireReadFrom.Replica).GetStringAsync("warm");
         replica.ReplyOverride = (_, command) => command.StartsWith("AUTH ", StringComparison.Ordinal)
             ? "-WRONGPASS dedicated authentication rejected\r\n"u8.ToArray() : null;
@@ -85,7 +89,9 @@ public partial class ErrorMetricsTests
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         await using var primary = StandaloneReplicaReadyTests.Server();
         await using var replica = StandaloneReplicaReadyTests.Server();
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(StandaloneReplicaReadyTests.Options(primary, replica));
+#pragma warning restore RESP010
         await client.WithReadFrom(RespireReadFrom.Replica).GetStringAsync("warm");
         replica.ReplyOverride = (_, command) => command == "ROLE" ? (serverError
             ? "-NOPERM dedicated role rejected\r\n"u8.ToArray()
@@ -146,7 +152,9 @@ public partial class ErrorMetricsTests
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         await using var primary = StandaloneReplicaReadyTests.Server();
         await using var replica = StandaloneReplicaReadyTests.Server();
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(StandaloneReplicaReadyTests.Options(primary, replica));
+#pragma warning restore RESP010
         var view = client.WithReadFrom(RespireReadFrom.Replica);
         await view.GetStringAsync("warm");
         replica.ReplyOverride = (_, command) => command.EndsWith(" failing", StringComparison.Ordinal)
@@ -207,12 +215,14 @@ public partial class ErrorMetricsTests
         await using var replica = new FakeRespServer(serverError
             ? "-NOPERM role rejected\r\n"u8.ToArray()
             : "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             ReadFrom = RespireReadFrom.ReplicaPreferred,
         });
+#pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("ok");
         var item = capture.Items.Single();
@@ -232,6 +242,7 @@ public partial class ErrorMetricsTests
         await using var replica = new FakeRespServer("*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray());
         replica.ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal)
             ? "-WRONGTYPE terminal\r\n"u8.ToArray() : null;
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
@@ -240,6 +251,7 @@ public partial class ErrorMetricsTests
             ReadFrom = alternative ? RespireReadFrom.ReplicaPreferred : RespireReadFrom.PrimaryPreferred,
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(1), MaximumExtraLoadPercent = 100 },
         });
+#pragma warning restore RESP010
         using var capture = new Capture();
         using var owner = RespireTelemetry.ErrorObservation.Rent(force: true);
         owner.Handled(new IOException("earlier caller retry"));
@@ -269,6 +281,7 @@ public partial class ErrorMetricsTests
             { SuppressReply = command => command == "GET key" };
         await using var replica = new FakeRespServer("*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray())
             { SuppressReply = command => command == "GET key" };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
@@ -276,6 +289,7 @@ public partial class ErrorMetricsTests
             ReadFrom = RespireReadFrom.ReplicaPreferred,
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(1), MaximumExtraLoadPercent = 100 },
         });
+#pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
         using var owner = RespireTelemetry.ErrorObservation.Rent(force: true);
         owner.Handled(new IOException("earlier caller retry"));

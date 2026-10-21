@@ -437,8 +437,10 @@ public class NativeResponseErrorTests
             bytes.ReleaseRef();
             if (bytesTask.GetAwaiter().GetResult() is not null) throw new InvalidOperationException();
             CompletePooledConversion(pool);
+#pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             var result = PooledResponseSource<int, long>.Create(new(RespValue.Integer(42)), 0,
                 static (int _, in RespValue value) => value.AsInteger()).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             if (result != 42) throw new InvalidOperationException();
             if (allocate) Volatile.Write(ref _allocationAnchor, new byte[37]);
         }
@@ -452,7 +454,9 @@ public class NativeResponseErrorTests
             static (int _, in RespValue value) => value.AsInteger());
         raw.TrySetResult(RespValue.Integer(42));
         raw.ReleaseRef();
+#pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
         if (converted.GetAwaiter().GetResult() != 42) throw new InvalidOperationException();
+#pragma warning restore RESP009
     }
 
     private static (PendingResponse Source, Func<Task> Consume) Rent(string shape, bool observeErrors,

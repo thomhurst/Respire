@@ -23,7 +23,7 @@ public partial class ErrorMetricsTests
         await Assert.That(async () => await wrapper.AcquireAsync("key", TimeSpan.Zero, keepAlive))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
-        await Assert.That(capture.Items.Single().Tags["redis.client.errors.internal"]).IsEqualTo(false);
+        await Assert.That((bool)capture.Items.Single().Tags["redis.client.errors.internal"]!).IsFalse();
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
@@ -47,7 +47,9 @@ public partial class ErrorMetricsTests
             // Complete and consume the starter between the joiner's live read and completion check.
             attemptType.GetField("RetryAttempts", flags)!.SetValue(attempt, starterObservation.Attempts);
             attempt.TrySetResult(RespireLockReleaseOutcome.Released);
+#pragma warning disable RESP009 // The attempt is explicitly completed above; consume it inline to force the observation-reuse interleaving.
             _ = starter.Attach(new ValueTask<RespireLockReleaseOutcome>(RespireLockReleaseOutcome.Released)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             return starterObservation.Attempts;
         };
         using var cancelled = new CancellationTokenSource();
@@ -92,7 +94,7 @@ public partial class ErrorMetricsTests
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         var item = capture.Items.Single();
         await Assert.That(item.Tags["error.type"]).IsEqualTo(failure!.GetType().FullName);
-        await Assert.That(item.Tags["redis.client.errors.internal"]).IsEqualTo(false);
+        await Assert.That((bool)item.Tags["redis.client.errors.internal"]!).IsFalse();
         await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
     }
 
@@ -106,7 +108,7 @@ public partial class ErrorMetricsTests
         await Assert.That(async () => await client.Locks.AcquireOrThrowAsync("key", TimeSpan.FromSeconds(30)))
             .Throws<RespireLockNotAcquiredException>();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
-        await Assert.That(capture.Items.Single().Tags["redis.client.errors.internal"]).IsEqualTo(false);
+        await Assert.That((bool)capture.Items.Single().Tags["redis.client.errors.internal"]!).IsFalse();
     }
 
     [Test]
@@ -133,7 +135,7 @@ public partial class ErrorMetricsTests
         await Assert.That(async () => await second).Throws<OperationCanceledException>();
         await Assert.That(second.IsCanceled).IsTrue();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
-        await Assert.That(capture.Items.Single().Tags["redis.client.errors.internal"]).IsEqualTo(false);
+        await Assert.That((bool)capture.Items.Single().Tags["redis.client.errors.internal"]!).IsFalse();
         var index = server.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("SET ", StringComparison.Ordinal) && command.Contains(" IFEQ ", StringComparison.Ordinal));
         await server.SendRawAsync(FakeRespServer.OkReply, server.ReceivedConnectionIds[index]);
         await Assert.That(await first.WaitAsync(deadline.Token)).IsTrue();
@@ -174,8 +176,8 @@ public partial class ErrorMetricsTests
         await Assert.That(release.IsCanceled).IsTrue();
         var items = capture.Items.ToArray();
         await Assert.That(items.Length).IsEqualTo(fenceFails ? 2 : 1);
-        if (fenceFails) await Assert.That(items[0].Tags["redis.client.errors.internal"]).IsEqualTo(true);
-        await Assert.That(items[^1].Tags["redis.client.errors.internal"]).IsEqualTo(false);
+        if (fenceFails) await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsTrue();
+        await Assert.That((bool)items[^1].Tags["redis.client.errors.internal"]!).IsFalse();
         await Assert.That(items[^1].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(fenceFails ? 1 : 0);
     }
 
@@ -253,7 +255,9 @@ public partial class ErrorMetricsTests
         for (var i = 0; i < 1000; i++)
         {
             var owner = DispatchResponseSource<RespireLockReleaseOutcome>.Start();
+#pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             _ = owner.Attach(new ValueTask<RespireLockReleaseOutcome>(RespireLockReleaseOutcome.Released)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             if (control) GC.KeepAlive(new byte[37]);
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;

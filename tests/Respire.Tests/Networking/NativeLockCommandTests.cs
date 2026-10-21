@@ -34,10 +34,12 @@ public class NativeLockCommandTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = (RespireProtocol)protocol, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         try
@@ -73,11 +75,13 @@ public class NativeLockCommandTests
     public async Task InvalidRenewalDurationFailsBeforeCapabilityProbing(long ticks)
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Locks.ResetExpiryAsync("key", "owner", TimeSpan.FromTicks(ticks)))
             .ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
@@ -221,11 +225,13 @@ public class NativeLockCommandTests
         await using var source = new FakeRespServer(UnknownDelex, UnknownDelifeq,
             Encoding.ASCII.GetBytes($"-{(ask ? "ASK" : "MOVED")} {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var seed = new FakeRespServer(Topology(source.Port));
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
+#pragma warning restore RESP010
         await Assert.That(await client.Locks.ReleaseAsync("resource", "owner")).IsTrue();
         await Assert.That(source.ReceivedCommands).Count().IsEqualTo(3);
         await Assert.That(target.ReceivedCommands[ask ? 1 : 0]).IsEqualTo("DELEX resource IFEQ owner");
@@ -248,12 +254,14 @@ public class NativeLockCommandTests
         {
             SuppressReply = _ => { written.TrySetResult(); return true; },
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
             CommandTimeout = null,
         });
+#pragma warning restore RESP010
         var connection = client.Core.Multiplexer.GetConnection();
         var execution = ExecuteAsync(client, extend).AsTask();
         await written.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -285,11 +293,13 @@ public class NativeLockCommandTests
         await using var source = new FakeRespServer(FakeRespServer.OkReply, ":41\r\n"u8.ToArray(), One,
             Encoding.ASCII.GetBytes($"-{(ask ? "ASK" : "MOVED")} {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var seed = new FakeRespServer(Topology(source.Port));
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
+#pragma warning restore RESP010
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
         using var cancellation = new CancellationTokenSource();
         var renewal = mutex.ResetExpiryAsync(TimeSpan.FromMinutes(1), cancellation.Token).AsTask();

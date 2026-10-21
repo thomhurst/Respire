@@ -29,12 +29,14 @@ public partial class ErrorMetricsTests
         target.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology
             : command == "GET key" ? "$100\r\npartial"u8.ToArray() : null;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", first.Port)],
             CircuitBreaker = circuit ? new() : null,
         }, deadline.Token);
+#pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
         using var stream = (await client.Strings.GetStreamAsync("key", deadline.Token))!;
         await stream.ReadExactlyAsync(new byte[7], deadline.Token);
@@ -214,11 +216,13 @@ public partial class ErrorMetricsTests
                 ? Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n") : null;
         target.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", first.Port)],
         }, deadline.Token);
+#pragma warning restore RESP010
         var pool = await client.Core.Cluster!.GetDedicatedPoolAsync(slot, deadline.Token, discovery: null, observation: default);
         var borrowedAtReset = -1;
         using var source = new ReplayUploadSource(() => borrowedAtReset = pool.CaptureRetirementState().Borrowed, resetFails);
@@ -262,11 +266,15 @@ public partial class ErrorMetricsTests
         {
             switch (read)
             {
+#pragma warning disable CA2022 // Probe this exact Stream overload for the producer exception; no payload bytes are expected or consumed.
                 case "array": stream.Read(buffer, 0, 1); break;
                 case "span": stream.Read(buffer.AsSpan()); break;
+#pragma warning restore CA2022
                 case "byte": stream.ReadByte(); break;
+#pragma warning disable CA2022 // Probe this exact Stream overload for the producer exception; no payload bytes are expected or consumed.
                 case "legacy": await stream.ReadAsync(buffer, 0, 1); break;
                 default: await stream.ReadAsync(buffer.AsMemory()); break;
+#pragma warning restore CA2022
             }
         }
         catch (Exception error) { return error; }

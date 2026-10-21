@@ -436,11 +436,13 @@ public class MetricSelectionTests
                 Groups = enabled ? RespireMetricGroups.Command : RespireMetricGroups.None,
             });
             await using var server = new FakeRespServer(3, FakeRespServer.OkReply);
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
                 Protocol = RespireProtocol.Resp2,
                 Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1, ClientName = "metric-selection",
             });
+#pragma warning restore RESP010
             var acquisitions = 0;
             server.ReplyOverride = (id, command) =>
             {
@@ -513,11 +515,13 @@ public class MetricSelectionTests
                         : command.StartsWith("EVALSHA ", StringComparison.Ordinal) ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply;
                 },
             };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
             await using var client = RespireClient.Create(new RespireOptions
             {
                 Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
                 Endpoints = [new("127.0.0.1", server.Port)], ClientName = "cluster-metric-selection",
             });
+#pragma warning restore RESP010
             using var capture = new Capture();
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             if (failHandshake) await Assert.That(Execute).Throws<RespireConnectionException>();
@@ -588,11 +592,13 @@ public class MetricSelectionTests
                             : FakeRespServer.OkReply;
                 },
             };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
                 Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
                 Endpoints = [new("127.0.0.1", server.Port)],
             });
+#pragma warning restore RESP010
             using var capture = new Capture(trace);
             if (failFallback)
                 await Assert.That(async () => { using var result = await Execute(); }).Throws<RespireServerException>();
@@ -663,11 +669,13 @@ public class MetricSelectionTests
                 _ => FakeRespServer.OkReply,
             },
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)], ClientName = "script-sampling",
         });
+#pragma warning restore RESP010
         var sampled = new ConcurrentQueue<Dictionary<string, object?>>();
         var completed = new ConcurrentQueue<Activity>();
         using var listener = new ActivityListener

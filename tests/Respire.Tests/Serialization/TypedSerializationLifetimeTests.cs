@@ -14,7 +14,9 @@ public class TypedSerializationLifetimeTests
     [Test]
     public async Task TypedNullGuardPreservesReferenceAndNullableValueRejection()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         await Assert.That(() => client.Serialize<string?>(null)).ThrowsExactly<ArgumentNullException>();
         await Assert.That(() => client.Serialize<int?>(null)).ThrowsExactly<ArgumentNullException>();
         await Assert.That(() => client.Serialize<TextPayload?>(null)).ThrowsExactly<ArgumentNullException>();
@@ -59,7 +61,9 @@ public class TypedSerializationLifetimeTests
     [Test]
     public async Task SerializedArgumentsRemainOwnedAcrossLaterCalls()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         var first = client.Serialize(new TextPayload("first"));
         var expected = first.ToString();
         for (var index = 0; index < 32; index++)
@@ -73,10 +77,12 @@ public class TypedSerializationLifetimeTests
         var converter = new NestedConverter();
         var options = new JsonSerializerOptions();
         options.Converters.Add(converter);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("localhost", 6379)], Serializer = new RespireSystemTextJsonSerializer(options),
         });
+#pragma warning restore RESP010
         converter.Nested = () => client.Serialize(new TypedSerializationAllocationTests.Payload(7)).ToString();
         for (var index = 0; index < 3; index++)
         {

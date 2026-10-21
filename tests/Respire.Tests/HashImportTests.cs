@@ -26,11 +26,13 @@ public class HashImportTests
     {
         var limit = TimeSpan.FromSeconds(10);
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
         {
             Protocol = (RespireProtocol)protocol, MaxInflightCommands = 2,
             CommandTimeout = TimeSpan.FromSeconds(2),
         });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         var gate = new RespireFakeGate();
@@ -97,10 +99,12 @@ public class HashImportTests
     {
         var limit = TimeSpan.FromSeconds(10);
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
         {
             Protocol = (RespireProtocol)protocol, CommandTimeout = TimeSpan.FromSeconds(2),
         });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         var gate = new RespireFakeGate();
@@ -131,8 +135,10 @@ public class HashImportTests
     public async Task FieldsetsStayOnDedicatedConnectionAndRemainIsolated(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
             { Protocol = (RespireProtocol)protocol, Connections = 3 });
+#pragma warning restore RESP010
         await using var first = await client.Hashes.CreateImportSessionAsync();
         await using var second = await client.Hashes.CreateImportSessionAsync();
         await first.PrepareAsync("schema", "z", "a");
@@ -160,7 +166,9 @@ public class HashImportTests
     public async Task QueuesSnapshotBinaryArgumentsAndApplyOnlyKeyPrefix(bool transaction, int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         var client = root.WithKeyPrefix("tenant:");
         await using var session = await client.Hashes.CreateImportSessionAsync();
         using var batch = transaction ? null : session.CreateBatch();
@@ -196,8 +204,10 @@ public class HashImportTests
     public async Task BatchesPreserveFieldsetOrderBeyondInflightCapacity(int capacity, int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
             { MaxInflightCommands = capacity, Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         using var batch = session.CreateBatch();
         for (var index = 0; index < 32; index++)
@@ -244,8 +254,10 @@ public class HashImportTests
             return command.StartsWith("HIMPORT SET", StringComparison.Ordinal)
                 ? "-READONLY demoted primary\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
             { UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync("{one}:anchor");
         await session.PrepareAsync("schema", "field");
         if (mode == "immediate")
@@ -275,7 +287,9 @@ public class HashImportTests
     public async Task UncertainBatchChunkFaultsUnsentImports(bool afterExecution)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { MaxInflightCommands = 1 });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         using var batch = session.CreateBatch();
         var prepared = batch.Hashes.PrepareImport("schema", "field");
@@ -356,8 +370,10 @@ public class HashImportTests
             }
             return inMulti ? "-NOPERM HIMPORT SET denied\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
             { Protocol = (RespireProtocol)protocol, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         await using var transaction = session.CreateTransaction();
@@ -375,7 +391,9 @@ public class HashImportTests
     public async Task OversizedTransactionPreservesPreparedFieldsets()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { MaxInflightCommands = 2 });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         await using var transaction = session.CreateTransaction();
@@ -397,12 +415,14 @@ public class HashImportTests
         server.SuppressReply = command => command == "AUTH user second";
         server.ReplyOverride = (_, command) => command.StartsWith("HIMPORT DISCARD", StringComparison.Ordinal)
             ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply;
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 128,
             Endpoints = [new("127.0.0.1", server.Port)], CredentialProvider = provider,
             CredentialTimeProvider = clock, CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("bootstrap", "field");
         var commands = server.ReceivedCommands.ToArray();
@@ -455,7 +475,9 @@ public class HashImportTests
     public async Task PreCanceledQueuePreservesPreparedFieldsets(bool transaction, bool empty)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         using var batch = transaction ? null : session.CreateBatch();
@@ -486,12 +508,14 @@ public class HashImportTests
         var provider = new ImportCredentials(new("user", "first", clock.GetUtcNow().AddSeconds(30)));
         await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
         server.SuppressReply = command => command == "AUTH user second";
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
             CredentialProvider = provider, CredentialTimeProvider = clock,
             CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         var commands = server.ReceivedCommands.ToArray();
@@ -537,12 +561,14 @@ public class HashImportTests
             if (command == "EXEC") { inMulti = false; return "*1\r\n+OK\r\n"u8.ToArray(); }
             return inMulti ? "+QUEUED\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
             CredentialProvider = provider, CredentialTimeProvider = clock,
             CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -586,7 +612,9 @@ public class HashImportTests
     public async Task OrdinaryQueuesRejectConnectionLocalImports()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         await Assert.That(() => batch.Hashes.PrepareImport("schema", "field")).Throws<InvalidOperationException>();
@@ -610,7 +638,9 @@ public class HashImportTests
     public async Task ValidationAndServerErrorsPreserveExistingFieldsets(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         await Assert.That(async () => await session.PrepareAsync("schema", "duplicate", "duplicate")).Throws<ArgumentException>();
@@ -637,7 +667,9 @@ public class HashImportTests
     public async Task QueueErrorsPreserveOtherResultsAndSession(bool transaction)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { MaxInflightCommands = transaction ? 16 : 1 });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         using var batch = transaction ? null : session.CreateBatch();
@@ -671,7 +703,9 @@ public class HashImportTests
     public async Task DisconnectedImportsNeverReplay(string mode, bool afterExecution, int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         using var fault = server.InjectFault(mode == "transaction" ? "EXEC" : "HIMPORT",
@@ -700,7 +734,9 @@ public class HashImportTests
     public async Task UnsubmittedDeadConnectionErrorsExpireSessionAndReleaseLease(string failure)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         RespireException error = failure switch
@@ -730,11 +766,13 @@ public class HashImportTests
     public async Task QueueProtocolFailureBeforeDispatchExpiresSessionAndReleasesLease(bool transaction, bool circuits)
     {
         await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
             CircuitBreaker = circuits ? new() : null,
         });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         using var batch = transaction ? null : session.CreateBatch();
@@ -756,7 +794,9 @@ public class HashImportTests
                 closed = true;
                 // The queue has entered its session usage but has not dispatched yet.
                 // Complete a real protocol close here so ClosedBeforeEnqueue marks its copy.
+#pragma warning disable RESP009 // The synchronous activity callback must finish the protocol close before dispatch resumes.
                 BreakConnectionAsync().GetAwaiter().GetResult();
+#pragma warning restore RESP009
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -788,7 +828,9 @@ public class HashImportTests
     public async Task DisposalReturnsBorrowedCountToZeroAndIsIdempotent()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         await Assert.That(client.Core.DedicatedPool.CaptureRetirementState().Borrowed).IsEqualTo(1);
@@ -802,7 +844,9 @@ public class HashImportTests
     public async Task CancellationBeforeImmediateSendPreservesSession()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         using var cancellation = new CancellationTokenSource();
@@ -829,7 +873,9 @@ public class HashImportTests
     public async Task CancellationAfterSendExpiresSessionAndNeverReplays(string mode, bool afterExecution, int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         var gate = new RespireFakeGate();
@@ -884,8 +930,10 @@ public class HashImportTests
         await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
         server.ReplyOverride = (_, command) => command.StartsWith("HIMPORT DISCARD", StringComparison.Ordinal)
             ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply;
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
             { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         await using var session = await root.WithKeyPrefix("prefix:").Hashes.CreateImportSessionAsync();
         byte[] name = [0, 255];
         byte[] field = [128, 0];
@@ -925,8 +973,10 @@ public class HashImportTests
         await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n");
         server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : FakeRespServer.OkReply;
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create(new RespireOptions
             { UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         var client = root.WithKeyPrefix("tenant:");
         await Assert.That(async () => await client.Hashes.CreateImportSessionAsync()).Throws<InvalidOperationException>();
         await using var session = await client.Hashes.CreateImportSessionAsync("{one}:anchor");
@@ -985,7 +1035,9 @@ public class HashImportTests
     public async Task RetiredImportConnectionNeverReplays(string mode)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         using var probe = server.InjectFault("HIMPORT", RespireFakeFault.Loading(), firstArgument: "SET"u8.ToArray());
@@ -1022,11 +1074,13 @@ public class HashImportTests
         await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n");
         server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : FakeRespServer.OkReply;
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync("{one}:anchor");
         await session.PrepareAsync("schema", "field");
         session.Connection.StopAcceptingCommands();
@@ -1075,8 +1129,10 @@ public class HashImportTests
             if (command == "EXEC") { inMulti = false; return Encoding.ASCII.GetBytes(reply); }
             return inMulti ? "+QUEUED\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
             { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         await using var multi = session.CreateTransaction();
@@ -1099,8 +1155,10 @@ public class HashImportTests
     public async Task InvalidSubcommandRepliesExpireSession(string subcommand, string reply)
     {
         await using var server = new FakeRespServer(20, Encoding.ASCII.GetBytes(reply));
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
             { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         async Task Send()
         {

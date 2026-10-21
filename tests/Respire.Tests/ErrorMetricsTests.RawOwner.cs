@@ -71,11 +71,13 @@ public partial class ErrorMetricsTests
         {
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray() : null,
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         async Task Execute()
@@ -122,12 +124,14 @@ public partial class ErrorMetricsTests
         {
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray() : null,
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             CommandTimeout = TimeSpan.FromMilliseconds(100), ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(100),
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
         using var cancellation = new CancellationTokenSource();
         var pending = client.ExecuteAsync("BLPOP", ["key", 1], cancellationToken: cancellation.Token).AsTask();
@@ -172,11 +176,13 @@ public partial class ErrorMetricsTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             MaxInflightCommands = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var error = await Assert.That(async () =>

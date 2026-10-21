@@ -28,12 +28,14 @@ public partial class ErrorMetricsTests
                 => "*2\r\n$1\r\n1\r\n$1\r\n2\r\n"u8.ToArray(),
             _ => null,
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             ClientSideCache = cache ? new() { CoalesceConcurrentMisses = false } : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var client = prefix ? root.WithKeyPrefix("tenant:") : root;
         RespireKey[] keys = crossSlot ? ["{first}:one", "{second}:two"] : ["{same}:one", "{same}:two"];
         using var capture = new Capture(throwOnMeasurement: true);

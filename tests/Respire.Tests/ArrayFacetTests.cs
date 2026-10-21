@@ -16,7 +16,9 @@ public class ArrayFacetTests
     public async Task EscapedGlobClassCharactersStayLiteral(int protocol, bool ignoreCase)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await client.Arrays.SetAsync("letters", 0, new RespireValue[] { "a", "-", "z", "b", "A", "Z", "B" });
         var matches = await client.Arrays.GrepAsync("letters", RespireArrayBound.First, RespireArrayBound.Last,
             [new RespireArrayPredicate(RespireArrayPredicateKind.Glob, @"[\a-z]")],
@@ -32,7 +34,9 @@ public class ArrayFacetTests
     public async Task BoundedAggregateArithmeticPreservesRequestedDirection(int protocol, bool descending)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         var maximum = decimal.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture);
         RespireValue[] values = descending ? [maximum, maximum, "-" + maximum] : ["-" + maximum, maximum, maximum];
         await client.Arrays.SetAsync("ordered", 0, values);
@@ -53,7 +57,9 @@ public class ArrayFacetTests
     public async Task EmptyRegularExpressionIsRejectedBeforeKeyLookup(int protocol, bool present)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await ArrayFacetScenarios.EmptyRegularExpressionIsRejectedBeforeKeyLookup(client, present);
     }
 
@@ -63,7 +69,9 @@ public class ArrayFacetTests
     public async Task GlobSearchHasBoundedWorkAndLeavesConnectionsUsable(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await client.Arrays.SetAsync("adversarial", 0, new string('a', 1024));
         await Assert.That(await client.Arrays.GrepAsync("adversarial", RespireArrayBound.First, RespireArrayBound.Last,
             new RespireArrayPredicate(RespireArrayPredicateKind.Glob, "*a*a*a*a*a*a*a*a*b"))).IsEmpty();
@@ -82,7 +90,9 @@ public class ArrayFacetTests
     public async Task SerializationPredicatesAndValidation(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await ArrayFacetScenarios.SerializationPredicatesAndValidation(client.WithKeyPrefix("validation:"));
     }
 
@@ -94,7 +104,9 @@ public class ArrayFacetTests
     public async Task EveryCommandHasDeferredExecution(int protocol, bool transactional)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await ArrayFacetScenarios.DeferredCommands(client.WithKeyPrefix("deferred:"), transactional);
     }
 
@@ -104,7 +116,9 @@ public class ArrayFacetTests
     public async Task SparseSlotsAndUnsignedIndexesPreservePresence(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await ArrayFacetScenarios.SparseSlotsAndUnsignedIndexesPreservePresence(client);
     }
 
@@ -114,7 +128,9 @@ public class ArrayFacetTests
     public async Task ScansPageByIndexInBothDirections(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await ArrayFacetScenarios.ScansPageByIndexInBothDirections(client);
     }
 
@@ -124,7 +140,9 @@ public class ArrayFacetTests
     public async Task CursorRingAndLastItemsRespectHolesAndResize(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await ArrayFacetScenarios.CursorRingAndLastItemsRespectHolesAndResize(client);
     }
 
@@ -134,7 +152,9 @@ public class ArrayFacetTests
     public async Task SearchAggregateAndInfoKeepReplyShapes(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await ArrayFacetScenarios.SearchAggregateAndInfoKeepReplyShapes(client);
     }
 

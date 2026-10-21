@@ -14,7 +14,9 @@ public class FakeListMoveManyTests
     {
         var clock = new CountingClock();
         await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var observed = server.InjectFault("BLMOVEM", RespireFakeFault.Delay(TimeSpan.Zero));
         var move = client.Lists.MoveManyAsync("source", "destination", waitFor: Timeout.InfiniteTimeSpan,
@@ -45,7 +47,9 @@ public class FakeListMoveManyTests
     public async Task CancellationAndTimeoutRemoveOnlyTheirOwnWaiters(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var cancelled = client.Lists.MoveManyAsync("same", "destination", waitFor: Timeout.InfiniteTimeSpan,
@@ -70,7 +74,9 @@ public class FakeListMoveManyTests
     public async Task CompetingWaitersKeepTheNextGenerationRegisteredForBinaryKeys()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         byte[] key = [0, 255, 128];
         var first = client.Lists.MoveManyAsync(key, "destination", waitFor: Timeout.InfiniteTimeSpan,
@@ -119,7 +125,9 @@ public class FakeListMoveManyTests
     public async Task MovesInvalidateBothWatchesAndBlockingInsideExecIsImmediate()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         foreach (var watched in new[] { "s", "d" })
         {
             await client.Lists.RightPushAsync("s", "a");
@@ -140,7 +148,9 @@ public class FakeListMoveManyTests
     public async Task InvalidRawOptionsDoNotMutateLists()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await client.Lists.RightPushAsync("s", "a", "b");
         RespireValue[][] invalid =
         [
@@ -153,7 +163,9 @@ public class FakeListMoveManyTests
         foreach (var arguments in invalid)
             await Assert.That(async () => { using var reply = await client.ExecuteAsync("LMOVEM", arguments); })
                 .Throws<RespireServerException>();
+#pragma warning disable RESP011 // This isolated fake list contains at most three seeded items; read the whole list to verify no unexpected elements remain.
         await Assert.That(await client.Lists.RangeAsync("s")).IsEquivalentTo(["a", "b"], CollectionOrdering.Matching);
+#pragma warning restore RESP011
         using var defaultMove = await client.ExecuteAsync("LMOVEM", "s", "d", "RIGHT", "LEFT");
         await Assert.That(defaultMove.Count).IsEqualTo(1);
         await Assert.That(defaultMove[0].AsString()).IsEqualTo("b");
@@ -166,16 +178,22 @@ public class FakeListMoveManyTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await client.Lists.RightPushAsync("s", "a", "b", "c");
         using (var expiry = await client.ExecuteAsync("PEXPIRE", "s", 1000)) { }
         await client.SetAsync("wrong", "text");
         await Assert.That(await client.Lists.MoveManyAsync("s", "wrong", 4, countMode: RespireListMoveCountMode.Exactly)).IsNull();
         await Assert.That(async () => await client.Lists.MoveManyAsync("s", "wrong", 2)).Throws<RespireServerException>();
+#pragma warning disable RESP011 // This isolated fake list contains at most three seeded items; read the whole list to verify no unexpected elements remain.
         await Assert.That(await client.Lists.RangeAsync("s")).IsEquivalentTo(["a", "b", "c"], CollectionOrdering.Matching);
+#pragma warning restore RESP011
         await Assert.That(await client.Lists.MoveManyAsync("s", "s", 2, to: RespireListSide.Left))
             .IsEquivalentTo(["b", "a"], CollectionOrdering.Matching);
+#pragma warning disable RESP011 // This isolated fake list contains at most three seeded items; read the whole list to verify no unexpected elements remain.
         await Assert.That(await client.Lists.RangeAsync("s")).IsEquivalentTo(["b", "a", "c"], CollectionOrdering.Matching);
+#pragma warning restore RESP011
         await Assert.That(await client.Lists.MoveManyAsync("s", "s", 99, order: RespireListMoveOrder.Bulk))
             .IsEquivalentTo(["b", "a", "c"], CollectionOrdering.Matching);
         clock.Advance(TimeSpan.FromSeconds(1));
@@ -189,7 +207,9 @@ public class FakeListMoveManyTests
     public async Task BlockingExactlyWakesOnGrowthAndCancellationReleasesWait(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol, Connections = 1 });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         using var observed = server.InjectFault("BLMOVEM", RespireFakeFault.Delay(TimeSpan.Zero));
@@ -218,13 +238,17 @@ public class FakeListMoveManyTests
     public async Task MoveUsesDestinationOrderAndPreservesUnmovedElements(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await client.Lists.RightPushAsync("source", "a", "b", "c");
         await client.Lists.RightPushAsync("destination", "x");
         using var moved = await client.ExecuteAsync("LMOVEM", "source", "destination", "LEFT", "LEFT", "COUNT", 2, "OBO");
         await Assert.That(moved[0].AsString()).IsEqualTo("b");
         await Assert.That(moved[1].AsString()).IsEqualTo("a");
+#pragma warning disable RESP011 // This isolated fake list contains at most three seeded items; read the whole list to verify no unexpected elements remain.
         await Assert.That(await client.Lists.RangeAsync("source")).IsEquivalentTo(["c"], CollectionOrdering.Matching);
         await Assert.That(await client.Lists.RangeAsync("destination")).IsEquivalentTo(["b", "a", "x"], CollectionOrdering.Matching);
+#pragma warning restore RESP011
     }
 }

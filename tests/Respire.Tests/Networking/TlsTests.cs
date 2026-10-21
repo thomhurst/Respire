@@ -34,6 +34,7 @@ public class TlsTests
         var servers = Task.WhenAll(ServeAsync(seed, stale.Port, peerPort), ServeAsync(peer, primary.Port, null));
         try
         {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
                 LibraryName = null,
@@ -45,6 +46,7 @@ public class TlsTests
                     TargetHost = "sentinel.example", RemoteCertificateValidationCallback = (_, _, _, _) => true,
                 },
             }, deadline.Token);
+#pragma warning restore RESP010
             await client.PingAsync(deadline.Token);
             await servers.WaitAsync(deadline.Token);
             await Assert.That(names.ToArray()).IsEquivalentTo(new string?[] { "sentinel.example", "sentinel.example" });

@@ -61,7 +61,9 @@ public class GeneratedSearchSchemaTests
     public async Task GeneratedDefinitionsProduceExactCreateWireTokens(int protocol, bool json)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var definition = json ? SearchJsonModelSearchSchema.Definition : SearchHashModelSearchSchema.Definition;
         await client.Search.CreateIndexAsync("models", definition);
         var tokens = server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString).ToArray();
@@ -77,7 +79,9 @@ public class GeneratedSearchSchemaTests
     public async Task GeneratedVectorWritesSendBinaryHashAndNumericJson(int protocol)
     {
         await using var server = Server();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var vector = new byte[] { 255, 128, 0, 1, 2, 3, 4, 5 };
         await SearchHashModelHashMapper.SetAsync(client, new("42", "Hello", "tools", 2, vector));
         await Assert.That(server.ReceivedArguments.Last()[^1]).IsEquivalentTo(vector);
@@ -92,7 +96,9 @@ public class GeneratedSearchSchemaTests
     {
         await using var server = Server();
         server.ReplyOverride = (_, command) => command.StartsWith("HSET ", StringComparison.Ordinal) ? ":1\r\n"u8.ToArray() : null;
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         var value = new SearchHashModel("42", "Hello", "tools", 2, new byte[8]);
         var tracker = SearchHashModelHashMapper.Track(client, value);
         await tracker.UpdateAsync(value);
@@ -115,7 +121,9 @@ public class GeneratedSearchSchemaTests
             ReplyOverride = (_, command) => command == "COMMAND INFO HSETEX"
                 ? "*1\r\n*6\r\n$6\r\nhsetex\r\n:-6\r\n*0\r\n:1\r\n:1\r\n:1\r\n"u8.ToArray() : null,
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         var vector = new byte[] { 255, 128, 0, 1, 2, 3, 4, 5 };
         var value = new SearchExpiringHashModel("42", vector);
         if (tracked)
@@ -198,12 +206,14 @@ public class GeneratedSearchSchemaTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = Server();
         server.SuppressReply = _ => { received.TrySetResult(); return true; };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = TimeSpan.FromMilliseconds(200), ThreadPoolMonitoring = false,
         });
+#pragma warning restore RESP010
         var value = new SearchHashModel("42", "Hello", "tools", 2, new byte[8]);
         var tracker = SearchHashModelHashMapper.Track(client, value);
         value.Embedding[0] = 1;
@@ -230,7 +240,9 @@ public class GeneratedSearchSchemaTests
             "HMGET bad Embedding" => "*1\r\n$1\r\nx\r\n"u8.ToArray(),
             _ => null,
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
         var read = await SearchHashModelHashMapper.GetPartialAsync(client, "good", ["Embedding"]);
         await Assert.That(read.Embedding.Value!).IsEquivalentTo(vector);
         await Assert.That(async () => await SearchHashModelHashMapper.GetPartialAsync(client, "bad", ["Embedding"])).Throws<ArgumentException>();

@@ -122,11 +122,13 @@ public class StreamReadTests
     {
         await using var server = new FakeRespServer(Reply(false, ("events", ["1-0"])));
         server.DelayReply(0, 150);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], CommandTimeout = TimeSpan.FromMilliseconds(25),
         });
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         if (enumerate)
         {
@@ -253,11 +255,13 @@ public class StreamReadTests
     public async Task HandshakeAuthenticationFailureEndsEnumerationWithoutRetry()
     {
         await using var server = new FakeRespServer("-WRONGPASS denied\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Connections = 1, Password = "test-secret", Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await using var reader = client.Streams.ReadAllAsync("events").GetAsyncEnumerator();
         var error = await Assert.That(async () => await reader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
             .ThrowsExactly<RespireConnectionException>();

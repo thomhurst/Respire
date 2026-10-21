@@ -19,8 +19,10 @@ public class FakePubSubTests
     {
         await using var server = new RespireFakeServer();
         var options = server.CreateOptions() with { Protocol = (RespireProtocol)protocol, Connections = 1 };
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var first = await RespireClient.ConnectAsync(options);
         await using var second = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         byte[] channel = [0, 255, 128];
         byte[] payload = [254, 0, 127];
         await using var one = await first.SubscribeAsync((RespireChannel)channel);
@@ -109,7 +111,9 @@ public class FakePubSubTests
     public async Task FaultHeldReplyPrecedesLaterPublications(int protocol, string command)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var publisher = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await using var wire = await WireClient.ConnectAsync(server, protocol);
         if (command == "PING")
         {
@@ -144,8 +148,10 @@ public class FakePubSubTests
     public async Task CancelledActivationAndDisposalRemoveConnectionRoutes(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var publisher = await RespireClient.ConnectAsync(server.CreateOptions());
         await using var subscriber = RespireClient.Create(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         var gate = new RespireFakeGate();
         using var fault = server.InjectFault("SUBSCRIBE", RespireFakeFault.Pause(gate, afterExecution: true));
         using var caller = new CancellationTokenSource();
@@ -165,9 +171,13 @@ public class FakePubSubTests
     public async Task PublicationDisconnectRespectsAcceptanceWithoutReplay(bool afterExecution)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var subscriber = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await using var subscription = await subscriber.SubscribeAsync("channel");
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var publisher = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         using var fault = server.InjectFault("PUBLISH", RespireFakeFault.Disconnect(afterExecution));
         await Assert.That(async () => await publisher.PublishAsync("channel", "accepted").AsTask().WaitAsync(Limit))
             .Throws<RespireConnectionException>();
@@ -222,8 +232,10 @@ public class FakePubSubTests
     public async Task SubscriberDisconnectResubscribesWithoutReplayingTheGap(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var publisher = await RespireClient.ConnectAsync(server.CreateOptions());
         await using var subscriber = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await using var subscription = await subscriber.SubscribeAsync("original");
         var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         subscriber.ConnectionStateChanged += change =>
@@ -252,7 +264,9 @@ public class FakePubSubTests
     public async Task ServerDisposalJoinsFaultHeldRepliesAndQueuedPublications()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var publisher = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await using var subscriber = await WireClient.ConnectAsync(server, 3);
         using var fault = server.InjectFault("SUBSCRIBE", RespireFakeFault.Pause(new RespireFakeGate(), afterExecution: true));
         await subscriber.SendAsync("SUBSCRIBE", "held");
@@ -273,7 +287,9 @@ public class FakePubSubTests
         await Confirmation(subscriber, "subscribe", "shared", 1, protocol);
         var publishers = Enumerable.Range(0, 4).Select(async publisher =>
         {
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
             await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 1 });
+#pragma warning restore RESP010
             for (var index = 0; index < 32; index++)
                 await Assert.That(await client.PublishAsync("shared", $"{publisher}:{index}")).IsEqualTo(1);
         }).ToArray();
@@ -296,7 +312,9 @@ public class FakePubSubTests
     public async Task SlowSubscriberHasBoundedOutputAndDoesNotBlockOtherClients()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var publisher = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await using var slow = await WireClient.ConnectAsync(server, 2);
         await slow.SendAsync("SUBSCRIBE", "slow");
         await Confirmation(slow, "subscribe", "slow", 1, 2);
@@ -314,7 +332,9 @@ public class FakePubSubTests
     public async Task DrainedPublicationsReleaseOutputCapacity()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var publisher = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await using var subscriber = await WireClient.ConnectAsync(server, 3);
         await subscriber.SendAsync("SUBSCRIBE", "drained");
         await Confirmation(subscriber, "subscribe", "drained", 1, 3);
@@ -333,7 +353,9 @@ public class FakePubSubTests
     public async Task UnsupportedPubSubVariantsLeaveFollowingRepliesInOrder()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 1 });
+#pragma warning restore RESP010
         foreach (var command in new[] { "PSUBSCRIBE", "PUNSUBSCRIBE", "SSUBSCRIBE", "SUNSUBSCRIBE", "SPUBLISH" })
         {
             var error = await Assert.That(async () => { using var ignored = await client.ExecuteAsync(command, "channel", "value"); })

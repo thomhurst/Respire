@@ -18,12 +18,14 @@ public partial class ErrorMetricsTests
         using var configuration = new MetricConfigurationScope(new()
             { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         await using var server = new FakeRespServer(4, ":123\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
             AllowAdmin = failure is not ("info-admin" or "evict" or "touch" or "pause-admin" or "unpause" or "unblock-admin"),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var handle = await client.Server.GetClientConnectionAsync();
         var commandsBefore = server.CommandsSeen;
         using var capture = new Capture(throwOnMeasurement: true);
@@ -71,11 +73,13 @@ public partial class ErrorMetricsTests
                 : response == "shape" ? "$3\r\nbad\r\n"u8.ToArray()
                 : operation == "unblock" ? ":1\r\n"u8.ToArray() : null,
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var handle = await client.Server.GetClientConnectionAsync();
         using var capture = new Capture(throwOnMeasurement: true);
         async Task Execute()
@@ -110,11 +114,13 @@ public partial class ErrorMetricsTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         await using var server = new FakeRespServer(4, ":123\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = failure != "admin",
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var handle = await client.Server.GetClientConnectionAsync();
         using var capture = new Capture(throwOnMeasurement: true);
         // This call must return a faulted ValueTask rather than throw during invocation.
@@ -140,12 +146,14 @@ public partial class ErrorMetricsTests
         var replyOverride = server.ReplyOverride!;
         server.ReplyOverride = (connectionId, command) => command == "CLUSTER SLOTS"
             ? NotificationTopology(server.Port) : replyOverride(connectionId, command);
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp3, Connections = 1, ClientSideCache = new(),
             UseCluster = cluster, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var mutationsAtFinal = -1;
         using var capture = new Capture(throwOnMeasurement: true, onMeasurement: item =>
         {
@@ -182,6 +190,7 @@ public partial class ErrorMetricsTests
                     $"*3\r\n$11\r\nunsubscribe\r\n${descriptor.ToString().Length}\r\n{descriptor}\r\n:0\r\n"),
                 _ => null,
             };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true, ClusterTopologyRefreshInterval = null,
@@ -191,6 +200,7 @@ public partial class ErrorMetricsTests
                 MaxDelay = TimeSpan.FromMilliseconds(1), JitterRatio = 0,
             }, Endpoints = [new("127.0.0.1", first.Port)],
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         using var capture = new Capture(throwOnMeasurement: true);
         Volatile.Write(ref topology, NotificationTopology(second.Port));

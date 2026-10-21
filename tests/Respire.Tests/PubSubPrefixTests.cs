@@ -22,10 +22,12 @@ public class PubSubPrefixTests
                 || command.StartsWith(verb.Replace("SUBSCRIBE", "UNSUBSCRIBE") + " ", StringComparison.Ordinal)
                 ? Confirmation(command[..command.IndexOf(' ')].ToLowerInvariant(), physicalTarget.Bytes.ToArray()) : null,
         };
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
         });
+#pragma warning restore RESP010
         byte[] prefix = [255, 0, (byte)'*', (byte)'?', (byte)'[', (byte)']', (byte)'\\', (byte)':'];
         var view = root.WithKeyPrefix("keys:").WithPubSubPrefix((RespireKey)prefix);
         var logical = new RespireChannel("item");
@@ -85,11 +87,13 @@ public class PubSubPrefixTests
     public async Task RootAndDerivedOptionsOwnIndependentBinaryNamespaces()
     {
         byte[] configured = [255, 0, (byte)':'];
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("localhost", 6379)], KeyPrefix = "keys:", PubSubPrefix = configured,
             ReplicaEndpoints = [new("localhost", 6380)], ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         configured[0] = 1;
         var view = (RespireClient)root.WithPubSubPrefix("inner:").WithKeyPrefix("nested:")
             .WithReadFrom(RespireReadFrom.Replica).WithoutClientCache();
@@ -111,14 +115,18 @@ public class PubSubPrefixTests
     [Arguments("localhost,pubSubPrefix=first,pubSubPrefix=", "")]
     public async Task ConnectionStringsDecodePubSubPrefixOnce(string connectionString, string expected)
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create(RespireOptions.Parse(connectionString));
+#pragma warning restore RESP010
         await Assert.That(root.ResolveChannel("item").Bytes.Span.SequenceEqual(Encoding.UTF8.GetBytes(expected + "item"))).IsTrue();
     }
 
     [Test]
     public async Task NotificationDescriptorsStayPhysicalAndPrefixesRemainExplicit()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create("localhost,keyPrefix=keys%3A");
+#pragma warning restore RESP010
         var view = root.WithPubSubPrefix("events:").WithKeyPrefix("nested:");
         var key = view.ResolveKey("item");
         var descriptor = RespireChannel.KeySpaceSingleKey(key, 2);
@@ -152,7 +160,9 @@ public class PubSubPrefixTests
     [Test]
     public async Task EmptyAndInvalidTextPrefixesAreRejected()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create("localhost");
+#pragma warning restore RESP010
         await Assert.That(() => root.WithPubSubPrefix(RespireKey.Empty)).Throws<ArgumentException>();
         await Assert.That(() => root.WithPubSubPrefix("")).Throws<ArgumentException>();
         await Assert.That(() => root.WithPubSubPrefix("\uD800")).Throws<ArgumentException>();

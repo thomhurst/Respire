@@ -245,11 +245,13 @@ public partial class ErrorMetricsTests
                 : command.StartsWith("WAITAOF ", StringComparison.Ordinal) ? "*2\r\n:-1\r\n:1\r\n"u8.ToArray()
                 : commandFailure && command.StartsWith("SET ", StringComparison.Ordinal) ? "-NOPERM denied\r\n"u8.ToArray() : null,
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp3, Connections = 1, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var mutationsAtFinal = -1;
         using var capture = new Capture(throwOnMeasurement: true, onMeasurement: item =>
         {
@@ -288,11 +290,13 @@ public partial class ErrorMetricsTests
                 _ => null,
             },
         };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = (RespireProtocol)protocol, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await ExecuteAsync();
         long legacyRentals = 0, failureRentals = 0;
         RespireTelemetry.ErrorObservation.RentalObserverForTests = () => Interlocked.Increment(ref legacyRentals);
@@ -325,8 +329,10 @@ public partial class ErrorMetricsTests
             var get = transaction ? multi!.GetString("key") : batch!.GetString("key");
             if (transaction) await multi!.CommitAsync();
             else await batch!.ExecuteAsync();
+#pragma warning disable RESP002 // Both branches above await their queue's flush; the analyzer cannot correlate the conditional transaction and batch aliases.
             await Assert.That(increment.Result).IsEqualTo(42L);
             await Assert.That(get.GetAwaiter().GetResult()).IsEqualTo("value");
+#pragma warning restore RESP002
         }
     }
 

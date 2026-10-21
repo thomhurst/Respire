@@ -114,7 +114,9 @@ public class HashReadTests
     [Test]
     public async Task ExpiryTime_RejectsEmptyFieldsAndInvalidPrecisionBeforeEnqueueing()
     {
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost:1");
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         await Assert.That(async () => await client.Hashes.ExpiryTimeAsync("hash")).Throws<ArgumentException>();

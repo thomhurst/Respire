@@ -188,11 +188,13 @@ public class DeferredExecutionOwnershipTests
     public async Task DiscardedQueuesPublishOnlyAtFirstInspectionOfEachPending(bool transaction)
     {
         using var configuration = Configure(commandMetrics: false);
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", 6379)],
         });
+#pragma warning restore RESP010
         using var capture = new Capture(commandMetrics: false);
         var batch = transaction ? null : client.CreateBatch();
         var commit = transaction ? client.CreateTransaction() : null;

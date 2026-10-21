@@ -14,7 +14,9 @@ public class FakeSetServerTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await client.Sets.AddAsync("source", "move", "last");
         await client.Sets.AddAsync("destination", "existing");
         await Number(client, "PEXPIRE", "source", 1000);
@@ -52,8 +54,10 @@ public class FakeSetServerTests
     public async Task ConcurrentDuplicatesAndMovesAreAtomic()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var first = await RespireClient.ConnectAsync(server.CreateOptions());
         await using var second = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         var added = await Task.WhenAll(Enumerable.Range(0, 200).Select(async index =>
             await (index < 100 ? first : second).Sets.AddAsync("source", index % 100)));
         await Assert.That(added.Sum()).IsEqualTo(100);
@@ -72,7 +76,9 @@ public class FakeSetServerTests
     public async Task UnsupportedSamplingAndScanningDoNotMutateSets()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         await client.Sets.AddAsync("set", "member");
         foreach (var (command, args) in new (string, RespireValue[])[]
         {

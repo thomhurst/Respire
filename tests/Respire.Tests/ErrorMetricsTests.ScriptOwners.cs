@@ -29,11 +29,13 @@ public partial class ErrorMetricsTests
             $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
             $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         using var capture = new Capture();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var pending = client.Scripts.FlushAsync(cancellationToken: deadline.Token).AsTask();
@@ -44,7 +46,7 @@ public partial class ErrorMetricsTests
         await second.SendRawAsync(FakeRespServer.OkReply, second.ReceivedConnectionIds[index]);
         await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<RespireServerException>();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
-        await Assert.That(capture.Items.Single().Tags["redis.client.errors.internal"]).IsEqualTo(false);
+        await Assert.That((bool)capture.Items.Single().Tags["redis.client.errors.internal"]!).IsFalse();
     }
 
     [Test]
@@ -76,7 +78,7 @@ public partial class ErrorMetricsTests
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         var item = capture.Items.Single();
         await Assert.That(item.Tags["error.type"]).IsEqualTo(failure!.GetType().FullName);
-        await Assert.That(item.Tags["redis.client.errors.internal"]).IsEqualTo(false);
+        await Assert.That((bool)item.Tags["redis.client.errors.internal"]!).IsFalse();
         await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
     }
 
@@ -101,7 +103,9 @@ public partial class ErrorMetricsTests
         {
             var owner = DispatchResponseSource<long>.Start();
             var response = owner.Attach(new ValueTask<long>(42));
+#pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             _ = response.GetAwaiter().GetResult();
+#pragma warning restore RESP009
             if (control) GC.KeepAlive(new byte[37]);
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;

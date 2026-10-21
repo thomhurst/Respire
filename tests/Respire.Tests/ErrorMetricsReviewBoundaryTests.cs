@@ -27,12 +27,14 @@ public class ErrorMetricsReviewBoundaryTests
         var slot = ClusterHash.GetSlot("key");
         await using var seed = new FakeRespServer(Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n"));
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = cluster, Connections = 1,
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", cluster ? seed.Port : target.Port)],
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         _ = await client.Strings.GetStringAsync("key", deadline.Token);
         target.ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal)
@@ -118,11 +120,13 @@ public class ErrorMetricsReviewBoundaryTests
         await using var source = new FakeRespServer(8, Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var seed = new FakeRespServer(Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{source.Port}\r\n"));
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         using var capture = new ErrorCapture();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await Assert.That(async () =>
