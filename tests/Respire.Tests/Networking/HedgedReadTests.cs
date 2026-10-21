@@ -224,28 +224,63 @@ public class HedgedReadTests
     }
 
     [Test]
-    public async Task DelayedOriginalOwnsArgumentsAfterHedgeReturns()
+    [Arguments(0)]
+    [Arguments(2100)]
+    public async Task DelayedOriginalOwnsArgumentsAfterHedgeReturns(int heldMilliseconds)
     {
         await using var primary = new FakeRespServer(Bulk("primary"));
         await using var replica = Replica(holdReads: true);
 #pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica) with { MaxInflightCommands = 1 });
 #pragma warning restore RESP010
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var budget = TimeSpan.FromSeconds(5);
+        using var deadline = new CancellationTokenSource(budget);
+        // The held slot must delay the original GET, not a new ROLE check before hedge
+        // dispatch. Validation starts inside this deadline, so keep it fresh for its budget.
+        client.Core.ReadRouter.RoleRevalidationInterval = budget;
         var strict = client.WithReadFrom(RespireReadFrom.Replica);
-        var blocker = strict.GetStringAsync("blocker", deadline.Token).AsTask();
-        await WaitForCommandAsync(replica, "GET blocker", deadline.Token);
-        var bytes = "mutable"u8.ToArray();
-        await Assert.That(await client.GetStringAsync(bytes, deadline.Token)).IsEqualTo("primary");
-        "changed"u8.CopyTo(bytes);
-        await Assert.That(replica.ReceivedCommands.Contains("GET mutable")).IsFalse();
-        await replica.SendRawAsync(Bulk("blocker"));
-        await Assert.That(await blocker.WaitAsync(deadline.Token)).IsEqualTo("blocker");
-        await WaitForCommandAsync(replica, "GET mutable", deadline.Token);
-        await Assert.That(replica.ReceivedCommands.Contains("GET changed")).IsFalse();
-        await replica.SendRawAsync(Bulk("discarded"));
-        replica.SuppressReply = null;
-        await Assert.That(await strict.GetStringAsync("next", deadline.Token)).IsEqualTo("replica");
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var pause = GC.GetTotalPauseDuration();
+        var phases = new ConcurrentQueue<string>();
+        void Record(string phase) => phases.Enqueue(FormattableString.Invariant(
+            $"{System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:F3} ms: {phase}; gc-pause-delta-ms={(GC.GetTotalPauseDuration() - pause).TotalMilliseconds:F3}"));
+        var reply = replica.ReplyOverride!;
+        replica.ReplyOverride = (id, command) =>
+        {
+            Record($"replica reply prepared for {command}");
+            return reply(id, command);
+        };
+        try
+        {
+            Record("blocker starting (includes ROLE validation)");
+            var blocker = strict.GetStringAsync("blocker", deadline.Token).AsTask();
+            await WaitForCommandAsync(replica, "GET blocker", deadline.Token);
+            Record("blocker holds capacity; setup delay starting");
+            // Exercise a scheduling gap after validation, past both default ROLE intervals.
+            await Task.Delay(heldMilliseconds, deadline.Token);
+            Record("mutable read starting");
+            var bytes = "mutable"u8.ToArray();
+            await Assert.That(await client.GetStringAsync(bytes, deadline.Token)).IsEqualTo("primary");
+            Record("primary hedge returned");
+            "changed"u8.CopyTo(bytes);
+            await Assert.That(replica.ReceivedCommands.Contains("GET mutable")).IsFalse();
+            await replica.SendRawAsync(Bulk("blocker"));
+            await Assert.That(await blocker.WaitAsync(deadline.Token)).IsEqualTo("blocker");
+            await WaitForCommandAsync(replica, "GET mutable", deadline.Token);
+            await Assert.That(replica.ReceivedCommands.Contains("GET changed")).IsFalse();
+            await replica.SendRawAsync(Bulk("discarded"));
+            replica.SuppressReply = null;
+            await Assert.That(await strict.GetStringAsync("next", deadline.Token)).IsEqualTo("replica");
+            await Assert.That(replica.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(1);
+        }
+        catch
+        {
+            Record("failed");
+            Console.WriteLine(string.Join(Environment.NewLine, phases));
+            Console.WriteLine($"Primary commands: {string.Join(", ", primary.ReceivedCommands)}");
+            Console.WriteLine($"Replica commands: {string.Join(", ", replica.ReceivedCommands)}");
+            throw;
+        }
     }
 
     [Test]
