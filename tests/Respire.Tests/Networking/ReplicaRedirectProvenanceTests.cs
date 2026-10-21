@@ -141,9 +141,60 @@ public class ReplicaRedirectProvenanceTests
         await Assert.That(source.ReceivedCommands.Count(command => command == "GET cache:independent")).IsEqualTo(1);
     }
 
+    [Test]
+    [Arguments(false, RespireClientTrackingMode.OptIn)]
+    [Arguments(true, RespireClientTrackingMode.OptIn)]
+    [Arguments(false, RespireClientTrackingMode.OptOut)]
+    [Arguments(true, RespireClientTrackingMode.OptOut)]
+    [Arguments(false, RespireClientTrackingMode.Broadcast)]
+    [Arguments(true, RespireClientTrackingMode.Broadcast)]
+    public async Task MixedMgetDoesNotChargeExcludedKeysToProvenance(bool retry, RespireClientTrackingMode mode)
+    {
+        var limit = TimeSpan.FromSeconds(10);
+        await using var target = Server();
+        await using var source = Server();
+        source.ReplyOverride = (_, command) => command.StartsWith("MGET ", StringComparison.Ordinal)
+            || command.StartsWith("GET cache:target", StringComparison.Ordinal)
+            ? Encoding.UTF8.GetBytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : Reply(command);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", source.Port)], Connections = 1,
+            EnableReplicaRedirects = true,
+            ClientSideCache = new() { TrackingMode = mode, KeyPrefixes = ["cache:"] },
+            RetryPolicy = retry ? new() : null, CommandTimeout = limit,
+        });
+        await client.GetStringAsync("cache:target-admit");
+        await client.GetStringAsync("cache:independent");
+        var excluded = "excluded" + new string('x', ClientSideCacheCoordinator.TrackingProvenance.MaximumKeyBytes);
+        var values = await client.Strings.GetManyAsync("cache:target-first", excluded, "cache:target-second");
+        await Assert.That(values.Length).IsEqualTo(3);
+        await Assert.That(values.All(value => value == "value")).IsTrue();
+        await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("MGET ", StringComparison.Ordinal))).IsEqualTo(1);
+        await Assert.That(await client.GetStringAsync("cache:target-first")).IsEqualTo("value");
+        await Assert.That(await client.GetStringAsync("cache:target-second")).IsEqualTo("value");
+        await Assert.That(target.ReceivedCommands.Count(command => command == "GET cache:target-first"
+            || command == "GET cache:target-second")).IsEqualTo(0);
+        var lost = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var subscription = client.ClientSideCache!.SubscribeInvalidations("cache:target-second", change =>
+        {
+            if ((change.Reasons & RespireClientCacheInvalidationReason.ContinuityLost) != 0) lost.TrySetResult();
+        });
+        target.CloseConnections();
+        await lost.Task.WaitAsync(limit);
+
+        await Assert.That(await client.GetStringAsync("cache:independent")).IsEqualTo("value");
+        await Assert.That(source.ReceivedCommands.Count(command => command == "GET cache:independent")).IsEqualTo(1);
+        await Assert.That(await client.GetStringAsync("cache:target-first")).IsEqualTo("value");
+        await Assert.That(await client.GetStringAsync("cache:target-second")).IsEqualTo("value");
+        await Assert.That(target.ReceivedCommands.Count(command => command == "GET cache:target-first")).IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "GET cache:target-second")).IsEqualTo(1);
+    }
+
     private static FakeRespServer Server() => new(8) { ReplyOverride = (_, command) => Reply(command) };
     private static byte[] Reply(string command) => Encoding.UTF8.GetBytes(command.StartsWith("HELLO 3", StringComparison.Ordinal)
-        ? "%1\r\n$5\r\nproto\r\n:3\r\n" : command.StartsWith("GET ", StringComparison.Ordinal)
+        ? "%1\r\n$5\r\nproto\r\n:3\r\n" : command.StartsWith("MGET ", StringComparison.Ordinal)
+            ? $"*{command.Count(character => character == ' ')}\r\n" + string.Concat(Enumerable.Repeat("$5\r\nvalue\r\n", command.Count(character => character == ' ')))
+        : command.StartsWith("GET ", StringComparison.Ordinal)
             || command.StartsWith("HGET ", StringComparison.Ordinal) || command.StartsWith("LCS ", StringComparison.Ordinal)
                 ? "$5\r\nvalue\r\n" : "+OK\r\n");
 }

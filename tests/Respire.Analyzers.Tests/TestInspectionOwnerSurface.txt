@@ -140,7 +140,7 @@ Respire.ClientSideCacheCoordinator.TrackingProvenance | field MaximumKeyBytes : 
 Respire.ClientSideCacheCoordinator.TrackingProvenance | field MaximumKeys : int
 Respire.ClientSideCacheCoordinator.TrackingProvenance | method Fence(ClientSideCacheCoordinator) : int
 Respire.ClientSideCacheCoordinator.TrackingProvenance | method Forget() : void
-Respire.ClientSideCacheCoordinator.TrackingProvenance | method Register(QueryRequest?) : void
+Respire.ClientSideCacheCoordinator.TrackingProvenance | method Register(QueryRequest?, ClientSideCacheCoordinator?) : void
 Respire.ClientSideCacheCoordinator.TrackingProvenance | method Register`1(string, in TCommand) : void
 # Count: Respire.Networking.BulkStreamPendingResponseSource | 27
 Respire.Networking.BulkStreamPendingResponseSource | constructor BulkStreamPendingResponseSource(string?, bool, Action<Exception?>?, CancellationToken, Action?)

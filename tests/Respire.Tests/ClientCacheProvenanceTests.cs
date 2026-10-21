@@ -10,6 +10,24 @@ namespace Respire.Tests;
 public class ClientCacheProvenanceTests
 {
     [Test]
+    public async Task ExcludedMgetKeysDoNotConsumeTheKeyCountBudget()
+    {
+        var cache = new ClientSideCacheCoordinator(new() { KeyPrefixes = ["cache:"] });
+        var owner = new ClientSideCacheCoordinator.TrackingProvenance();
+        var arguments = new RespireValue[ClientSideCacheCoordinator.TrackingProvenance.MaximumKeys + 2];
+        arguments[0] = "cache:target";
+        for (var index = 1; index < arguments.Length; index++) arguments[index] = $"excluded:{index}";
+        var command = new CmdN(Verbs.MGet, arguments);
+        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("MGET", in command, out var request)).IsTrue();
+        owner.Register(request, cache);
+        Put(cache, "cache:target");
+        Put(cache, "cache:independent");
+        owner.Fence(cache);
+        await Assert.That(cache.TryGetHit(new RespireKey("cache:target"), out _)).IsFalse();
+        await Assert.That(cache.TryGetHit(new RespireKey("cache:independent"), out _)).IsTrue();
+    }
+
+    [Test]
     [Arguments("LCS")]
     [Arguments("MGET")]
     [Arguments("JSON.MGET")]

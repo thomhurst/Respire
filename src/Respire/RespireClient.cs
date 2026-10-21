@@ -3143,7 +3143,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
     // Keep the query's owned physical-key metadata alongside its wire snapshot. Both
     // ordinary redirects and retries need it to attribute the fill to a tracking socket.
-    private readonly struct CacheQueryCommand(SnapshotCommand snapshot, ClientSideCacheCoordinator.QueryRequest request) : IRespCommand
+    private readonly struct CacheQueryCommand(SnapshotCommand snapshot, ClientSideCacheCoordinator.QueryRequest request) : IRespCommandWrapper
     {
         public int GetWriteSizeHint() => snapshot.GetWriteSizeHint();
         public void Write(ref RespWriter writer) => snapshot.Write(ref writer);
@@ -3151,6 +3151,13 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         public RespireCommandRetryCategory RetryCategory => snapshot.RetryCategory;
         public int CursorArgumentIndex => snapshot.CursorArgumentIndex;
         public bool HasOpaqueCursor => snapshot.HasOpaqueCursor;
+        // SnapshotCommand contains immutable read data, with no admission callbacks,
+        // mutation fence or connection protocol state to retain.
+        public bool IsConnectionProtocol => false;
+        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => default;
+        public void ValidateAdmission() { }
+        public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
+        public void OnAccepted() { }
         public bool TryGetClusterSlot(out int slot) => snapshot.TryGetClusterSlot(out slot);
         public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => snapshot.GetClientCacheMetadata(operation);
         public RespireCacheMutation GetCacheMutation(string operation) => snapshot.GetCacheMutation(operation);

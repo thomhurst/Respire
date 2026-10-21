@@ -23,7 +23,7 @@ internal sealed partial class ClientSideCacheCoordinator
             Register(TryCreateQuery(operation, in command, out var request) && request.Query.Operation == operation ? request : null);
         }
 
-        internal void Register(QueryRequest? read)
+        internal void Register(QueryRequest? read, ClientSideCacheCoordinator? cache = null)
         {
             if (_keys is null) return;
             if (read is not { } request)
@@ -48,6 +48,10 @@ internal sealed partial class ClientSideCacheCoordinator
             for (var index = 0; index < count; index++)
             {
                 var key = start < 0 ? request.PrimaryKey : query.GetArgument(start + index).AsKey();
+                // MGET can mix eligible and excluded tokens. Coverage is immutable and
+                // matches BeginRead's per-key CanCache state; excluded keys never fill
+                // the cache and must not exhaust this socket's provenance budget.
+                if (cache is not null && !cache.CanTrack(in key)) continue;
                 if (_keys.Contains(key)) continue;
                 var length = key.WireLength;
                 if (_keys.Count == MaximumKeys || length > MaximumKeyBytes - _keyBytes)

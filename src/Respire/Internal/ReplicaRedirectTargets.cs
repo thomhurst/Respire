@@ -262,7 +262,7 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
                 if (_stopping || !_observations.TryGetValue(connection, out var observation) || observation.Fenced)
                     throw new RespireConnectionException("Redirect tracking owner is no longer available.")
                     { Endpoint = Endpoint };
-                observation.Provenance.Register(read);
+                observation.Provenance.Register(read, _cache);
             }
         }
 
