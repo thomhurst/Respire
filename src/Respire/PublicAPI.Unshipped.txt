@@ -1,4 +1,6 @@
 #nullable enable
+Respire.RespireOptions.ReplicaRedirectValidator.get -> System.Func<Respire.RespireEndpoint, bool>?
+Respire.RespireOptions.ReplicaRedirectValidator.init -> void
 Respire.IRespireClient.RegisterKeyTrackingAsync(Respire.RespireKey key, Respire.RespireKey? field = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 Respire.RespireClient.RegisterKeyTrackingAsync(Respire.RespireKey key, Respire.RespireKey? field = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 Respire.RespireProxy

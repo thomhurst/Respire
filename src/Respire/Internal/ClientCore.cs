@@ -773,6 +773,9 @@ internal sealed class ClientCore : IAsyncDisposable
     internal DedicatedConnectionPool CreateServerPool(RespireEndpoint endpoint, bool controlConnection = false,
         TimeSpan? commandTimeout = null, bool replicaRedirect = false)
     {
+        // All replica redirect owners pass here for every hop. Run user policy outside
+        // internal locks, before constructing options, owning a pool, or connecting.
+        if (replicaRedirect) ValidateReplicaRedirectDestination(endpoint);
         lock (_hubGate)
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
@@ -785,6 +788,23 @@ internal sealed class ClientCore : IAsyncDisposable
             _ownedPools.Add(pool);
             return pool;
         }
+    }
+
+    private void ValidateReplicaRedirectDestination(RespireEndpoint endpoint)
+    {
+        if (Options.ReplicaRedirectValidator is not { } validator) return;
+        bool allowed;
+        try { allowed = validator(endpoint); }
+        catch (Exception error)
+        {
+            // A callback's transport-shaped exception must not turn a policy failure
+            // into a retryable connection failure.
+            throw new RespireException($"Replica redirect destination validation failed for {endpoint}.", error)
+            { Endpoint = endpoint, IsCommandNotSubmitted = true };
+        }
+        if (!allowed)
+            throw new RespireException($"Replica redirect destination {endpoint} was rejected by ReplicaRedirectValidator.")
+            { Endpoint = endpoint, IsCommandNotSubmitted = true };
     }
 
     internal ValueTask ReleaseServerPoolAsync(DedicatedConnectionPool pool)

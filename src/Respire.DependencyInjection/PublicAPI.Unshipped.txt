@@ -1,4 +1,6 @@
 #nullable enable
+Respire.DependencyInjection.RespireOptionsBuilder.ReplicaRedirectValidator.get -> System.Func<Respire.RespireEndpoint, bool>?
+Respire.DependencyInjection.RespireOptionsBuilder.ReplicaRedirectValidator.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.EnableMultipathTcp.get -> bool
 Respire.DependencyInjection.RespireOptionsBuilder.EnableMultipathTcp.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.EnableReplicaRedirects.get -> bool
