@@ -377,8 +377,14 @@ public sealed class GatheredSetTests
             else
                 await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<RespireTimeoutException>();
             payload.AsSpan().Fill((byte)'b');
-            while (server.CommandsSeen == 0) await Task.Delay(1, guard.Token);
-            await Assert.That(server.ReceivedArguments[0][2].All(value => value == (byte)'a')).IsTrue();
+            // Public cancellation waits for the write lease, not the cancelled reply's FIFO slot.
+            // CommandsSeen is published before the fake peer sends that reply. Yield until the
+            // client drains it so inspecting 5 MiB cannot compete with the peer/receiver while
+            // the receive-only scenario's 200 ms response deadline is still running.
+            while (connection.InspectForTests().Inflight.Count != 0 && connection.IsConnected)
+                await Task.Delay(1, guard.Token);
+            await Assert.That(connection.IsConnected).IsTrue();
+            await Assert.That(server.ReceivedArguments[0][2].AsSpan().IndexOfAnyExcept((byte)'a')).IsEqualTo(-1);
             var next = await client.SetAsync("after", "unchanged", cancellationToken: guard.Token);
             await Assert.That(next).IsTrue();
             await Assert.That(server.ReceivedCommands[1]).IsEqualTo("SET after unchanged");
