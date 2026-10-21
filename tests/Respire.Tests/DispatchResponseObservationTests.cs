@@ -411,6 +411,7 @@ public class DispatchResponseObservationTests
     [NotInParallel]
     [Arguments("allocating", "Expected zero burst allocations")]
     [Arguments("lost-region", "no-GC region was not retained")]
+    [Arguments("allocation-budget", "no-GC region was not retained")]
     public async Task IsolatedBurstPreservesStrictFailures(string mode, string expected)
     {
         var failure = await Assert.That(() => RunBurstProbeAsync(mode)).Throws<InvalidOperationException>();
@@ -419,33 +420,36 @@ public class DispatchResponseObservationTests
 
     [Test]
     [NotInParallel]
-    public async Task RunnerCollectionCannotInterruptIsolatedBurstRegion()
+    [Arguments("collection")]
+    [Arguments("allocation-budget")]
+    public async Task RunnerActivityCannotInterruptIsolatedBurstRegion(string activity)
     {
         var handshake = Path.Combine(Path.GetTempPath(), $"respire-burst-{Guid.NewGuid():N}");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        var collected = false;
-        async Task CollectWhenChildRegionIsOpen()
+        var activityCompleted = false;
+        async Task RunActivityWhenChildRegionIsOpen()
         {
             while (!File.Exists(handshake + ".ready"))
                 await Task.Delay(10, deadline.Token);
             // The child has entered WithoutConcurrentGc and cannot measure until we
-            // release it. This collection would invalidate a region in this process.
-            GC.Collect(2, GCCollectionMode.Forced, blocking: true);
-            collected = true;
+            // release it. Both activities invalidate a region in the runner process.
+            if (activity == "collection") GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+            else ExhaustBurstRegionBudget();
+            activityCompleted = true;
             await File.WriteAllTextAsync(handshake + ".continue", "", deadline.Token);
         }
 
-        var collection = CollectWhenChildRegionIsOpen();
+        var activityTask = RunActivityWhenChildRegionIsOpen();
         try
         {
             await RunBurstProbeAsync("normal", handshake);
-            await collection;
-            await Assert.That(collected).IsTrue();
+            await activityTask;
+            await Assert.That(activityCompleted).IsTrue();
         }
         finally
         {
             deadline.Cancel();
-            try { await collection; }
+            try { await activityTask; }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
             File.Delete(handshake + ".ready");
             File.Delete(handshake + ".continue");
@@ -495,15 +499,21 @@ public class DispatchResponseObservationTests
                 if (!SpinWait.SpinUntil(() => File.Exists(handshake + ".continue"), TimeSpan.FromSeconds(10)))
                     throw new TimeoutException("Parent did not release the burst measurement.");
                 if (GCSettings.LatencyMode != GCLatencyMode.NoGCRegion)
-                    throw new InvalidOperationException("Parent collection interrupted the child region.");
+                    throw new InvalidOperationException("Parent activity interrupted the child region.");
             }
             if (mode == "lost-region") GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+            if (mode == "allocation-budget") ExhaustBurstRegionBudget();
             return (MeasureBurst(pending, mode == "allocating"), MeasureBurst(pending, true));
         });
         Console.WriteLine($"Burst: {measured.Item1} bytes; positive control: {measured.Item2} bytes.");
         if (measured.Item1 != 0 || measured.Item2 < 37L * pending.Length)
             throw new InvalidOperationException($"Expected zero burst allocations and a positive control of at least " +
                 $"{37L * pending.Length} bytes; observed {measured.Item1} and {measured.Item2} bytes.");
+    }
+
+    private static void ExhaustBurstRegionBudget()
+    {
+        for (var index = 0; index < 1024; index++) GC.KeepAlive(new byte[64 * 1024]);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

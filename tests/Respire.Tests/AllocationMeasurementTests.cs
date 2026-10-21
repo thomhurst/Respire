@@ -40,6 +40,55 @@ public class AllocationMeasurementTests
     }
 
     [Test]
+    public async Task BackgroundAllocationsExhaustTheProcessWideRegion()
+    {
+        using var start = new ManualResetEventSlim();
+        using var finished = new ManualResetEventSlim();
+        long workerAllocated = 0;
+        var worker = new Thread(() =>
+        {
+            if (!start.Wait(TimeSpan.FromSeconds(30))) return;
+            try { workerAllocated = ExhaustRegionBudget(); }
+            finally { finished.Set(); }
+        }) { IsBackground = true };
+        worker.Start();
+        InvalidOperationException failure;
+        try
+        {
+            failure = CaptureFailure(() => AllocationMeasurement.WithoutConcurrentGc(() =>
+            {
+                start.Set();
+                if (!finished.Wait(TimeSpan.FromSeconds(30)))
+                    throw new TimeoutException("Background allocations did not finish.");
+                return 0;
+            }));
+        }
+        finally
+        {
+            start.Set();
+            if (!worker.Join(TimeSpan.FromSeconds(30)))
+                throw new TimeoutException("Background allocator did not exit.");
+        }
+
+        await Assert.That(failure.Message).Contains("no-GC region was not retained");
+        await Assert.That(failure.Message).Contains("process bytes=");
+        await Assert.That(failure.Message).Contains("mode=NoGCRegion->");
+        await Assert.That(failure.InnerException is InvalidOperationException).IsTrue();
+        await Assert.That(workerAllocated).IsGreaterThanOrEqualTo(64L * 1024 * 1024);
+        Console.WriteLine(failure.Message);
+    }
+
+    // Small-object allocations on a different thread still consume the process-wide
+    // 16 MiB reservation. Keep each allocation alive without retaining the whole budget.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long ExhaustRegionBudget()
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < 1024; index++) GC.KeepAlive(new byte[64 * 1024]);
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    [Test]
     public async Task DiagnosticSnapshotsPreserveExactMeasurementAndPositiveControl()
     {
         _ = Measure(false);
