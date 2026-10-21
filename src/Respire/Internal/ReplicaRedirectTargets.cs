@@ -40,6 +40,7 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
                         && selected.RecoveryExhausted)
                     {
                         evicted = selected;
+                        evicted.BeginStop();
                         _entries.Remove(endpoint);
                         selected = null;
                     }
@@ -49,6 +50,7 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
                             .MinBy(static entry => entry.LastUse);
                         // A temporary, untracked send remains safe when every retained owner is busy.
                         if (evicted is null) return null;
+                        evicted.BeginStop();
                         _entries.Remove(evicted.Endpoint);
                     }
                 }
@@ -186,15 +188,20 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
             }
         }
 
-        internal async ValueTask DisposeAsync()
+        internal void BeginStop()
         {
-            // Planned closes are already fenced by the owner, with metrics deferred until
-            // selection is released. Do not run user instrumentation from socket disposal.
-            _stopping = true;
+            // Join a running loss fence before the owner's retirement fence. Detaching
+            // alone cannot stop a callback whose event invocation already captured it.
             lock (_observationGate)
             {
+                _stopping = true;
                 if (_observed is { } connection) connection.PendingCommandsFailing -= _observedFailure;
             }
+        }
+
+        internal async ValueTask DisposeAsync()
+        {
+            BeginStop();
             await _stop.CancelAsync().ConfigureAwait(false);
             await Node.DisposeAsync().ConfigureAwait(false);
             // Join any backoff or unpublished initial handshake, not only published sockets.
@@ -207,6 +214,7 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
             Action onFailure;
             lock (_observationGate)
             {
+                if (_stopping) return;
                 if (!ReferenceEquals(_observed, connection))
                 {
                     // This synchronous fence is independent of queued lifecycle observers
@@ -232,10 +240,14 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
 
         private void OnPendingCommandsFailing()
         {
-            if (_stopping) return;
             // Fence replies synchronously, but never invoke user instrumentation from a
             // socket/lifecycle callback: a listener can dispose and join that same socket.
-            var removed = _cache.FlushForContinuityLossWithoutMetrics();
+            int removed;
+            lock (_observationGate)
+            {
+                if (_stopping) return;
+                removed = _cache.FlushForContinuityLossWithoutMetrics();
+            }
             ThreadPool.UnsafeQueueUserWorkItem(static count =>
             {
                 try { ClientSideCacheCoordinator.PublishContinuityFlushMetrics(count); }
@@ -295,6 +307,7 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
             lock (_gate)
             {
                 entries = _entries.Values.ToArray();
+                foreach (var entry in entries) entry.BeginStop();
                 _entries.Clear();
             }
         }

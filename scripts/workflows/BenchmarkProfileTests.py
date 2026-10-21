@@ -29,8 +29,9 @@ class BenchmarkProfileTests(unittest.TestCase):
                 files.append(path)
         root = Mock()
         root.rglob.return_value = files
+        script = self.portable_names_step()
         with patch('pathlib.Path', return_value=root):
-            exec(compile(self.portable_names_step(), '<portable-names-step>', 'exec'), {})
+            exec(compile(script, '<portable-names-step>', 'exec'), {})
         for path in files:
             path.with_name.assert_called_once_with(path.name.replace('"', '_'))
             path.rename.assert_called_once_with(path.with_name.return_value)
@@ -42,9 +43,10 @@ class BenchmarkProfileTests(unittest.TestCase):
         path.with_name.return_value.exists.return_value = True
         root = Mock()
         root.rglob.return_value = [path]
+        script = self.portable_names_step()
         with patch('pathlib.Path', return_value=root):
             with self.assertRaisesRegex(AssertionError, 'Profile artifact name collision'):
-                exec(compile(self.portable_names_step(), '<portable-names-step>', 'exec'), {})
+                exec(compile(script, '<portable-names-step>', 'exec'), {})
         path.rename.assert_not_called()
 
     def run_profiles(self, change=None, parameterized=False):

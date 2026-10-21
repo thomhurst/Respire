@@ -9,6 +9,58 @@ namespace Respire.Tests.Networking;
 
 public class ReplicaRedirectEvictionTests
 {
+    [Test]
+    public async Task StoppingTargetQuiescesCapturedFailureObserverBeforeRetirementFence()
+    {
+        var limit = TimeSpan.FromSeconds(10);
+        static byte[] Reply(string command) => Encoding.UTF8.GetBytes(command.StartsWith("HELLO 3", StringComparison.Ordinal)
+            ? "%1\r\n$5\r\nproto\r\n:3\r\n" : command.StartsWith("GET ", StringComparison.Ordinal) ? "$1\r\nv\r\n" : "+OK\r\n");
+        await using var target = new FakeRespServer(4) { ReplyOverride = (_, command) => Reply(command) };
+        await using var source = new FakeRespServer(4) { ReplyOverride = (_, command) => Reply(command) };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", source.Port)], Connections = 1,
+            EnableReplicaRedirects = true, ClientSideCache = new(),
+        });
+        var entry = new ReplicaRedirectTargets.Entry(client.Core, new("127.0.0.1", target.Port));
+        using var release = new ManualResetEventSlim();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            await entry.EnsureConnectedAsync(client.Core, default);
+            var connection = await entry.Node.GetHealthyConnectionAsync(default);
+            // Pause an already captured invocation list before it reaches the owner's
+            // handler. Unsubscription alone cannot retract that captured callback.
+            connection.PendingCommandsFailing += () =>
+            {
+                started.TrySetResult();
+                if (!release.Wait(limit)) throw new TimeoutException("Retirement observer barrier was not released.");
+            };
+            entry.Observe(connection);
+            connection.PendingCommandsFailing += () => completed.TrySetResult();
+            target.CloseConnections();
+            await started.Task.WaitAsync(limit);
+            entry.BeginStop();
+            client.Core.ClientCache!.FlushForContinuityLoss();
+            var before = client.ClientSideCache!.GetStatistics().ContinuityFlushes;
+            await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("v");
+            release.Set();
+            await completed.Task.WaitAsync(limit);
+            // A late observation must not resubscribe or fence the stopped socket either.
+            entry.Observe(connection);
+            await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes).IsEqualTo(before);
+            await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
+            await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("v");
+            await Assert.That(source.ReceivedCommands.Count(command => command == "GET fresh")).IsEqualTo(1);
+        }
+        finally
+        {
+            release.Set();
+            await entry.DisposeAsync();
+        }
+    }
+
     [Test, NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
