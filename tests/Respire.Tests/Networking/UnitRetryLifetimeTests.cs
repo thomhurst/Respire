@@ -100,11 +100,13 @@ public partial class UnitRetryLifetimeTests
         }, _ => Interlocked.Increment(ref attempts) == 1
             ? "*3\r\n+OK\r\n$2\r\n42\r\n-TRYAGAIN busy\r\n"u8.ToArray()
             : "*3\r\n+OK\r\n$3\r\nbad\r\n$5\r\nvalue\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates final-attempt conversion failure and release of the unit mutation fence.
         await using var client = await RespireClient.ConnectAsync(Options(server, sentinel: false) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins },
         });
+#pragma warning restore RESP010
         Exception? numberError;
         if (transaction)
         {
@@ -153,8 +155,10 @@ public partial class UnitRetryLifetimeTests
             if (command == "GET key") return Interlocked.Increment(ref attempts) == 1 ? TryAgain : Value;
             return command.StartsWith("GET i", StringComparison.Ordinal) ? Bulk("v" + command[5..]) : null;
         }, _ => Interlocked.Increment(ref attempts) == 1 ? "*1\r\n-TRYAGAIN busy\r\n"u8.ToArray() : "*1\r\n$5\r\nvalue\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client keeps the retry unit and independent commands on one connection to verify FIFO ownership.
         await using var client = await RespireClient.ConnectAsync(Options(server, sentinel: false) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.FromSeconds(2), MaxBackoff = TimeSpan.FromSeconds(2), Jitter = 0 } });
+#pragma warning restore RESP010
         var target = transaction ? "EXEC" : "GET key";
         var running = ReadUnitAsync(client, transaction);
         await WaitUntilAsync(() => Volatile.Read(ref attempts) == 1);

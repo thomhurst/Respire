@@ -24,11 +24,13 @@ public partial class TopologyCommandRetryTests
             return "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
         });
         await using var sentinel = Sentinel(() => Volatile.Read(ref demoted) == 0 ? former.Port : replacement.Port);
+#pragma warning disable RESP010 // Test-owned client isolates Sentinel batch replay, primary rediscovery, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(SentinelOptions(sentinel) with
         {
             CircuitBreaker = circuits ? new() : null,
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum },
         });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var read = batch.GetString("key");
         var write = batch.Set("key", "value");
@@ -62,7 +64,9 @@ public partial class TopologyCommandRetryTests
         });
         formerServer = former;
         await using var sentinel = Sentinel(() => Volatile.Read(ref failed) == 0 ? former.Port : replacement.Port);
+#pragma warning disable RESP010 // Test-owned client isolates Sentinel batch replay, primary rediscovery, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(SentinelOptions(sentinel));
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var first = batch.GetString("first");
         var second = batch.GetString("second");

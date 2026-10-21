@@ -165,11 +165,13 @@ public class SentinelReconnectPolicyTests
         await using var second = new FakeRespServer("-ERR unsupported\r\n"u8.ToArray(), EmptyPeers);
         await using var first = new FakeRespServer("$-1\r\n"u8.ToArray(), EmptyPeers);
         using var metrics = new DiscoveryMetrics(second.Port);
+#pragma warning disable RESP010 // Test-owned client verifies null-policy Sentinel fallback order and absence of reconnect policy metrics.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port, second.Port) with
         {
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port), new("127.0.0.1", last.Port)],
             ReconnectPolicy = null,
         });
+#pragma warning restore RESP010
         await client.PingAsync();
         await Assert.That(metrics.Attempts).IsEmpty();
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(new[] { "ROLE", "PING" }, CollectionOrdering.Matching);

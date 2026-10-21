@@ -148,11 +148,13 @@ public partial class TopologyCommandRetryTests
         var slot = ClusterHash.GetSlot("key");
         var redirectReply = Encoding.ASCII.GetBytes($"-{redirect} {slot} 127.0.0.1:{target.Port}\r\n");
         await using var source = TrackedClusterNode(command => command == "GET key" ? redirectReply : null);
+#pragma warning disable RESP010 // Test-owned client isolates tracking cache state, producer reuse, and retry metrics for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(source) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true },
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(targetReads).IsEqualTo(2);
@@ -179,11 +181,13 @@ public partial class TopologyCommandRetryTests
             "GET second" => "$6\r\nsecond\r\n"u8.ToArray(),
             _ => null,
         });
+#pragma warning disable RESP010 // Test-owned client isolates tracking cache state, producer reuse, and retry metrics for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true },
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         server.GateCommand("GET first", release.Task);
         var firstKey = "first"u8.ToArray();
         var secondKey = "second"u8.ToArray();
@@ -213,11 +217,13 @@ public partial class TopologyCommandRetryTests
         var exhaust = false;
         await using var server = TrackedClusterNode(command => command == "GET key"
             ? Interlocked.Increment(ref calls) % 2 == 1 || exhaust ? TryAgain : Value : null);
+#pragma warning disable RESP010 // Test-owned client isolates tracking cache state, producer reuse, and retry metrics for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true },
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         for (var round = 0; round < 32; round++)
         {
             exhaust = round % 2 == 0;

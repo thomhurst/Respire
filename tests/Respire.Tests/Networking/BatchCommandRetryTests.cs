@@ -27,7 +27,9 @@ public class BatchCommandRetryTests
             "GET second" => Interlocked.Increment(ref reads) == 1 ? TryAgain : "$5\r\nfinal\r\n"u8.ToArray(),
             _ => null,
         });
+#pragma warning disable RESP010 // Test-owned client isolates batch replay and final-reply publication with circuit admission enabled or disabled.
         await using var client = await RespireClient.ConnectAsync(Options(server) with { CircuitBreaker = circuits ? new() : null });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var first = batch.GetString("first");
         var second = batch.GetString("second");
@@ -53,8 +55,10 @@ public class BatchCommandRetryTests
             "GET key" => Interlocked.Increment(ref reads) == 1 ? TryAgain : "$5\r\nvalue\r\n"u8.ToArray(),
             _ => null,
         });
+#pragma warning disable RESP010 // Test-owned client isolates the retry permission and effects of the accumulating batch member.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum } });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var increment = batch.Increment("counter");
         var read = batch.GetString("key");
@@ -79,7 +83,9 @@ public class BatchCommandRetryTests
             if (Interlocked.Increment(ref reads) == 1) { server.CloseConnections(); return null; }
             return "$5\r\nfinal\r\n"u8.ToArray();
         };
+#pragma warning disable RESP010 // Test-owned client isolates connection loss and safe whole-batch replay without inherited response sources.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var first = batch.GetString("first");
         if (unsafeMember) _ = batch.Increment("counter");
@@ -100,6 +106,7 @@ public class BatchCommandRetryTests
     {
         var dials = 0;
         await using var server = Server(command => command == "INCR counter" ? ":1\r\n"u8.ToArray() : "$5\r\nvalue\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client must start unconnected so the injected first-dial failure precedes every batch send.
         await using var client = RespireClient.Create(Options(server) with
         {
             TestingStreamFactory = async (host, port, token) =>
@@ -110,6 +117,7 @@ public class BatchCommandRetryTests
                 return new NetworkStream(socket, ownsSocket: true);
             },
         });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var increment = batch.Increment("counter");
         var read = batch.GetString("key");
@@ -127,6 +135,7 @@ public class BatchCommandRetryTests
     {
         PartialWriteStream? transport = null;
         await using var server = Server(command => command == "INCR counter" ? ":1\r\n"u8.ToArray() : "$5\r\nvalue\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client installs the partial-write transport and isolates its batch replay decisions.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             TestingStreamFactory = async (host, port, token) =>
@@ -136,6 +145,7 @@ public class BatchCommandRetryTests
                 return transport = new PartialWriteStream(new NetworkStream(socket, ownsSocket: true));
             },
         });
+#pragma warning restore RESP010
         transport!.FailNextWrite = true;
         using var batch = client.CreateBatch();
         var read = batch.GetString("key");
@@ -170,12 +180,14 @@ public class BatchCommandRetryTests
             if (Interlocked.Increment(ref writes) == 1) server.GateCommand("SET key old", releaseRetry.Task);
             return FakeRespServer.OkReply;
         }
+#pragma warning disable RESP010 // Test-owned client isolates cache mutation fences and the batch snapshot across a gated retry.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero,
                 MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins },
         });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var write = batch.Set("key", payload);
         var read = batch.GetString("key");
@@ -211,8 +223,10 @@ public class BatchCommandRetryTests
             if (command == "GET second") signal.TrySetResult();
             return command.StartsWith("GET ");
         };
+#pragma warning disable RESP010 // Test-owned client isolates the canceled batch attempt and its caller-token lifetime.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.FromSeconds(1), Jitter = 0 } });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var first = batch.GetString("first");
         var second = batch.GetString("second");
@@ -241,7 +255,9 @@ public class BatchCommandRetryTests
             else retrySeen.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // Test-owned client isolates response deadlines and late FIFO replies across the batch retry.
         await using var client = await RespireClient.ConnectAsync(Options(server) with { CommandTimeout = TimeSpan.FromSeconds(2) });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var read = batch.GetString("key");
         var execution = batch.TryExecuteAsync().AsTask();
@@ -280,7 +296,9 @@ public class BatchCommandRetryTests
         });
         listener.Start();
         await using var server = Server(command => command.StartsWith("GET ") ? TryAgain : null);
+#pragma warning disable RESP010 // Test-owned client isolates retry exhaustion metrics while deliberately reusing its response sources.
         await using var client = await RespireClient.ConnectAsync(Options(server) with { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
+#pragma warning restore RESP010
         for (var iteration = 0; iteration < 32; iteration++)
         {
             using var batch = client.CreateBatch();
@@ -313,7 +331,9 @@ public class BatchCommandRetryTests
     public async Task ServerCursorContinuationExcludesWholeBatchFromRetry()
     {
         await using var server = Server(command => command.StartsWith("HSCAN ") ? TryAgain : "$5\r\nvalue\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates the non-replayable cursor continuation and its companion batch member.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         _ = batch.Hashes.ScanFieldsPage("hash", cursor: 7);
         var read = batch.GetString("key");
@@ -334,7 +354,9 @@ public class BatchCommandRetryTests
         var reads = 0;
         await using var server = Server(command => command == "GET key"
             ? Interlocked.Increment(ref reads) == 1 ? Encoding.ASCII.GetBytes($"-{code} busy\r\n") : "$5\r\nvalue\r\n"u8.ToArray() : null);
+#pragma warning disable RESP010 // Test-owned client isolates whole-batch retry policy, attempt replies, and response-source reuse on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var read = batch.GetString("key");
         var result = await batch.TryExecuteAsync();
@@ -351,6 +373,7 @@ public class BatchCommandRetryTests
     public async Task DisabledOrUnselectedPolicyKeepsOneSend(string mode)
     {
         await using var server = Server(command => command == "GET key" ? TryAgain : null);
+#pragma warning disable RESP010 // Test-owned client isolates whole-batch retry policy, attempt replies, and response-source reuse on this scripted server.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             RetryPolicy = mode switch
@@ -361,6 +384,7 @@ public class BatchCommandRetryTests
                 _ => new() { MaxCommandRetryCategory = RespireCommandRetryCategory.Never },
             },
         });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         _ = batch.GetString("key");
         await Assert.That((await batch.TryExecuteAsync()).FailureCount).IsEqualTo(1);
@@ -371,8 +395,10 @@ public class BatchCommandRetryTests
     public async Task HashImportSessionDoesNotReplayPinnedMembers()
     {
         await using var server = Server(command => command.StartsWith("HIMPORT PREPARE ") ? TryAgain : null);
+#pragma warning disable RESP010 // Test-owned client isolates the pinned hash-import session and verifies its members cannot replay.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.ServerAdmin } });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         using var batch = session.CreateBatch();
         var prepare = batch.Hashes.PrepareImport("schema", "field");
@@ -394,8 +420,10 @@ public class BatchCommandRetryTests
             if (command == "GET second") { readSeen.TrySetResult(); return true; }
             return false;
         };
+#pragma warning disable RESP010 // Test-owned client isolates canceled batch mutation fences until injected native replies drain.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
+#pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         using var firstBatch = client.CreateBatch();
         var write = firstBatch.Set("key", "first");
@@ -428,7 +456,9 @@ public class BatchCommandRetryTests
             "GET key" => Interlocked.Increment(ref rounds) == 1 && transientFailure ? TryAgain : "$5\r\nvalue\r\n"u8.ToArray(),
             _ => null,
         });
+#pragma warning disable RESP010 // Test-owned client isolates conversion of abandoned and final batch replies.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var number = batch.Get<int>("number");
         var read = batch.GetString("key");
@@ -448,6 +478,7 @@ public class BatchCommandRetryTests
         var rejected = 0;
         await using var server = Server(command => command == $"GET key{members - 1}" && Interlocked.Increment(ref rejected) == 1
             ? TryAgain : "$5\r\nvalue\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client installs the recording transport to count bulk writes for each batch attempt.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             TestingStreamFactory = async (host, port, token) =>
@@ -457,6 +488,7 @@ public class BatchCommandRetryTests
                 return transport = new RecordingWriteStream(new NetworkStream(socket, ownsSocket: true));
             },
         });
+#pragma warning restore RESP010
         transport!.Writes.Clear();
         using var batch = client.CreateBatch();
         for (var i = 0; i < members; i++) _ = batch.GetString($"key{i}");
@@ -474,8 +506,10 @@ public class BatchCommandRetryTests
     public async Task BulkAdmissionStopsUnsentWritesWhenCallerCancels(bool retries)
     {
         await using var server = Server(_ => null);
+#pragma warning disable RESP010 // Test-owned client isolates cancellation during bulk acceptance and the unsent remainder of the batch.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = retries ? Options(server).RetryPolicy : null });
+#pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         using var batch = client.CreateBatch();
         // Cancel inside acceptance of the first frame, before the bulk owner can admit
@@ -503,8 +537,10 @@ public class BatchCommandRetryTests
     public async Task NeverMemberPreventsWholeUnitReplay()
     {
         await using var server = Server(command => command == "GET first" ? TryAgain : "$5\r\nvalue\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates a Never-category member and the resulting whole-batch replay prohibition.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.ServerAdmin } });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         _ = batch.GetString("first");
         var second = batch.Execute(RespireCommands.String.GET.WithRetryCategory(RespireCommandRetryCategory.Never), "second");
@@ -541,7 +577,9 @@ public class BatchCommandRetryTests
             "GET second" => Interlocked.Increment(ref rounds) == 1 ? TryAgain : "$5\r\nvalue\r\n"u8.ToArray(),
             _ => null,
         });
+#pragma warning disable RESP010 // Test-owned client isolates retry-count telemetry for successful members of a failing batch.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var first = batch.GetString("first");
         var second = batch.GetString("second");
@@ -586,7 +624,9 @@ public class BatchCommandRetryTests
         public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
         public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default) => inner.ReadAsync(buffer, token);
+#pragma warning disable RESP009 // Stream's synchronous override shares the recording shim; the tested Respire transport uses WriteAsync.
         public override void Write(byte[] buffer, int offset, int count) => WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
         public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token = default)
         {
             Writes.Enqueue(Encoding.ASCII.GetString(buffer.Span));
@@ -608,7 +648,9 @@ public class BatchCommandRetryTests
         public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
         public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default) => inner.ReadAsync(buffer, token);
+#pragma warning disable RESP009 // Stream's synchronous override shares the partial-write fault shim; the tested Respire transport uses WriteAsync.
         public override void Write(byte[] buffer, int offset, int count) => WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token = default)
         {
             if (FailNextWrite)

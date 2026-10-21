@@ -31,7 +31,9 @@ public partial class TopologyCommandRetryTests
             },
         };
         var options = topology == "Sentinel" ? SentinelOptions(discovery) : ClusterOptions(discovery);
+#pragma warning disable RESP010 // Test-owned client isolates failed topology discovery from command retry ownership.
         await using var client = RespireClient.Create(options);
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(discoveries).IsGreaterThanOrEqualTo(topology == "Sentinel" ? 2 : 1);
         await Assert.That(primary.ReceivedCommands.Count(command => command == "GET key") + fallbackReads).IsEqualTo(1);

@@ -38,8 +38,10 @@ public partial class UnitRetryLifetimeTests
             }
             return Volatile.Read(ref attempts) >= 2;
         };
+#pragma warning disable RESP010 // Test-owned client isolates retired retry sources from the next owner when a late reply arrives.
         await using var client = await RespireClient.ConnectAsync(LifetimeOptions(server, owner) with
         { CommandTimeout = TimeSpan.FromSeconds(timeout ? 2 : 15) });
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         await using var first = new ObservedRead(client, owner, cancellation.Token);
         await parked.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -124,6 +126,7 @@ public partial class UnitRetryLifetimeTests
             Volatile.Write(ref lost, 1);
             retiring = previousConnection!.DisposeAsync().AsTask();
         });
+#pragma warning disable RESP010 // Test-owned client controls replacement dialing to verify a stopped owner cannot resume its retry.
         await using var client = await RespireClient.ConnectAsync(LifetimeOptions(server, owner) with
         {
             TestingStreamFactory = async (host, port, token) =>
@@ -138,6 +141,7 @@ public partial class UnitRetryLifetimeTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         previousConnection = client.Core.Multiplexer.GetConnection();
         using var cancellation = new CancellationTokenSource();
         await using var pending = new ObservedRead(client, owner, cancellation.Token);
@@ -190,8 +194,10 @@ public partial class UnitRetryLifetimeTests
         await using var server = UnitServer((command, _) => command == "GET key"
             ? Interlocked.Increment(ref attempts) == 1 ? TryAgain : Value : null, _ => null);
         server.GateCommand("GET key", release.Task);
+#pragma warning disable RESP010 // Test-owned client isolates coalesced cache waiters and the next same-key retry producer.
         await using var client = await RespireClient.ConnectAsync(LifetimeOptions(server, "cache") with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.FromSeconds(10), MaxBackoff = TimeSpan.FromSeconds(10), Jitter = 0 } });
+#pragma warning restore RESP010
         using var leaderToken = new CancellationTokenSource();
         using var followerToken = new CancellationTokenSource();
         await using var leader = new ObservedRead(client, "cache", leaderToken.Token);
