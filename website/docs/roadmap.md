@@ -39,7 +39,7 @@ The previous release-gate, API, onboarding, and feature epics are complete
 [#1576](https://github.com/thomhurst/Respire/issues/1576),
 [#1585](https://github.com/thomhurst/Respire/issues/1585), and
 [#1594](https://github.com/thomhurst/Respire/issues/1594)). Their implemented features
-are described in the guides below; the remaining pre-release work is tracked separately.
+are described in the guides below; release preparation is summarized separately.
 
 - [Consistent native public type names](fundamentals/api-naming.md): `Respire` prefixes,
   `IRespire` interfaces, and `Result` suffixes for command outcome wrappers.
@@ -326,22 +326,24 @@ open blockers. These historical results do not certify current main or promise z
 A notification-based field cache is not offered: subkey notifications cannot meet the cache
 consistency contract. See the [field-level caching decision](guides/keyspace-notifications.md#field-level-cache-decision).
 
-## Planned work
+## Release preparation
 
-The current pre-release epics target **2.0.0**, as recorded in the
+The next supported major targets **2.0.0**, as recorded in the
 [release naming decision](https://github.com/thomhurst/Respire/issues/1796).
-They track remaining work, not release commitments.
+The [pre-release hygiene work](https://github.com/thomhurst/Respire/issues/1815)
+has shipped: release naming, SDK package validation, the Orleans topology assessment,
+and the Cluster replica fallback diagnosis and fixture stabilization. The documented
+topology limits and performance follow-ups below still apply.
 
-- [Release hygiene before 2.0](https://github.com/thomhurst/Respire/issues/1815):
-  release naming, package compatibility validation, and the remaining Orleans and
-  Cluster replica recovery checks.
-- [Remaining feature gaps against other Redis clients](https://github.com/thomhurst/Respire/issues/1816):
-  job groups and queue controls,
-  client-side encryption, coordination APIs, and testing support.
-  [MessagePack, protobuf-net, and MemoryPack serializers](fundamentals/values-and-serialization.md#binary-serializer-packages) are available as optional packages.
-  The existing [job queue](guides/job-queues.md), [dashboard](guides/stream-dashboard.md),
-  [typed queries](guides/generated-search-schemas.md#typed-queries), and
-  [near-cache map](guides/near-cache-map.md) are already available.
+[Published-package baseline activation](https://github.com/thomhurst/Respire/issues/1819)
+remains a post-release task. It requires every shipping library package to be available
+on NuGet at 2.0.0 and does not block tagging or publishing that release. Until then,
+[package validation](contributing.md#validate-the-package) checks compatible assets
+within each package without restoring an unavailable baseline.
+
+The [feature-gap epic](https://github.com/thomhurst/Respire/issues/1816) is complete.
+Its job groups and queue controls, client-side encryption, coordination APIs, serializers,
+and testing support are documented in the available features above.
 
 ## Validation and performance follow-ups
 
@@ -368,7 +370,13 @@ They track remaining work, not release commitments.
   Sentinel failover and abrupt silo death have acceptance coverage. Membership writes during
   ASK migration are covered; multi-host partitions need an independent-network test harness.
 - [Cluster availability-zone replica fallback timeout](https://github.com/thomhurst/Respire/issues/1749):
-  investigate the failure under concurrent test load and validate recovery.
+  a failing concurrent run captured long runtime suspensions. The affected routing fixtures
+  now share a bounded scheduling limit, preserving the original timeout, cold setup,
+  local-zone result and once-per-endpoint assertions. The normal concurrent suite and
+  standalone fallback checks passed. [The stabilization PR](https://github.com/thomhurst/Respire/pull/2142)
+  records the trace limitations and separate traced hedge failure
+  [#2145](https://github.com/thomhurst/Respire/issues/2145). The evidence supports fixture
+  scheduling changes; the original occurrence's cause remains uncertain.
 
 See [Coming from StackExchange.Redis](./stackexchange-redis) for a feature comparison and the
 [introduction](./intro.md#design-bets) for the design bets. Report issues on
