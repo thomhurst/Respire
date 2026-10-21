@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using System.Reflection;
+using System.Runtime;
 using System.Text;
 using System.Threading.Tasks.Sources;
 using Respire.Commands;
@@ -18,6 +19,9 @@ namespace Respire.Tests;
 public class DispatchResponseObservationTests
 {
     private const string NativeProbe = "RESPIRE_NATIVE_DISPATCH_PROBE";
+    private const string BurstProbe = "RESPIRE_DISPATCH_BURST_PROBE";
+    private const string BurstRuntime = "RESPIRE_DISPATCH_BURST_RUNTIME";
+    private const string BurstHandshake = "RESPIRE_DISPATCH_BURST_HANDSHAKE";
 
     [Test]
     [ParallelLimiter<ChildProcessProbes>]
@@ -55,7 +59,7 @@ public class DispatchResponseObservationTests
     internal static int? RunIsolatedNativeDispatchProbe()
     {
         var mode = Environment.GetEnvironmentVariable(NativeProbe);
-        if (mode is null) return null;
+        if (mode is null) return RunIsolatedBurstProbe();
         try
         {
 #pragma warning disable RESP009 // The child entry point completes its probe before starting the test runner.
@@ -401,13 +405,105 @@ public class DispatchResponseObservationTests
     [Test]
     [NotInParallel]
     public async Task WarmConcurrentBurstRetainsEveryDispatchOwner()
+        => await RunBurstProbeAsync("normal");
+
+    [Test]
+    [NotInParallel]
+    [Arguments("allocating", "Expected zero burst allocations")]
+    [Arguments("lost-region", "no-GC region was not retained")]
+    public async Task IsolatedBurstPreservesStrictFailures(string mode, string expected)
     {
+        var failure = await Assert.That(() => RunBurstProbeAsync(mode)).Throws<InvalidOperationException>();
+        await Assert.That(failure!.Message).Contains(expected);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RunnerCollectionCannotInterruptIsolatedBurstRegion()
+    {
+        var handshake = Path.Combine(Path.GetTempPath(), $"respire-burst-{Guid.NewGuid():N}");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var collected = false;
+        async Task CollectWhenChildRegionIsOpen()
+        {
+            while (!File.Exists(handshake + ".ready"))
+                await Task.Delay(10, deadline.Token);
+            // The child has entered WithoutConcurrentGc and cannot measure until we
+            // release it. This collection would invalidate a region in this process.
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+            collected = true;
+            await File.WriteAllTextAsync(handshake + ".continue", "", deadline.Token);
+        }
+
+        var collection = CollectWhenChildRegionIsOpen();
+        try
+        {
+            await RunBurstProbeAsync("normal", handshake);
+            await collection;
+            await Assert.That(collected).IsTrue();
+        }
+        finally
+        {
+            deadline.Cancel();
+            try { await collection; }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+            File.Delete(handshake + ".ready");
+            File.Delete(handshake + ".continue");
+        }
+    }
+
+    private static async Task RunBurstProbeAsync(string mode, string? handshake = null)
+    {
+        var start = AsyncFlushSignalTests.CreateProbeStartInfo(Environment.ProcessPath,
+            Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(DispatchResponseObservationTests).Assembly.Location);
+        start.Environment[BurstProbe] = mode;
+        start.Environment[BurstRuntime] = Environment.Version.ToString();
+        if (handshake is not null) start.Environment[BurstHandshake] = handshake;
+        await AsyncFlushSignalTests.RunProbeAsync(start, TimeSpan.FromSeconds(30));
+    }
+
+    private static int? RunIsolatedBurstProbe()
+    {
+        var mode = Environment.GetEnvironmentVariable(BurstProbe);
+        if (mode is null) return null;
+        try
+        {
+            if (Environment.GetEnvironmentVariable(BurstRuntime) != Environment.Version.ToString())
+                throw new InvalidOperationException("Burst probe runtime differs from parent.");
+            MeasureIsolatedBurst(mode, Environment.GetEnvironmentVariable(BurstHandshake));
+            return 0;
+        }
+        catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    private static void MeasureIsolatedBurst(string mode, string? handshake)
+    {
+        // NotInParallel excludes other test bodies, but does not stop the runner,
+        // coverage collector or background work left by the suite. Own the process
+        // as well as the region; never retry or ignore a lost region in this child.
         var pending = new ValueTask<BurstResult>[10000];
-        for (var index = 0; index < 4; index++) _ = MeasureBurst(pending, false);
+        for (var index = 0; index < 4; index++)
+        {
+            _ = MeasureBurst(pending, false);
+            _ = MeasureBurst(pending, true);
+        }
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
-            (MeasureBurst(pending, false), MeasureBurst(pending, true)));
-        await Assert.That(measured.Item1).IsEqualTo(0L);
-        await Assert.That(measured.Item2).IsGreaterThan(0L);
+        {
+            if (handshake is not null)
+            {
+                File.WriteAllText(handshake + ".ready", "");
+                if (!SpinWait.SpinUntil(() => File.Exists(handshake + ".continue"), TimeSpan.FromSeconds(10)))
+                    throw new TimeoutException("Parent did not release the burst measurement.");
+                if (GCSettings.LatencyMode != GCLatencyMode.NoGCRegion)
+                    throw new InvalidOperationException("Parent collection interrupted the child region.");
+            }
+            if (mode == "lost-region") GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+            return (MeasureBurst(pending, mode == "allocating"), MeasureBurst(pending, true));
+        });
+        Console.WriteLine($"Burst: {measured.Item1} bytes; positive control: {measured.Item2} bytes.");
+        if (measured.Item1 != 0 || measured.Item2 < 37L * pending.Length)
+            throw new InvalidOperationException($"Expected zero burst allocations and a positive control of at least " +
+                $"{37L * pending.Length} bytes; observed {measured.Item1} and {measured.Item2} bytes.");
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
