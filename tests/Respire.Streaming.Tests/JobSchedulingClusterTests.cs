@@ -58,6 +58,10 @@ public class JobSchedulingClusterTests
             var client = root.WithKeyPrefix(prefix);
             var queue = new RespireJobQueue<string>(client, "replacement", Encoding.UTF8.GetBytes);
             await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "job", "old");
+            await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "orphan", "deleted");
+            var orphan = (await client.Streams.ReadAsync(queue.StreamKey)).Single(entry => entry.GetString("_respire.job.id") == "orphan");
+            await client.Streams.RemoveAsync(queue.StreamKey, orphan.Id);
+            await Assert.That(await queue.ReclaimOrphanedDeduplicationAsync()).IsEqualTo(1);
             await using var transaction = client.CreateTransaction();
             var replace = queue.EnqueueScheduled(transaction, "job", "new", new() { Group = "group:{other}:東京" });
             await transaction.CommitAsync();

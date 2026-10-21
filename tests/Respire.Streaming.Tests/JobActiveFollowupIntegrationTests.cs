@@ -177,6 +177,7 @@ public class JobActiveFollowupIntegrationTests(RedisTestContainer redis)
         await Assert.That(await Complete(client, queue, active)).IsEqualTo(1);
         await Assert.That(await Complete(client, queue, active)).IsEqualTo(0);
         await Promote(client, queue);
+        await Assert.That(await queue.ReclaimOrphanedDeduplicationAsync()).IsEqualTo(0);
         var followup = (await Read(client, queue, scheduled)).Single();
         await Assert.That(followup.GetString("_respire.job.payload")).IsEqualTo("last");
         await Assert.That(followup.GetString("_respire.job.deduplication")).IsEqualTo("KeepLastIfActive");

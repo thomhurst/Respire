@@ -162,6 +162,7 @@ public class JobReplacementIntegrationTests(RedisTestContainer redis)
         // The same durable state survives retry staging and promotion; retry payload/backoff stay intact.
         await Assert.That(await client.Scripts.ExecuteIntegerAsync(Script("JobQueueScheduling", "Retry"),
             JobGroupIntegrationTests.Keys(queue), [Group, "owner", first.Id.Value, 1, 60000, 0])).IsEqualTo(1);
+        await Assert.That(await queue.ReclaimOrphanedDeduplicationAsync()).IsEqualTo(0);
         await Assert.That((await queue.EnqueueScheduledAsync("job", "retry duplicate", new())).Enqueued).IsFalse();
         if (!grouped)
             using (await client.ExecuteAsync("ZADD", [queue.StreamKey + ":due", 0,
@@ -203,8 +204,10 @@ public class JobReplacementIntegrationTests(RedisTestContainer redis)
         await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "job", "old generation");
         await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return redis.call('PEXPIREAT', KEYS[1], 1)"), [DedupKey(queue)], []);
         await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "job", "new generation");
+        await Assert.That(await queue.ReclaimOrphanedDeduplicationAsync()).IsEqualTo(0);
         await CreateGroup(client, queue);
         var first = (await Read(client, queue)).Single();
+        await Assert.That(await queue.ReclaimOrphanedDeduplicationAsync()).IsEqualTo(0);
         var second = (await Read(client, queue)).Single();
         await Assert.That(first.GetString("_respire.job.payload")).IsEqualTo("old generation");
         await Assert.That(second.GetString("_respire.job.payload")).IsEqualTo("new generation");

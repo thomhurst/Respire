@@ -19,6 +19,59 @@ internal static class JobDeduplication
 {
     internal static string Key(string stream) => stream + ":dedup-deliveries";
 
+    // Inspect a single server-side snapshot. A client-side scan can mistake a promoted
+    // or retried envelope for a missing one. Absence cannot prove an active handler ended.
+    internal static readonly RespireScript ReclaimOrphans = RespireScript.Create("""
+        local limit = tonumber(ARGV[1])
+        local examined = redis.call('HLEN', KEYS[3])
+        local function withinLimit()
+            if examined > limit then error('ERR job deduplication maintenance scan limit exceeded') end
+        end
+        withinLimit()
+        local values = redis.call('HGETALL', KEYS[3])
+        local candidates = {}
+        for i = 1, #values, 2 do
+            local field, state = values[i], values[i+1]
+            local generation = string.match(field, '^(%x+)$') or string.match(field, '^(%x+):next$')
+            local revision = string.match(state, '^(%x+)|pending$')
+            if generation and #generation == 32 and revision and #revision == 32 then
+                candidates[field] = revision
+            end
+        end
+        if not next(candidates) then return 0 end
+        for stream = 1, 2 do
+            local start = '-'
+            while true do
+                local rows = redis.call('XRANGE', KEYS[stream], start, '+', 'COUNT', math.min(256, limit - examined + 1))
+                examined = examined + #rows
+                withinLimit()
+                if #rows == 0 then break end
+                for _, row in ipairs(rows) do
+                    local generation, revision
+                    for i = 1, #row[2], 2 do
+                        if row[2][i] == '_respire.job.generation' then generation = row[2][i+1] end
+                        if row[2][i] == '_respire.job.revision' then revision = row[2][i+1] end
+                    end
+                    if generation and revision then
+                        if candidates[generation] == revision then candidates[generation] = nil end
+                        local followup = generation .. ':next'
+                        if candidates[followup] == revision then candidates[followup] = nil end
+                    end
+                end
+                start = '(' .. rows[#rows][1]
+            end
+        end
+        -- All reads and the permission check precede the first mutation: Lua errors
+        -- do not roll back earlier writes. Unknown metadata and active fields survive.
+        local firstOrphan = next(candidates)
+        if firstOrphan and not redis.acl_check_cmd('HDEL', KEYS[3], firstOrphan) then
+            return redis.error_reply('NOPERM job deduplication maintenance is not permitted')
+        end
+        local removed = 0
+        for field in pairs(candidates) do removed = removed + redis.call('HDEL', KEYS[3], field) end
+        return removed
+        """);
+
     // Default records retain their original stream-ID-only format. Extended records carry
     // the winning window, independent of the stream entry's promotion, retry or deletion.
     // Both enqueue scripts (including EXEC) execute this before any append.
