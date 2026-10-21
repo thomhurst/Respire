@@ -113,6 +113,33 @@ public class ReplicaRedirectCacheTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task CompletedMutationDuringTargetHandshakeCannotPublishStaleRead(bool retry)
+    {
+        await using var target = Target();
+        await using var source = Source(target.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(source.Port, retry));
+        var received = Signal();
+        var release = Signal();
+        target.GateCommand("CLIENT TRACKING ", release.Task, () => received.TrySetResult());
+        var read = client.GetStringAsync("key").AsTask();
+        try
+        {
+            await received.Task.WaitAsync(Limit);
+            // Finish the mutation before tracking is ready. The target never saw it
+            // and deliberately keeps returning an old replica value.
+            await client.Strings.SetAsync("key", "new").AsTask().WaitAsync(Limit);
+        }
+        finally { release.TrySetResult(); }
+        await Assert.That(await read.WaitAsync(Limit)).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(target.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task DisconnectFlushesEntriesAndReplacementRestoresTracking(bool retry)
     {
         await using var target = Target();

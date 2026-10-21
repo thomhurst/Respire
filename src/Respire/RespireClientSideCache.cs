@@ -223,6 +223,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     private QueryRegistrationStorage _queryStorage;
     private CacheStore _store;
     private long _continuityEpoch;
+    // Unlike continuity, a full invalidation cannot be repaired by a redirect handshake.
+    private long _fullInvalidationEpoch;
     private long _queryEpoch;
     private readonly RequestCounters[] _requests = new RequestCounters[
         BitOperations.RoundUpToPowerOf2((uint)Math.Clamp(Environment.ProcessorCount, 4, 64))];
@@ -433,7 +435,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             }
         }
         return new(query, dependencies, Volatile.Read(ref _queryEpoch), Volatile.Read(ref _continuityEpoch),
-            Volatile.Read(ref _store), lease is not null && !HasActiveMutation(dependencies), lease, lease?.Generation ?? 0);
+            Volatile.Read(ref _store), lease is not null && !HasActiveMutation(dependencies), lease, lease?.Generation ?? 0,
+            Volatile.Read(ref _fullInvalidationEpoch));
     }
 
     internal void CompleteRead(in QueryReadToken token, in RespValue response, bool allowInsert)
@@ -477,12 +480,18 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             // Only a live redirect owner may move registrations. Completed copies cannot create a new owner.
             if (!CanTrackAll(token.Dependencies) || token.Lease is not { } lease || lease.Generation != token.LeaseGeneration)
                 return token with { CanCache = false, Lease = null, LeaseGeneration = 0 };
+            var canCache = token.CanCache && token.FullInvalidationEpoch == Volatile.Read(ref _fullInvalidationEpoch);
+            for (var index = 0; index < lease.Registered; index++)
+            {
+                var stamp = lease.GetDependency(index);
+                canCache &= stamp.State.Generation == stamp.Generation;
+            }
             ReleaseQueryRead(lease, token.LeaseGeneration);
             var query = token.Query;
             var rebased = RegisterQueryRead(in query, token.Dependencies, RentQueryRead(token.Dependencies.Length));
-            // Redirects keep the original tracking decision on the wire. Suppressed reads
-            // cannot acquire publication permission merely because their writer retired.
-            return rebased with { CanCache = token.CanCache && rebased.CanCache };
+            // A new tracking socket restores continuity, but cannot undo an invalidation
+            // observed before its handshake completed, even after the writer retired.
+            return rebased with { CanCache = canCache && rebased.CanCache, FullInvalidationEpoch = token.FullInvalidationEpoch };
         }
     }
 
@@ -491,6 +500,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         if (!token.CanCache || token.Lease is not { } lease || lease.Generation != token.LeaseGeneration
             || Volatile.Read(ref _queryEpoch) != token.QueryEpoch
             || Volatile.Read(ref _continuityEpoch) != token.ContinuityEpoch
+            || Volatile.Read(ref _fullInvalidationEpoch) != token.FullInvalidationEpoch
             || !ReferenceEquals(Volatile.Read(ref _store), token.Store)) return false;
         for (var index = 0; index < lease.Registered; index++)
         {
@@ -629,12 +639,14 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 }
 
                 state.Readers++;
+                var fullInvalidationEpoch = Volatile.Read(ref _fullInvalidationEpoch);
                 return new ReadToken(
                     state,
                     state.Generation,
                     Volatile.Read(ref _continuityEpoch),
                     Volatile.Read(ref _store),
-                    CanCache: !HasActiveMutation(in ownedKey));
+                    CanCache: !HasActiveMutation(in ownedKey),
+                    FullInvalidationEpoch: fullInvalidationEpoch);
             }
         }
     }
@@ -651,6 +663,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                     && state.CanCache
                     && state.Generation == token.Generation
                     && Volatile.Read(ref _continuityEpoch) == token.ContinuityEpoch
+                    && Volatile.Read(ref _fullInvalidationEpoch) == token.FullInvalidationEpoch
                     && ReferenceEquals(Volatile.Read(ref _store), token.Store))
                 {
                     return token.Store.Set(state.Key, in response, decodedText);
@@ -675,11 +688,18 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     internal ReadToken RebaseRead(in ReadToken token)
     {
-        var empty = default(RespValue);
-        var key = token.State.Key;
-        CompleteRead(in token, in empty, allowInsert: false);
-        var rebased = BeginRead(in key);
-        return rebased with { CanCache = token.CanCache && rebased.CanCache };
+        lock (token.State)
+        {
+            var canCache = token.CanCache && token.State.Generation == token.Generation
+                && token.FullInvalidationEpoch == Volatile.Read(ref _fullInvalidationEpoch);
+            var key = token.State.Key;
+            // Register the replacement before retiring the old reader so invalidations
+            // cannot slip through a gap with no registered state for this key.
+            var rebased = BeginRead(in key);
+            var empty = default(RespValue);
+            CompleteRead(in token, in empty, allowInsert: false);
+            return rebased with { CanCache = canCache && rebased.CanCache, FullInvalidationEpoch = token.FullInvalidationEpoch };
+        }
     }
 
     internal bool CanTrack(in RespireKey key)
@@ -932,6 +952,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         {
             lock (_queryLock)
             {
+                if (!continuityLost && reason != RespireClientCacheInvalidationReason.ContinuityLost)
+                    Interlocked.Increment(ref _fullInvalidationEpoch);
                 Interlocked.Increment(ref _continuityEpoch);
                 Interlocked.Increment(ref _queryEpoch);
                 var replacement = new CacheStore(_options, RecordRemoval);
@@ -1172,7 +1194,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         long Generation,
         long ContinuityEpoch,
         CacheStore Store,
-        bool CanCache = true);
+        bool CanCache = true,
+        long FullInvalidationEpoch = 0);
 
     // Canonical GET text is separate from arbitrary caller converters. Coalesced
     // callers copy response storage but share this immutable text/publication handle.
@@ -1231,7 +1254,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         CacheStore Store,
         bool CanCache,
         QueryReadLease? Lease,
-        long LeaseGeneration);
+        long LeaseGeneration,
+        long FullInvalidationEpoch = 0);
 
     internal sealed class QueryReadLease(int dependencyCount)
     {

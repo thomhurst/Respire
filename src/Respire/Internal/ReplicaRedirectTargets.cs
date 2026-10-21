@@ -33,6 +33,13 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
             lock (_gate)
             {
                 ObjectDisposedException.ThrowIf(_disposed || core.Disposed, this);
+                if (_entries.TryGetValue(endpoint, out selected) && selected.Readers == 0
+                    && selected.RecoveryExhausted)
+                {
+                    evicted = selected;
+                    _entries.Remove(endpoint);
+                    selected = null;
+                }
                 if (!_entries.TryGetValue(endpoint, out selected) && _entries.Count == MaximumTargets)
                 {
                     evicted = _entries.Values.Where(static entry => entry.Readers == 0)
@@ -92,6 +99,16 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
         private readonly CancellationTokenSource _stop = new();
         private static long _nextRecoveryEpisode;
         private RespireConnection? _observed;
+        private readonly ClientSideCacheCoordinator _cache;
+        private volatile bool _stopping;
+        internal bool RecoveryExhausted
+        {
+            get
+            {
+                try { Node.ThrowIfRecoveryExhausted(); return false; }
+                catch (RespireReconnectLimitException) { return true; }
+            }
+        }
 
         internal async ValueTask EnsureConnectedAsync(ClientCore core, CancellationToken cancellationToken)
         {
@@ -150,6 +167,13 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
 
         internal async ValueTask DisposeAsync()
         {
+            // Planned closes are already fenced by the owner, with metrics deferred until
+            // selection is released. Do not run user instrumentation from socket disposal.
+            _stopping = true;
+            lock (_observationGate)
+            {
+                if (_observed is { } connection) connection.PendingCommandsFailing -= OnPendingCommandsFailing;
+            }
             await _stop.CancelAsync().ConfigureAwait(false);
             await Node.DisposeAsync().ConfigureAwait(false);
             // Join any backoff or unpublished initial handshake, not only published sockets.
@@ -165,19 +189,25 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
                 {
                     // This synchronous fence is independent of queued lifecycle observers
                     // and reconnect policy exhaustion, and precedes pending reply completion.
-                    connection.PendingCommandsFailing += cache.FlushForContinuityLoss;
+                    connection.PendingCommandsFailing += OnPendingCommandsFailing;
                     _observed = connection;
                 }
             }
             if (!connection.IsConnected) cache.FlushForContinuityLoss();
         }
 
+        private void OnPendingCommandsFailing()
+        {
+            if (!_stopping) _cache.FlushForContinuityLoss();
+        }
+
         internal Entry(ClientCore core, RespireEndpoint endpoint)
         {
             Endpoint = endpoint;
             var cache = core.ClientCache!;
+            _cache = cache;
             var options = core.CreateConnectionOptions(cache.HandlePush, enableClientTracking: true,
-                enableReplicaRedirects: true) with
+                enableMaintenanceNotifications: !endpoint.IsUnixSocket, enableReplicaRedirects: true) with
             {
                 CredentialCacheInvalidation = cache.FlushForContinuityLossWithoutMetrics,
                 CredentialCacheRetirementFence = cache.FlushForMovingRetirementFence,
@@ -186,7 +216,11 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
             Node = RespireConnectionMultiplexer.Create(endpoint.Host, endpoint.Port, 1, options, core.Logger);
             Node.SlotStateChanged += (_, change) =>
             {
+                if (_stopping) return;
                 if (change.State != RespireConnectionState.Connected) cache.FlushForContinuityLoss();
+                // Optional destinations report their own recovery without participating
+                // in aggregate command connection health.
+                core.QueueRecoveryStateChanged(change with { ReconnectSource = RespireReconnectSource.Dedicated });
             };
         }
     }
