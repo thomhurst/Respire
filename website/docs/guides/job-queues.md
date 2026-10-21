@@ -1232,6 +1232,12 @@ Replace and KeepLastIfActive lifecycle tracking has no automatic expiry or backg
 After manual deletion or trimming, reclaim orphaned **pending** lifecycle fields explicitly:
 
 ```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "email", Encoding.UTF8.GetBytes);
 long removed = await queue.ReclaimOrphanedDeduplicationAsync(maximumEntries: 10_000);
 ```
 
@@ -1248,7 +1254,8 @@ sizes; temporary memory holds the lifecycle fields and one page of up to 256 ent
 `maximumEntries` limit counts hash fields plus entries across both streams, defaults to 10,000,
 and fails with `RespireServerException` **without deleting any fields** if exceeded. Choose a
 maintenance window and an appropriate explicit limit for a large queue; cancellation cannot undo
-a script Redis has already executed. It requires `HLEN`, `HGETALL`, `HDEL` on `:dedup-deliveries`
+a script Redis has already executed. It requires Redis 7.0 or later for Lua ACL preflight,
+plus `HLEN`, `HGETALL`, `HDEL` on `:dedup-deliveries`
 and `XRANGE` on both streams. All three keys are explicit script keys, validated in the same
 Redis Cluster slot, including with client key prefixes.
 
