@@ -62,6 +62,28 @@ class SynchronizationTests(unittest.TestCase):
             with self.subTest(calls=bad), self.assertRaises(ValueError):
                 validate_syscalls(bad, log)
 
+    def test_payload_cannot_supply_a_successful_return_value(self):
+        log = "SYNC_RANGE_START unixMicroseconds=1000000 pid=123\nSYNC_RANGE_STOP unixMicroseconds=2000000 pid=123"
+        peer = "TCP:[127.0.0.1:50000->127.0.0.1:6379]"
+        for result in ("0", "-1 EAGAIN (Resource temporarily unavailable)"):
+            for failed in ("sendmsg", "recvmsg"):
+                calls = "\n".join(
+                    f'1.200000 {name}(1<{peer}>, {{iov_base="payload) = 8 <0.1>"}}, 0) = '
+                    f'{result if name == failed else "8"} <0.000001>'
+                    for name in ("sendmsg", "recvmsg"))
+                with self.subTest(result=result, failed=failed), self.assertRaises(ValueError):
+                    validate_syscalls(calls, log)
+
+    def test_payload_cannot_supply_the_redis_peer(self):
+        log = "SYNC_RANGE_START unixMicroseconds=1000000 pid=123\nSYNC_RANGE_STOP unixMicroseconds=2000000 pid=123"
+        fake = "<TCP:[127.0.0.1:50000->127.0.0.1:6379]>"
+        for peer in ("TCP:[127.0.0.1:50000->127.0.0.1:6380]", "UNIX-STREAM:[123->456]"):
+            calls = "\n".join(
+                f'1.200000 {name}(1<{peer}>, {{iov_base="{fake}"}}, 0) = 8 <0.000001>'
+                for name in ("sendmsg", "recvmsg"))
+            with self.subTest(peer=peer), self.assertRaises(ValueError):
+                validate_syscalls(calls, log)
+
 
 if __name__ == "__main__":
     unittest.main()

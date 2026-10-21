@@ -58,8 +58,11 @@ def validate_syscalls(text, exercise, redis_port=6379):
         # the destination-port check on traffic to a different service.
         address = r"(?:\[[^\]\s]+\]|[^\[\]<>\s:]+)"
         peer = rf"<TCP(?:v6)?:\[{address}:\d+->{address}:{redis_port}\]>"
-        return any(re.match(rf"(?:{names})\(", row) and re.search(peer, row)
-                   and re.search(r" = [1-9]\d*\b", row) for row in rows)
+        # Only the actual fd annotation and trailing syscall result count.
+        # Dumped payload bytes can contain text resembling either of them.
+        return any(re.match(rf"(?:{names})\(\d+{peer},", row)
+                   and re.search(r"\)\s+= [1-9]\d*(?: <\d+\.\d+>)?$", row)
+                   for row in rows)
 
     if not successful("sendmsg|sendto|writev"):
         raise ValueError("No socket sends in the marked range")
