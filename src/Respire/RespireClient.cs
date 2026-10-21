@@ -5183,6 +5183,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
         internal bool RequiresRedirectIdentity { get; init; }
         internal bool FollowsReplicaRedirects { get; init; }
+        // Cache writes also own post-success TTL correction after the response is classified.
+        internal bool CallerOwnsRedirectTarget { get; set; }
         private bool CommandMayBeOutstanding { get; set; } = true;
         private ClientCore? RedirectOwner { get; set; }
         private DedicatedConnectionPool? RedirectPool { get; set; }
@@ -5191,7 +5193,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
         internal void RetainRedirectTargetUntil(Task cleanup)
         {
-            if (FollowsReplicaRedirects) RedirectCleanup = cleanup;
+            if (FollowsReplicaRedirects)
+                RedirectCleanup = RedirectCleanup is { IsCompleted: false } previous
+                    ? Task.WhenAll(previous, cleanup) : cleanup;
         }
 
         internal void HoldRedirectTarget(ClientCore owner, DedicatedConnectionPool pool, RespireConnection? connection)
@@ -5211,18 +5215,23 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         }
 
         public ValueTask<RespireResult> CompleteResponseAsync(ValueTask<RespireResult> response)
-            => FollowsReplicaRedirects ? CompleteRedirectResponseAsync(response) : response;
+            => FollowsReplicaRedirects && !CallerOwnsRedirectTarget ? CompleteRedirectResponseAsync(response) : response;
 
         private async ValueTask<RespireResult> CompleteRedirectResponseAsync(ValueTask<RespireResult> response)
         {
             try { return await response.ConfigureAwait(false); }
             finally
             {
-                if (RedirectCleanup is { IsCompleted: false } cleanup)
-                    CorrectionCoordinator.Observe(ReleaseAfterCleanupAsync(cleanup));
-                else
-                    await ReleaseRedirectTargetAsync().ConfigureAwait(false);
+                await ReleaseRedirectTargetAfterCleanupAsync().ConfigureAwait(false);
             }
+        }
+
+        internal async ValueTask ReleaseRedirectTargetAfterCleanupAsync()
+        {
+            if (RedirectCleanup is { IsCompleted: false } cleanup)
+                CorrectionCoordinator.Observe(ReleaseAfterCleanupAsync(cleanup));
+            else
+                await ReleaseRedirectTargetAsync().ConfigureAwait(false);
         }
 
         private async Task ReleaseAfterCleanupAsync(Task cleanup)
