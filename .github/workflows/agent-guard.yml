@@ -8,6 +8,8 @@ on:
       - scripts/AgentDotNetWindowsJob.cs
       - scripts/Write-AgentWindowsStartupDiagnostics.ps1
       - scripts/Test-AgentWindowsStartupDiagnostics.ps1
+      - scripts/Test-AgentWindowsStartupComparison.ps1
+      - scripts/Test-AgentWindowsStartupComparisonDiagnostics.ps1
       - scripts/Test-AgentDotNetWindowsHandles.ps1
       - scripts/Test-InvokeAgentDotNet.ps1
       - scripts/Test-AgentDotNetArguments.ps1
@@ -38,6 +40,8 @@ on:
       - scripts/AgentDotNetWindowsJob.cs
       - scripts/Write-AgentWindowsStartupDiagnostics.ps1
       - scripts/Test-AgentWindowsStartupDiagnostics.ps1
+      - scripts/Test-AgentWindowsStartupComparison.ps1
+      - scripts/Test-AgentWindowsStartupComparisonDiagnostics.ps1
       - scripts/Test-AgentDotNetWindowsHandles.ps1
       - scripts/Test-InvokeAgentDotNet.ps1
       - scripts/Test-AgentDotNetArguments.ps1
@@ -71,6 +75,26 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  startup-investigation:
+    # Opt in through workflow_dispatch. A passing sample does not close #2044.
+    name: Windows direct and guarded startup investigation
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compare native startup boundaries without retrying failures
+        shell: pwsh
+        run: ./scripts/Test-AgentWindowsStartupComparison.ps1 -DiagnosticsDirectory '${{ runner.temp }}/agent-startup-comparison'
+      - name: Retain startup comparison when artifact processes can start
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-startup-comparison
+          path: ${{ runner.temp }}/agent-startup-comparison
+          if-no-files-found: warn
+          retention-days: 7
+
   guard:
     name: Agent Guard (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -106,6 +130,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/Test-AgentWindowsStartupDiagnostics.ps1
+      - name: Verify Windows startup comparison failure propagation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/Test-AgentWindowsStartupComparisonDiagnostics.ps1
       - name: Verify MTP discovery, execution, and failure propagation
         shell: pwsh
         run: ./scripts/Test-AgentDotNetMtp.ps1 -DiagnosticsDirectory '${{ runner.temp }}/agent-guard-mtp'
