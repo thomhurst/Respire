@@ -638,7 +638,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private static async ValueTask ValidateClientKillPermissionAsync(
+    internal static async ValueTask ValidateClientKillPermissionAsync(
         RespireConnection connection,
         CancellationToken cancellationToken)
     {

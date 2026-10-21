@@ -146,8 +146,8 @@ internal sealed class CorrectionCoordinator(ClientCore core)
         TimeSpan waitBound, TimeSpan tolerance)
     {
         var previous = TimeSpan.MaxValue;
-        var requiresOrdering = identity.ServerClientId > 0;
-        var canFence = requiresOrdering;
+        var requiresOrdering = identity.ServerClientId > 0 || identity.Connection is { Multiplexer: null };
+        var canFence = identity.ServerClientId > 0;
         while (true)
         {
             var sent = Stopwatch.GetTimestamp();
@@ -165,8 +165,11 @@ internal sealed class CorrectionCoordinator(ClientCore core)
                 previous = TimeSpan.MaxValue;
                 continue;
             }
-            requiresOrdering = false;
-            identity = default; // A completed broadcast is FIFO proof, so subsequent passes need no kill.
+            // A completed broadcast proves ordering, but a temporary redirect connection is
+            // also the route to the physical target. Keep that route for every fresh-clock pass
+            // without authorizing another kill of an already fenced client ID.
+            requiresOrdering = identity.Connection is { Multiplexer: null };
+            identity = requiresOrdering ? identity with { ServerClientId = 0 } : default;
             canFence = false;
             var roundTrip = Stopwatch.GetElapsedTime(sent);
             if (roundTrip < tolerance || roundTrip > previous / 2) return;

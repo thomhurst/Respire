@@ -377,82 +377,97 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
         var now = DateTimeOffset.UtcNow;
         var absoluteExpiration = GetAbsoluteExpiration(now, options);
+        RespireClient.TrackedScriptExecution? trackedExecution = null;
         try
         {
-            RespireResult result;
-            var args = new RespireValue[]
+            try
             {
-                absoluteExpiration?.UtcTicks ?? NotPresent,
-                options.SlidingExpiration?.Ticks ?? NotPresent,
-                GetExpirationMilliseconds(now, absoluteExpiration, options),
-                value,
-            };
-            if (trackedWire is not null)
-            {
-                var execution = await trackedWire.StartTrackedScriptExecutionAsync(
-                    SetScript, [key], args, token, errorObservation: observation).ConfigureAwait(false);
-                result = await trackedWire.ExecuteWithCorrectionAsync(
-                    execution,
-                    // TTL correction first uses FIFO ordering and fences only if that pass stalls.
-                    // An uncertain write without a TTL correction still needs an explicit fence.
-                    ordering: absoluteExpiration.HasValue
-                        ? RespireClient.CorrectionOrdering.OrderedCorrection : RespireClient.CorrectionOrdering.FenceFirst,
-                    state: (Cache: this, Key: key, Deadline: absoluteExpiration.GetValueOrDefault(), Options: options, Observation: observation),
-                    correct: absoluteExpiration.HasValue
-                        ? static async (state, identity) =>
-                        {
-                            try
-                            {
-                                await state.Cache.CapDelayedTtlAsync(state.Key, state.Deadline, state.Options, identity, state.Observation)
-                                    .ConfigureAwait(false);
-                            }
-                            catch (RespireException correctionFailure) when (
-                                identity.ServerClientId == 0 && correctionFailure is not RespireServerException)
-                            {
-                                state.Observation.Handled(correctionFailure);
-                            }
-                        }
-                        : null).ConfigureAwait(false);
-            }
-            else
-            {
-                result = await (_wireClient is { } wire
-                    ? wire.ExecuteScriptBorrowedAsync(SetScript, [key], args, token, observation)
-                    : ExecuteWrappedScriptAsync(SetScript, [key], args, token, observation)).ConfigureAwait(false);
-            }
-
-            result.Dispose();
-        }
-        catch (Exception ex) when (
-            trackedWire is null &&
-            ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
-        {
-            // An abandoned wait or lost connection does not prove the send was rejected — a
-            // queued set can still reach Redis, and if that send was delayed it stores a TTL
-            // computed before the delay. With no reply to measure the delay against, correct
-            // unconditionally: a correction that beats a still-queued set no-ops on the
-            // ownership check. This untracked/mock/decorator path remains best-effort;
-            // tracked operations use the explicit ordering policy above.
-            if (absoluteExpiration is { } cancelledDeadline)
-            {
-                try
+                RespireResult result;
+                var args = new RespireValue[]
                 {
-                    await CapDelayedTtlAsync(
-                        key, cancelledDeadline, options, observation: observation).ConfigureAwait(false);
-                }
-                catch (RespireException correctionFailure) when (
-                    correctionFailure is not RespireServerException)
+                    absoluteExpiration?.UtcTicks ?? NotPresent,
+                    options.SlidingExpiration?.Ticks ?? NotPresent,
+                    GetExpirationMilliseconds(now, absoluteExpiration, options),
+                    value,
+                };
+                if ((trackedWire ?? _wireClient) is { } wire)
                 {
-                    observation.Handled(correctionFailure);
+                    var execution = trackedExecution = await wire.StartTrackedScriptExecutionAsync(
+                        SetScript, [key], args, token, captureSendTimestampOnly: trackedWire is null,
+                        errorObservation: observation).ConfigureAwait(false);
+                    execution.CallerOwnsRedirectTarget = true;
+                    result = trackedWire is null
+                        ? await ((RespireClient.ITrackedCorrectionExecution<RespireResult>)execution).Response.ConfigureAwait(false)
+                        : await trackedWire.ExecuteWithCorrectionAsync(
+                        execution,
+                        // TTL correction first uses FIFO ordering and fences only if that pass stalls.
+                        // An uncertain write without a TTL correction still needs an explicit fence.
+                        ordering: absoluteExpiration.HasValue
+                            ? RespireClient.CorrectionOrdering.OrderedCorrection : RespireClient.CorrectionOrdering.FenceFirst,
+                        state: (Cache: this, Key: key, Deadline: absoluteExpiration.GetValueOrDefault(), Options: options, Observation: observation, Execution: execution),
+                        correct: absoluteExpiration.HasValue
+                            ? static async (state, identity) =>
+                            {
+                                try
+                                {
+                                    await state.Cache.CapDelayedTtlAsync(state.Key, state.Deadline, state.Options, identity, state.Observation, state.Execution)
+                                        .ConfigureAwait(false);
+                                }
+                                catch (RespireException correctionFailure) when (
+                                    identity.ServerClientId == 0 && correctionFailure is not RespireServerException)
+                                {
+                                    state.Observation.Handled(correctionFailure);
+                                }
+                            }
+                            : null).ConfigureAwait(false);
                 }
+                else
+                {
+                    result = await ExecuteWrappedScriptAsync(SetScript, [key], args, token, observation).ConfigureAwait(false);
+                }
+
+                result.Dispose();
+            }
+            catch (Exception ex) when (
+                trackedWire is null &&
+                ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException
+                && (trackedExecution is null || ((RespireClient.ITrackedCorrectionExecution<RespireResult>)trackedExecution).CommandMayBeOutstanding))
+            {
+                // An abandoned wait or lost connection does not prove the send was rejected — a
+                // queued set can still reach Redis, and if that send was delayed it stores a TTL
+                // computed before the delay. With no reply to measure the delay against, correct
+                // unconditionally: a correction that beats a still-queued set no-ops on the
+                // ownership check. This untracked/mock/decorator path remains best-effort;
+                // tracked operations use the explicit ordering policy above.
+                if (absoluteExpiration is { } cancelledDeadline)
+                {
+                    try
+                    {
+                        await CapDelayedTtlAsync(
+                            key, cancelledDeadline, options, trackedExecution?.ConnectionIdentity ?? default,
+                            observation, trackedExecution).ConfigureAwait(false);
+                    }
+                    catch (RespireException correctionFailure) when (
+                        correctionFailure is not RespireServerException)
+                    {
+                        observation.Handled(correctionFailure);
+                    }
+                }
+
+                throw;
             }
 
-            throw;
+            if (absoluteExpiration is { } absolute && DateTimeOffset.UtcNow - now >= SendDelayTolerance)
+            {
+                var correctionTarget = trackedExecution?.ConnectionIdentity ?? default;
+                if (correctionTarget.Connection is not { Multiplexer: null }) correctionTarget = default;
+                await CapDelayedTtlAsync(key, absolute, options, correctionTarget, observation, trackedExecution).ConfigureAwait(false);
+            }
         }
-
-        if (absoluteExpiration is { } absolute && DateTimeOffset.UtcNow - now >= SendDelayTolerance)
+        finally
         {
-            await CapDelayedTtlAsync(key, absolute, options, observation: observation).ConfigureAwait(false);
+            if (trackedExecution is not null)
+                await trackedExecution.ReleaseRedirectTargetAfterCleanupAsync().ConfigureAwait(false);
         }
     }
 
@@ -472,7 +487,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         DateTimeOffset absolute,
         DistributedCacheEntryOptions options,
         RespireClient.TrackedConnectionIdentity originalConnection = default,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation = default,
+        RespireClient.TrackedScriptExecution? execution = null)
         => RunCorrectionAsync(
             CapTtlScript,
             key,
@@ -482,7 +498,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 options.SlidingExpiration?.Ticks ?? NotPresent,
                 GetExpirationMilliseconds(DateTimeOffset.UtcNow, absolute, options),
             ],
-            originalConnection, observation);
+            originalConnection, observation, execution);
 
     /// <summary>
     /// Runs a shrink-only correction script. Corrections chase a command whose reply was never
@@ -516,7 +532,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         string key,
         Func<RespireValue[]> args,
         RespireClient.TrackedConnectionIdentity originalConnection = default,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation = default,
+        RespireClient.TrackedScriptExecution? execution = null)
     {
         // Convergence can leave an idempotent pass running after its bounded foreground
         // wait. Such passes must never retain the caller's pooled observation.
@@ -525,11 +542,16 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         try
         {
             await CorrectionCoordinator.ConvergeAsync(originalConnection,
-                (Cache: this, Script: script, Key: key, Args: args, Errors: errors),
+                (Cache: this, Script: script, Key: key, Args: args, Errors: errors, Execution: execution),
                 static (state, identity) => state.Cache._wireClient is { } wire
                     ? wire.Core.Corrections.CreateFence(wire, identity) : null,
-                static (state, ordered, identity) => state.Cache.RunCorrectionPassAsync(
-                    state.Script, state.Key, state.Args(), ordered, identity, state.Errors),
+                static (state, ordered, identity) =>
+                {
+                    var pass = state.Cache.RunCorrectionPassAsync(
+                        state.Script, state.Key, state.Args(), ordered, identity, state.Errors);
+                    state.Execution?.RetainRedirectTargetUntil(pass);
+                    return pass;
+                },
                 CorrectionWaitBound, SendDelayTolerance).ConfigureAwait(false);
         }
         catch (Exception error)
@@ -904,64 +926,77 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         RespireClient.TrackedScriptExecution? trackedExecution = null;
         try
         {
-            var args = new RespireValue[] { returnData ? "1" : "0", now.UtcTicks };
-            if ((trackedWire ?? _wireClient) is { } wire)
-            {
-                // Real-client fallback still borrows this owner. Timestamp-only tracking
-                // preserves best-effort correction when CLIENT ID is unavailable.
-                trackedExecution = await wire.StartTrackedScriptExecutionAsync(
-                        GetAndRefreshScript, [key], args, token,
-                        captureSendTimestampOnly: trackedWire is null, errorObservation: observation)
-                    .ConfigureAwait(false);
-                result = await ((RespireClient.ITrackedCorrectionExecution<RespireResult>)trackedExecution)
-                    .Response.ConfigureAwait(false);
-            }
-            else
-            {
-                result = await ExecuteWrappedScriptAsync(
-                    GetAndRefreshScript, [key], args, token, observation).ConfigureAwait(false);
-            }
-        }
-        catch (Exception ex) when (
-            ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
-        {
-            originalConnection = trackedExecution?.ConnectionIdentity ?? default;
-            // Same hazard as the set path: an abandoned or failed reply wait can leave the
-            // script's execution uncertain, and a delayed send would re-arm the sliding TTL
-            // from a stale "now". The real client completes its exact-connection safety
-            // barrier when an ID was captured; untracked and mock/decorator corrections remain
-            // best-effort as in SetCoreAsync.
             try
             {
-                await CapRefreshedTtlAsync(key, originalConnection, observation).ConfigureAwait(false);
+                var args = new RespireValue[] { returnData ? "1" : "0", now.UtcTicks };
+                if ((trackedWire ?? _wireClient) is { } wire)
+                {
+                    // Real-client fallback still borrows this owner. Timestamp-only tracking
+                    // preserves best-effort correction when CLIENT ID is unavailable.
+                    trackedExecution = await wire.StartTrackedScriptExecutionAsync(
+                            GetAndRefreshScript, [key], args, token,
+                            captureSendTimestampOnly: trackedWire is null, errorObservation: observation)
+                        .ConfigureAwait(false);
+                    result = await ((RespireClient.ITrackedCorrectionExecution<RespireResult>)trackedExecution)
+                        .Response.ConfigureAwait(false);
+                }
+                else
+                {
+                    result = await ExecuteWrappedScriptAsync(
+                        GetAndRefreshScript, [key], args, token, observation).ConfigureAwait(false);
+                }
             }
-            catch (RespireException correctionFailure) when (
-                originalConnection.ServerClientId == 0 && correctionFailure is not RespireServerException)
+            catch (Exception ex) when (
+                ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException
+                && (trackedExecution is null || ((RespireClient.ITrackedCorrectionExecution<RespireResult>)trackedExecution).CommandMayBeOutstanding))
             {
-                observation.Handled(correctionFailure);
+                originalConnection = trackedExecution?.ConnectionIdentity ?? default;
+                // Same hazard as the set path: an abandoned or failed reply wait can leave the
+                // script's execution uncertain, and a delayed send would re-arm the sliding TTL
+                // from a stale "now". The real client completes its exact-connection safety
+                // barrier when an ID was captured; untracked and mock/decorator corrections remain
+                // best-effort as in SetCoreAsync.
+                try
+                {
+                    await CapRefreshedTtlAsync(key, originalConnection, observation, trackedExecution).ConfigureAwait(false);
+                }
+                catch (RespireException correctionFailure) when (
+                    originalConnection.ServerClientId == 0 && correctionFailure is not RespireServerException)
+                {
+                    observation.Handled(correctionFailure);
+                }
+
+                throw;
             }
 
-            throw;
-        }
-
-        // The re-arm the script just performed used a "now" stale by however long the send
-        // stalled; past the tolerance, shrink the TTL back to a fresh-clock remainder — but
-        // only when the script says the re-arm had an absolute deadline in play, the one
-        // shape staleness can over-extend. Runs without the caller's token — the entry was
-        // already extended, so undoing the over-extension must not be skippable by
-        // cancellation.
-        try
-        {
-            if (DateTimeOffset.UtcNow - now >= SendDelayTolerance && !result.IsNull && result[0].AsInteger() == 1)
+            // The re-arm the script just performed used a "now" stale by however long the send
+            // stalled; past the tolerance, shrink the TTL back to a fresh-clock remainder — but
+            // only when the script says the re-arm had an absolute deadline in play, the one
+            // shape staleness can over-extend. Runs without the caller's token — the entry was
+            // already extended, so undoing the over-extension must not be skippable by
+            // cancellation.
+            try
             {
-                await CapRefreshedTtlAsync(key, observation: observation).ConfigureAwait(false);
+                if (DateTimeOffset.UtcNow - now >= SendDelayTolerance && !result.IsNull && result[0].AsInteger() == 1)
+                {
+                    // An observed reply needs no FIFO barrier on the normal route. A temporary
+                    // redirect target still needs its physical identity so correction stays there.
+                    var correctionTarget = trackedExecution?.ConnectionIdentity ?? default;
+                    if (correctionTarget.Connection is not { Multiplexer: null }) correctionTarget = default;
+                    await CapRefreshedTtlAsync(key, correctionTarget, observation, trackedExecution).ConfigureAwait(false);
+                }
+                return result;
             }
-            return result;
+            catch
+            {
+                result.Dispose();
+                throw;
+            }
         }
-        catch
+        finally
         {
-            result.Dispose();
-            throw;
+            if (trackedExecution is not null)
+                await trackedExecution.ReleaseRedirectTargetAfterCleanupAsync().ConfigureAwait(false);
         }
     }
 
@@ -973,12 +1008,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     private ValueTask CapRefreshedTtlAsync(
         string key,
         RespireClient.TrackedConnectionIdentity originalConnection = default,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation = default,
+        RespireClient.TrackedScriptExecution? execution = null)
         => RunCorrectionAsync(
             CapRefreshedTtlScript,
             key,
             () => [DateTimeOffset.UtcNow.UtcTicks],
-            originalConnection, observation);
+            originalConnection, observation, execution);
 
     private static DateTimeOffset? GetAbsoluteExpiration(DateTimeOffset now, DistributedCacheEntryOptions options)
     {

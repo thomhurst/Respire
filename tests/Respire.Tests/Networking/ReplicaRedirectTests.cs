@@ -8,7 +8,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
-public class ReplicaRedirectTests
+public partial class ReplicaRedirectTests
 {
     [Test]
     [NotInParallel]
@@ -569,23 +569,43 @@ public class ReplicaRedirectTests
     [Arguments(false, true)]
     [Arguments(true, false)]
     [Arguments(true, true)]
-    public async Task TrackedScriptsKeepTheirCapturedConnection(bool captureTimestampOnly, bool cache)
+    public async Task TrackedScriptsFollowRedirectAndFallbackOnCapturedTarget(bool captureTimestampOnly, bool cache)
     {
-        await using var primary = new FakeRespServer(":1\r\n"u8.ToArray());
+        await using var primary = TrackedTarget();
         await using var replica = CorrectionReplica(primary.Port, lua: false);
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null, RetryPolicy = new() });
         await client.EnsureReliableCorrectionOrderingAsync();
+        var pools = client.Core.OwnedPools.Count;
+        var timestamps = new List<long>();
+        var rejections = 0;
+        var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseHandshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        primary.GateCommand("CLIENT CAPA REDIRECT", releaseHandshake.Task, () => handshake.TrySetResult());
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var execution = await client.StartTrackedScriptExecutionAsync(RespireScript.Create("return 1"),
             ["key"], [], cancellation.Token, requireReliableCorrectionOrdering: true,
-            captureSendTimestampOnly: captureTimestampOnly);
-        var error = await Assert.That(async () => { using var reply = await execution.ConsumeResponseAsync(); })
-            .Throws<RespireServerException>();
-        await Assert.That(error!.Code).IsEqualTo("REDIRECT");
-        await Assert.That(execution.ConnectionIdentity.Endpoint.Port).IsEqualTo(replica.Port);
-        await Assert.That(execution.ConnectionIdentity.ServerClientId).IsEqualTo(41);
-        await Assert.That(primary.CommandsSeen).IsEqualTo(0);
+            captureSendTimestampOnly: captureTimestampOnly, onSerialized: timestamps.Add,
+            onCommandNotApplied: () => rejections++);
+        long targetAdmission;
+        try
+        {
+            await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            targetAdmission = Stopwatch.GetTimestamp();
+        }
+        finally { releaseHandshake.TrySetResult(); }
+        using var reply = await execution.ConsumeResponseAsync();
+        await Assert.That(reply.AsInteger()).IsEqualTo(1);
+        await Assert.That(execution.ConnectionIdentity.Endpoint.Port).IsEqualTo(primary.Port);
+        await Assert.That(execution.ConnectionIdentity.ServerClientId).IsEqualTo(99);
+        await Assert.That(timestamps.Count).IsEqualTo(3);
+        await Assert.That(timestamps[1] >= targetAdmission).IsTrue();
+        await Assert.That(execution.StartedTimestamp).IsEqualTo(timestamps[2]);
+        await Assert.That(rejections).IsEqualTo(2);
+        await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("EVAL "))).IsEqualTo(1);
+        await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("EVAL"))).IsEqualTo(1);
+        await Assert.That(client.Core.OwnedPools.Count).IsEqualTo(pools);
+        await Assert.That(execution.Connection.IsConnected).IsFalse();
     }
 
     [Test]

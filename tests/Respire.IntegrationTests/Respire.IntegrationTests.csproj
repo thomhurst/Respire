@@ -15,6 +15,8 @@
     <ItemGroup>
         <Compile Include="..\RedisTestContainer.cs" Link="RedisTestContainer.cs" />
         <Compile Include="..\ContainerStartRetry.cs" Link="ContainerStartRetry.cs" />
+        <Compile Include="../ReplicaRedirectTestFixture.cs" Link="ReplicaRedirectTestFixture.cs" />
+        <Compile Include="../Respire.Tests/Networking/FakeRespServer.cs" Link="FakeRespServer.cs" />
         <Compile Include="../TestRespSession.cs" Link="TestRespSession.cs" />
         <Compile Include="../GeneratedHashModelScenarios.cs" Link="GeneratedHashModelScenarios.cs" />
         <Compile Include="../GeneratedSearchModels.cs" Link="GeneratedSearchModels.cs" />

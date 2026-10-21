@@ -10,6 +10,7 @@
     <Compile Include="..\ContainerStartRetry.cs" Link="ContainerStartRetry.cs" />
     <Compile Include="..\TestRespSession.cs" Link="TestRespSession.cs" />
     <Compile Include="..\Respire.Tests\Networking\FakeRespServer.cs" Link="FakeRespServer.cs" />
+    <Compile Include="../ReplicaRedirectTestFixture.cs" Link="ReplicaRedirectTestFixture.cs" />
     <Using Include="Respire.Testing" />
   </ItemGroup>
 </Project>

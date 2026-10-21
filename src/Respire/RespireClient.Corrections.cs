@@ -61,12 +61,12 @@ public sealed partial class RespireClient
             return execution.CompleteResponseAsync(
                 ValidateAndExecuteCorrectionAsync(execution, ordering, state, correct, onOutcomeUncertain, observation));
         if (observation.IsEmpty)
-            return DispatchResponseSource<TResult>.Run(
+            return execution.CompleteResponseAsync(DispatchResponseSource<TResult>.Run(
                 (Client: this, Execution: execution, Ordering: ordering, State: state, Correct: correct, Uncertain: onOutcomeUncertain),
                 static (state, owner) => state.Client.ValidateAndExecuteCorrectionAsync(
-                    state.Execution, state.Ordering, state.State, state.Correct, state.Uncertain, owner));
-        return RespireTelemetry.ObserveFinalError(
-            ValidateAndExecuteCorrectionAsync(execution, ordering, state, correct, onOutcomeUncertain, observation), observation);
+                    state.Execution, state.Ordering, state.State, state.Correct, state.Uncertain, owner)));
+        return execution.CompleteResponseAsync(RespireTelemetry.ObserveFinalError(
+            ValidateAndExecuteCorrectionAsync(execution, ordering, state, correct, onOutcomeUncertain, observation), observation));
     }
 
     private ValueTask<TResult> ValidateAndExecuteCorrectionAsync<TResult, TState>(
