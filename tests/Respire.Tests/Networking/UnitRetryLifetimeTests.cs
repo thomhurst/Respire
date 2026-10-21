@@ -149,6 +149,10 @@ public partial class UnitRetryLifetimeTests
     public async Task IndependentCommandsKeepFifoResultsAroundPendingUnitRetry(bool transaction)
     {
         const int independent = 16;
+        var clock = new ClusterRecoveryTestClock();
+        var backoff = TimeSpan.FromSeconds(2);
+        var replyHeld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var attempts = 0;
         await using var server = UnitServer((command, _) =>
         {
@@ -157,43 +161,64 @@ public partial class UnitRetryLifetimeTests
         }, _ => Interlocked.Increment(ref attempts) == 1 ? "*1\r\n-TRYAGAIN busy\r\n"u8.ToArray() : "*1\r\n$5\r\nvalue\r\n"u8.ToArray());
 #pragma warning disable RESP010 // Test-owned client keeps the retry unit and independent commands on one connection to verify FIFO ownership.
         await using var client = await RespireClient.ConnectAsync(Options(server, sentinel: false) with
-        { RetryPolicy = new() { InitialBackoff = TimeSpan.FromSeconds(2), MaxBackoff = TimeSpan.FromSeconds(2), Jitter = 0 } });
+        {
+            // This test controls progress at each phase; a shared wall-clock command deadline
+            // must not expire while the harness deliberately holds a reply. Bound each await instead.
+            CommandTimeout = null,
+            RetryPolicy = new() { InitialBackoff = backoff, MaxBackoff = backoff, Jitter = 0 },
+        });
 #pragma warning restore RESP010
+        client.Core.UnitRetryClock = clock;
         var target = transaction ? "EXEC" : "GET key";
         var running = ReadUnitAsync(client, transaction);
-        await WaitUntilAsync(() => Volatile.Read(ref attempts) == 1);
-
-        // The unit is in backoff. Independent commands on its connection complete in order.
-        var during = await Task.WhenAll(Enumerable.Range(0, independent)
-            .Select(index => client.GetStringAsync($"i{index}").AsTask()));
-        await Assert.That(running.IsCompleted).IsFalse();
-        for (var index = 0; index < independent; index++) await Assert.That(during[index]).IsEqualTo($"v{index}");
-
-        // Hold the resend's reply, then queue independent commands behind it on the same connection.
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        server.GateCommand(target, release.Task);
-        await WaitUntilAsync(() => server.ReceivedCommands.Count(command => command == target) == 2);
-        var behind = Enumerable.Range(independent, independent)
-            .Select(index => client.GetStringAsync($"i{index}").AsTask()).ToArray();
-        await Task.Delay(100);
-        await Assert.That(behind.Any(task => task.IsCompleted)).IsFalse();
-        release.TrySetResult();
-        var (value, error) = await running.WaitAsync(TimeSpan.FromSeconds(5));
-        var after = await Task.WhenAll(behind).WaitAsync(TimeSpan.FromSeconds(5));
-
-        await Assert.That(error).IsNull();
-        await Assert.That(value).IsEqualTo("value");
-        for (var index = 0; index < independent; index++) await Assert.That(after[index]).IsEqualTo($"v{index + independent}");
-        await Assert.That(attempts).IsEqualTo(2);
-        // Each independent command was sent once, and none was swallowed by the unit attempts.
-        var commands = server.ReceivedCommands.ToArray();
-        var first = Array.IndexOf(commands, target);
-        var second = Array.LastIndexOf(commands, target);
-        for (var index = 0; index < independent * 2; index++)
+        try
         {
-            var position = Array.IndexOf(commands, $"GET i{index}");
-            await Assert.That(commands.Count(command => command == $"GET i{index}")).IsEqualTo(1);
-            await Assert.That(index < independent ? position > first && position < second : position > second).IsTrue();
+            // Timer registration proves that the first failed attempt has been consumed and
+            // the unit is waiting in backoff. It cannot resend until this test advances the clock.
+            await WaitUntilAsync(() => clock.ActiveTimers == 1);
+            var during = await Task.WhenAll(Enumerable.Range(0, independent)
+                .Select(index => client.GetStringAsync($"i{index}").AsTask())).WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(running.IsCompleted).IsFalse();
+            await Assert.That(Volatile.Read(ref attempts)).IsEqualTo(1);
+            for (var index = 0; index < independent; index++) await Assert.That(during[index]).IsEqualTo($"v{index}");
+
+            // Install the reply gate before allowing the resend. Its arrival callback proves
+            // the retry is on the wire, independently of continuation scheduling speed.
+            server.GateCommand(target, release.Task, () => replyHeld.TrySetResult());
+            clock.Advance(backoff);
+            await replyHeld.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var behind = Enumerable.Range(independent, independent)
+                .Select(index => client.GetStringAsync($"i{index}").AsTask()).ToArray();
+            var connection = client.Core.Multiplexer.GetConnection();
+            // Observe actual FIFO admission instead of sleeping for a negative-completion probe.
+            await WaitUntilAsync(() => connection.PendingResponseCount >= independent + 1);
+            await Assert.That(running.IsCompleted).IsFalse();
+            await Assert.That(behind.Any(task => task.IsCompleted)).IsFalse();
+            release.TrySetResult();
+            var (value, error) = await running.WaitAsync(TimeSpan.FromSeconds(5));
+            var after = await Task.WhenAll(behind).WaitAsync(TimeSpan.FromSeconds(5));
+
+            await Assert.That(error).IsNull();
+            await Assert.That(value).IsEqualTo("value");
+            for (var index = 0; index < independent; index++) await Assert.That(after[index]).IsEqualTo($"v{index + independent}");
+            await Assert.That(attempts).IsEqualTo(2);
+            // Each independent command was sent once, and none was swallowed by the unit attempts.
+            var commands = server.ReceivedCommands.ToArray();
+            var first = Array.IndexOf(commands, target);
+            var second = Array.LastIndexOf(commands, target);
+            for (var index = 0; index < independent * 2; index++)
+            {
+                var position = Array.IndexOf(commands, $"GET i{index}");
+                await Assert.That(commands.Count(command => command == $"GET i{index}")).IsEqualTo(1);
+                await Assert.That(index < independent ? position > first && position < second : position > second).IsTrue();
+            }
+        }
+        finally
+        {
+            release.TrySetResult();
+            // Disposal cancels an unadvanced backoff too, including failures before timer registration.
+            await client.DisposeAsync();
+            await running.WaitAsync(TimeSpan.FromSeconds(5));
         }
     }
 
