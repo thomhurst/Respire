@@ -35,8 +35,9 @@ function Invoke-ArgumentGuard(
     Write-ArgumentPhase "$Phase guard-enter timeoutSeconds=$TimeoutSeconds singleNode=$SingleNode executable=$Executable cwd=$((Get-Location).ProviderPath)"
     try {
         & $guardScript -TimeoutSeconds $TimeoutSeconds -DotNetPath $Executable -SingleNode:$SingleNode -DotNetArguments $Arguments
-        $script:LASTEXITCODE = $LASTEXITCODE
-        Write-ArgumentPhase "$Phase guard-return exit=$LASTEXITCODE"
+        # Keep a named result; shadowing the automatic variable hides later native exits.
+        $script:argumentGuardExitCode = $LASTEXITCODE
+        Write-ArgumentPhase "$Phase guard-return exit=$argumentGuardExitCode"
     }
     catch {
         Write-ArgumentPhase "$Phase guard-throw: $_"
@@ -93,7 +94,7 @@ return 0;
 '@ | Set-Content -LiteralPath (Join-Path $testRoot 'Program.cs')
     # Build the native probe without relying on SingleNode injection under test.
     Invoke-ArgumentGuard -Phase 'fixture-build' -TimeoutSeconds 60 -Arguments @('build', $project, '/m:1', '--nologo')
-    if ($LASTEXITCODE -ne 0) { throw 'Argument probe build failed.' }
+    if ($argumentGuardExitCode -ne 0) { throw 'Argument probe build failed.' }
     $probeName = if ($IsWindows) { 'ArgumentProbe.exe' } else { 'ArgumentProbe' }
     $probe = Join-Path $testRoot "bin/Debug/net10.0/$probeName"
     $env:RESPIRE_GUARD_TEST_CAPTURE = Join-Path $testRoot 'arguments.json'
@@ -106,7 +107,7 @@ return 0;
         $markerPath = Join-Path (Get-Location).ProviderPath $directoryMarkerName
         [IO.File]::WriteAllText($markerPath, $directoryMarkerName)
         Invoke-ArgumentGuard -Phase $phase -Executable $probe -SingleNode:$SingleNode -Arguments $InputArguments
-        if ($LASTEXITCODE -ne 0) { throw "Argument probe failed: $LASTEXITCODE" }
+        if ($argumentGuardExitCode -ne 0) { throw "Argument probe failed: $argumentGuardExitCode" }
         $actualDirectory = [IO.File]::ReadAllText($env:RESPIRE_GUARD_TEST_DIRECTORY)
         # Native cwd may resolve aliases such as macOS /var to /private/var.
         # A unique marker proves directory identity without assuming path spelling.
@@ -230,7 +231,7 @@ return 0;
     $env:RESPIRE_GUARD_TEST_SDK_VERSION = 'not-a-version'
     Remove-Item -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE
     Invoke-ArgumentGuard -Phase 'unrecognized-sdk-control' -SingleNode -Executable $probe -Arguments @('test', 'project')
-    if ($LASTEXITCODE -ne 1 -or (Test-Path -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE)) {
+    if ($argumentGuardExitCode -ne 1 -or (Test-Path -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE)) {
         throw 'Unrecognized effective SDK did not fail before launching the workload.'
     }
     $configuration.test.runner = 'VSTest'
@@ -248,7 +249,7 @@ return 0;
 
     # Exercise real MSBuild with the injected switch, not only the probe.
     Invoke-ArgumentGuard -Phase 'single-node-pack' -SingleNode -TimeoutSeconds 60 -Arguments @('pack', $project, '--no-restore', '--nologo')
-    if ($LASTEXITCODE -ne 0) { throw 'SingleNode pack failed.' }
+    if ($argumentGuardExitCode -ne 0) { throw 'SingleNode pack failed.' }
     Write-Output 'OK native arguments, SDK-aware runner overrides, nearest MTP configuration, existing switches, separator, and pack passed.'
     Write-ArgumentPhase 'smoke-passed'
 }
