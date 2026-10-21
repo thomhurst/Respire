@@ -425,12 +425,14 @@ public class RespireConnectionTests
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         server.DelayReply(0, 250);
+#pragma warning disable RESP010 // This watchdog scenario owns its server, timeout configuration and client lifetime.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(50),
         });
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
         var response = await client.SendBlockingAsync(
@@ -449,12 +451,14 @@ public class RespireConnectionTests
             // the watchdog continuation when the CI worker is heavily loaded.
             SuppressReply = command => command == "PING",
         };
+#pragma warning disable RESP010 // This watchdog scenario owns its server, timeout configuration and client lifetime.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(50),
         });
+#pragma warning restore RESP010
         var connection = await client.Core.DedicatedPool.RentAsync(CancellationToken.None);
 
         await Assert.That(async () =>

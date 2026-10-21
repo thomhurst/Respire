@@ -55,10 +55,15 @@ warmup cannot fix:
 - **Runner process activity.** `NotInParallel` excludes test bodies, but the runner,
   collector and leftover background work still share the process-wide GC reservation.
   The 10,000-owner dispatch burst uses a fresh child before runner startup. A handshake
-  regression forces a parent collection while the child's region is open; separate
-  controls require the child to reject an allocating ordinary path and a lost region.
+  regression forces a parent collection or allocates 64 MiB in the parent while the
+  child's region is open; separate controls require the child to reject an allocating
+  ordinary path and a lost region. `BackgroundAllocationsExhaustTheProcessWideRegion`
+  reproduces budget loss using only small-object allocations on a different thread,
+  without an explicit collection. An unkeyed test does not give the measuring thread
+  exclusive use of that budget.
   The original CI failure did not record a GC reason, so this isolation does not establish
-  which activity interrupted that historical sample (issue #2066).
+  which activity interrupted that historical sample. These deterministic regressions
+  verify the isolation fix independently of the unrecoverable historical GC reason (#2066).
 
 Child-process rules:
 
