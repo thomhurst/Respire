@@ -50,7 +50,9 @@ public class StreamConfigurationTests
     public async Task InvalidOptionsAndCancellationDoNotConnectOrEnqueue()
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // This test owns a lazy client to prove invalid or pre-canceled XCFGSET calls do not connect or enqueue.
         await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         RespireStreamConfigurationOptions[] invalid = [default, new() { IdempotencyDurationSeconds = 0 }, new() { IdempotencyDurationSeconds = 86401 },
@@ -88,7 +90,9 @@ public class StreamConfigurationTests
         await using var owner = new FakeRespServer(FakeRespServer.OkReply);
         var slot = ClusterHash.GetSlot("{tenant}:events");
         await using var seed = new FakeRespServer(Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n"));
+#pragma warning disable RESP010 // This test owns the cluster client and scripted topology to isolate prefixed XCFGSET routing.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
+#pragma warning restore RESP010
         await client.WithKeyPrefix("{tenant}:").Streams.ConfigureAsync("events", new() { IdempotencyMaxSize = 1 });
         await Assert.That(owner.ReceivedCommands).IsEquivalentTo(new[] { "XCFGSET {tenant}:events IDMP-MAXSIZE 1" });
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(new[] { "CLUSTER SLOTS" });

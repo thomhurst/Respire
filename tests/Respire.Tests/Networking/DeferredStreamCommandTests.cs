@@ -126,7 +126,9 @@ public class DeferredStreamCommandTests
     [Test]
     public async Task InvalidArgumentsAndCrossSlotCommandsDoNotEnqueue()
     {
+#pragma warning disable RESP010 // This test owns a lazy cluster client to verify validation and cross-slot rejection without connecting.
         await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true, Endpoints = [new("127.0.0.1", 1)] });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         using var batch = view.CreateBatch();
         await using var transaction = view.CreateTransaction();
@@ -161,11 +163,13 @@ public class DeferredStreamCommandTests
             $"*2\r\n*3\r\n:{firstSlot}\r\n:{firstSlot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{other.Port}\r\n" +
             $"*3\r\n:{secondSlot}\r\n:{secondSlot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
+#pragma warning disable RESP010 // This test owns the cluster client and scripted owners to isolate prefixed batch/transaction routing.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         using var batch = transactional ? null : view.CreateBatch();
         await using var transaction = transactional ? view.CreateTransaction() : null;

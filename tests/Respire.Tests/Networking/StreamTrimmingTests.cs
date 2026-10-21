@@ -69,7 +69,9 @@ public class StreamTrimmingTests
     public async Task InvalidTrimmingFailsBeforeIoOrEnqueue()
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // This test owns a lazy client to verify invalid trim options fail before connecting or enqueueing.
         await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         RespireStreamTrimOptions[] invalid =
@@ -109,11 +111,13 @@ public class StreamTrimmingTests
     public async Task AddLimitWithoutThresholdRejectsDefaultApproximationBeforeIoOrEnqueue()
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // This test owns a lazy client to prove threshold-free LIMIT fails without I/O on every command surface.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         var options = new RespireStreamAddOptions { Limit = 1 };

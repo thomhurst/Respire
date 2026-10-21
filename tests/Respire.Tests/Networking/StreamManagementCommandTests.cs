@@ -22,11 +22,13 @@ public class StreamManagementCommandTests
         seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology
             : command.StartsWith("XREADGROUP ") ? System.Text.Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n") : null;
         target.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
+#pragma warning disable RESP010 // This test owns the cluster client and topology so cached pending-replay routing cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", seed.Port)], ClusterTopologyRefreshInterval = null,
         });
+#pragma warning restore RESP010
         for (var index = 0; index < 4; index++)
         {
             await foreach (var entry in client.Streams.ReadGroupAsync(key, "group", "consumer", (RespireStreamId)"0"))

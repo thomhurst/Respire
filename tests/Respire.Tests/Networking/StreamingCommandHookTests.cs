@@ -32,10 +32,12 @@ public sealed class StreamingCommandHookTests
         target.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology
             : command == "GET key" ? "$4\r\ndata\r\n"u8.ToArray() : null;
         var hook = new Hook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This test owns the cluster client and reentrant hook to isolate redirected upload/download scopes.
         await using var client = await RespireClient.ConnectAsync(Options(first, hook) with
         {
             UseCluster = true, ClusterTopologyRefreshInterval = null,
         });
+#pragma warning restore RESP010
         Task<long>? nested = null;
         hook.Before = context =>
         {
@@ -61,7 +63,9 @@ public sealed class StreamingCommandHookTests
         await using var server = Server();
         var denied = new InvalidOperationException("Denied");
         var hook = new Hook { Before = _ => throw denied, ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This test owns the client and rejecting hook to verify sources and wire state remain untouched.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var source = new MemoryStream(new byte[16]);
         var baseline = server.CommandsSeen;
         var pending = Execute(client, route, source);
@@ -89,7 +93,9 @@ public sealed class StreamingCommandHookTests
         if (serverError) server.ReplyOverride = (_, command) => command.StartsWith("SET ", StringComparison.Ordinal)
             ? "-ERR failed\r\n"u8.ToArray() : null;
         var hook = new Hook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This test owns the client and dedicated pool to observe upload conversion and lease cleanup at hook completion.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var borrowedAtCompletion = -1;
         hook.After = () => borrowedAtCompletion = client.Core.DedicatedPool.CaptureRetirementState().Borrowed;
         using var source = new MemoryStream(new byte[16]);
@@ -113,7 +119,9 @@ public sealed class StreamingCommandHookTests
     {
         await using var server = Server();
         var hook = new Hook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This test owns the client and failing source to observe hook completion after dedicated-lease cleanup.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var borrowedAtCompletion = -1;
         hook.After = () => borrowedAtCompletion = client.Core.DedicatedPool.CaptureRetirementState().Borrowed;
         using var cancellation = new CancellationTokenSource();
@@ -149,7 +157,9 @@ public sealed class StreamingCommandHookTests
             return true;
         };
         var hook = new Hook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This test owns the client and reply gate to isolate pre-dispatch and post-dispatch cancellation outcomes.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var source = new MemoryStream(new byte[16]);
         using var cancellation = new CancellationTokenSource();
         var baseline = server.CommandsSeen;
@@ -184,7 +194,9 @@ public sealed class StreamingCommandHookTests
             _ => "$4\r\ndata\r\n"u8.ToArray(),
         } : null;
         var hook = new Hook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This test owns the client and scripted download to separate stream transfer from later payload failures.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         Stream? stream = null;
         Exception? error = null;
         try { stream = await client.Strings.GetStreamAsync("key"); }
@@ -216,8 +228,10 @@ public sealed class StreamingCommandHookTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = reads.Task };
         var hook = new Hook { ThrowOnCompleted = true };
         // The first read belongs to the upload whose buffer lifetime is under test.
+#pragma warning disable RESP010 // This test owns the client and gated socket to observe hook completion only after borrowed upload memory is released.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
             { CommandTimeout = null, LibraryName = null });
+#pragma warning restore RESP010
         await server.ConnectionAccepted;
         var connection = client.Core.Multiplexer.GetConnection();
         var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection)!;

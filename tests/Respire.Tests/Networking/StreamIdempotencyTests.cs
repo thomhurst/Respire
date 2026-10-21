@@ -85,7 +85,9 @@ public class StreamIdempotencyTests
     public async Task InvalidInputsNeverConnectOrEnqueue()
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // This test owns a lazy client to verify invalid stream identities fail before connecting or enqueueing.
         await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         foreach (RespireValue invalid in new RespireValue[] { default, "", Array.Empty<byte>() })
@@ -157,7 +159,9 @@ public class StreamIdempotencyTests
         await using var owner = new FakeRespServer("$3\r\n1-0\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
         var slot = ClusterHash.GetSlot("{tenant}:events");
         await using var seed = new FakeRespServer(Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n"));
+#pragma warning disable RESP010 // This test owns the cluster client and topology to distinguish stream-key routing from producer/group values.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("{tenant}:");
         await view.Streams.AddAsync("events", new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual("{other}", "id") }, ("f", "v"));
         await view.Streams.NegativeAcknowledgeAsync("events", "{another}", RespireStreamNackMode.Fail, "1-0");
