@@ -53,7 +53,11 @@ def validate_syscalls(text, exercise, redis_port=6379):
         # diagnostic socket for Redis traffic. A resumed record may omit the fd;
         # keep the initial call in raw evidence, but require a complete successful
         # Redis call here rather than accepting only EAGAIN or IPC traffic.
-        peer = rf"<TCP(?:v6)?:\[[^\]]*:{redis_port}\]>"
+        # IPv6 endpoints have their own brackets inside the TCP peer brackets.
+        # Match both endpoints explicitly so a Redis source port cannot satisfy
+        # the destination-port check on traffic to a different service.
+        address = r"(?:\[[^\]\s]+\]|[^\[\]<>\s:]+)"
+        peer = rf"<TCP(?:v6)?:\[{address}:\d+->{address}:{redis_port}\]>"
         return any(re.match(rf"(?:{names})\(", row) and re.search(peer, row)
                    and re.search(r" = [1-9]\d*\b", row) for row in rows)
 

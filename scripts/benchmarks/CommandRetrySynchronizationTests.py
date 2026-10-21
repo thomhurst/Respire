@@ -37,6 +37,31 @@ class SynchronizationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_syscalls(calls, bad)
 
+    def test_accepts_ipv4_and_bracketed_ipv6_redis_peers(self):
+        log = "SYNC_RANGE_START unixMicroseconds=1000000 pid=123\nSYNC_RANGE_STOP unixMicroseconds=2000000 pid=123"
+        peers = (
+            "TCP:[127.0.0.1:50000->127.0.0.1:6379]",
+            "TCPv6:[[::ffff:127.0.0.1]:50000->[::ffff:127.0.0.1]:6379]",
+            "TCPv6:[[::1]:50000->[::1]:6379]",
+        )
+        for peer in peers:
+            calls = (f"1.200000 sendmsg(1<{peer}>, ...) = 8 <0.1>\n"
+                     f"1.300000 recvmsg(1<{peer}>, ...) = 8 <0.1>")
+            with self.subTest(peer=peer):
+                self.assertEqual(2, validate_syscalls(calls, log)["recordsInRange"])
+
+    def test_rejects_ipv6_wrong_destination_and_failed_or_ipc_traffic(self):
+        log = "SYNC_RANGE_START unixMicroseconds=1000000 pid=123\nSYNC_RANGE_STOP unixMicroseconds=2000000 pid=123"
+        peer = "TCPv6:[[::ffff:127.0.0.1]:6379->[::ffff:127.0.0.1]:6379]"
+        calls = (f"1.200000 sendmsg(1<{peer}>, ...) = 8 <0.1>\n"
+                 f"1.300000 recvmsg(1<{peer}>, ...) = 8 <0.1>")
+        for bad in (calls.replace("]:6379]>", "]:6380]>"),
+                    calls.replace(" = 8", " = -1 EAGAIN"),
+                    calls.replace("TCPv6:", "UNIX-STREAM:"),
+                    calls.replace("->", "")):
+            with self.subTest(calls=bad), self.assertRaises(ValueError):
+                validate_syscalls(bad, log)
+
 
 if __name__ == "__main__":
     unittest.main()
