@@ -27,6 +27,15 @@ try {
     }
     $helper = Join-Path $testRoot 'Write-AgentWindowsStartupDiagnostics.ps1'
     $originalHelper = [IO.File]::ReadAllText($helper)
+    Add-Type -Path (Join-Path $testRoot 'AgentDotNetWindowsJob.cs')
+    $performanceType = [AgentDotNetWindowsJob].GetNestedType('PerformanceInformation', [Reflection.BindingFlags]::NonPublic)
+    $expectedSize = if ([IntPtr]::Size -eq 8) { 104 } else { 56 }
+    if ([Runtime.InteropServices.Marshal]::SizeOf([Activator]::CreateInstance($performanceType)) -ne $expectedSize) { throw 'PERFORMANCE_INFORMATION does not match the Windows SDK layout.' }
+    $snapshot = & $pwshPath -NoProfile -NonInteractive -File $helper -SnapshotOnly 2>&1
+    if ($LASTEXITCODE -ne 0 -or ($snapshot -join "`n") -notmatch 'startup-snapshot .*system commitBytes=\d+') {
+        throw "Baseline snapshot failed: $snapshot"
+    }
+    if (($snapshot -join "`n") -match 'exit=0xC0000142|event log=|startup-failure') { throw 'Baseline reported a failure or collected failure-only events.' }
     $failureScript = Join-Path $testRoot 'Fail-Startup.ps1'
     @'
 param([int]$ExitCode)
@@ -50,8 +59,9 @@ param([string]$Guard, [string]$Pwsh, [string]$FailureScript, [string]$ExitCode)
 exit $LASTEXITCODE
 '@ | Set-Content -LiteralPath $caller
 
-    foreach ($mode in @('blocked', 'real', 'throwing', 'missing', 'unrelated')) {
+    foreach ($mode in @('blocked', 'real', 'native-unavailable', 'throwing', 'missing', 'unrelated')) {
         if ($mode -eq 'throwing') { Set-Content -LiteralPath $helper -Value "throw 'diagnostic failure sentinel'" }
+        elseif ($mode -eq 'native-unavailable') { [IO.File]::WriteAllText($helper, $originalHelper.Replace('AgentDotNetWindowsJob.cs', 'missing-native-snapshot.cs')) }
         elseif ($mode -eq 'missing') { Remove-Item -LiteralPath $helper }
         elseif ($mode -eq 'blocked') {
             @'
@@ -109,8 +119,17 @@ finally { $entered.Dispose(); $resume.Dispose() }
             if ($mode -eq 'real' -and $output -notmatch 'event log=Application (records=\d+|unavailable:)') {
                 throw "Event-log outcome was not retained: $output"
             }
+            if ($mode -eq 'real') {
+                foreach ($pattern in @('system commitBytes=\d+ commitLimitBytes=\d+ commitPeakBytes=\d+ physicalAvailableBytes=\d+ physicalTotalBytes=\d+ handles=\d+ processes=\d+ threads=\d+',
+                    'desktop heapCapacityKb=\d+ sessionGdiObjects=\d+ sessionUserObjects=\d+')) {
+                    if ($output -notmatch $pattern) { throw "Native resource evidence missing: $output" }
+                }
+            }
             if ($mode -in @('throwing', 'missing') -and $output -notmatch 'Windows startup diagnostics unavailable:') {
                 throw "Diagnostic failure was not reported: $output"
+            }
+            if ($mode -eq 'native-unavailable' -and ($output -notmatch 'native snapshot unavailable:' -or $output -notmatch 'event log=Application (records=\d+|unavailable:)')) {
+                throw "Native diagnostic failure interrupted other evidence: $output"
             }
             if ($mode -eq 'unrelated' -and $output -match 'startup-failure|Windows startup diagnostics') {
                 throw "Unrelated exit triggered Windows startup evidence: $output"

@@ -1,14 +1,17 @@
-param([int]$WrapperProcessId, [long]$PeakWorkingSetBytes)
+param([int]$WrapperProcessId, [long]$PeakWorkingSetBytes, [switch]$SnapshotOnly)
 
 # Run in the surviving guard host: after STATUS_DLL_INIT_FAILED even the
 # runner's Node-based artifact action may be unable to start. Never launch a
 # diagnostic child, enumerate environment variables, or replace the guard exit.
 $ErrorActionPreference = 'Stop'
 function Write-StartupEvidence([string]$Message) {
-    try { [Console]::Error.WriteLine(('startup-failure {0:o} {1}' -f [DateTimeOffset]::UtcNow, $Message)) } catch { }
+    $prefix = if ($SnapshotOnly) { 'startup-snapshot' } else { 'startup-failure' }
+    try { [Console]::Error.WriteLine(('{0} {1:o} {2}' -f $prefix, [DateTimeOffset]::UtcNow, $Message)) } catch { }
 }
 
-Write-StartupEvidence "exit=0xC0000142 guardPid=$PID wrapperPid=$WrapperProcessId peakWorkingSetBytes=$PeakWorkingSetBytes os=$([Environment]::OSVersion.Version)"
+if (-not $SnapshotOnly) {
+    Write-StartupEvidence "exit=0xC0000142 guardPid=$PID wrapperPid=$WrapperProcessId peakWorkingSetBytes=$PeakWorkingSetBytes os=$([Environment]::OSVersion.Version)"
+}
 try {
     $current = [Diagnostics.Process]::GetCurrentProcess()
     try {
@@ -17,6 +20,18 @@ try {
     finally { $current.Dispose() }
 }
 catch { Write-StartupEvidence "host snapshot unavailable: $($_.Exception.Message)" }
+
+try {
+    # Add-Type compiles in this host, without a compiler child. Normally the
+    # real guard already loaded this type before a workload or discovery failed.
+    Add-Type -Path (Join-Path $PSScriptRoot 'AgentDotNetWindowsJob.cs')
+    try { Write-StartupEvidence ([AgentDotNetWindowsJob]::DescribeSystemResources()) }
+    catch { Write-StartupEvidence "system snapshot unavailable: $($_.Exception.Message)" }
+    try { Write-StartupEvidence ([AgentDotNetWindowsJob]::DescribeDesktopResources()) }
+    catch { Write-StartupEvidence "desktop snapshot unavailable: $($_.Exception.Message)" }
+}
+catch { Write-StartupEvidence "native snapshot unavailable: $($_.Exception.Message)" }
+if ($SnapshotOnly) { return }
 
 # Restrict queries to crash, application-popup and resource-exhaustion events
 # near the failure. ReadEvent has an OS timeout; cap records and output as well.

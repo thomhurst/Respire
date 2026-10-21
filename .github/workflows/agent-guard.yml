@@ -77,20 +77,26 @@ concurrency:
 jobs:
   startup-investigation:
     # Opt in through workflow_dispatch. A passing sample does not close #2044.
-    name: Windows direct and guarded startup investigation
+    name: Windows direct and guarded startup investigation (${{ matrix.console }})
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        console: [NoWindow, Hidden]
     steps:
       - uses: actions/checkout@v7
       - name: Compare native startup boundaries without retrying failures
         shell: pwsh
-        run: ./scripts/Test-AgentWindowsStartupComparison.ps1 -DiagnosticsDirectory '${{ runner.temp }}/agent-startup-comparison'
+        run: |
+          ./scripts/Write-AgentWindowsStartupDiagnostics.ps1 -SnapshotOnly
+          ./scripts/Test-AgentWindowsStartupComparison.ps1 -DirectConsoleMode '${{ matrix.console }}' -DiagnosticsDirectory '${{ runner.temp }}/agent-startup-comparison'
       - name: Retain startup comparison when artifact processes can start
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: windows-startup-comparison
+          name: windows-startup-comparison-${{ matrix.console }}
           path: ${{ runner.temp }}/agent-startup-comparison
           if-no-files-found: warn
           retention-days: 7
@@ -110,7 +116,9 @@ jobs:
           dotnet-version: 10.0.x
       - name: Verify native arguments and SingleNode
         shell: pwsh
-        run: ./scripts/Test-AgentDotNetArguments.ps1 -DiagnosticsDirectory '${{ runner.temp }}/agent-guard-arguments'
+        run: |
+          if ($IsWindows) { ./scripts/Write-AgentWindowsStartupDiagnostics.ps1 -SnapshotOnly }
+          ./scripts/Test-AgentDotNetArguments.ps1 -DiagnosticsDirectory '${{ runner.temp }}/agent-guard-arguments'
       - name: Retain native argument diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -204,7 +212,9 @@ jobs:
             11.0.100-preview.7.26381.103
       - name: Environment MTP overrides global VSTest on the supporting SDK
         shell: pwsh
-        run: ./scripts/Test-AgentDotNetMtp.ps1 -SdkVersion 11.0.100-preview.7.26381.103 -DiagnosticsDirectory '${{ runner.temp }}/agent-guard-mtp'
+        run: |
+          if ($IsWindows) { ./scripts/Write-AgentWindowsStartupDiagnostics.ps1 -SnapshotOnly }
+          ./scripts/Test-AgentDotNetMtp.ps1 -SdkVersion 11.0.100-preview.7.26381.103 -DiagnosticsDirectory '${{ runner.temp }}/agent-guard-mtp'
       - name: Environment VSTest overrides global MTP on the supporting SDK
         shell: pwsh
         run: ./scripts/Test-AgentDotNetVstest.ps1 -SdkVersion 11.0.100-preview.7.26381.103 -DiagnosticsDirectory '${{ runner.temp }}/agent-guard-vstest'

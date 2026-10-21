@@ -112,6 +112,50 @@ $global:LASTEXITCODE = [int](Get-Content -LiteralPath (Join-Path $PSScriptRoot '
         catch { $failure = $_ }
         if ([string]$failure -notlike "*MTP discovery failed (separator=False): $guardFailureExitCode.*") { throw "Discovery exit lost: $failure" }
     }
+    if ($IsWindows) {
+        # Reproduce an OUTER host failing before Capture-Guard's first marker.
+        # The guard stub still lets fixture setup complete. No .NET child runs.
+        @'
+param($WrapperProcessId, $PeakWorkingSetBytes)
+$record = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'expected-cleanup.json') -Raw | ConvertFrom-Json
+if (Test-Path -LiteralPath $record.Fixture) { throw 'Fixture survived until diagnostic collection.' }
+if ((Get-Location).Path -ne $record.Location) { throw 'Location not restored before diagnostic collection.' }
+foreach ($name in @('RESPIRE_MTP_GUARD_TEST_MARKER', 'TUNIT_DISABLE_HTML_REPORTER', 'DOTNET_TEST_RUNNER')) {
+    if ([Environment]::GetEnvironmentVariable($name) -ne "sentinel-$name") { throw 'Environment not restored before diagnostic collection.' }
+}
+[IO.File]::AppendAllText((Join-Path $PSScriptRoot 'startup-evidence.txt'), "cleanup verified`n")
+throw 'outer host diagnostic failure sentinel'
+'@ | Set-Content -LiteralPath (Join-Path $scripts 'Write-AgentWindowsStartupDiagnostics.ps1')
+        function Start-Process {
+            [CmdletBinding()]
+            param($FilePath, $ArgumentList, $RedirectStandardOutput, $RedirectStandardError, [switch]$PassThru, $WindowStyle)
+            $fixturePath = Split-Path -Parent $ArgumentList[2].Trim('"')
+            @{ Fixture = $fixturePath; Location = $originalLocation.Path } | ConvertTo-Json |
+                Set-Content -LiteralPath (Join-Path $scripts 'expected-cleanup.json')
+            $PSBoundParameters.ArgumentList = @('-NoProfile', '-NonInteractive', '-Command', "exit $outerExit")
+            Microsoft.PowerShell.Management\Start-Process @PSBoundParameters
+        }
+        try {
+            foreach ($outerExit in @(73, -1073741502)) {
+                foreach ($name in $environmentNames) { [Environment]::SetEnvironmentVariable($name, "sentinel-$name") }
+                $failure = $null
+                try {
+                    & (Join-Path $scripts 'Test-AgentDotNetMtp.ps1') -DiagnosticsDirectory (Join-Path $testRoot "outer-exit-$outerExit") *>&1 | Out-Null
+                }
+                catch { $failure = $_ }
+                if ([string]$failure -notlike "*MTP discovery failed (separator=False): $outerExit.*") { throw "Outer startup exit lost: $failure" }
+                $evidence = Join-Path $scripts 'startup-evidence.txt'
+                if ($outerExit -eq 73 -and (Test-Path -LiteralPath $evidence)) { throw 'Unrelated outer exit collected startup evidence.' }
+                if ($outerExit -eq -1073741502) {
+                    if (-not (Test-Path -LiteralPath $evidence) -or (Get-Content -LiteralPath $evidence -Raw).Trim() -ne 'cleanup verified') {
+                        throw 'Outer startup failure did not collect evidence after cleanup.'
+                    }
+                }
+            }
+        }
+        finally { Remove-Item -LiteralPath Function:Start-Process }
+        Write-Output 'OK outer discovery startup failure retains its exit and collects evidence after cleanup; unrelated exits do not collect it.'
+    }
     @'
 param([int]$TimeoutSeconds, [switch]$SingleNode, [string[]]$DotNetArguments)
 if ($DotNetArguments[0] -eq 'build') { $global:LASTEXITCODE = 0; return }
