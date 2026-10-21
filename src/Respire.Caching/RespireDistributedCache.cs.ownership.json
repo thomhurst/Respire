@@ -39,7 +39,7 @@
     {
       "Name": "distributed-cache-correction",
       "Role": "borrower",
-      "Member": "Respire.Caching.RespireDistributedCache.RunCorrectionAsync(RespireScript,string,Func<RespireValue[]>,RespireClient.TrackedConnectionIdentity,RespireTelemetry.ErrorObservation):ValueTask",
+      "Member": "Respire.Caching.RespireDistributedCache.RunCorrectionAsync(RespireScript,string,Func<RespireValue[]>,RespireClient.TrackedConnectionIdentity,RespireTelemetry.ErrorObservation,RespireClient.TrackedScriptExecution?):ValueTask",
       "Owner": "Respire.Caching.RespireDistributedCache.RunGetScriptAsync(string,bool,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireResult>",
       "Contract": "Foreground TTL corrections copy completed retries into the caller; detached passes retain an independent failure-only owner until the last pass finishes. Only swallowed failures are internal. Publication follows foreground cleanup. SET uses the same correction boundary."
     }
