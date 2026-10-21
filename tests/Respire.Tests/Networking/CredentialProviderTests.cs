@@ -137,7 +137,9 @@ public class CredentialProviderTests
                 renewalReceived.Task.WaitAsync(Limit).GetAwaiter().GetResult();
                 var read = client.GetStringAsync("key");
                 readStarted.TrySetResult();
+#pragma warning disable RESP009 // Keep the invalidation observer synchronous to probe re-entry across the renewal fence.
                 freshRead.TrySetResult(read.AsTask().WaitAsync(Limit).GetAwaiter().GetResult());
+#pragma warning restore RESP009
             }
             catch (Exception error) { freshRead.TrySetException(error); }
         });
@@ -921,8 +923,10 @@ public class CredentialProviderTests
         listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
         {
             if (!observe.Value || observedConnection is null) return;
+#pragma warning disable RESP009 // A synchronous metrics observer must re-enter command admission without blocking renewal.
             using var reply = observedConnection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask()
                 .WaitAsync(Limit).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             Interlocked.Increment(ref completed);
         });
         listener.Start();

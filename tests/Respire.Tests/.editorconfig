@@ -4,3 +4,9 @@
 # await using keeps each client alive for its whole scenario and then disposes it.
 [{DispatchResponseObservationTests,StandaloneCircuitAllocationTests,StandaloneReplicaReadyTests,StandaloneBatchFlushTests}.cs]
 dotnet_diagnostic.RESP010.severity = none
+
+# These wire fixtures own clients for fake-server cache/tracking/topology settings
+# or credential identity, expiry, protocol, and renewal state. Reusing a client
+# across scenarios would invalidate their isolation and connection-lifetime probes.
+[Networking/{HashMultiReadCacheTests,CredentialProviderTests}.cs]
+dotnet_diagnostic.RESP010.severity = none
