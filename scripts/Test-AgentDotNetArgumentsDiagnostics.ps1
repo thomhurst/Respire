@@ -80,3 +80,6 @@ finally {
     if (-not $resolvedRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "Refusing cleanup outside temp root: $resolvedRoot" }
     if (Test-Path -LiteralPath $resolvedRoot) { Remove-Item -LiteralPath $resolvedRoot -Recurse -Force }
 }
+
+# Expected guard failures must not escape into the Actions pwsh step.
+exit 0
