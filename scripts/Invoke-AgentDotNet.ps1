@@ -338,15 +338,46 @@ function Get-LiveProcessIdentity([int]$ProcessId) {
     }
 }
 
-function Get-ProcessTreeState([int]$RootProcessId) {
+function Test-ProcessStartOrder([string]$ParentIdentity, [string]$ChildIdentity) {
+    # Windows and Linux identities are integer creation ticks. macOS uses
+    # seconds:microseconds; compare each component numerically, not as text or
+    # a decimal fraction (100:20 precedes 100:100).
+    if ($ParentIdentity -notmatch '^[0-9]+(:[0-9]+)?$' -or
+        $ChildIdentity -notmatch '^[0-9]+(:[0-9]+)?$') { return $false }
+    $parentParts = $ParentIdentity.Split(':')
+    $childParts = $ChildIdentity.Split(':')
+    if ($parentParts.Count -ne $childParts.Count) { return $false }
+    for ($index = 0; $index -lt $parentParts.Count; $index++) {
+        $parentPart = 0L
+        $childPart = 0L
+        if (-not [long]::TryParse($parentParts[$index], [ref]$parentPart) -or
+            -not [long]::TryParse($childParts[$index], [ref]$childPart)) { return $false }
+        if ($childPart -gt $parentPart) { return $true }
+        if ($childPart -lt $parentPart) { return $false }
+    }
+    return $true
+}
+
+function Get-ProcessTreeState([int]$RootProcessId, [string]$RootStartIdentity) {
     $snapshot = @(Get-ProcessSnapshot)
+    $byId = @{}
+    foreach ($item in $snapshot) { $byId[$item.ProcessId] = $item }
     $processIds = [System.Collections.Generic.HashSet[int]]::new()
-    $null = $processIds.Add($RootProcessId)
+    # A parent PID is historical: after exit Windows can reuse it while older
+    # orphans still reference it. Verify the root identity and creation order
+    # of every edge before allowing memory accounting or fallback cleanup.
+    $root = $byId[$RootProcessId]
+    if ($RootStartIdentity -and $null -ne $root -and $root.StartIdentity -eq $RootStartIdentity) {
+        $null = $processIds.Add($RootProcessId)
+    }
 
     do {
         $added = $false
         foreach ($item in $snapshot) {
-            if ($processIds.Contains($item.ParentProcessId) -and $processIds.Add($item.ProcessId)) {
+            if (-not $processIds.Contains($item.ProcessId) -and
+                $processIds.Contains($item.ParentProcessId) -and
+                (Test-ProcessStartOrder $byId[$item.ParentProcessId].StartIdentity $item.StartIdentity) -and
+                $processIds.Add($item.ProcessId)) {
                 $added = $true
             }
         }
@@ -762,6 +793,10 @@ try {
     }
     $processStarted = $true
     $wrapperProcessId = $process.Id
+    $wrapperStartIdentity = Get-LiveProcessIdentity -ProcessId $wrapperProcessId
+    if (-not $wrapperStartIdentity -and -not $process.HasExited) {
+        throw 'Could not verify the running wrapper identity for resource accounting.'
+    }
 
     try {
         $process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
@@ -775,7 +810,7 @@ try {
     }
 
     while ($true) {
-        $treeState = Get-ProcessTreeState $process.Id
+        $treeState = Get-ProcessTreeState $process.Id $wrapperStartIdentity
         Sync-TrackedProcesses $trackedProcesses @($treeState.Snapshot) @($treeState.Processes)
         $workingSetBytes = Get-TrackedWorkingSetBytes $trackedProcesses @($treeState.Snapshot)
         $peakWorkingSetBytes = [math]::Max($peakWorkingSetBytes, $workingSetBytes)
@@ -800,7 +835,7 @@ try {
             $PollIntervalMilliseconds,
             [math]::Max(1, [math]::Ceiling($remaining.TotalMilliseconds)))
         if ($process.WaitForExit([int]$waitMilliseconds)) {
-            $treeState = Get-ProcessTreeState $process.Id
+            $treeState = Get-ProcessTreeState $process.Id $wrapperStartIdentity
             Sync-TrackedProcesses $trackedProcesses @($treeState.Snapshot) @($treeState.Processes)
 
             if ([DateTimeOffset]::UtcNow -gt $deadline) {
