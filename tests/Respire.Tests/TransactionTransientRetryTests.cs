@@ -4,6 +4,7 @@ using System.Diagnostics.Metrics;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Testing;
+using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -202,19 +203,54 @@ public class TransactionTransientRetryTests
     public async Task OneDeadlineCoversCallbacksAndConflictBackoff()
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(Options(server) with { CommandTimeout = TimeSpan.FromMilliseconds(200) });
+        // Network progress has a generous watchdog; only the logical timeout is
+        // advanced by the test, after the intended callback/backoff has been reached.
+        var budget = TimeSpan.FromHours(1);
+        var clock = new ClusterRecoveryTestClock();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with { CommandTimeout = budget });
         var callbacks = 0;
+        var backoffs = new List<int>();
+        var deadlines = new List<long>();
         var tokens = new List<CancellationToken>();
+        var timeoutCreations = 0;
+        var options = new RespireTransactionRetryOptions
+        {
+            TimeoutFactory = (_, timeout) =>
+            {
+                timeoutCreations++;
+                return new CancellationTokenSource(timeout, clock);
+            },
+            Backoff = attempt =>
+            {
+                backoffs.Add(attempt);
+                clock.Advance(budget / 4);
+                return TimeSpan.FromMilliseconds(1);
+            },
+        };
         await Assert.That(async () => await client.RunTransactionAsync(["watched"], async (transaction, token) =>
         {
             callbacks++;
             tokens.Add(token);
-            if (callbacks == 1) await client.IncrementAsync("watched", cancellationToken: token);
-            else await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            deadlines.Add(transaction.HelperRetryContext!.Deadline.Ticks);
+            if (callbacks == 1)
+            {
+                clock.Advance(budget / 2);
+                await client.IncrementAsync("watched", cancellationToken: token);
+            }
+            else
+            {
+                clock.Advance(budget / 4);
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
             _ = transaction.Set("result", "done");
-        })).Throws<RespireTimeoutException>();
+        }, options).AsTask().WaitAsync(TimeSpan.FromSeconds(30))).Throws<RespireTimeoutException>();
         await Assert.That(callbacks).IsEqualTo(2);
+        await Assert.That(timeoutCreations).IsEqualTo(1);
+        await Assert.That(backoffs.SequenceEqual([1])).IsTrue();
+        await Assert.That(deadlines[0]).IsNotEqualTo(0);
+        await Assert.That(deadlines[0]).IsEqualTo(deadlines[1]);
         await Assert.That(tokens[0]).IsEqualTo(tokens[1]);
+        await Assert.That(tokens[1].IsCancellationRequested).IsTrue();
         await Assert.That(await client.ExistsAsync("result")).IsFalse();
     }
 
@@ -324,18 +360,35 @@ public class TransactionTransientRetryTests
     public async Task DeadlineInterruptsConflictBackoffBeforeAnotherWatch()
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(Options(server) with { CommandTimeout = TimeSpan.FromMilliseconds(200) });
+        var budget = TimeSpan.FromHours(1);
+        var clock = new ClusterRecoveryTestClock();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with { CommandTimeout = budget });
         var callbacks = 0;
+        var backoffs = new List<int>();
+        CancellationToken callbackToken = default;
         RespireWatchedTransaction? attempt = null;
         await Assert.That(async () => await client.RunTransactionAsync(["watched"], async (transaction, token) =>
         {
             callbacks++;
+            callbackToken = token;
             attempt = transaction;
             _ = transaction.Set("result", "done");
             await client.IncrementAsync("watched", cancellationToken: token);
-        }, new() { Backoff = _ => TimeSpan.FromHours(1) })).Throws<RespireTimeoutException>();
+        }, new()
+        {
+            TimeoutFactory = (_, timeout) => new CancellationTokenSource(timeout, clock),
+            Backoff = conflict =>
+            {
+                backoffs.Add(conflict);
+                clock.Advance(budget);
+                return TimeSpan.FromHours(1);
+            },
+        }).AsTask().WaitAsync(TimeSpan.FromSeconds(30))).Throws<RespireTimeoutException>();
         await Assert.That(callbacks).IsEqualTo(1);
+        await Assert.That(backoffs.SequenceEqual([1])).IsTrue();
+        await Assert.That(callbackToken.IsCancellationRequested).IsTrue();
         await Assert.That(() => attempt!.Increment("result")).Throws<InvalidOperationException>();
+        await Assert.That(await client.ExistsAsync("result")).IsFalse();
     }
 
     [Test]

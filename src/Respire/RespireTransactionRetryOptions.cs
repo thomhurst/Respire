@@ -3,6 +3,11 @@ namespace Respire;
 /// <summary>Bounds optimistic transaction retries after Redis reports a WATCH conflict.</summary>
 public sealed record RespireTransactionRetryOptions
 {
+    // Keep the logical timeout controllable per operation in tests, without replacing
+    // the transport's TickCount64 clock or changing the pooled production timeout.
+    internal Func<CancellationToken, TimeSpan, CancellationTokenSource> TimeoutFactory { get; init; }
+        = Internal.CommandTimeoutCancellation.Create;
+
     /// <summary>Maximum WATCH-conflict attempts, including the initial attempt. Must be positive. Defaults to five.</summary>
     /// <remarks>Transient retries use RespireOptions.RetryPolicy.MaxAttempts independently and do not consume this budget.</remarks>
     public int MaxAttempts { get; init; } = 5;
