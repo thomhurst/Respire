@@ -6,6 +6,8 @@ on:
     paths:
       - scripts/Invoke-AgentDotNet.ps1
       - scripts/AgentDotNetWindowsJob.cs
+      - scripts/Write-AgentWindowsStartupDiagnostics.ps1
+      - scripts/Test-AgentWindowsStartupDiagnostics.ps1
       - scripts/Test-AgentDotNetWindowsHandles.ps1
       - scripts/Test-InvokeAgentDotNet.ps1
       - scripts/Test-AgentDotNetArguments.ps1
@@ -33,6 +35,8 @@ on:
     paths:
       - scripts/Invoke-AgentDotNet.ps1
       - scripts/AgentDotNetWindowsJob.cs
+      - scripts/Write-AgentWindowsStartupDiagnostics.ps1
+      - scripts/Test-AgentWindowsStartupDiagnostics.ps1
       - scripts/Test-AgentDotNetWindowsHandles.ps1
       - scripts/Test-InvokeAgentDotNet.ps1
       - scripts/Test-AgentDotNetArguments.ps1
@@ -96,6 +100,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/Test-AgentDotNetWindowsHandles.ps1
+      - name: Verify Windows startup failure evidence preserves exit and cleanup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/Test-AgentWindowsStartupDiagnostics.ps1
       - name: Verify MTP discovery, execution, and failure propagation
         shell: pwsh
         run: ./scripts/Test-AgentDotNetMtp.ps1 -DiagnosticsDirectory '${{ runner.temp }}/agent-guard-mtp'

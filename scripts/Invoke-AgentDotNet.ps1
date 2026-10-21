@@ -680,6 +680,9 @@ $child = [Diagnostics.Process]::Start($startInfo)
 try {
     $child.WaitForExit()
     $exitCode = $child.ExitCode
+    if ($IsWindows -and $exitCode -eq -1073741502) {
+        try { [Console]::Error.WriteLine("startup-failure workloadPid=$($child.Id) executable=$([IO.Path]::GetFileName($startInfo.FileName)) exit=0xC0000142") } catch { }
+    }
 }
 finally {
     $child.Dispose()
@@ -808,6 +811,16 @@ try {
     else {
         $process.WaitForExit()
         $finalExitCode = $process.ExitCode
+    }
+    if ($IsWindows -and $finalExitCode -eq -1073741502) {
+        try {
+            & (Join-Path $PSScriptRoot 'Write-AgentWindowsStartupDiagnostics.ps1') `
+                -WrapperProcessId $process.Id -PeakWorkingSetBytes $peakWorkingSetBytes
+        }
+        catch {
+            # Startup evidence must not hide the original exit or skip containment cleanup.
+            try { [Console]::Error.WriteLine("Windows startup diagnostics unavailable: $_") } catch { }
+        }
     }
 }
 finally {

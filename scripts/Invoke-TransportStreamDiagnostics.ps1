@@ -18,7 +18,8 @@ $revision = (git -C $repo rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the diagnostic revision.' }
 $measuredPaths = @('benchmarks/Respire.Benchmarks', 'src', 'Directory.Build.props',
     'Directory.Packages.props', 'global.json', 'scripts/Invoke-TransportStreamDiagnostics.ps1',
-    'scripts/Invoke-AgentDotNet.ps1', 'scripts/AgentDotNetWindowsJob.cs')
+    'scripts/Invoke-AgentDotNet.ps1', 'scripts/AgentDotNetWindowsJob.cs',
+    'scripts/Write-AgentWindowsStartupDiagnostics.ps1')
 if (git -C $repo status --porcelain -- @measuredPaths) {
     throw 'Commit measured source before capturing revision-stamped evidence.'
 }
