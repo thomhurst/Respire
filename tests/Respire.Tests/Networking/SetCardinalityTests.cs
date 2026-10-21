@@ -89,11 +89,14 @@ public class SetCardinalityTests
         var slot = ClusterHash.GetSlot("tenant:{sets}:first");
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology, "-ERR wrong route\r\n"u8.ToArray());
+        // This client owns the fake cluster topology used to verify cardinality routing.
+#pragma warning disable RESP010
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var client = root.WithKeyPrefix("tenant:");
         await Assert.That(await Count(client, mode, false, ["{sets}:first", "{sets}:second"])).IsEqualTo(2);
         await Assert.That(await Count(client, mode, true, ["{sets}:first", "{sets}:second"])).IsEqualTo(5);

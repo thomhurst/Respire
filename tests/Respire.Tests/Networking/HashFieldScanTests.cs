@@ -30,11 +30,13 @@ public class HashFieldScanTests
         };
         second.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology
             : "*2\r\n$1\r\n7\r\n*0\r\n"u8.ToArray();
+#pragma warning disable RESP010 // This field-scan scenario owns its client to isolate cursor pins and cluster read policy.
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", first.Port) },
         });
+#pragma warning restore RESP010
         await using var client = owner.WithReadFrom(RespireReadFrom.PrimaryPreferred);
         var retired = 0;
         using var listener = new System.Diagnostics.ActivityListener
@@ -192,11 +194,13 @@ public class HashFieldScanTests
             $"*2\r\n$9\r\n127.0.0.1\r\n:{replica.Port}\r\n");
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology
             : command.StartsWith("HSCAN ", StringComparison.Ordinal) ? pageReply : FakeRespServer.OkReply;
+#pragma warning disable RESP010 // This field-scan scenario owns its client to isolate cursor pins and cluster read policy.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
         });
+#pragma warning restore RESP010
         await using var reads = client.WithReadFrom(policy);
         // Fresh primary pages must create a pin. Replica pages must not bypass an existing replica pin.
         var establishPin = cursor != 0 || policy == RespireReadFrom.Replica;
@@ -233,7 +237,9 @@ public class HashFieldScanTests
     [Test]
     public async Task CommandPreservesCursorAndKeyRoutingMetadata()
     {
+#pragma warning disable RESP010 // This field-scan scenario owns its client to isolate cursor pins and cluster read policy.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = { new RespireEndpoint("localhost") } });
+#pragma warning restore RESP010
         var command = HashCommands.ScanFieldsCommand((RespireClient)client.WithKeyPrefix("p:"), "hash", 17, null, null);
         await Assert.That(command.ReadKind).IsEqualTo(ReadCommandKind.CursorRead);
         await Assert.That(command.CursorArgumentIndex).IsEqualTo(1);

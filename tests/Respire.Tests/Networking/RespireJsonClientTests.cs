@@ -95,6 +95,8 @@ public partial class RespireJsonClientTests
                 _ => null,
             },
         };
+        // The protocol-specific JSON fixture owns its client until the fake server scenario ends.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = protocol,
@@ -104,6 +106,7 @@ public partial class RespireJsonClientTests
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             ThreadPoolMonitoring = false,
         });
+#pragma warning restore RESP010
         var json = client.WithKeyPrefix("tenant:").Json;
 
         var result = await json.GetAsync("profile", JsonTestContext.Default.Profile);
@@ -177,11 +180,14 @@ public partial class RespireJsonClientTests
     [Test]
     public async Task MultiSetRejectsCrossSlotKeysBeforeConnecting()
     {
+        // An unconnected cluster client proves JSON cross-slot validation runs before discovery.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", 1) },
         });
+#pragma warning restore RESP010
         var json = new RespireJsonClient(client);
         RespireJsonSetEntry<Profile>[] entries =
         [

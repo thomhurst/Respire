@@ -67,8 +67,11 @@ public class ValkeyClusterScanCommandTests
         RespireReadFrom policy, bool includeWrite)
     {
         await using var cluster = new ScanCluster();
+        // The scan-routing case needs its own tracked RESP3 client and fake primary topology.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(cluster.First.Port, 3)
             with { ClientSideCache = new(), ClusterTopologyRefreshInterval = null });
+#pragma warning restore RESP010
         var tag = $"{{{Tag(0)}}}:";
         await Assert.That(await client.GetStringAsync(tag + "cached")).IsEqualTo("value");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
@@ -193,7 +196,7 @@ public class ValkeyClusterScanCommandTests
         RespireValkeyClusterScanPage page;
         if (transaction)
         {
-            var queue = view.CreateTransaction();
+            await using var queue = view.CreateTransaction();
             var pending = queue.Keys.ScanValkeyClusterPage(cursor, "*tail", RespireKeyType.String, 7);
             await queue.CommitAsync();
             page = pending.Result;
@@ -239,7 +242,10 @@ public class ValkeyClusterScanCommandTests
     public async Task InvalidArgumentsDoNotConnect(string shape)
     {
         await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        // An unconnected cluster client proves invalid CLUSTERSCAN arguments never dial.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(target.Port, 2));
+#pragma warning restore RESP010
         var cursor = shape switch { "null" => null!, "empty" => "", _ => "0" };
         var count = shape switch { "zero-count" => 0, "negative-count" => -1, _ => 250 };
         int? slot = shape switch { "negative-slot" => -1, "large-slot" => 16384, _ => null };
@@ -259,9 +265,15 @@ public class ValkeyClusterScanCommandTests
     public async Task StandaloneAndPreCancellationDoNotConnect()
     {
         await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        // An unconnected standalone client proves CLUSTERSCAN rejects unsupported routing before I/O.
+#pragma warning disable RESP010
         await using var standalone = RespireClient.Create(Options(target.Port, 2) with { UseCluster = false });
+#pragma warning restore RESP010
         await Assert.That(async () => await standalone.Keys.ScanValkeyClusterPageAsync()).ThrowsExactly<InvalidOperationException>();
+        // An unconnected cluster client proves pre-canceled CLUSTERSCAN never dials.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(target.Port, 2));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
         await Assert.That(async () => await client.Keys.ScanValkeyClusterPageAsync(cancellationToken: cancellation.Token))
             .Throws<OperationCanceledException>();

@@ -82,7 +82,9 @@ public class KeyMetadataTests
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync();
         // A pre-cancelled lazy client never establishes a connection or submits a command.
+#pragma warning disable RESP010 // This test owns a lazy client to prove invalid or cancelled metadata commands send nothing.
         await using var lazy = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) } });
+#pragma warning restore RESP010
         await Assert.That(async () => await lazy.Keys.EncodingAsync("key", cancelled.Token)).Throws<OperationCanceledException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
     }

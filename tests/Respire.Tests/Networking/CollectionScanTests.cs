@@ -81,12 +81,14 @@ public class CollectionScanTests
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
+#pragma warning disable RESP010 // This scan scenario owns its client and isolated cluster topology for cursor routing.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
+#pragma warning restore RESP010
 
         _ = await CollectAsync(client.SortedSets.ScanAsync(key));
 

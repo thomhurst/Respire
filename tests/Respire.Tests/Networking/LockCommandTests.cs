@@ -446,6 +446,7 @@ public class LockCommandTests
             "+PONG\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray());
         server.DelayCommand("PING", 1000);
+#pragma warning disable RESP010 // This lock scenario owns its client to isolate inflight capacity, fencing, and renewal state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -453,6 +454,7 @@ public class LockCommandTests
             Connections = 1,
             MaxInflightCommands = 1,
         });
+#pragma warning restore RESP010
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
         await client.EnsureReliableCorrectionOrderingAsync();
         var ping = client.PingAsync().AsTask();
@@ -522,6 +524,7 @@ public class LockCommandTests
             "+PONG\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray());
         server.DelayCommand("PING", 3000);
+#pragma warning disable RESP010 // This lock scenario owns its client to isolate inflight capacity, fencing, and renewal state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -530,6 +533,7 @@ public class LockCommandTests
             MaxInflightCommands = 1,
             CommandTimeout = TimeSpan.FromSeconds(1),
         });
+#pragma warning restore RESP010
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
         await client.EnsureReliableCorrectionOrderingAsync();
         var ping = client.PingAsync().AsTask();
@@ -577,6 +581,7 @@ public class LockCommandTests
                 ? "-NOPERM this user has no permissions to run the 'client|id' command\r\n"u8.ToArray()
                 : LockReply(command),
         };
+#pragma warning disable RESP010 // This lock scenario owns its client to isolate inflight capacity, fencing, and renewal state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -584,6 +589,7 @@ public class LockCommandTests
             Connections = 1,
             LoggerFactory = logger,
         });
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
 
         // A cancellable token makes the release fenceable, so CLIENT ID is attempted and denied.
@@ -607,6 +613,7 @@ public class LockCommandTests
                 ? "-ERR CLIENT ID failed\r\n"u8.ToArray()
                 : LockReply(command),
         };
+#pragma warning disable RESP010 // This lock scenario owns its client to isolate inflight capacity, fencing, and renewal state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -614,6 +621,7 @@ public class LockCommandTests
             Connections = 1,
             CommandTimeout = TimeSpan.FromSeconds(5),
         });
+#pragma warning restore RESP010
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
         await Assert.That(async () => await mutex.ReleaseAsync()).Throws<RespireServerException>();
@@ -718,6 +726,7 @@ public class LockCommandTests
                 : LockReply(command),
         };
         server.DelayCommand("DELEX ", 1000);
+#pragma warning disable RESP010 // This lock scenario owns its client to isolate inflight capacity, fencing, and renewal state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -725,6 +734,7 @@ public class LockCommandTests
             Connections = 1,
             LoggerFactory = logger,
         });
+#pragma warning restore RESP010
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
         using var cancellation = new CancellationTokenSource();
 
@@ -759,6 +769,7 @@ public class LockCommandTests
             : command.StartsWith("DELEX ", StringComparison.Ordinal)
                 ? Interlocked.Increment(ref seedDeletes) == 1 ? moved : ":1\r\n"u8.ToArray()
             : LockReply(command);
+#pragma warning disable RESP010 // This lock scenario owns its client to isolate inflight capacity, fencing, and renewal state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -766,6 +777,7 @@ public class LockCommandTests
             ConnectTimeout = TimeSpan.FromSeconds(30),
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
+#pragma warning restore RESP010
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
         using var cancellation = new CancellationTokenSource();
 
@@ -868,6 +880,7 @@ public class LockCommandTests
             ":1\r\n"u8.ToArray(),
             FakeRespServer.OkReply,
             "$-1\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This lock scenario owns its client to isolate inflight capacity, fencing, and renewal state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -875,6 +888,7 @@ public class LockCommandTests
             Connections = 1,
             CommandTimeout = null,
         });
+#pragma warning restore RESP010
 
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
@@ -900,6 +914,7 @@ public class LockCommandTests
             ":41\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray());
         server.CloseConnectionAfterCommand = 4;
+#pragma warning disable RESP010 // This lock scenario owns its client to isolate inflight capacity, fencing, and renewal state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -907,6 +922,7 @@ public class LockCommandTests
             Connections = 1,
             CommandTimeout = null,
         });
+#pragma warning restore RESP010
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
         await Assert.That(async () => await mutex.ResetExpiryAsync(TimeSpan.FromSeconds(5)))
@@ -953,12 +969,14 @@ public class LockCommandTests
             FakeRespServer.OkReply,
             ":1\r\n"u8.ToArray());
         server.DelayReply(3, 500);
+#pragma warning disable RESP010 // This lock scenario owns its client to isolate inflight capacity, fencing, and renewal state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
         });
+#pragma warning restore RESP010
         await client.EnsureReliableCorrectionOrderingAsync();
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));

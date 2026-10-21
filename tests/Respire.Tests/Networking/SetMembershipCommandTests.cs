@@ -95,6 +95,8 @@ public class SetMembershipCommandTests
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology, "-ERR command reached seed instead of slot owner\r\n"u8.ToArray());
+        // This client belongs to the fake slot-owner scenario for SINTERCARD routing.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -102,6 +104,7 @@ public class SetMembershipCommandTests
             Connections = 1,
             Endpoints = { new("127.0.0.1", seed.Port) },
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         long result;
         if (path == "immediate")
@@ -149,7 +152,10 @@ public class SetMembershipCommandTests
     [Test]
     public async Task ClusterTransaction_ValidatesAllKeysAndRoutesPastTheCount()
     {
+        // An unconnected cluster client tests transaction slot validation without committing.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true, Endpoints = { new("localhost") } });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         await Assert.That(() => transaction.Sets.Move("{a}:first", "{b}:second", "value"))
             .Throws<InvalidOperationException>();

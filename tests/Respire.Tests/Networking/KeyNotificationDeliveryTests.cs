@@ -29,11 +29,13 @@ public class KeyNotificationDeliveryTests
         };
         server.ReplyOverride = (_, command) => command.StartsWith("UNSUBSCRIBE ", StringComparison.Ordinal)
             || command.StartsWith("PUNSUBSCRIBE ", StringComparison.Ordinal) ? Confirmation(descriptor, resp3, true) : null;
+#pragma warning disable RESP010 // This notification scenario owns its client and subscription recovery or overflow state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = resp3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync(descriptor);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
@@ -66,10 +68,12 @@ public class KeyNotificationDeliveryTests
         await using var server = new FakeRespServer(Confirmation(descriptor, false, false));
         server.ReplyOverride = (_, command) => command.StartsWith("UNSUBSCRIBE ", StringComparison.Ordinal)
             ? Confirmation(descriptor, false, true) : null;
+#pragma warning disable RESP010 // This notification scenario owns its client and subscription recovery or overflow state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         long measurements = 0;
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, current) =>
@@ -129,11 +133,13 @@ public class KeyNotificationDeliveryTests
         server.ReplyOverride = (_, command) => command == "HELLO 3"
             ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray()
             : Confirmation(descriptor, resp3, command.StartsWith("UNSUBSCRIBE ") || command.StartsWith("PUNSUBSCRIBE "));
+#pragma warning disable RESP010 // This notification scenario owns its client and subscription recovery or overflow state.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = resp3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await using var first = await client.SubscribeAsync(descriptorFirst ? descriptor : ordinary);
         await using var second = await client.SubscribeAsync(descriptorFirst ? ordinary : descriptor);
         await server.SendRawAsync(Data(descriptor, resp3, "set"));

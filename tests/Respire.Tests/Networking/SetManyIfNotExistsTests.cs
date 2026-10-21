@@ -60,11 +60,14 @@ public class SetManyIfNotExistsTests
     public async Task CrossSlotPairs_FailBeforeSendingOrEnqueueing()
     {
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
+        // This fake cluster client verifies cross-slot MSETNX rejection without dispatch.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         (RespireKey Key, RespireValue Value)[] pairs = [("{a}:one", "first"), ("{b}:two", "second")];
         await Assert.That(async () => await view.Strings.SetManyIfNotExistsAsync(pairs))
@@ -91,11 +94,14 @@ public class SetManyIfNotExistsTests
         var slot = ClusterHash.GetSlot("{tenant}:a");
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology, "-ERR wrong route\r\n"u8.ToArray());
+        // The MSETNX routing scenario owns its seed and slot-owner connections.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("{tenant}:");
         (RespireKey Key, RespireValue Value)[] pairs = [("a", "{different}:one"), ("b", "{other}:two")];
         bool result;

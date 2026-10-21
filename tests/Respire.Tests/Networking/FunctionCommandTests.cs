@@ -74,7 +74,9 @@ public class FunctionCommandTests
     [Test]
     public async Task ClusterSlotValidationPrecedesQueueAndAdminDoesNotSelectSlot()
     {
+#pragma warning disable RESP010 // This lazy cluster client is owned by the test; slot validation must fail before network I/O.
         await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true, Endpoints = { new RespireEndpoint("localhost") } });
+#pragma warning restore RESP010
         var function = RespireFunction.Create("function");
         await Assert.That(async () => { using var result = await client.Functions.ExecuteAsync(function, ["{a}", "{b}"]); }).Throws<RespireCrossSlotException>();
         using var batch = client.CreateBatch();

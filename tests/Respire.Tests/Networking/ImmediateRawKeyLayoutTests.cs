@@ -37,11 +37,13 @@ public class ImmediateRawKeyLayoutTests
     [Arguments("TDIGEST.MERGE")]
     public async Task CrossSlotFailsBeforeIoOnAllImmediateSurfaces(string operation)
     {
+#pragma warning disable RESP010 // This raw-layout scenario owns its client to isolate slot validation and scripted routing.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Endpoints = [new("localhost", 1)], Connections = 1,
         });
+#pragma warning restore RESP010
         var args = CreateArguments(operation, "{a}:one", "{b}:two");
         var catalog = RespireCommands.All.ToArray().Single(command => command.Name == operation);
         foreach (var descriptor in new[] { catalog, (RespireCommand)operation })
@@ -60,11 +62,13 @@ public class ImmediateRawKeyLayoutTests
     [Test]
     public async Task InlineAndInterpolatedKeysAreValidatedWithoutSplittingArguments()
     {
+#pragma warning disable RESP010 // This raw-layout scenario owns its client to isolate slot validation and scripted routing.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Endpoints = [new("localhost", 1)], Connections = 1,
         });
+#pragma warning restore RESP010
         var first = "{a}:key with spaces";
         var second = "{b}:key";
         await Assert.That(async () => await client.ExecuteAsync($"MGET {first} {second}"))
@@ -88,11 +92,13 @@ public class ImmediateRawKeyLayoutTests
         var slot = ClusterHash.GetSlot(first);
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology, "-ERR wrong route\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This raw-layout scenario owns its client to isolate slot validation and scripted routing.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         foreach (var operation in operations)
         {
@@ -126,11 +132,13 @@ public class ImmediateRawKeyLayoutTests
         await Assert.That(standaloneServer.CommandsSeen).IsEqualTo(3);
 
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray(), FakeRespServer.OkReply);
+#pragma warning disable RESP010 // This raw-layout scenario owns its client to isolate slot validation and scripted routing.
         await using var cluster = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         using var unknown = await cluster.ExecuteAsync("VENDOR.UNKNOWN", "{a}:one", "{b}:two");
         using var noKeys = await cluster.ExecuteAsync(RespireCommands.Scripting.EVAL, "return ARGV[1]", 0, "{a}", "{b}");
         using var admin = await cluster.ExecuteAsync(RespireCommands.Dragonfly.DFLYCLUSTER_CONFIG, "{a}", "{b}");
@@ -141,11 +149,13 @@ public class ImmediateRawKeyLayoutTests
     [Test]
     public async Task SharedLayoutsPreserveDeferredAllowlistAndRejectMalformedCounts()
     {
+#pragma warning disable RESP010 // This raw-layout scenario owns its client to isolate slot validation and scripted routing.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Endpoints = [new("localhost", 1)], Connections = 1,
         });
+#pragma warning restore RESP010
         foreach (var args in new RespireValue[][] { ["script", -1], ["script", long.MaxValue], ["script", 2, "one"] })
             await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Scripting.EVAL, args))
                 .Throws<ArgumentException>();

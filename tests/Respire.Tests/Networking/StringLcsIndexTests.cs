@@ -166,11 +166,14 @@ public class StringLcsIndexTests
     public async Task CrossSlotKeys_AreRejectedAfterPrefixing()
     {
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
+        // This fake cluster client verifies LCS validates physical keys after prefixing.
+#pragma warning disable RESP010
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var client = root.WithKeyPrefix("tenant:");
         await Assert.That(async () => await client.Strings.LcsIndexAsync("{a}:first", "{b}:second"))
             .Throws<RespireCrossSlotException>();
@@ -196,11 +199,14 @@ public class StringLcsIndexTests
         var slot = ClusterHash.GetSlot("tenant:{same}:first");
         var topology = $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n";
         await using var seed = new FakeRespServer(Encoding.UTF8.GetBytes(topology), "-ERR wrong route\r\n"u8.ToArray());
+        // This client owns the fake topology used to verify LCS routing by prefixed key.
+#pragma warning disable RESP010
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var client = root.WithKeyPrefix("tenant:{same}:");
         if (mode == "immediate") await client.Strings.LcsIndexAsync("first", "second");
         else if (mode == "batch")

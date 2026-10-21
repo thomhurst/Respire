@@ -139,11 +139,13 @@ public class MultiKeyListPopTests
         var slot = ClusterHash.GetSlot("tenant:{lists}:first");
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology, "-ERR wrong route\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This list-pop scenario owns its client and scripted cluster routing or cross-slot validation.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         RespireKey[] keys = ["{lists}:first", "{lists}:second"];
         RespireKey returned;
@@ -182,11 +184,13 @@ public class MultiKeyListPopTests
     public async Task CrossSlotKeys_AreRejectedBeforeSendingOrEnqueueing()
     {
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This list-pop scenario owns its client and scripted cluster routing or cross-slot validation.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         RespireKey[] keys = ["{a}:first", "{b}:second"];
         await Assert.That(async () => await view.Lists.PopManyAsync(keys)).Throws<RespireCrossSlotException>();

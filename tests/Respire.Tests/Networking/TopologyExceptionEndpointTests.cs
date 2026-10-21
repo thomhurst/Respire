@@ -20,7 +20,10 @@ public class TopologyExceptionEndpointTests
             ? "-WRONGTYPE target rejected\r\n"u8.ToArray() : null);
         await using var source = ClusterNode((command, _) => command == "GET key"
             ? Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot("key")} 127.0.0.1:{target.Port}\r\n") : null);
+        // The redirect scenario owns the source and target connections named in its errors.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(source));
+#pragma warning restore RESP010
         var error = await Assert.ThrowsAsync<RespireServerException>(async () =>
         {
             using var result = await client.ExecuteAsync(RespireCommands.String.GET, ["key"],
@@ -41,7 +44,10 @@ public class TopologyExceptionEndpointTests
         var reads = 0;
         await using var server = Standalone((command, _) => command == "GET key"
             ? Count(ref reads, "-TRYAGAIN busy\r\n"u8.ToArray()) : null);
+        // The retry scenario owns the physical connection whose final endpoint is asserted.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server));
+#pragma warning restore RESP010
         var error = await Assert.ThrowsAsync<RespireServerException>(async () =>
         {
             switch (shape)

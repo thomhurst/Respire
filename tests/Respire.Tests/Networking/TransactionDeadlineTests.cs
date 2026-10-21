@@ -119,12 +119,15 @@ public class TransactionDeadlineTests
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        // The lazy TLS client belongs to this listener-gated acquisition cancellation scenario.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, UseTls = true,
             CommandTimeout = Timeout, ConnectTimeout = Timeout,
             Endpoints = [new("127.0.0.1", port)],
         });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var pending = transaction.Set("k", "v");
         using var caller = new CancellationTokenSource();
@@ -151,11 +154,14 @@ public class TransactionDeadlineTests
                 return false;
             },
         };
+        // The lazy client must include its gated initialization in the EXEC deadline.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, ClientName = "acquisition-budget",
             CommandTimeout = Timeout, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         _ = transaction.Set("k", "v");
         var commit = transaction.CommitAsync().AsTask();
@@ -229,6 +235,8 @@ public class TransactionDeadlineTests
     public async Task ImportCredentialGatePreservesDeadlineAndCallerCancellation(bool cancelCaller, bool preCanceled)
     {
         await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
+        // This import scenario owns a client with expiring credentials and a held credential gate.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
@@ -238,6 +246,7 @@ public class TransactionDeadlineTests
             CredentialProvider = new ExpiringCredentials(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         var gate = await session.Connection.AcquireCredentialSequenceAsync(default);
@@ -280,12 +289,15 @@ public class TransactionDeadlineTests
             ReplyOverride = (_, command) => command.StartsWith("HELLO ", StringComparison.Ordinal)
                 ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray() : null,
         };
+        // The cache-barrier scenario needs its own joinable read flight and command budget.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Connections = 1, CommandTimeout = timeout,
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         await using var transaction = session.CreateTransaction();
@@ -357,12 +369,15 @@ public class TransactionDeadlineTests
             _ when command.StartsWith("SET ", StringComparison.Ordinal) => Queued,
             _ => FakeRespServer.OkReply,
         };
+        // This client owns the published cluster sockets used while topology refresh is gated.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 2, UseCluster = true, CommandTimeout = Timeout,
             ReconnectPolicy = withReconnectPolicy ? new() : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var keys = new Dictionary<int, string>();
         for (var index = 0; keys.Count < 2 && index < 32; index++)
         {

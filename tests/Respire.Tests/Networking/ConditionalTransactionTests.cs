@@ -115,11 +115,13 @@ public class ConditionalTransactionTests
     {
         await using var server = new FakeRespServer(Info("9.2.0"), FakeRespServer.OkReply, Queued, "*-1\r\n"u8.ToArray());
         var hook = new AbortHook();
+#pragma warning disable RESP010 // This transaction scenario owns its client and pipeline hook to observe only the scripted abort.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)], PipelineHook = hook,
         });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         _ = transaction.Set("key", "value");
         await Assert.That(await transaction.CommitAsync(RespireCondition.KeyNotExists("key"))).IsFalse();

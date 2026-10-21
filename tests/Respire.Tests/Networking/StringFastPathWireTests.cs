@@ -235,11 +235,14 @@ public class StringFastPathWireTests
             ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
                 ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${primary.Port.ToString().Length}\r\n{primary.Port}\r\n") : null,
         };
+        // The lazy client must discover this scenario's sentinel and primary on its first stream read.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, SentinelPrimaryName = "primary",
             Endpoints = [new("127.0.0.1", sentinel.Port)],
         });
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var stream = await client.Strings.GetStreamAsync("key", deadline.Token);
         using var reader = new StreamReader(stream!);

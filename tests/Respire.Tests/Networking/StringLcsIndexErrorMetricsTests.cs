@@ -13,11 +13,14 @@ public class StringLcsIndexErrorMetricsTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
+        // The metrics fixture owns its fake cluster client to isolate transaction slot rejection.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         _ = transaction.Strings.LcsIndex("{a}:first", "{a}:second");
         using var capture = new ErrorCapture();
@@ -76,11 +79,14 @@ public class StringLcsIndexErrorMetricsTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
+        // Each construction-error case owns a client configured for its cross-slot setting.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = crossSlot, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         using var capture = new ErrorCapture();
         var options = crossSlot ? null : new RespireLcsOptions { MinimumMatchLength = -1 };
         async Task Invoke()

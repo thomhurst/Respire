@@ -44,11 +44,14 @@ public class SortedSetAlgebraCommandTests
     [Arguments("ZDIFFSTORE")]
     public async Task ImmediateAlgebra_RejectsCrossSlotBeforeDiscovery(string operation)
     {
+        // An unconnected cluster client proves algebra rejects cross-slot keys before discovery.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true,
             Endpoints = [new("localhost", 1)], Connections = 1,
         });
+#pragma warning restore RESP010
         foreach (var (prefix, first, second) in new[]
         {
             ("", "{a}:one", "{b}:two"),
@@ -92,11 +95,14 @@ public class SortedSetAlgebraCommandTests
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(
             topology, "-ERR command reached seed instead of slot owner\r\n"u8.ToArray());
+        // This client owns the mapped-key algebra scenario's fake cluster topology.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true,
             Endpoints = [new("127.0.0.1", seed.Port)], Connections = 1,
         });
+#pragma warning restore RESP010
         var view = prefix.Length == 0 ? client : client.WithKeyPrefix(prefix);
         string[] operations = ["ZINTER", "ZUNION", "ZDIFF", "ZINTERSTORE", "ZUNIONSTORE", "ZDIFFSTORE"];
         foreach (var operation in operations)
@@ -176,7 +182,7 @@ public class SortedSetAlgebraCommandTests
             membersReply, membersReply, membersReply,
             ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        var batch = client.CreateBatch();
+        using var batch = client.CreateBatch();
 
         var scores = batch.SortedSets.ScoresMany("scores", "one", "missing");
         _ = batch.SortedSets.Intersect("first", "second");
@@ -211,8 +217,11 @@ public class SortedSetAlgebraCommandTests
             membersReply, entriesReply, membersReply, pairedEntriesReply, entriesReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
+        // The full-rank reads verify typed member/score conversion from fixed two-member replies.
+#pragma warning disable RESP011
         var byRank = await client.SortedSets.RangeAsync<int>("typed");
         var rankScores = await client.SortedSets.RangeWithScoresAsync<int>("typed");
+#pragma warning restore RESP011
         var byScore = await client.SortedSets.RangeByScoreAsync<int>("typed", 1, 2);
         var scoreEntries = await client.SortedSets.RangeByScoreWithScoresAsync<int>(
             "typed", new RespireScoreRange(1, 2));
@@ -242,10 +251,13 @@ public class SortedSetAlgebraCommandTests
         await using var server = new FakeRespServer(
             membersReply, entriesReply, membersReply, entriesReply, entriesReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        var batch = client.CreateBatch();
+        using var batch = client.CreateBatch();
 
+        // Deferred full-rank reads use the same fixed two-member replies to verify conversion.
+#pragma warning disable RESP011
         var byRank = batch.SortedSets.Range<int>("typed");
         var rankScores = batch.SortedSets.RangeWithScores<int>("typed");
+#pragma warning restore RESP011
         var byScore = batch.SortedSets.RangeByScore<int>("typed", 1, 2);
         var scoreEntries = batch.SortedSets.RangeByScoreWithScores<int>(
             "typed", new RespireScoreRange(1, 2));

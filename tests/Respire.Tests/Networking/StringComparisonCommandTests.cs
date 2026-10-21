@@ -196,11 +196,14 @@ public class StringComparisonCommandTests
         var slot = ClusterHash.GetSlot("tenant:{compare}:key");
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology, "-ERR wrong route\r\n"u8.ToArray());
+        // This client owns the fake topology for prefixed conditional-string routing.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         const string key = "{compare}:key";
         var condition = RespireValueCondition.EqualTo("{other}:old");

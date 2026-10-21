@@ -55,7 +55,9 @@ public class IncrementExtendedTests
     public async Task FloatingInfinityBoundsRepresentAnUnboundedInterval()
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This increment scenario owns its client and isolated fake-server values, expiry, and protocol state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
         var result = await client.Strings.IncrementExtendedAsync("float", 0.5,
             new() { LowerBound = double.NegativeInfinity, UpperBound = double.PositiveInfinity });
         await Assert.That(result).IsEqualTo(new RespireIncrementResult<double>(0.5, 0.5));
@@ -117,7 +119,9 @@ public class IncrementExtendedTests
     {
         var clock = new RespireFakeClock(DateTimeOffset.FromUnixTimeSeconds(100));
         await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This increment scenario owns its client and isolated fake-server values, expiry, and protocol state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await Assert.That(await client.Strings.IncrementExtendedAsync("missing", options: new() { UpperBound = 0 })).IsEqualTo(new RespireIncrementResult<long>(0, 0));
         await Assert.That(await client.ExistsAsync("missing")).IsFalse();
         await client.SetAsync("key", long.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture), TimeSpan.FromSeconds(5));
@@ -152,7 +156,9 @@ public class IncrementExtendedTests
     public async Task FakeFloatReportsActualClampDeltaAndRejectsInvalidInput(int protocol)
     {
         await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This increment scenario owns its client and isolated fake-server values, expiry, and protocol state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
         await Assert.That(await client.Strings.IncrementExtendedAsync("float", 2.5)).IsEqualTo(new RespireIncrementResult<double>(2.5, 2.5));
         await Assert.That(await client.Strings.IncrementExtendedAsync("float", -4.0, new() { LowerBound = 0.5 }))
             .IsEqualTo(new RespireIncrementResult<double>(2.5, 0));

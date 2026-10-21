@@ -20,9 +20,12 @@ public class TypedCollectionReadTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var strings = await client.Strings.GetManyAsync<Payload>("a", "missing", "b");
+        // These whole-collection wire shapes deserialize fixed two-entry fake replies.
+#pragma warning disable RESP011
         var list = await client.Lists.RangeAsync<Payload>("list");
         var set = await client.Sets.MembersAsync<Payload>("set");
         var hash = await client.Hashes.GetAllAsync<Payload>("hash");
+#pragma warning restore RESP011
 
         await Assert.That(strings).IsEquivalentTo(new Payload?[] { new("one"), null, new("two") });
         await Assert.That(list).IsEquivalentTo(new[] { new Payload("one"), new Payload("two") });
@@ -52,12 +55,15 @@ public class TypedCollectionReadTests
             ArrayReply(first, second),
             ArrayReply("first", first, "second", second));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        var batch = client.CreateBatch();
+        using var batch = client.CreateBatch();
 
         var strings = batch.Strings.GetMany<Payload>("a", "missing", "b");
+        // Keep the deferred whole-collection commands; their fake replies each contain two entries.
+#pragma warning disable RESP011
         var list = batch.Lists.Range<Payload>("list");
         var set = batch.Sets.Members<Payload>("set");
         var hash = batch.Hashes.GetAll<Payload>("hash");
+#pragma warning restore RESP011
 
         await batch.ExecuteAsync();
 
