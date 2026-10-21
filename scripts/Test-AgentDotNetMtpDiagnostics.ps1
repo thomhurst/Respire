@@ -94,7 +94,82 @@ $global:LASTEXITCODE = [int](Get-Content -LiteralPath (Join-Path $PSScriptRoot '
             if (-not ($output | Where-Object { ([string]$_).Contains($marker) })) { throw "Missing discovery marker: $marker" }
         }
     }
-    Write-Output 'OK MTP diagnostic write failures preserve live markers, guard exits, original errors, location/environment restoration and fixture cleanup.'
+
+    # A host can stall outside the inner guard's timeout, including while
+    # collecting startup-failure evidence. Exercise the actual smoke boundary.
+    Remove-Item -LiteralPath Function:Add-Content
+    @'
+param([int]$TimeoutSeconds, [switch]$SingleNode, [string[]]$DotNetArguments)
+if ($DotNetArguments[0] -eq 'build') { $global:LASTEXITCODE = 0; return }
+$global:LASTEXITCODE = [int](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'exit-code.txt'))
+'@ | Set-Content -LiteralPath (Join-Path $scripts 'Invoke-AgentDotNet.ps1')
+    foreach ($guardFailureExitCode in @(73, 124)) {
+        $guardFailureExitCode | Set-Content -LiteralPath (Join-Path $scripts 'exit-code.txt')
+        $failure = $null
+        try {
+            & (Join-Path $scripts 'Test-AgentDotNetMtp.ps1') -DiagnosticsDirectory (Join-Path $testRoot "discovery-exit-$guardFailureExitCode") *>&1 | Out-Null
+        }
+        catch { $failure = $_ }
+        if ([string]$failure -notlike "*MTP discovery failed (separator=False): $guardFailureExitCode.*") { throw "Discovery exit lost: $failure" }
+    }
+    @'
+param([int]$TimeoutSeconds, [switch]$SingleNode, [string[]]$DotNetArguments)
+if ($DotNetArguments[0] -eq 'build') { $global:LASTEXITCODE = 0; return }
+Start-Sleep -Seconds 4
+$PID | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'host-pid.txt')
+Write-Output 'partial discovery output control'
+[Console]::Error.WriteLine('partial discovery error control')
+Start-Sleep -Seconds 8
+$global:LASTEXITCODE = 73
+'@ | Set-Content -LiteralPath (Join-Path $scripts 'Invoke-AgentDotNet.ps1')
+    (Get-Content -LiteralPath $SmokeScript -Raw).Replace('[TimeSpan]::FromSeconds(90)', '[TimeSpan]::FromSeconds(3)') |
+        Set-Content -LiteralPath (Join-Path $scripts 'Test-AgentDotNetMtp.ps1')
+    # Keep cold process startup outside the shortened test deadline. The real
+    # script retains its full 90-second startup/output-drainage allowance.
+    function Start-Process {
+        [CmdletBinding()]
+        param([string]$FilePath, [string[]]$ArgumentList, [string]$RedirectStandardOutput,
+            [string]$RedirectStandardError, [switch]$PassThru, [string]$WindowStyle)
+        $hostProcess = Microsoft.PowerShell.Management\Start-Process @PSBoundParameters
+        $startup = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            while (-not (Test-Path -LiteralPath (Join-Path $scripts 'host-pid.txt'))) {
+                if ($hostProcess.WaitForExit(50)) { throw 'Stall host exited before readiness.' }
+                if ($startup.Elapsed.TotalSeconds -ge 30) { throw 'Stall host did not become ready within 30s.' }
+            }
+            return $hostProcess
+        }
+        catch {
+            if (-not $hostProcess.HasExited) {
+                $hostProcess.Kill($true)
+                $null = $hostProcess.WaitForExit(5000)
+            }
+            $hostProcess.Dispose()
+            throw
+        }
+    }
+    $diagnostics = Join-Path $testRoot 'diagnostics-stall'
+    $failure = $null
+    try {
+        & (Join-Path $scripts 'Test-AgentDotNetMtp.ps1') -DiagnosticsDirectory $diagnostics *>&1 | Out-Null
+    }
+    catch { $failure = $_ }
+    if ([string]$failure -notlike '*MTP discovery host exceeded 90s timeout*') { throw "Host timeout lost: $failure" }
+    $hostPid = [int](Get-Content -LiteralPath (Join-Path $scripts 'host-pid.txt'))
+    if (Get-Process -Id $hostPid -ErrorAction SilentlyContinue) { throw "Stalled discovery host survived: $hostPid" }
+    $fixture = @(Get-ChildItem -LiteralPath $diagnostics -Directory)
+    foreach ($log in @('discovery-False.log', 'discovery-False.stderr.log')) {
+        $saved = Get-Content -LiteralPath (Join-Path $fixture[0].FullName $log) -Raw
+        if ($saved -notlike '*partial discovery*control*') { throw "Timed-out discovery output was lost: $log" }
+    }
+    $phases = Get-Content -LiteralPath (Join-Path $fixture[0].FullName 'phases.log') -Raw
+    if (-not $phases.Contains('fixture cleanup started')) { throw 'Timed-out cleanup was not logged.' }
+    if (Test-Path -LiteralPath (Join-Path ([IO.Path]::GetTempPath()) $fixture[0].Name)) { throw 'Timed-out fixture was not deleted.' }
+    if ((Get-Location).Path -ne $originalLocation.Path) { throw 'Timed-out location was not restored.' }
+    foreach ($name in $environmentNames) {
+        if ([Environment]::GetEnvironmentVariable($name) -ne "sentinel-$name") { throw "Timed-out environment was not restored: $name" }
+    }
+    Write-Output 'OK MTP diagnostics preserve guard exits and live markers; stalled discovery terminates with retained output, restored state and fixture cleanup.'
 }
 finally {
     Set-Location -LiteralPath $originalLocation.Path

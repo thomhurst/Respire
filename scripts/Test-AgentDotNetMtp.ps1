@@ -116,12 +116,44 @@ exit $guardExitCode
         @{ GuardScript = $guardScript; PhaseLog = $phaseLog; TimeoutSeconds = $smokeTimeoutSeconds; Arguments = $baseArguments + $listArguments + $extensionSeparator + @('--treenode-filter', $filter) } |
             ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $payloadPath
         $discoveryLog = Join-Path $diagnosticsRoot "discovery-$separator.log"
-        Write-MtpPhase "discovery host started (separator=$separator); output=$discoveryLog"
-        # Redirect to disk so partial output survives a stalled capture or failure.
-        & $pwshPath -NoProfile -File $captureScript $payloadPath > $discoveryLog 2>&1
-        Write-MtpPhase "discovery host returned (separator=$separator); exit=$LASTEXITCODE"
-        $discovery = @(Get-Content -LiteralPath $discoveryLog)
-        if ($LASTEXITCODE -ne 0) { throw "MTP discovery failed (separator=$separator): $LASTEXITCODE. $($discovery -join [Environment]::NewLine)" }
+        $discoveryErrorLog = Join-Path $diagnosticsRoot "discovery-$separator.stderr.log"
+        Write-MtpPhase "discovery host starting (separator=$separator); output=$discoveryLog; errors=$discoveryErrorLog"
+        # Bound startup/teardown and diagnostic collection outside the inner
+        # guard too. Redirect to disk so partial output survives host termination.
+        $hostOptions = @{
+            FilePath = $pwshPath
+            ArgumentList = @('-NoProfile', '-File', ('"{0}"' -f $captureScript), ('"{0}"' -f $payloadPath))
+            RedirectStandardOutput = $discoveryLog
+            RedirectStandardError = $discoveryErrorLog
+            PassThru = $true
+        }
+        if ($IsWindows) { $hostOptions.WindowStyle = 'Hidden' }
+        $discoveryHost = Start-Process @hostOptions
+        $hostTimeout = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(90))
+        try {
+            Write-MtpPhase "discovery host started (separator=$separator); child pid=$($discoveryHost.Id)"
+            try {
+                # Include redirected-output drainage in the host deadline.
+                $discoveryHost.WaitForExitAsync($hostTimeout.Token).GetAwaiter().GetResult()
+            }
+            catch [OperationCanceledException] {
+                throw "MTP discovery host exceeded 90s timeout (separator=$separator)."
+            }
+            $discoveryExitCode = $discoveryHost.ExitCode
+            Write-MtpPhase "discovery host returned (separator=$separator); child pid=$($discoveryHost.Id); exit=$discoveryExitCode"
+        }
+        finally {
+            $hostTimeout.Dispose()
+            if (-not $discoveryHost.HasExited) {
+                $discoveryHost.Kill($true)
+                if (-not $discoveryHost.WaitForExit(5000)) {
+                    Write-Warning 'MTP discovery host did not exit within 5s of tree termination.' -WarningAction Continue
+                }
+            }
+            $discoveryHost.Dispose()
+        }
+        $discovery = @(Get-Content -LiteralPath $discoveryLog) + @(Get-Content -LiteralPath $discoveryErrorLog)
+        if ($discoveryExitCode -ne 0) { throw "MTP discovery failed (separator=$separator): $discoveryExitCode. $($discovery -join [Environment]::NewLine)" }
         # CI enables ANSI color even on redirected SDK output. Remove presentation
         # sequences before checking the same exact method name and global count.
         $discovery = @($discovery | ForEach-Object { [regex]::Replace([string]$_, '\x1b\[[0-?]*[ -/]*[@-~]', '') })
