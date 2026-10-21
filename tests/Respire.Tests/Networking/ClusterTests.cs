@@ -364,6 +364,10 @@ public class ClusterTests
     [Arguments("none")]
     [Arguments("transient")]
     [Arguments("moved")]
+    // Runtime sampling plus concurrent cold JIT spent 29 s entering the retry owner (#2148),
+    // before HSCAN admission. Isolate these cases from other test bodies;
+    // the ten-second command budget and the actual retry/cursor assertions stay intact.
+    [NotInParallel]
     public async Task ReadFrom_RetryEnabledBatchRecordsFreshCursorIssuer(string retry)
     {
         byte[]? topology = null;
@@ -401,6 +405,7 @@ public class ClusterTests
             ReplicaRouteRevalidationInterval = TimeSpan.FromMinutes(1),
             Endpoints = [new("127.0.0.1", primary.Port)],
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
+            CommandTimeout = TimeSpan.FromSeconds(10),
         });
         await using var owner = client;
         await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
