@@ -260,7 +260,7 @@ public class NodeAddressMappingTests
 
         async Task ServeAsync()
         {
-            using var socket = await listener.AcceptSocketAsync(deadline.Token);
+            using var socket = await AcceptLoopbackSocketAsync(listener, deadline.Token);
             await using var stream = new SslStream(new NetworkStream(socket, ownsSocket: false));
             await stream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
             {
@@ -349,7 +349,7 @@ public class NodeAddressMappingTests
 
         async Task ServeAsync()
         {
-            using var socket = await listener.AcceptSocketAsync(deadline.Token);
+            using var socket = await AcceptLoopbackSocketAsync(listener, deadline.Token);
             await using var stream = new SslStream(new NetworkStream(socket, ownsSocket: false));
             await stream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
             {
@@ -358,6 +358,18 @@ public class NodeAddressMappingTests
             var request = new byte[FakeRespServer.PingFrame.Length];
             await stream.ReadExactlyAsync(request, deadline.Token);
             await stream.WriteAsync(FakeRespServer.PongReply, deadline.Token);
+        }
+    }
+
+    private static async ValueTask<Socket> AcceptLoopbackSocketAsync(TcpListener listener, CancellationToken token)
+    {
+        // Dual-mode listeners bind all interfaces. Unrelated peers must not consume
+        // a scripted connection or enter TLS authentication.
+        while (true)
+        {
+            var socket = await listener.AcceptSocketAsync(token);
+            if (FakeRespServer.IsLoopbackPeer(socket.RemoteEndPoint)) return socket;
+            socket.Dispose();
         }
     }
 
