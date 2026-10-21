@@ -19,7 +19,9 @@ public class SearchSynonymTests
             ? Encoding.UTF8.GetBytes((protocol == 3 ? "%2\r\n" : "*4\r\n") + pairs)
             : command.StartsWith("FT.TAGVALS") ? Encoding.UTF8.GetBytes((protocol == 3 ? "~" : "*") + "2\r\n$3\r\nred\r\n$4\r\nblue\r\n")
             : "+OK\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This synonym scenario owns its client and fixed fake membership replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var search = client.Search;
         await search.UpdateSynonymsAsync("index ü", "group one", ["car", "motor car"]);
         await CheckArguments(server, "FT.SYNUPDATE", "index ü", "group one", "car", "motor car");
@@ -43,7 +45,9 @@ public class SearchSynonymTests
         await using var server = Server(command => protocol == 3
             ? command.StartsWith("FT.SYNDUMP") ? "%0\r\n"u8.ToArray() : "~0\r\n"u8.ToArray()
             : "*0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This synonym scenario owns its client and fixed fake membership replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         await Assert.That((await client.Search.GetSynonymsAsync("idx")).Count).IsEqualTo(0);
         await Assert.That((await client.Search.GetTagValuesAsync("idx", "tags")).Count).IsEqualTo(0);
     }
@@ -59,7 +63,9 @@ public class SearchSynonymTests
     public async Task MalformedSynonymRepliesAreRejected(string reply)
     {
         await using var server = Server(_ => Encoding.UTF8.GetBytes(reply));
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Search.GetSynonymsAsync("idx")).Throws<InvalidOperationException>();
     }
 
@@ -71,7 +77,9 @@ public class SearchSynonymTests
     public async Task MalformedTagRepliesAreRejected(string reply)
     {
         await using var server = Server(_ => Encoding.UTF8.GetBytes(reply));
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Search.GetTagValuesAsync("idx", "tags")).Throws<InvalidOperationException>();
     }
 
@@ -81,7 +89,9 @@ public class SearchSynonymTests
     public async Task PrefixViewsRejectEverySynonymCommandBeforeSending(int protocol)
     {
         await using var server = Server(_ => "+OK\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var search = client.WithKeyPrefix("tenant:").Search;
         await Assert.That(async () => await search.UpdateSynonymsAsync("shared-index", "g", ["car", "auto"]))
             .Throws<NotSupportedException>();
@@ -94,7 +104,9 @@ public class SearchSynonymTests
     public async Task InvalidNamesTermsAndAmbiguousFirstTermAreRejectedBeforeSending()
     {
         await using var server = Server(_ => "+OK\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         var search = client.Search;
         Func<Task>[] calls = [
             () => search.UpdateSynonymsAsync("", "g", ["term"]).AsTask(),

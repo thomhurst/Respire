@@ -17,7 +17,9 @@ public class SearchAliasTests
         await using var server = Server(command => command.StartsWith("FT._LIST") || command.StartsWith("FT.ALIASLIST")
             ? Encoding.UTF8.GetBytes((protocol == 3 ? "~" : "*") + "2\r\n$7\r\nname ü\r\n$6\r\nsecond\r\n")
             : "+OK\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This alias scenario owns its client and fixed fake inventory replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var search = client.Search;
         var indexes = await search.ListIndexesAsync();
         await CheckArguments(server, "FT._LIST");
@@ -40,7 +42,9 @@ public class SearchAliasTests
     public async Task EmptyCollectionsAreValid(string reply)
     {
         await using var server = Server(_ => Encoding.UTF8.GetBytes(reply));
+#pragma warning disable RESP010 // This alias scenario owns its client and fixed fake inventory replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         await Assert.That((await client.Search.ListIndexesAsync()).Count).IsEqualTo(0);
         await Assert.That((await client.Search.ListAliasesAsync("idx")).Count).IsEqualTo(0);
     }
@@ -55,7 +59,9 @@ public class SearchAliasTests
     public async Task MalformedCollectionsAreRejected(string reply)
     {
         await using var server = Server(_ => Encoding.UTF8.GetBytes(reply));
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         var indexError = await Assert.That(async () => await client.Search.ListIndexesAsync()).Throws<InvalidOperationException>();
         await Assert.That(indexError!.Message).Contains("index name");
         var aliasError = await Assert.That(async () => await client.Search.ListAliasesAsync("idx")).Throws<InvalidOperationException>();
@@ -66,7 +72,9 @@ public class SearchAliasTests
     public async Task InvalidNamesAreRejectedBeforeSending()
     {
         await using var server = Server(_ => "+OK\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         var search = client.Search;
         foreach (var name in new[] { null, "", " " })
         {
@@ -89,7 +97,9 @@ public class SearchAliasTests
     public async Task EveryCommandPreservesServerErrors(int protocol)
     {
         await using var server = Server(_ => "-ERR denied by test\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This error scenario owns its client and scripted errors/capability responses.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var search = client.Search;
         Func<Task>[] calls = [
             () => search.ListIndexesAsync().AsTask(),
@@ -110,7 +120,9 @@ public class SearchAliasTests
     public async Task PrefixedViewsRejectEveryAliasCommandBeforeSending(int protocol)
     {
         await using var server = Server(_ => "+OK\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var search = client.WithKeyPrefix("tenant:").Search;
         Func<Task>[] calls =
         [
@@ -138,7 +150,9 @@ public class SearchAliasTests
             "GET cache-key" => "$5\r\nalive\r\n"u8.ToArray(),
             _ => FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // This cache scenario needs an isolated client cache and scripted read/write counters.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol) with { ClientSideCache = new() });
+#pragma warning restore RESP010
         await client.GetStringAsync("cache-key");
         await client.Search.ListIndexesAsync();
         await client.GetStringAsync("cache-key");

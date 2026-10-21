@@ -20,7 +20,9 @@ public class SearchConfigurationTests
     {
         IReadOnlyDictionary<string, string?> owned;
         await using (var server = Server(ReadReply(protocol)))
+#pragma warning disable RESP010 // This configuration scenario owns its client, admin options and fixed fake replies.
         await using (var client = await RespireClient.ConnectAsync(Options(server, protocol)))
+#pragma warning restore RESP010
         {
             owned = await client.Search.GetConfigurationAsync();
             await Assert.That(LastArguments(server)).IsEquivalentTo(
@@ -46,7 +48,9 @@ public class SearchConfigurationTests
     public async Task WritesExactlyOneOptionAndValueToken(int protocol)
     {
         await using var server = Server(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // This configuration scenario owns its client, admin options and fixed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         await client.Search.SetConfigurationAsync("option with spaces", "value with spaces\r\nand unicode é");
         await Assert.That(LastArguments(server)).IsEquivalentTo(
             ["FT.CONFIG", "SET", "option with spaces", "value with spaces\r\nand unicode é"], CollectionOrdering.Matching);
@@ -80,7 +84,9 @@ public class SearchConfigurationTests
     public async Task RejectsMalformedConfigurationReads(int protocol, string reply)
     {
         await using var server = Server(Encoding.UTF8.GetBytes(reply));
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var error = await Assert.That(async () => await client.Search.GetConfigurationAsync())
             .Throws<InvalidOperationException>();
         await Assert.That(error!.Message).StartsWith("Unexpected FT.CONFIG GET reply:");
@@ -97,7 +103,9 @@ public class SearchConfigurationTests
         foreach (var protocol in new[] { 2, 3 })
         {
             await using var server = Server(Encoding.UTF8.GetBytes(reply));
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             var error = await Assert.That(async () => await client.Search.SetConfigurationAsync("TIMEOUT", "501"))
                 .Throws<InvalidOperationException>();
             await Assert.That(error!.Message).StartsWith("Unexpected FT.CONFIG SET reply:");
@@ -110,7 +118,9 @@ public class SearchConfigurationTests
     public async Task EmptyConfigurationResultsAreValid(int protocol)
     {
         await using var server = Server(protocol == 2 ? "*0\r\n"u8.ToArray() : "%0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This configuration scenario owns its client, admin options and fixed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var values = await client.Search.GetConfigurationAsync("DOES_NOT_EXIST");
         await Assert.That(values.Count).IsEqualTo(0);
     }
@@ -125,7 +135,9 @@ public class SearchConfigurationTests
         foreach (var message in new[] { "ERR unknown configuration option", "NOPERM configuration denied" })
         {
             await using var server = Server(Encoding.UTF8.GetBytes("-" + message + "\r\n"));
+#pragma warning disable RESP010 // This error scenario owns its client and scripted errors/capability responses.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
             var error = await Assert.That(async () =>
             {
                 if (write) await client.Search.SetConfigurationAsync("UNKNOWN", "value");
@@ -142,7 +154,9 @@ public class SearchConfigurationTests
     public async Task ValidatesArgumentsAndPreCanceledCallsBeforeSending(int protocol)
     {
         await using var server = Server(ReadReply(protocol));
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         foreach (var option in new[] { null, "", " " })
         {
             await Assert.That(async () => await client.Search.GetConfigurationAsync(option!)).Throws<ArgumentException>();
@@ -164,7 +178,9 @@ public class SearchConfigurationTests
     public async Task WritesRequireAdminBeforeSending(int protocol)
     {
         await using var server = Server(ReadReply(protocol));
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var disabled = await RespireClient.ConnectAsync(Options(server, protocol, allowAdmin: false));
+#pragma warning restore RESP010
         await disabled.Search.GetConfigurationAsync();
         await Assert.That(async () => await disabled.Search.SetConfigurationAsync("TIMEOUT", "500"))
             .Throws<NotSupportedException>();
@@ -177,7 +193,9 @@ public class SearchConfigurationTests
     public async Task BothCommandsRejectPrefixViewsBeforeSending(int protocol)
     {
         await using var server = Server(ReadReply(protocol));
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var enabled = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var prefix = enabled.WithKeyPrefix("tenant:").Search;
         await Assert.That(async () => await prefix.GetConfigurationAsync()).Throws<NotSupportedException>();
         await Assert.That(async () => await prefix.SetConfigurationAsync("TIMEOUT", "500")).Throws<NotSupportedException>();
@@ -215,7 +233,9 @@ public class SearchConfigurationTests
                 "FT.CONFIG GET TIMEOUT" => ReadReply(2),
                 _ => null,
             };
+#pragma warning disable RESP010 // This routing scenario owns its client and isolated fake cluster topology.
         await using var client = await RespireClient.ConnectAsync(Options(first, 2) with { UseCluster = true });
+#pragma warning restore RESP010
         await client.Search.GetConfigurationAsync("TIMEOUT");
         await client.Search.SetConfigurationAsync("TIMEOUT", "501");
         var commands = first.ReceivedCommands.Concat(second.ReceivedCommands).ToArray();
@@ -237,7 +257,9 @@ public class SearchConfigurationTests
             "GET cache-key" => "$5\r\nalive\r\n"u8.ToArray(),
             _ => null,
         };
+#pragma warning disable RESP010 // This cache scenario needs an isolated client cache and scripted read/write counters.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol) with { ClientSideCache = new() });
+#pragma warning restore RESP010
         await client.GetStringAsync("cache-key");
         await client.Search.GetConfigurationAsync();
         using (await client.ExecuteAsync("FT.CONFIG GET", ["TIMEOUT"])) { }
@@ -263,7 +285,9 @@ public class SearchConfigurationTests
             accepted.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // This cancellation probe owns its client and withheld reply to verify FIFO draining.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         Task pending = write
             ? client.Search.SetConfigurationAsync("TIMEOUT", "501", cancellation.Token).AsTask()

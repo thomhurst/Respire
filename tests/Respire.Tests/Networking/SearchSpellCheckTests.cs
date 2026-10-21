@@ -25,7 +25,9 @@ public class SearchSpellCheckTests
         excludes[0] = "changed";
         var clone = options with { Distance = 2 };
         await using var server = Server(_ => "*0\r\n");
+#pragma warning disable RESP010 // This spellcheck scenario owns its client and fixed fake dictionary replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         await client.Search.SpellCheckAsync("index", "helo", clone);
         await Assert.That(server.ReceivedCommands.Last()).IsEqualTo(
             "FT.SPELLCHECK index helo DISTANCE 2 TERMS INCLUDE included TERMS EXCLUDE excluded");
@@ -42,7 +44,9 @@ public class SearchSpellCheckTests
             ? "*2\r\n*3\r\n+TERM\r\n+helo\r\n*2\r\n*2\r\n+0.5\r\n+hello\r\n*2\r\n+0\r\n+help\r\n*3\r\n+TERM\r\n+xyz\r\n*0\r\n"
             : "%1\r\n+results\r\n%2\r\n+helo\r\n*2\r\n%1\r\n+hello\r\n,0.5\r\n%1\r\n+help\r\n,0\r\n+xyz\r\n*0\r\n";
         await using var server = Server(_ => reply);
+#pragma warning disable RESP010 // This spellcheck scenario owns its client and fixed fake dictionary replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         var result = await client.Search.SpellCheckAsync("index", "helo xyz", new()
         { Distance = 2, IncludeDictionaries = ["words ü", "more"], ExcludeDictionaries = ["ignored"], Dialect = 4 });
         await Assert.That(server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString)).IsEquivalentTo(
@@ -64,7 +68,9 @@ public class SearchSpellCheckTests
     {
         await using var server = Server(command => command.StartsWith("FT.DICTDUMP")
             ? (protocol == 3 ? "~2\r\n+hello\r\n+ü\r\n" : "*2\r\n+hello\r\n+ü\r\n") : ":2\r\n");
+#pragma warning disable RESP010 // This spellcheck scenario owns its client and fixed fake dictionary replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         await Assert.That(await client.Search.AddDictionaryTermsAsync("dict", ["hello", "ü"])).IsEqualTo(2L);
         await Assert.That(server.ReceivedCommands.Last()).IsEqualTo("FT.DICTADD dict hello ü");
         var terms = await client.Search.DumpDictionaryAsync("dict");
@@ -80,7 +86,9 @@ public class SearchSpellCheckTests
     public async Task EmptySpellcheckResultsAreAccepted(string reply)
     {
         await using var server = Server(_ => reply);
+#pragma warning disable RESP010 // This spellcheck scenario owns its client and fixed fake dictionary replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         await Assert.That((await client.Search.SpellCheckAsync("idx", "")).Count).IsEqualTo(0);
     }
 
@@ -103,7 +111,9 @@ public class SearchSpellCheckTests
     public async Task MalformedSpellcheckRepliesAreRejected(string reply)
     {
         await using var server = Server(_ => reply);
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Search.SpellCheckAsync("idx", "helo")).Throws<InvalidOperationException>();
     }
 
@@ -114,7 +124,9 @@ public class SearchSpellCheckTests
     public async Task MalformedDictionaryCountsAreRejected(string reply)
     {
         await using var server = Server(_ => reply);
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Search.AddDictionaryTermsAsync("dict", ["hello"])).Throws<InvalidOperationException>();
         await Assert.That(async () => await client.Search.DeleteDictionaryTermsAsync("dict", ["hello"])).Throws<InvalidOperationException>();
     }
@@ -127,7 +139,9 @@ public class SearchSpellCheckTests
     public async Task MalformedDictionaryDumpsAreRejected(string reply)
     {
         await using var server = Server(_ => reply);
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Search.DumpDictionaryAsync("dict")).Throws<InvalidOperationException>();
     }
 
@@ -135,7 +149,9 @@ public class SearchSpellCheckTests
     public async Task InvalidArgumentsNeverReachServer()
     {
         await using var server = Server(_ => ":0\r\n");
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+#pragma warning restore RESP010
         var search = client.Search;
         Func<Task>[] invalid = [
             () => search.AddDictionaryTermsAsync("", ["x"]).AsTask(),
@@ -165,7 +181,9 @@ public class SearchSpellCheckTests
     public async Task PrefixCancellationAndServerErrorsArePreserved(int protocol)
     {
         await using var server = Server(_ => "-ERR dictionary failure\r\n");
+#pragma warning disable RESP010 // This error scenario owns its client and scripted errors/capability responses.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
         await using var prefixed = client.WithKeyPrefix("tenant:");
         using var canceled = new CancellationTokenSource();
         canceled.Cancel();
