@@ -89,7 +89,7 @@ concurrency:
 jobs:
   startup-investigation:
     # Opt in through workflow_dispatch. A passing sample does not close #2044.
-    name: Windows direct and guarded startup investigation (${{ matrix.console }})
+    name: Windows startup investigation (${{ matrix.launch }}, ${{ matrix.console }})
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 5
@@ -97,18 +97,21 @@ jobs:
       fail-fast: false
       matrix:
         console: [NoWindow, Hidden]
+        # Independent VMs: an interleaved direct launch can follow guard cleanup.
+        # DirectOnly never invokes the guard and is not a rerun of a failed pair.
+        launch: [Paired, DirectOnly]
     steps:
       - uses: actions/checkout@v7
       - name: Compare native startup boundaries without retrying failures
         shell: pwsh
         run: |
           ./scripts/Write-AgentWindowsStartupDiagnostics.ps1 -SnapshotOnly
-          ./scripts/Test-AgentWindowsStartupComparison.ps1 -DirectConsoleMode '${{ matrix.console }}' -DiagnosticsDirectory '${{ runner.temp }}/agent-startup-comparison'
+          ./scripts/Test-AgentWindowsStartupComparison.ps1 -DirectConsoleMode '${{ matrix.console }}' -DirectOnly:('${{ matrix.launch }}' -eq 'DirectOnly') -DiagnosticsDirectory '${{ runner.temp }}/agent-startup-comparison'
       - name: Retain startup comparison when artifact processes can start
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: windows-startup-comparison-${{ matrix.console }}
+          name: windows-startup-comparison-${{ matrix.launch }}-${{ matrix.console }}
           path: ${{ runner.temp }}/agent-startup-comparison
           if-no-files-found: warn
           retention-days: 7

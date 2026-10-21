@@ -3,6 +3,8 @@ param(
     [ValidateRange(1, 30)][int]$LaunchTimeoutSeconds = 15,
     [ValidateRange(1, 300)][int]$TotalTimeoutSeconds = 180,
     [ValidateSet('NoWindow', 'Hidden')][string]$DirectConsoleMode = 'NoWindow',
+    # Run on its own hosted runner to exclude earlier guard cleanup as a cause.
+    [switch]$DirectOnly,
     [string]$DiagnosticsDirectory,
     [string]$GuardScript = (Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'),
     # Override only for failure controls; both launch modes use the same payload.
@@ -36,21 +38,25 @@ function Write-ComparisonHost {
 
 # A direct PowerShell host failed in run 39528792779 before it could enter
 # Invoke-AgentDotNet. Compare that boundary with the exact same harmless payload
-# inside containment, in one surviving host. This is an opt-in investigation,
-# never a retry of a failed smoke test and never a substitute for those tests.
+# inside containment, in one surviving host. DirectOnly never invokes containment;
+# use a separate fresh runner so its direct launches cannot follow guard cleanup.
+# This is an opt-in investigation, never a retry of a failed smoke test and never
+# a substitute for those tests.
 $pwsh = (Get-Process -Id $PID).Path
 $arguments = @('-NoProfile', '-NonInteractive', '-Command', $ProbeCommand)
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $result = 0
+$launchMode = if ($DirectOnly) { 'DirectOnly' } else { 'Paired' }
+$modes = if ($DirectOnly) { @('direct') } else { @('direct', 'guarded') }
 $probeRoot = Join-Path ([IO.Path]::GetTempPath()) ('startup-comparison-' + [guid]::NewGuid())
 try {
     [IO.Directory]::CreateDirectory($probeRoot) | Out-Null
     $probeScript = Join-Path $probeRoot 'Probe.ps1'
     [IO.File]::WriteAllText($probeScript, $ProbeCommand)
-    Write-ComparisonPhase "begin iterations=$Iterations directConsoleMode=$DirectConsoleMode pwsh=$pwsh os=$([Environment]::OSVersion.Version)"
+    Write-ComparisonPhase "begin iterations=$Iterations directConsoleMode=$DirectConsoleMode launchMode=$launchMode pwsh=$pwsh os=$([Environment]::OSVersion.Version)"
     Write-ComparisonHost
     foreach ($iteration in 1..$Iterations) {
-        foreach ($mode in @('direct', 'guarded')) {
+        foreach ($mode in $modes) {
             $remaining = $TotalTimeoutSeconds - $clock.Elapsed.TotalSeconds
             if ($remaining -le 0) { $result = 124; Write-ComparisonPhase 'total deadline exceeded'; break }
             $timeout = [math]::Max(1, [math]::Min($LaunchTimeoutSeconds, [math]::Floor($remaining)))

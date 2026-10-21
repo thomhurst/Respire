@@ -24,10 +24,14 @@ exit ([int][IO.File]::ReadAllText((Join-Path $PSScriptRoot 'exit.txt')))
         @{ Exit = -1073741502; Calls = 1 },
         @{ Exit = 73; Calls = 0; Probe = 'exit 73' },
         @{ Exit = -1073741502; Calls = 0; Probe = 'exit -1073741502' },
-        @{ Exit = 124; Calls = 0; Probe = '[Threading.Thread]::Sleep(30000)' }
+        @{ Exit = 124; Calls = 0; Probe = '[Threading.Thread]::Sleep(30000)' },
+        @{ Exit = 0; Calls = 0; DirectOnly = $true },
+        @{ Exit = 73; Calls = 0; DirectOnly = $true; Probe = 'exit 73' },
+        @{ Exit = -1073741502; Calls = 0; DirectOnly = $true; Probe = 'exit -1073741502' },
+        @{ Exit = 124; Calls = 0; DirectOnly = $true; Probe = '[Threading.Thread]::Sleep(30000)' }
     )) {
         $expected = $case.Exit
-        $mode = if ($case.Calls -eq 0) { 'direct' } else { 'guarded' }
+        $mode = if ($case.DirectOnly) { 'direct-only' } elseif ($case.Calls -eq 0) { 'direct' } else { 'guarded' }
         $logs = Join-Path $testRoot "logs-$expected-$mode-$consoleMode"
         $expected | Set-Content -LiteralPath (Join-Path $testRoot 'exit.txt')
         Remove-Item -LiteralPath (Join-Path $testRoot 'calls.txt') -ErrorAction SilentlyContinue
@@ -38,6 +42,10 @@ exit ([int][IO.File]::ReadAllText((Join-Path $PSScriptRoot 'exit.txt')))
         $info.RedirectStandardError = $true
         foreach ($argument in @('-NoProfile', '-NonInteractive', '-File', (Join-Path $testRoot 'Test-AgentWindowsStartupComparison.ps1'),
             '-Iterations', '2', '-DirectConsoleMode', $consoleMode, '-DiagnosticsDirectory', $logs)) { $info.ArgumentList.Add($argument) }
+        if ($case.DirectOnly) {
+            # The isolated control must work without even loading a guard script.
+            foreach ($argument in @('-DirectOnly', '-GuardScript', (Join-Path $testRoot 'missing-guard.ps1'))) { $info.ArgumentList.Add($argument) }
+        }
         if ($case.Probe) {
             foreach ($argument in @('-ProbeCommand', $case.Probe, '-LaunchTimeoutSeconds', '2')) { $info.ArgumentList.Add($argument) }
         }
@@ -55,6 +63,13 @@ exit ([int][IO.File]::ReadAllText((Join-Path $PSScriptRoot 'exit.txt')))
             $saved = Get-Content -LiteralPath (Join-Path $logs 'startup-comparison.log') -Raw
             if ($saved -notmatch "end exit=$expected ") { throw 'Comparison lost its final live/file marker.' }
             if ($saved -notmatch "directConsoleMode=$consoleMode ") { throw 'Comparison did not record its console creation mode.' }
+            if ($case.DirectOnly) {
+                $expectedLaunches = if ($expected -eq 0) { 2 } else { 1 }
+                if ($saved -notmatch 'launchMode=DirectOnly ' -or $saved -match 'mode=guarded' -or
+                    ([regex]::Matches($saved, 'mode=direct start timeoutSeconds=')).Count -ne $expectedLaunches) {
+                    throw 'Direct-only control lost isolation, launch count, or stop-on-first-failure behavior.'
+                }
+            }
             if ($saved -match 'childPid=(\d+) childStartTicks=(\d+)') {
                 $identity = $Matches.Clone()
                 $child = Get-Process -Id ([int]$identity[1]) -ErrorAction SilentlyContinue
