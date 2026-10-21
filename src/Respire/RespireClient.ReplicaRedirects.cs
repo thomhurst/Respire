@@ -52,6 +52,9 @@ public sealed partial class RespireClient
                 RespireServerException error;
                 try
                 {
+                    // Register before dispatch, under the same gate as the socket loss
+                    // fence. The union covers completed values and overlapping fills.
+                    if (track) trackedTarget?.RegisterRead(operation, in command);
                     var reply = execution is null
                         ? await SendReplicaRedirectAttemptAsync(operation, connection, command,
                             cancellationToken, deadline, observation, sendAsking, tracking, track).ConfigureAwait(false)

@@ -783,8 +783,11 @@ write-safety rules. Cluster continues to use its existing `MOVED`/`ASK` handling
 With client-side caching enabled, redirected cache reads retain RESP3 tracking connections
 and can populate the cache. Repeated reads can hit the cache while the target continues to
 deliver invalidations. The client retains up to eight tracked destinations, shared by its
-views. A new destination, target disconnection, credential renewal, or eviction flushes
-cache continuity before entries can be published without invalidation coverage. Unused
+views. A new destination, credential renewal, or eviction flushes cache continuity before
+entries can be published without invalidation coverage. Target disconnection invalidates
+the physical keys read through that socket, dependent queries and overlapping fills,
+preserving independent cache hits on healthy sockets. Unknown dependencies or exhausted
+[provenance limits](client-side-caching.md#invalidation-flow) keep the global fence. Unused
 destinations are evicted when capacity is needed; if all retained destinations are serving
 reads, an additional destination uses a temporary connection and bypasses publication.
 Disposing the client closes its retained targets. Other redirected commands continue to

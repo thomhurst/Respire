@@ -431,6 +431,15 @@ In `OptIn` mode, Redis tracks only the misses Respire sends with `CLIENT CACHING
 continuity is lost, Respire clears the affected cache state rather than trust entries whose
 invalidations may have been missed.
 
+With replica redirects enabled, each retained target socket keeps bounded provenance for the
+physical keys it reads. Losing that socket invalidates those keys, their dependent queries,
+and overlapping fills; independent keys cached through healthy targets or the source stay warm.
+Keys read through more than one socket are invalidated conservatively when either socket fails.
+Provenance retains at most 4,096 distinct keys and 1 MiB of key bytes per socket, including keys
+whose cached values expired or were evicted. Unknown read dependencies or an exhausted budget
+restore whole-cache invalidation for that socket. New destinations, credential changes, target
+eviction, maintenance retirement and client disposal keep their existing global continuity fences.
+
 ## Opt-out tracking and local writes
 
 Choose `OptOut` when most reads should be tracked. Each caching connection sends
@@ -536,7 +545,7 @@ while (!cancellationToken.IsCancellationRequested)
 - `Reasons` is a `RespireClientCacheInvalidationReason` flags value: `ServerInvalidation`,
   `LocalMutation`, `ExplicitClear`, `ContinuityLost`. Local writes can notify before they are sent
   and again after they complete, even if the value did not change.
-- Redis-wide invalidations, `Clear()`, writes with unknown keys, and continuity loss wake every
+- Redis-wide invalidations, `Clear()`, writes with unknown keys, and global continuity loss wake every
   subscription. TTL expiry and capacity eviction do not notify.
 
 Delivery rules:

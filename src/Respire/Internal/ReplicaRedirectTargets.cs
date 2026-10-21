@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using Respire.Infrastructure;
 using Respire.Networking;
+using Respire.Protocol;
 
 namespace Respire.Internal;
 
@@ -121,7 +122,7 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
         private readonly SemaphoreSlim _initialization = new(1, 1);
         private readonly CancellationTokenSource _stop = new();
         private static long _nextRecoveryEpisode;
-        private readonly ConditionalWeakTable<RespireConnection, Action> _observations = new();
+        private readonly ConditionalWeakTable<RespireConnection, Observation> _observations = new();
         private readonly ClientSideCacheCoordinator _cache;
         private volatile bool _stopping;
         internal bool RecoveryExhausted
@@ -196,7 +197,10 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
             {
                 _stopping = true;
                 foreach (var observation in _observations)
-                    observation.Key.PendingCommandsFailing -= observation.Value;
+                {
+                    observation.Key.PendingCommandsFailing -= observation.Value.OnFailure;
+                    observation.Value.Provenance.Forget();
+                }
             }
         }
 
@@ -216,39 +220,62 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
             lock (_observationGate)
             {
                 if (_stopping) return;
-                if (!_observations.TryGetValue(connection, out onFailure!))
+                if (!_observations.TryGetValue(connection, out var observation))
                 {
                     // This synchronous fence is independent of queued lifecycle observers
                     // and reconnect policy exhaustion, and precedes pending reply completion.
-                    var fenced = 0;
+                    observation = new Observation();
                     onFailure = () =>
                     {
                         // Lifetime/MOVING publication already fences the old route before
                         // retiring it, then fences overlapping fills after admission stops.
                         // Its eventual drain must not clear values from the new socket.
-                        if (Interlocked.Exchange(ref fenced, 1) == 0 && !connection.IsRetired)
-                            OnPendingCommandsFailing();
+                        if (!connection.IsRetired) OnPendingCommandsFailing(observation);
                     };
                     // A paused acquisition can observe A again after replacement B.
                     // Keep A's original fence without retaining dead sockets indefinitely.
-                    _observations.Add(connection, onFailure);
+                    observation.OnFailure = onFailure;
+                    _observations.Add(connection, observation);
                     connection.PendingCommandsFailing += onFailure;
                 }
+                else onFailure = observation.OnFailure;
             }
             // Subscription can race peer loss. The socket callback and this check share
             // one fence, including later observations of the same disconnected socket.
             if (!connection.IsConnected) onFailure();
         }
 
-        private void OnPendingCommandsFailing()
+        private sealed class Observation
+        {
+            internal readonly ClientSideCacheCoordinator.TrackingProvenance Provenance = new();
+            internal Action OnFailure = null!;
+            internal bool Fenced;
+        }
+
+        internal void RegisterRead(RespireConnection connection, ClientSideCacheCoordinator.QueryRequest? read)
+        {
+            Observe(connection);
+            lock (_observationGate)
+            {
+                // A reply cannot publish after the socket's one-shot fence. In particular,
+                // an acquisition paused before observation cannot add keys after that fence.
+                if (_stopping || !_observations.TryGetValue(connection, out var observation) || observation.Fenced)
+                    throw new RespireConnectionException("Redirect tracking owner is no longer available.")
+                    { Endpoint = Endpoint };
+                observation.Provenance.Register(read);
+            }
+        }
+
+        private void OnPendingCommandsFailing(Observation observation)
         {
             // Fence replies synchronously, but never invoke user instrumentation from a
             // socket/lifecycle callback: a listener can dispose and join that same socket.
             int removed;
             lock (_observationGate)
             {
-                if (_stopping) return;
-                removed = _cache.FlushForContinuityLossWithoutMetrics();
+                if (_stopping || observation.Fenced) return;
+                observation.Fenced = true;
+                removed = observation.Provenance.Fence(_cache);
             }
             ThreadPool.UnsafeQueueUserWorkItem(static count =>
             {
@@ -286,6 +313,11 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
     {
         private int _returned;
         internal RespireConnection Connection { get; set; } = null!;
+        internal void RegisterRead<TCommand>(string operation, in TCommand command)
+            where TCommand : struct, IRespCommand
+            => RegisterRead(ClientSideCacheCoordinator.TryCreateQuery(operation, in command, out var request)
+                && request.Query.Operation == operation ? request : null);
+        internal void RegisterRead(ClientSideCacheCoordinator.QueryRequest? read) => entry.RegisterRead(Connection, read);
         internal void UseConnection(RespireConnection connection)
         {
             Connection = connection;

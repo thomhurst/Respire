@@ -2,7 +2,7 @@
 # Each scenario owns fake servers and clients with specific capacity, topology,
 # retry, or telemetry settings. Sharing clients would leak state between scenarios;
 # await using keeps each client alive for its whole scenario and then disposes it.
-[{DispatchResponseObservationTests,StandaloneCircuitAllocationTests,StandaloneReplicaReadyTests,StandaloneBatchFlushTests,ReplicaRedirectTests,ReplicaRedirectTests.TrackedScripts,ReplicaRedirectCacheTests,ReplicaRedirectTargetRecoveryTests,ReplicaRedirectEvictionTests}.cs]
+[{DispatchResponseObservationTests,StandaloneCircuitAllocationTests,StandaloneReplicaReadyTests,StandaloneBatchFlushTests,ReplicaRedirectTests,ReplicaRedirectTests.TrackedScripts,ReplicaRedirectCacheTests,ReplicaRedirectTargetRecoveryTests,ReplicaRedirectEvictionTests,ReplicaRedirectProvenanceTests}.cs]
 dotnet_diagnostic.RESP010.severity = none
 
 # These wire fixtures own clients for fake-server cache/tracking/topology settings
