@@ -209,7 +209,11 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
                     var fenced = 0;
                     _observedFailure = () =>
                     {
-                        if (Interlocked.Exchange(ref fenced, 1) == 0) OnPendingCommandsFailing();
+                        // Lifetime/MOVING publication already fences the old route before
+                        // retiring it, then fences overlapping fills after admission stops.
+                        // Its eventual drain must not clear values from the new socket.
+                        if (Interlocked.Exchange(ref fenced, 1) == 0 && !connection.IsRetired)
+                            OnPendingCommandsFailing();
                     };
                     connection.PendingCommandsFailing += _observedFailure;
                     _observed = connection;

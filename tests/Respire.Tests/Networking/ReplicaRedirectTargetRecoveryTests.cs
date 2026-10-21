@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Text;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
 using TUnit.Assertions;
@@ -13,6 +15,82 @@ namespace Respire.Tests.Networking;
 public class ReplicaRedirectTargetRecoveryTests
 {
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
+
+    [Test, NotInParallel]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task PlannedReplacementDoesNotRefenceWhenOldTargetFinishesDraining(bool lifetime, bool retry)
+    {
+        using var metrics = new MetricConfigurationScope();
+        var clock = new ClusterRecoveryTestClock();
+        await using var replacement = new FakeRespServer(8) { ReplyOverride = (_, command) => TargetReply(command) };
+        await using var target = new FakeRespServer(8)
+        {
+            ReplyOverride = (_, command) => TargetReply(command),
+            SuppressReply = command => command == "PING",
+        };
+        await using var source = Source(target.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(source.Port, retry) with
+        {
+            ConnectionMaxLifetime = lifetime ? Limit : null,
+            ConnectionLifetimeTimeProvider = clock,
+        });
+        await Assert.That(await client.GetStringAsync("seed")).IsEqualTo("value");
+        using var lease = await client.Core.RedirectTargets!.AcquireAsync(new("127.0.0.1", target.Port), default);
+        var original = lease!.Connection;
+        var node = original.Multiplexer!;
+        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        original.PendingCommandsFailing += () => failed.TrySetResult();
+        var pending = original.SendAsync(new RawCommand(RespCommands.Ping)).AsTask();
+        using var timeout = new CancellationTokenSource(Limit);
+        while (!target.ReceivedCommands.Contains("PING")) await Task.Delay(10, timeout.Token);
+        var before = client.ClientSideCache!.GetStatistics().ContinuityFlushes;
+        var fenced = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, observer) =>
+        {
+            if (ReferenceEquals(instrument, RespireTelemetry.ClientCacheContinuityFlushes))
+                observer.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) => fenced.TrySetResult());
+        listener.Start();
+
+        if (lifetime)
+        {
+            // Keep the source's recycle unpublished so only the target's fence is measured.
+            source.SuppressReply = command => command.StartsWith("HELLO 3", StringComparison.Ordinal);
+            clock.Advance(Limit);
+            while (original.IsAcceptingCommands) await Task.Delay(10, timeout.Token);
+        }
+        else
+        {
+            var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            node.MovingHandoffPublished += () => published.TrySetResult();
+            var announcement = node.CaptureMovingAnnouncement(0, original,
+                new MaintenanceNotification("MOVING", 1, 10, new("127.0.0.1", replacement.Port)));
+            node.QueueDedicatedMovingHandoff(original, announcement, static () => true);
+            await published.Task.WaitAsync(Limit);
+        }
+
+        // Both publication fences have completed before their continuity metric is emitted.
+        await fenced.Task.WaitAsync(Limit);
+        await Assert.That(original.IsConnected).IsTrue();
+        await Assert.That(pending.IsCompleted).IsFalse();
+        await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
+        await target.SendRawAsync(FakeRespServer.PongReply);
+        using var pong = await pending.WaitAsync(Limit);
+        await failed.Task.WaitAsync(Limit);
+        // Even re-observing the retired socket must not re-arm its failure fence.
+        lease.UseConnection(original);
+        await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - before).IsEqualTo(1L);
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
+        await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("value");
+        var serving = lifetime ? target : replacement;
+        await Assert.That(serving.ReceivedCommands.Count(command => command == "GET fresh")).IsEqualTo(1);
+    }
 
     [Test]
     [Arguments(false)]
