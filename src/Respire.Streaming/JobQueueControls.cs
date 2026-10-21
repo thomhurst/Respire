@@ -108,6 +108,6 @@ internal static class JobQueueControls
 
         """ + JobDeduplication.Acquire + """
         if limit > 0 and #page[2] == 0 then redis.call('HSET', control, 'count', count) end
-        return {page[1], page[2], 0, 0}
+        return {page[1], page[2], 0, 0, lifecycleKey and redis.call('HGET', lifecycleKey, 'followups') or '0'}
         """;
 }

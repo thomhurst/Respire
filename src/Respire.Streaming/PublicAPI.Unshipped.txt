@@ -3,6 +3,7 @@ Respire.Streaming.RespireJobDeduplicationMode
 Respire.Streaming.RespireJobDeduplicationMode.FirstSubmissionWins = 0 -> Respire.Streaming.RespireJobDeduplicationMode
 Respire.Streaming.RespireJobDeduplicationMode.Extend = 1 -> Respire.Streaming.RespireJobDeduplicationMode
 Respire.Streaming.RespireJobDeduplicationMode.Replace = 2 -> Respire.Streaming.RespireJobDeduplicationMode
+Respire.Streaming.RespireJobDeduplicationMode.KeepLastIfActive = 3 -> Respire.Streaming.RespireJobDeduplicationMode
 Respire.Streaming.RespireJobEnqueueOptions.DeduplicationMode.get -> Respire.Streaming.RespireJobDeduplicationMode
 Respire.Streaming.RespireJobEnqueueOptions.DeduplicationMode.init -> void
 Respire.Streaming.RespireJobQueue<T>.EnqueueAsync(Respire.Streaming.RespireJobDeduplicationMode deduplicationMode, string! jobId, T payload, System.TimeSpan? deduplicationWindow = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Streaming.RespireJobEnqueueResult>

@@ -12,6 +12,40 @@ public class JobSchedulingClusterTests
 {
     [Test]
     [NotInParallel]
+    public async Task ActiveFollowupsUseExplicitSameSlotKeysWithPrefixedTransactions()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new()
+        {
+            Topology = RespireContainerTopology.Cluster, Image = "redis:7.4-alpine",
+        });
+        await using var root = await RespireClient.ConnectAsync(fixture.CreateOptions());
+        foreach (var prefix in new[] { "tenant:", "{tenant}:" })
+        {
+            var client = root.WithKeyPrefix(prefix);
+            var queue = new RespireJobQueue<string>(client, "followup-cluster", Encoding.UTF8.GetBytes);
+            await queue.EnqueueAsync(RespireJobDeduplicationMode.KeepLastIfActive, "job", "active");
+            await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
+            var active = (await JobReplacementIntegrationTests.Read(client, queue)).Single();
+            await using var transaction = client.CreateTransaction();
+            var successor = queue.Enqueue(transaction, "job", "superseded");
+            var latest = queue.EnqueueScheduled(transaction, "job", "last", new() { Group = "group:{other}:東京" });
+            await transaction.CommitAsync();
+            await Assert.That(successor.Result.Enqueued).IsTrue();
+            await Assert.That(latest.Result.Enqueued).IsTrue();
+            var type = typeof(RespireJobQueue<string>).Assembly.GetType("Respire.Streaming.JobQueueScripts")!;
+            var complete = (RespireScript)type.GetField("Complete", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+            complete = (RespireScript)typeof(RespireJobQueue<string>).Assembly.GetType("Respire.Streaming.JobDeduplication")!
+                .GetMethod("Terminal", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [complete, false])!;
+            await Assert.That(await client.Scripts.ExecuteIntegerAsync(complete,
+                [queue.StreamKey, queue.EventsStreamKey, queue.StreamKey + ":dedup-deliveries"],
+                [RespireJobQueue<string>.ConsumerGroup, "owner", active.Id.Value, 1, "completed", "", ""])).IsEqualTo(1);
+            await Assert.That((await JobReplacementIntegrationTests.Read(client, queue, grouped: true)).Single()
+                .GetString("_respire.job.payload")).IsEqualTo("last");
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task ReplaceUsesExplicitSameSlotLifecycleKeysWithPrefixedTransactionsAndAcquisition()
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
