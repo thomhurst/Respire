@@ -44,9 +44,12 @@ public class ReconnectPolicyTests
         {
             ReplyOverride = (connectionId, _) => connectionId == 0 ? null : unavailable,
         };
+        // A test-owned client isolates the reconnect attempt budget and lifecycle state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
             new() { InitialDelay = TimeSpan.FromMilliseconds(50), MaxDelay = TimeSpan.FromMilliseconds(100), JitterRatio = 0, MaxAttempts = 2 })
             with { Database = 1 });
+#pragma warning restore RESP010
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var exhausted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var exhaustionMeasured = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -110,9 +113,12 @@ public class ReconnectPolicyTests
         if (!closeBeforeAccept) acceptGate.SetResult();
         await using var server = new FakeRespServer(3, acceptGate.Task, FakeRespServer.PongReply);
         // Initial setup must finish before this test releases the accept gate.
+        // A test-owned client isolates the reconnect attempt budget and lifecycle state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
             new() { InitialDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0, MaxAttempts = 1 }) with
             { LibraryName = null });
+#pragma warning restore RESP010
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         client.ConnectionStateChanged += changes.Enqueue;
         var measured = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -152,8 +158,11 @@ public class ReconnectPolicyTests
     public async Task IdentitySetupPropagatesExhaustionWithOrWithoutCallerCancellation(bool cancellable)
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        // A test-owned client isolates the reconnect attempt budget and lifecycle state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
             new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 }));
+#pragma warning restore RESP010
         var original = client.Core.Multiplexer.GetConnection();
         await server.DisposeAsync();
         await original.DisposeAsync();
@@ -176,12 +185,18 @@ public class ReconnectPolicyTests
         server.SuppressReply = command =>
         {
             if (command != "CLIENT SETNAME policy-test" || Interlocked.Increment(ref handshakes) != 3) return false;
+            // The synchronous fake-server callback must send the scripted handshake rejection before returning.
+#pragma warning disable RESP009
             server.SendRawAsync("-ERR rejected replacement\r\n"u8.ToArray(), 2).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             return true;
         };
+        // A test-owned client isolates the reconnect attempt budget and lifecycle state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
             new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 }) with
             { Connections = 2, ClientName = "policy-test" });
+#pragma warning restore RESP010
         await client.Core.Multiplexer.GetConnection(0).DisposeAsync();
         await Assert.That(async () => await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync()
             .AsTask().WaitAsync(TimeSpan.FromSeconds(3))).ThrowsExactly<RespireReconnectLimitException>();
@@ -204,9 +219,12 @@ public class ReconnectPolicyTests
                 _ => null,
             },
         };
+        // A test-owned client isolates the reconnect attempt budget and lifecycle state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
             new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 }) with
             { Protocol = RespireProtocol.Resp2, ClientName = "policy-test" });
+#pragma warning restore RESP010
         await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync();
         // A command with an uncertain outcome keeps the server-side identity owed to the fence.
         await Assert.That(async () => await client.PingAsync()).Throws<RespireConnectionException>();
@@ -231,16 +249,25 @@ public class ReconnectPolicyTests
         {
             if (command == "CLIENT SETNAME policy-test" && Interlocked.Increment(ref handshakes) == 2)
             {
+                // The synchronous fake-server callback must finish rejecting recovery before it can process the fence.
+#pragma warning disable RESP009
                 server.SendRawAsync("-ERR rejected replacement\r\n"u8.ToArray(), 1).GetAwaiter().GetResult();
+#pragma warning restore RESP009
                 return true;
             }
             if (command != "CLIENT KILL ID 42") return false;
+            // The synchronous fake-server callback must deliver the fence reply before returning.
+#pragma warning disable RESP009
             server.SendRawAsync(":1\r\n"u8.ToArray(), 2).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             return true;
         };
+        // A test-owned client isolates the reconnect attempt budget and lifecycle state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
             new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 }) with
             { ClientName = "policy-test" });
+#pragma warning restore RESP010
         await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync();
         await Assert.That(async () => await client.PingAsync()).Throws<RespireConnectionException>();
         await Assert.That(async () => await client.Core.Multiplexer.GetHealthyConnectionAsync(default)
@@ -259,7 +286,10 @@ public class ReconnectPolicyTests
     public async Task LegacyRecoveryStillReportsItsSourceSlot()
     {
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
+        // A test-owned client isolates the reconnect attempt budget and lifecycle state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port, new()) with { ReconnectPolicy = null });
+#pragma warning restore RESP010
         var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
@@ -278,8 +308,11 @@ public class ReconnectPolicyTests
     public async Task RecoveryDoesNotReplayAnAcceptedCommand()
     {
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply) { CloseConnectionAfterCommand = 1 };
+        // A test-owned client isolates the reconnect attempt budget and lifecycle state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
             new() { InitialDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0 }));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.PingAsync()).Throws<RespireConnectionException>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await client.Core.Multiplexer.GetHealthyConnectionAsync(deadline.Token);
@@ -290,8 +323,11 @@ public class ReconnectPolicyTests
     public async Task CallerCancellationLeavesSharedRecoveryUntilClientDisposalCancelsIt()
     {
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
+        // A test-owned client isolates the reconnect attempt budget and lifecycle state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
             new() { InitialDelay = TimeSpan.FromHours(1), MaxDelay = TimeSpan.FromHours(1), JitterRatio = 0 }));
+#pragma warning restore RESP010
         await client.Core.Multiplexer.GetConnection().DisposeAsync();
         using var cancelled = new CancellationTokenSource();
         var waiting = client.Core.Multiplexer.GetHealthyConnectionAsync(cancelled.Token).AsTask();
@@ -307,13 +343,19 @@ public class ReconnectPolicyTests
     public async Task ReconnectingHandlerCanDisposeSynchronously()
     {
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
+        // A test-owned client isolates the reconnect attempt budget and lifecycle state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
             new() { InitialDelay = TimeSpan.FromHours(1), MaxDelay = TimeSpan.FromHours(1), JitterRatio = 0 }));
+#pragma warning restore RESP010
         await client.Core.Multiplexer.GetConnection().DisposeAsync();
         client.ConnectionStateChanged += change =>
         {
             if (change.State == RespireConnectionState.Reconnecting)
+                // The lifecycle observer must synchronously dispose to exercise reentrant reconnect cleanup.
+#pragma warning disable RESP009
                 client.DisposeAsync().AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
         };
         await Task.Run(async () => await Assert.That(() => client.Core.Multiplexer.GetConnection())
             .Throws<ObjectDisposedException>()).WaitAsync(TimeSpan.FromSeconds(5));
@@ -325,8 +367,11 @@ public class ReconnectPolicyTests
     public async Task EmptyBroadcastAwaitsDelayedRecoveryAndPropagatesExhaustion(bool unavailable)
     {
         await using var server = new FakeRespServer(2, ":42\r\n"u8.ToArray(), ":0\r\n"u8.ToArray());
+        // A test-owned client isolates the reconnect attempt budget and lifecycle state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
             new() { InitialDelay = TimeSpan.FromMilliseconds(50), JitterRatio = 0, MaxAttempts = 1 }));
+#pragma warning restore RESP010
         var multiplexer = client.Core.Multiplexer;
         await multiplexer.EnsureReliableCorrectionOrderingAsync();
         var original = multiplexer.GetConnection();
@@ -354,7 +399,10 @@ public class ReconnectPolicyTests
     public async Task StaleReconnectRequestDoesNotFenceTheHealthyCurrentConnection()
     {
         await using var server = new FakeRespServer(":42\r\n"u8.ToArray(), ":0\r\n"u8.ToArray());
+        // A test-owned client isolates the reconnect attempt budget and lifecycle state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port, new()));
+#pragma warning restore RESP010
         var multiplexer = client.Core.Multiplexer;
         await multiplexer.EnsureReliableCorrectionOrderingAsync();
         var current = multiplexer.GetConnection();

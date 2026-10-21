@@ -39,12 +39,15 @@ public class TimeoutDiagnosticsTests
         var topology = System.Text.Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{source.Port}\r\n");
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, topology);
+        // A test-owned client isolates connection stages and deadline observations for these scripted peers.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", seed.Port)], UseCluster = true, Connections = 1,
             ClientName = "redirect-timeout", CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         if (redirect == "READONLY")
         {
             source.SuppressReply = command =>
@@ -92,12 +95,15 @@ public class TimeoutDiagnosticsTests
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        // A test-owned client isolates connection stages and deadline observations for these scripted peers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", port)], Connections = 1, UseTls = true,
             ConnectTimeout = TimeSpan.FromSeconds(10), CommandTimeout = null,
         });
+#pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         var timeout = TimeSpan.FromSeconds(10);
         using var deadline = Respire.Internal.CommandTimeoutCancellation.Create(caller.Token, timeout);
@@ -147,12 +153,15 @@ public class TimeoutDiagnosticsTests
                 return true;
             },
         };
+        // A test-owned client isolates connection stages and deadline observations for these scripted peers.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Database = 1, Connections = 1,
             ConnectTimeout = TimeSpan.FromSeconds(10), CommandTimeout = null,
         });
+#pragma warning restore RESP010
         // Use the guarded removal's fallback deadline without arming a competing SELECT deadline.
         client.RemovalLeaseTtl = TimeSpan.FromSeconds(1);
         using var caller = new CancellationTokenSource();
@@ -213,11 +222,14 @@ public class TimeoutDiagnosticsTests
                 return command.StartsWith("UNLINK ", StringComparison.Ordinal);
             },
         };
+        // A test-owned client isolates connection stages and deadline observations for these scripted peers.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, CommandTimeout = null,
         });
+#pragma warning restore RESP010
         client.RemovalLeaseTtl = TimeSpan.FromSeconds(1);
         using var caller = new CancellationTokenSource();
         // RespireClient.LeaseExpiryMargin adds one second; the remaining three allow scheduling.
@@ -280,6 +292,8 @@ public class TimeoutDiagnosticsTests
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        // A test-owned client isolates connection stages and deadline observations for these scripted peers.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -287,6 +301,7 @@ public class TimeoutDiagnosticsTests
             Connections = 1, UseCluster = cluster, UseTls = true,
             CommandTimeout = TimeSpan.FromMilliseconds(200), ConnectTimeout = TimeSpan.FromSeconds(5)
         });
+#pragma warning restore RESP010
         RespireTimeoutException? error;
         if (correctionSetup)
         {
@@ -443,6 +458,8 @@ public class TimeoutDiagnosticsTests
         var topology = System.Text.Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
+        // A test-owned client isolates connection stages and deadline observations for these scripted peers.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -450,6 +467,7 @@ public class TimeoutDiagnosticsTests
             Connections = 1, UseCluster = cluster,
             CommandTimeout = TimeSpan.FromSeconds(2)
         });
+#pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         var removal = client.UnlinkGuardedAsync("private-key", caller.Token).AsTask();
         await scriptSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -648,11 +666,14 @@ public class TimeoutDiagnosticsTests
                 return true;
             },
         };
+        // A test-owned client isolates connection stages and deadline observations for these scripted peers.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         await using RespireTransactionBase transaction = watched
             ? await client.CreateTransactionAsync(["key"])
             : client.CreateTransaction();

@@ -18,7 +18,7 @@ public class ReceiveLoopStartupTests
         // inline delivery of that reply. A continuation that then waits for retirement must not
         // keep the receive task from completing.
         var stream = new ScriptedStream();
-        var connection = await RespireConnection.ConnectAsync("scripted", 6379,
+        await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
                 Protocol = RespireProtocol.Resp2,
@@ -31,7 +31,10 @@ public class ReceiveLoopStartupTests
             try
             {
                 using var value = awaiter.GetResult();
+                // Blocking inside the first reply continuation reproduces the retirement reentrancy regression.
+#pragma warning disable RESP009
                 connection.RetireAsync().WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
                 completed.TrySetResult();
             }
             catch (Exception error) { completed.TrySetException(error); }
@@ -79,10 +82,16 @@ public class ReceiveLoopStartupTests
         }
 
         public override void Write(byte[] buffer, int offset, int count)
+            // The synchronous Stream override forwards to the scripted write, which completes synchronously.
+#pragma warning disable RESP009
             => WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
 
         public override int Read(byte[] buffer, int offset, int count)
+            // The synchronous Stream override must retain the scripted blocking-read behavior.
+#pragma warning disable RESP009
             => ReadAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
 
         protected override void Dispose(bool disposing)
         {

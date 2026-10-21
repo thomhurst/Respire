@@ -15,7 +15,10 @@ public class ReconnectBacklogTests
     public async Task UnexpectedSelectionFailureOnlyFailsItsOwnWaiter()
     {
         await using var server = new FakeRespServer(1, FakeRespServer.OkReply);
+        // A test-owned client isolates the reconnect backlog and pending recovery state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port));
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var failSelection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var failure = new InvalidOperationException("Unexpected selection failure");
@@ -166,10 +169,13 @@ public class ReconnectBacklogTests
             ReplyOverride = (connection, _) => connection == 1 || exhaust && connection > 0
                 ? "-TRYAGAIN controlled replacement failure\r\n"u8.ToArray() : null,
         };
+        // A test-owned client isolates the reconnect backlog and pending recovery state.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
         {
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 2 },
         });
+#pragma warning restore RESP010
         var queue = client.Core.Multiplexer.GetReconnectBacklog(4);
         await client.Core.Multiplexer.GetConnection().DisposeAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -254,9 +260,10 @@ public class ReconnectBacklogTests
         internal static async Task<Fixture> CreateAsync(int capacity = 8)
         {
             var server = new FakeRespServer(4, FakeRespServer.OkReply);
+            RespireClient? client = null;
             try
             {
-                var client = await RespireClient.ConnectAsync(Options(server.Port));
+                client = await RespireClient.ConnectAsync(Options(server.Port));
                 var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 server.SuppressReply = command =>
                 {
@@ -268,7 +275,15 @@ public class ReconnectBacklogTests
                 await client.Core.Multiplexer.GetConnection().DisposeAsync();
                 return new(server, client, queue, handshake);
             }
-            catch { await server.DisposeAsync(); throw; }
+            catch
+            {
+                try
+                {
+                    if (client is not null) await client.DisposeAsync();
+                }
+                finally { await server.DisposeAsync(); }
+                throw;
+            }
         }
 
         internal Task ReleaseAsync() => Server.SendRawAsync(FakeRespServer.OkReply, 1);

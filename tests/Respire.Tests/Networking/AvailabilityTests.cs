@@ -19,6 +19,7 @@ public class AvailabilityTests
             FakeRespServer.OkReply,
             FakeRespServer.OkReply);
 
+#pragma warning disable RESP010 // Test-owned client verifies candidate failover and the selected endpoint options.
         await using var client = await RespireClient.ConnectAnyAsync([
             new RespireOptions
             {
@@ -36,6 +37,7 @@ public class AvailabilityTests
                 Connections = 1,
             },
         ]);
+#pragma warning restore RESP010
 
         await Assert.That(client.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", server.Port));
 

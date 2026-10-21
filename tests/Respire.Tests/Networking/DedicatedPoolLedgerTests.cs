@@ -80,11 +80,13 @@ public class DedicatedPoolLedgerTests
         await using var server = MaintenanceServer();
         await using var target = MaintenanceServer();
         var logger = new CleanupFailureLogger();
+#pragma warning disable RESP010 // Test-owned client controls maintenance migration and cleanup failure ownership.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp3, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
         });
+#pragma warning restore RESP010
         try
         {
             var pool = client.Core.DedicatedPool;
@@ -170,10 +172,12 @@ public class DedicatedPoolLedgerTests
         };
         var logger = new CleanupFailureLogger();
         if (aggregateFailure) logger.WarningFailure = new AggregateException(logger.WarningFailure);
+#pragma warning disable RESP010 // Test-owned client is deliberately disposed to verify all owners survive a pool cleanup failure.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
         });
+#pragma warning restore RESP010
         var core = client.Core;
         var connection = core.Multiplexer.GetConnection();
         var hub = core.Hub;
@@ -228,10 +232,12 @@ public class DedicatedPoolLedgerTests
     public async Task ClientDisposalPreservesEveryFailedPool()
     {
         await using var server = new FakeRespServer(3, FakeRespServer.OkReply);
+#pragma warning disable RESP010 // Test-owned client owns the injected failed pools until explicit disposal.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var firstLogger = new CleanupFailureLogger();
         var secondLogger = new CleanupFailureLogger();
         await using var first = CreatePool(server, firstLogger);
@@ -291,6 +297,7 @@ public class DedicatedPoolLedgerTests
             // independent best-effort cleanup and are not owned by the data generation.
             IgnoredDisconnectPort = mode == "sentinel" ? sentinel.Port : null,
         };
+#pragma warning disable RESP010 // Test-owned client isolates cleanup failures across the selected routing owners.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 2,
@@ -300,6 +307,7 @@ public class DedicatedPoolLedgerTests
             ReplicaEndpoints = mode == "replicas" ? [new("127.0.0.1", second.Port), new("127.0.0.1", third.Port)] : [],
             LoggerFactory = logger,
         });
+#pragma warning restore RESP010
         if (mode == "cluster")
             await client.Core.Cluster!.GetConnectionAsync(10000, CancellationToken.None, discovery: null, observation: default);
         if (mode == "replicas")
@@ -335,11 +343,13 @@ public class DedicatedPoolLedgerTests
         await using var second = new FakeRespServer(8, FakeRespServer.OkReply);
         await using var replacement = new FakeRespServer(8, FakeRespServer.OkReply);
         var logger = new CleanupFailureLogger { ThrowOnDisconnect = false, DistinctDisconnectFailures = true };
+#pragma warning disable RESP010 // Test-owned client owns multiple failed cluster retirements until disposal.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)], LoggerFactory = logger,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         router.ApplyTopology([
             new(0, 8191, new("127.0.0.1", first.Port), "first", []),

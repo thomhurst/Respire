@@ -27,11 +27,15 @@ public class FrameSerializationSelectionTests
         // A dedicated producer preserves thread-local scratch history across both completed sends.
         await Task.Factory.StartNew(() =>
         {
+#pragma warning disable RESP009 // Keep both sends on this dedicated producer to observe retained thread-local serialization scratch.
             using var first = connection.SendAsync(new ObservedCommand(large, knownBound ? large.Length : 0,
                 () => hints++, () => observations.Add(gateHeld()))).AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
+#pragma warning disable RESP009 // The second send must reuse the first send's producer thread and scratch history.
             using var second = connection.SendAsync(new ObservedCommand(FakeRespServer.PingFrame,
                 FakeRespServer.PingFrame.Length, () => hints++,
                 () => observations.Add(gateHeld()))).AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(observations.Count).IsEqualTo(2);
         await Assert.That(observations[0]).IsEqualTo(knownBound);

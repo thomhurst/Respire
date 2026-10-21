@@ -15,7 +15,10 @@ public class ProtocolNegotiationTests
     public async Task DefaultClientNegotiatesResp3BeforeApplicationCommands()
     {
         await using var server = new FakeRespServer(HelloReply, FakeRespServer.PongReply);
+        // A fresh client is required to exercise this scripted protocol negotiation from startup.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await client.PingAsync();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["HELLO 3", "PING"], CollectionOrdering.Matching);
     }
@@ -31,10 +34,13 @@ public class ProtocolNegotiationTests
     {
         await using var server = new FakeRespServer(Encoding.ASCII.GetBytes(rejection),
             FakeRespServer.OkReply, FakeRespServer.OkReply, FakeRespServer.OkReply, FakeRespServer.PongReply);
+        // A fresh client is required to exercise this scripted protocol negotiation from startup.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             Username = "user", Password = "secret", Database = 2, ClientName = "fallback",
         });
+#pragma warning restore RESP010
         await client.PingAsync();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(
             ["HELLO 3 AUTH user secret", "AUTH user secret", "CLIENT SETNAME fallback", "SELECT 2", "PING"],
@@ -56,7 +62,10 @@ public class ProtocolNegotiationTests
                 _ => null,
             },
         };
+        // A fresh client is required to exercise this scripted protocol negotiation from startup.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server) with { Connections = 2 });
+#pragma warning restore RESP010
         var shapes = new HashSet<Respire.Protocol.RespireDataType>();
         for (var index = 0; index < 4; index++)
         {
@@ -68,8 +77,11 @@ public class ProtocolNegotiationTests
         }
         await Assert.That(shapes).IsEquivalentTo([Respire.Protocol.RespireDataType.Map, Respire.Protocol.RespireDataType.Array]);
         for (var index = 0; index < 4; index++)
+            // The scripted peer always returns one field; HGETALL exercises both RESP2 and RESP3 shapes.
+#pragma warning disable RESP011
             await Assert.That(await client.Hashes.GetAllAsync("hash"))
                 .IsEquivalentTo(new Dictionary<string, string> { ["a"] = "1" });
+#pragma warning restore RESP011
         await Assert.That(server.ReceivedCommands.Count(command => command == "HELLO 3")).IsEqualTo(2);
         await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(2);
     }
@@ -78,7 +90,10 @@ public class ProtocolNegotiationTests
     public async Task SuccessfulInlineAuthenticationIsNotRepeated()
     {
         await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply, FakeRespServer.PongReply);
+        // A fresh client is required to exercise this scripted protocol negotiation from startup.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server) with { Password = "secret", Database = 2 });
+#pragma warning restore RESP010
         await client.PingAsync();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(
             ["HELLO 3 AUTH default secret", "SELECT 2", "PING"], CollectionOrdering.Matching);
@@ -146,7 +161,10 @@ public class ProtocolNegotiationTests
     public async Task ExplicitResp2DoesNotSendHello()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        // A fresh client is required to exercise this scripted protocol negotiation from startup.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server) with { Protocol = RespireProtocol.Resp2 });
+#pragma warning restore RESP010
         await client.PingAsync();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["PING"], CollectionOrdering.Matching);
     }

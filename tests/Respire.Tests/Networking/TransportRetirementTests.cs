@@ -34,7 +34,10 @@ public class TransportRetirementTests
             try
             {
                 using var value = awaiter.GetResult();
+                // The regression specifically requires synchronous retirement inside a reply continuation.
+#pragma warning disable RESP009
                 connection.RetireAsync().WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
                 completed.TrySetResult();
             }
             catch (Exception error) { completed.TrySetException(error); }
@@ -73,7 +76,10 @@ public class TransportRetirementTests
                 if (!proceed.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Producer did not finish.");
                 scheduler.ReleaseCurrentRunner();
                 scheduler.ReleaseCurrentRunner(); // Repeated retirement must not hand off twice.
+                // The callback must block on scheduler drain to verify reentrant runner handoff.
+#pragma warning disable RESP009
                 scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
                 if (!secondTask.IsCompletedSuccessfully || !thirdTask.IsCompletedSuccessfully)
                     throw new InvalidOperationException("Retirement skipped queued completions.");
                 completed.TrySetResult();

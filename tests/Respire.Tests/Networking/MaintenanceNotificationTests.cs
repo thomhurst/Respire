@@ -49,7 +49,10 @@ public class MaintenanceNotificationTests
     public async Task NegotiatesOnlyWhenRequestedOnResp3(RespireMaintenanceNotificationMode mode, RespireProtocol protocol, int count)
     {
         await using var server = Server();
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server) with { MaintenanceNotifications = mode, Protocol = protocol });
+#pragma warning restore RESP010
         await client.PingAsync();
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(count);
         await Assert.That(server.ReceivedCommands.Contains("CLIENT MAINT_NOTIFICATIONS ON")).IsEqualTo(count == 3);
@@ -69,7 +72,10 @@ public class MaintenanceNotificationTests
             await Assert.That(async () => await RespireClient.ConnectAsync(options)).Throws<RespireException>();
         else
         {
+            // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
             await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
             await client.PingAsync();
         }
     }
@@ -85,7 +91,10 @@ public class MaintenanceNotificationTests
             await Assert.That(async () => await RespireClient.ConnectAsync(options)).Throws<RespireException>();
         else
         {
+            // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
             await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
             await client.PingAsync();
         }
         await Assert.That(server.ReceivedCommands.Contains("CLIENT MAINT_NOTIFICATIONS ON")).IsFalse();
@@ -103,7 +112,10 @@ public class MaintenanceNotificationTests
             "UNSUBSCRIBE events" => ">3\r\n+unsubscribe\r\n+events\r\n:0\r\n"u8.ToArray(),
             _ => ordinaryReply(id, command),
         };
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         _ = await client.Lists.LeftPopAsync("queue", waitFor: TimeSpan.FromSeconds(1));
         await using var subscription = await client.SubscribeAsync("events");
         await Assert.That(server.ReceivedCommands.Count(command => command == "HELLO 3")).IsEqualTo(3);
@@ -236,7 +248,10 @@ public class MaintenanceNotificationTests
         var targetReply = target.ReplyOverride;
         target.ReplyOverride = (connection, command) => command.StartsWith("SET ")
             ? FakeRespServer.OkReply : targetReply!(connection, command);
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(source));
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = client.Core.DedicatedPool;
         await Assert.That(client.Core.Multiplexer.IsConnected).IsFalse();
@@ -266,7 +281,10 @@ public class MaintenanceNotificationTests
         await using var server = Server(maxConnections: 12);
         ConfigureMaintenanceRouting(server);
         await using var sentinel = MaintenanceSentinel(server.Port);
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(server, sentinel, mode));
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pool = await MaintenancePoolAsync(client, "upload");
         var old = await pool.RentAsync(timeout.Token, kind: DedicatedLeaseKind.Streaming);
@@ -297,7 +315,10 @@ public class MaintenanceNotificationTests
         var reply = server.ReplyOverride!;
         server.ReplyOverride = (id, command) => command.StartsWith("SET ") ? FakeRespServer.OkReply : reply(id, command);
         await using var sentinel = MaintenanceSentinel(server.Port);
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(server, sentinel, mode));
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pool = await MaintenancePoolAsync(client, "upload");
         await using var payload = new PausedFirstReadStream();
@@ -330,7 +351,10 @@ public class MaintenanceNotificationTests
         var targetReply = target.ReplyOverride!;
         target.ReplyOverride = (id, command) => command.StartsWith("SET ") ? FakeRespServer.OkReply
             : command.StartsWith("BLPOP ") ? "_\r\n"u8.ToArray() : targetReply(id, command);
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(source));
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = client.Core.DedicatedPool;
         await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
@@ -377,11 +401,14 @@ public class MaintenanceNotificationTests
         target.ReplyOverride = (id, command) => command.StartsWith("SET ") ? FakeRespServer.OkReply
             : command.StartsWith("WAIT ") ? ":1\r\n"u8.ToArray()
             : command.StartsWith("WAITAOF ") ? "*2\r\n:1\r\n:1\r\n"u8.ToArray() : targetReply(id, command);
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
             ConnectTimeout = TimeSpan.FromMilliseconds(200),
             CommandTimeout = TimeSpan.FromSeconds(1),
         });
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = client.Core.DedicatedPool;
         await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
@@ -431,10 +458,13 @@ public class MaintenanceNotificationTests
         server.SuppressReply = command => command == "HELLO 3";
         // ConnectTimeout bounds only TCP/TLS setup; the suppressed HELLO reply is bounded by
         // the command timeout, as documented for handshake replies.
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server) with
         {
             ConnectTimeout = TimeSpan.FromMilliseconds(100), CommandTimeout = TimeSpan.FromMilliseconds(250),
         });
+#pragma warning restore RESP010
         var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
         using var listener = new ActivityListener
         {
@@ -461,7 +491,10 @@ public class MaintenanceNotificationTests
         var options = Options(server);
         options.Endpoints.Clear();
         options.Endpoints.Add(new("LoCaLhOsT", server.Port));
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(options);
+#pragma warning restore RESP010
         await Assert.That(await client.Strings.SetAsync("mixed-case", new ReadOnlySequence<byte>("value"u8.ToArray()))).IsTrue();
         await Assert.That(server.ReceivedCommands).Contains("SET mixed-case value");
     }
@@ -478,7 +511,10 @@ public class MaintenanceNotificationTests
         ConfigureMaintenanceRouting(source);
         ConfigureMaintenanceRouting(target);
         await using var sentinel = MaintenanceSentinel(source.Port);
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, mode));
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = await MaintenancePoolAsync(client, "pending");
         var upload = client.Strings.SetAsync("pending", new ReadOnlySequence<byte>("value"u8.ToArray()),
@@ -506,7 +542,10 @@ public class MaintenanceNotificationTests
         ConfigureMaintenanceRouting(source);
         ConfigureMaintenanceRouting(target);
         await using var sentinel = MaintenanceSentinel(source.Port);
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, mode));
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = await MaintenancePoolAsync(client, "moved-upload");
         var started = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
@@ -556,6 +595,8 @@ public class MaintenanceNotificationTests
         await using var sentinel = MaintenanceSentinel(source.Port);
         var relaxed = TimeSpan.FromSeconds(3);
         var stallAcquisition = false;
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, mode) with
         {
             CommandTimeout = TimeSpan.FromSeconds(1),
@@ -571,6 +612,7 @@ public class MaintenanceNotificationTests
                 return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
             },
         });
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = await MaintenancePoolAsync(client, "moved-upload");
         var lease = await originalPool.RentAsync(timeout.Token, kind: DedicatedLeaseKind.Streaming);
@@ -657,7 +699,10 @@ public class MaintenanceNotificationTests
         var sourceReply = source.ReplyOverride;
         source.ReplyOverride = (connection, command) => command.StartsWith("CLIENT KILL ")
             ? ":1\r\n"u8.ToArray() : sourceReply!(connection, command);
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(source));
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = client.Core.DedicatedPool;
         var original = client.Core.Multiplexer.GetConnection();
@@ -690,7 +735,10 @@ public class MaintenanceNotificationTests
         await using var source = Server(maxConnections: 8);
         ConfigureMaintenanceRouting(source);
         await using var sentinel = MaintenanceSentinel(source.Port);
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, "sentinel"));
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var generation = client.Core.Sentinel!.Current!;
         var pool = generation.Pool;
@@ -744,7 +792,10 @@ public class MaintenanceNotificationTests
         await using var source = Server(maxConnections: 8);
         ConfigureMaintenanceRouting(source);
         await using var sentinel = MaintenanceSentinel(source.Port);
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, "sentinel"));
+#pragma warning restore RESP010
         var generation = client.Core.Sentinel!.Current!;
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -808,7 +859,10 @@ public class MaintenanceNotificationTests
         ConfigureMaintenanceRouting(source);
         ConfigureMaintenanceRouting(target);
         await using var sentinel = MaintenanceSentinel(source.Port);
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, mode));
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = await MaintenancePoolAsync(client, "lease");
         ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> Rent(CancellationToken token)
@@ -858,7 +912,10 @@ public class MaintenanceNotificationTests
         ConfigureMaintenanceRouting(source);
         ConfigureMaintenanceRouting(target);
         await using var sentinel = MaintenanceSentinel(source.Port);
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, mode));
+#pragma warning restore RESP010
         var selected = client.Core.Multiplexer.GetConnection();
         var originalPool = await MaintenancePoolAsync(client, "old-upload");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -1485,10 +1542,13 @@ public class MaintenanceNotificationTests
             "INFO scriptingengines" => Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(inventory)}\r\n{inventory}\r\n"),
             _ => targetReply(id, command),
         };
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
             Connections = 1, MaxInflightCommands = 4, CommandTimeout = TimeSpan.FromSeconds(5),
         });
+#pragma warning restore RESP010
         var original = client.Core.Multiplexer.GetConnection();
         var first = original.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         var second = original.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
@@ -1981,12 +2041,15 @@ public class MaintenanceNotificationTests
                 $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n"),
             _ => FakeRespServer.OkReply,
         };
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server) with
         {
             UseCluster = cluster,
             CommandTimeout = TimeSpan.FromMilliseconds(150),
             MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(5),
         });
+#pragma warning restore RESP010
         // The 150ms budget tests the stalled upload, not connection initialization.
         // Bound warmup separately and keep ordinary command deadlines armed after it.
         using var initialization = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -2024,7 +2087,10 @@ public class MaintenanceNotificationTests
     public async Task MaintenanceLeaseKindCanRetainAllFourIdleConnections(bool streaming)
     {
         await using var server = Server(maxConnections: 8);
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server));
+#pragma warning restore RESP010
         var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
         var kind = streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary;
         var connections = new RespireConnection[4];
@@ -2047,7 +2113,10 @@ public class MaintenanceNotificationTests
     {
         await using var server = Server(maxConnections: 8);
         server.ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : FakeRespServer.OkReply;
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server));
+#pragma warning restore RESP010
         var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
         var first = new RespireConnection[4];
         for (var index = 0; index < first.Length; index++)

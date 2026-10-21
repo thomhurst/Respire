@@ -15,7 +15,9 @@ public class CorrectionCoordinatorTests
     [Arguments(true)]
     public async Task AcknowledgementSurvivesRetirementFailureAndReleaseRetries(bool retirementFails)
     {
+#pragma warning disable RESP010 // Test-owned client isolates correction acknowledgement and release retries.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 1)] });
+#pragma warning restore RESP010
         var fences = 0;
         var releases = 0;
         var fence = new CorrectionFence(Identity, (identity, _, acknowledge) =>
@@ -58,7 +60,9 @@ public class CorrectionCoordinatorTests
     [Arguments(true)]
     public async Task RejectedOrUnansweredFenceCannotDispatchCorrection(bool unanswered)
     {
+#pragma warning disable RESP010 // Test-owned client owns the correction queue for the rejected or unanswered fence.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 1)] });
+#pragma warning restore RESP010
         var releases = 0;
         string? stage = null;
         string? reason = null;
@@ -81,7 +85,9 @@ public class CorrectionCoordinatorTests
     [Test]
     public async Task QueueDisposalStopsUnacknowledgedFence()
     {
+#pragma warning disable RESP010 // Test-owned client is deliberately disposed to stop the unacknowledged fence.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 1)] });
+#pragma warning restore RESP010
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releases = 0;
         string? reason = null;
@@ -109,7 +115,9 @@ public class CorrectionCoordinatorTests
     [Arguments(5)]
     public async Task AttemptsDistinguishTerminalDisposalFromRetryableErrors(int failure)
     {
+#pragma warning disable RESP010 // Test-owned client controls terminal disposal versus retryable cleanup failures.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 1)] });
+#pragma warning restore RESP010
         if (failure == 0) await client.DisposeAsync();
         using var stop = new CancellationTokenSource();
         if (failure == 1) stop.Cancel();
@@ -129,10 +137,12 @@ public class CorrectionCoordinatorTests
     [Test]
     public async Task OverduePassBoundsFenceWithoutAuthorizingDependentCorrection()
     {
+#pragma warning disable RESP010 // Test-owned client bounds the overdue fence without authorizing a dependent correction.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 1)], ConnectTimeout = TimeSpan.FromMilliseconds(10),
         });
+#pragma warning restore RESP010
         var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFence = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -229,7 +239,9 @@ public class CorrectionCoordinatorTests
     [Test]
     public async Task FailedFenceRetriesSameIdentityBeforeRelease()
     {
+#pragma warning disable RESP010 // Test-owned client isolates retrying the same fence identity before releasing it.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 1)] });
+#pragma warning restore RESP010
         var identities = new List<RespireClient.TrackedConnectionIdentity>();
         var releases = 0;
         var fence = new CorrectionFence(Identity, (identity, _, acknowledge) =>

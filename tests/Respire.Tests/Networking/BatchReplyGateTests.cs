@@ -16,12 +16,14 @@ public class BatchReplyGateTests
     {
         await using var server = new FakeRespServer(connections, ":42\r\n"u8.ToArray());
         var gate = new BatchReplyGate();
+#pragma warning disable RESP010 // Test-owned client keeps reply gating and repeated batch ordering on these sockets.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = connections,
             Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
             TestingStreamFactory = gate.ConnectAsync,
         });
+#pragma warning restore RESP010
         for (var iteration = 0; iteration < 3; iteration++)
         {
             using var batch = client.CreateBatch();
@@ -50,12 +52,14 @@ public class BatchReplyGateTests
     {
         await using var server = new FakeRespServer(":42\r\n"u8.ToArray());
         var gate = new BatchReplyGate();
+#pragma warning disable RESP010 // Test-owned client is disposed while a gated batch reply is outstanding.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
             Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
             TestingStreamFactory = gate.ConnectAsync,
         });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         _ = batch.Increment("gate:dispose");
         var received = gate.Arm();

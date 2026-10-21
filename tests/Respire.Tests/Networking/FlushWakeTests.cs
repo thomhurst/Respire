@@ -31,8 +31,10 @@ public class FlushWakeTests
         {
             try
             {
+#pragma warning disable RESP009 // This dedicated non-pool producer must remain on its thread while testing the dispatched flush wake.
                 using var reply = connection.SendAsync(new PausedProducer(published, release))
                     .AsTask().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
                 first.TrySetResult(reply.AsString());
             }
             catch (Exception error) { first.TrySetException(error); }
@@ -86,8 +88,10 @@ public class FlushWakeTests
                     if (Thread.CurrentThread.IsThreadPoolThread)
                         throw new InvalidOperationException("The writer must not be a pool thread.");
                     // Each command starts a new batch on an idle connection, the dispatched path.
+#pragma warning disable RESP009 // A bounded wait on a dedicated non-pool thread exercises the idle connection's dispatched flush path.
                     using var reply = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame))
                         .AsTask().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
                     replies.Add(reply.AsString()!);
                 }
             }
