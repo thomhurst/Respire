@@ -129,7 +129,9 @@ public class ClusterDatabaseTests
     public async Task DedicatedLeaseSelectsBeforeItsFirstCommand()
     {
         await using var server = new FakeRespServer(Info(), FakeRespServer.OkReply, FakeRespServer.PongReply);
+#pragma warning disable RESP010 // Test-owned client isolates database capability discovery and SELECT ordering on the scripted endpoints.
         await using var client = RespireClient.Create(Options(server.Port));
+#pragma warning restore RESP010
         var pool = client.Core.DedicatedPool;
         var connection = await pool.RentAsync(CancellationToken.None);
         try
@@ -150,7 +152,9 @@ public class ClusterDatabaseTests
         byte[] subscribed = "*3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n"u8.ToArray();
         await using var server = new FakeRespServer(2, Info(), FakeRespServer.OkReply, subscribed);
         await using var seed = new FakeRespServer(Info(), FakeRespServer.OkReply, Topology(server.Port));
+#pragma warning disable RESP010 // Test-owned client isolates database capability discovery and SELECT ordering on the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch").AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(
             ["INFO SERVER", "SELECT 2", "INFO SERVER", "SELECT 2", "SUBSCRIBE ch"]);
@@ -183,7 +187,9 @@ public class ClusterDatabaseTests
         await using var owner = new FakeRespServer(Info(), FakeRespServer.OkReply,
             Encoding.ASCII.GetBytes($"-{(ask ? "ASK" : "MOVED")} {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var seed = new FakeRespServer(Info(), FakeRespServer.OkReply, Topology(owner.Port));
+#pragma warning disable RESP010 // Test-owned client isolates database capability discovery and SELECT ordering on the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         await client.SetAsync("key", "value");
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(new[] { "INFO SERVER", "SELECT 2", "CLUSTER SLOTS" });
         await Assert.That(owner.ReceivedCommands).IsEquivalentTo(new[] { "INFO SERVER", "SELECT 2", "SET key value" });
@@ -199,7 +205,9 @@ public class ClusterDatabaseTests
         var slot = ClusterHash.GetSlot("key");
         await using var seed = new FakeRespServer(Info(), FakeRespServer.OkReply, "*0\r\n"u8.ToArray(),
             Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+#pragma warning disable RESP010 // Test-owned client isolates database capability discovery and SELECT ordering on the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.SetAsync("key", "value")).ThrowsExactly<RespireConfigurationException>();
         await Assert.That(target.ReceivedCommands).IsEquivalentTo(new[] { "INFO SERVER" });
     }
@@ -212,7 +220,9 @@ public class ClusterDatabaseTests
     {
         await using var owner = new FakeRespServer(Info("8.1.0"));
         await using var seed = new FakeRespServer(Info(), FakeRespServer.OkReply, Topology(owner.Port));
+#pragma warning disable RESP010 // Test-owned client isolates database capability discovery and SELECT ordering on the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await Assert.That(async () =>
         {
@@ -229,7 +239,9 @@ public class ClusterDatabaseTests
     public async Task IncompatibleDedicatedSocketSurfacesConfigurationError()
     {
         await using var server = new FakeRespServer(Info("8.1.0"));
+#pragma warning disable RESP010 // Test-owned client isolates database capability discovery and SELECT ordering on the scripted endpoints.
         await using var client = RespireClient.Create(Options(server.Port));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Core.DedicatedPool.RentAsync(CancellationToken.None))
             .ThrowsExactly<RespireConfigurationException>();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["INFO SERVER"]);
@@ -250,7 +262,9 @@ public class ClusterDatabaseTests
             },
         };
         await using var seed = new FakeRespServer(Info(), FakeRespServer.OkReply, Topology(owner.Port));
+#pragma warning disable RESP010 // Test-owned client isolates database capability discovery and SELECT ordering on the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.SubscribeAsync("ch").AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
             .ThrowsExactly<RespireConfigurationException>();
         await Assert.That(owner.ReceivedCommands).IsEquivalentTo(["INFO SERVER", "SELECT 2", "INFO SERVER"]);

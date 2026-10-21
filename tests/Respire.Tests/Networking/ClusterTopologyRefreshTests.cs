@@ -16,6 +16,7 @@ public class ClusterTopologyRefreshTests
     {
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         var clock = new ManualTopologyRefreshClock();
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -24,6 +25,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
 
         await Assert.That(seed.ReceivedCommands).IsEmpty();
@@ -52,6 +54,7 @@ public class ClusterTopologyRefreshTests
             return Topology(seed.Port, seed.Port);
         };
         var clock = new ManualTopologyRefreshClock();
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -60,6 +63,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
         var periodic = await clock.Created.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -79,6 +83,7 @@ public class ClusterTopologyRefreshTests
     {
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         var clock = new ManualTopologyRefreshClock();
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -87,6 +92,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
@@ -111,6 +117,7 @@ public class ClusterTopologyRefreshTests
             if (call >= 4) fourthRefresh.TrySetResult();
             return Topology(seed.Port, seed.Port);
         };
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -119,6 +126,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshClock = new ManualTopologyRefreshClock(),
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
@@ -148,6 +156,7 @@ public class ClusterTopologyRefreshTests
             return Topology(seed.Port, seed.Port);
         };
         var clock = new ManualTopologyRefreshClock();
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -156,6 +165,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
@@ -193,6 +203,7 @@ public class ClusterTopologyRefreshTests
         };
         // The manual clock never ends the MOVED debounce on its own.
         var clock = new ManualTopologyRefreshClock();
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -201,6 +212,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
@@ -236,6 +248,7 @@ public class ClusterTopologyRefreshTests
             return null;
         };
         var clock = new ManualTopologyRefreshClock();
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -244,6 +257,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
@@ -277,6 +291,7 @@ public class ClusterTopologyRefreshTests
             return Topology(seed.Port, seed.Port);
         };
         var clock = new ManualTopologyRefreshClock();
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -285,6 +300,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
@@ -306,6 +322,7 @@ public class ClusterTopologyRefreshTests
     {
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         var clock = new ManualTopologyRefreshClock();
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -314,6 +331,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshClock = clock,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
         var connection = await router.GetConnectionAsync(0, CancellationToken.None, discovery: null, observation: default);
@@ -329,6 +347,7 @@ public class ClusterTopologyRefreshTests
     {
         var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -336,6 +355,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
         seed.SuppressReply = command =>
@@ -362,6 +382,7 @@ public class ClusterTopologyRefreshTests
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         var initialTopology = TwoMasterTopology(seed.Port, 8191, 8192, alternative.Port);
         seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? initialTopology : null;
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -371,6 +392,7 @@ public class ClusterTopologyRefreshTests
             CommandTimeout = null,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         seed.SuppressReply = command => command == "CLUSTER SLOTS";
 
         client.Core.Cluster!.SignalTopologyRefresh(force: true);
@@ -391,6 +413,7 @@ public class ClusterTopologyRefreshTests
         seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? TwoMasterTopology(seed.Port, 8191, 8192, alternative.Port)
             : null;
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -402,6 +425,7 @@ public class ClusterTopologyRefreshTests
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(2), MaxDelay = TimeSpan.FromSeconds(2),
                 JitterRatio = 0, MaxAttempts = 2 },
         });
+#pragma warning restore RESP010
         seed.SuppressReply = command => command == "CLUSTER SLOTS";
 
         client.Core.Cluster!.SignalTopologyRefresh(force: true);
@@ -425,6 +449,7 @@ public class ClusterTopologyRefreshTests
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         var replicaPort = replica.Port;
         seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Topology(seed.Port, replicaPort, "127.0.0.1") : null;
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -434,6 +459,7 @@ public class ClusterTopologyRefreshTests
             CommandTimeout = TimeSpan.FromSeconds(10),
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         seed.SuppressReply = command =>
         {
             if (command != "CLUSTER SLOTS") return false;
@@ -461,6 +487,7 @@ public class ClusterTopologyRefreshTests
             ? TwoMasterTopology(firstMaster.Port, 8191, 8192, secondMaster.Port)
             : null;
         var seedEndpoint = new RespireEndpoint("127.0.0.1", seed.Port);
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -468,6 +495,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshInterval = null,
             Endpoints = [seedEndpoint],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         seed.CloseConnections();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -499,6 +527,7 @@ public class ClusterTopologyRefreshTests
     {
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Topology(seed.Port, seed.Port + 1) : null;
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -506,6 +535,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         typeof(ClusterRouter).GetField("_replicas", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .SetValue(router, new[]
@@ -537,6 +567,7 @@ public class ClusterTopologyRefreshTests
             if (Interlocked.Increment(ref calls) >= 2) refreshed.TrySetResult();
             return Topology(seed.Port, replicaEndpoint.Port);
         };
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -544,6 +575,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         await Assert.That(router.GetReplicas().Single().Endpoint).IsEqualTo(replicaEndpoint);
 
@@ -579,6 +611,7 @@ public class ClusterTopologyRefreshTests
         seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? Topology(seed.Port, replicaPort)
             : null;
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -586,6 +619,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
 
         router.SignalTopologyRefresh();
@@ -621,6 +655,7 @@ public class ClusterTopologyRefreshTests
             if (Interlocked.Increment(ref slotsCalls) >= 2) fullRefresh.TrySetResult();
             return Topology(seed.Port, seed.Port);
         };
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -628,6 +663,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
@@ -654,6 +690,7 @@ public class ClusterTopologyRefreshTests
     public async Task CancelledReadOnlyWaiterAbandonsFlightOnlyWhenLast(int waiters, bool expectAbandoned)
     {
         var policy = new RespireReconnectPolicy { InitialDelay = TimeSpan.Zero, MaxAttempts = 3 };
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -662,6 +699,7 @@ public class ClusterTopologyRefreshTests
             Endpoints = [new RespireEndpoint("127.0.0.1", 1)],
             ReconnectPolicy = policy,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         using var flightCancellation = new CancellationTokenSource();
         var source = new RespireEndpoint("127.0.0.1", 1);
@@ -719,6 +757,7 @@ public class ClusterTopologyRefreshTests
         seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? Topology(seed.Port, replicaPort, "127.0.0.1") : null;
         replicaServer.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? incompleteTopology : null;
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -726,6 +765,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var originalOwner = router.GetSlotOwnerEndpoint(0);
         var originalReplica = router.GetReplicas().Single();
@@ -793,6 +833,7 @@ public class ClusterTopologyRefreshTests
             ? Encoding.ASCII.GetBytes(
                 $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n")
             : null;
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -800,6 +841,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var secondEndpoint = new RespireEndpoint("127.0.0.1", second.Port);
 
@@ -842,6 +884,7 @@ public class ClusterTopologyRefreshTests
             return initial;
         };
 
+#pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -849,6 +892,7 @@ public class ClusterTopologyRefreshTests
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var initialGeneration = PublishedDiscoveryGeneration(router);
         var firstOwner = router.GetSlotOwnerEndpoint(0);

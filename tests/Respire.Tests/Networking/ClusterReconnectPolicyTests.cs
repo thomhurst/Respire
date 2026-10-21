@@ -34,13 +34,17 @@ public class ClusterReconnectPolicyTests
         {
             await Assert.That(async () =>
             {
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
                 await using var unexpected = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
             }).ThrowsExactly<RespireReconnectLimitException>();
             await Assert.That(last.CommandsSeen).IsEqualTo(0);
         }
         else
         {
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
             await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
             await client.PingAsync();
             await Assert.That(last.ReceivedCommands).IsEquivalentTo(["AUTH test", "CLUSTER SLOTS", "PING"]);
         }
@@ -57,6 +61,7 @@ public class ClusterReconnectPolicyTests
         await using var second = new FakeRespServer(FakeRespServer.OkReply,
             "-ERR topology unavailable\r\n"u8.ToArray(), FakeRespServer.PongReply);
         var clock = new GatedDiscoveryClock();
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Password = "test", CommandTimeout = null,
@@ -65,6 +70,7 @@ public class ClusterReconnectPolicyTests
                 JitterRatio = 0, MaxAttempts = 1 },
             ClusterDiscoveryClock = clock,
         });
+#pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         var ended = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -114,7 +120,9 @@ public class ClusterReconnectPolicyTests
         await using var first = new FakeRespServer("-ERR first unavailable\r\n"u8.ToArray());
         await using var second = new FakeRespServer("-ERR second unavailable\r\n"u8.ToArray());
         await using var last = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(first.Port, second.Port, last.Port));
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         await Assert.That(async () =>
         {
@@ -143,7 +151,9 @@ public class ClusterReconnectPolicyTests
             SuppressReply = _ => { received.TrySetResult(); return true; },
         };
         await using var second = new FakeRespServer(FakeRespServer.OkReply, "-ERR unsupported topology\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(first.Port, second.Port) with { LibraryName = null });
+#pragma warning restore RESP010
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
@@ -181,7 +191,9 @@ public class ClusterReconnectPolicyTests
     {
         await using var target = new FakeRespServer("-ERR target unavailable\r\n"u8.ToArray());
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, "-ERR unsupported topology\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port, target.Port));
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var source = await router.GetConnectionAsync(null, default, discovery: null, observation: default);
         var original = new RespireServerException(code == "READONLY" ? "READONLY demoted"
@@ -209,7 +221,9 @@ public class ClusterReconnectPolicyTests
         {
             CloseConnectionAfterCommand = 3,
         };
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port, unused.Port));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.SetAsync("key", "value")).Throws<RespireConnectionException>();
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["AUTH test", "CLUSTER SLOTS", "SET key value"]);
         await Assert.That(unused.CommandsSeen).IsEqualTo(0);
@@ -225,7 +239,9 @@ public class ClusterReconnectPolicyTests
         await using var first = new FakeRespServer("-ERR owner unavailable\r\n"u8.ToArray());
         await using var second = new FakeRespServer("-ERR peer unavailable\r\n"u8.ToArray());
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, "-ERR unsupported topology\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         router.SetSlotOwner(42, router.GetMultiplexer(new("127.0.0.1", first.Port)));
         router.SetSlotOwner(43, router.GetMultiplexer(new("127.0.0.1", second.Port)));
@@ -252,7 +268,9 @@ public class ClusterReconnectPolicyTests
     {
         await using var unavailable = new FakeRespServer("-ERR owner unavailable\r\n"u8.ToArray());
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, "-ERR unsupported topology\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var endpoint = new RespireEndpoint("127.0.0.1", seed.Port);
         if (failedPhysicalSlot)
@@ -299,7 +317,9 @@ public class ClusterReconnectPolicyTests
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), BackoffMultiplier = 3,
                 JitterRatio = 0, MaxAttempts = 2 },
         };
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(options);
+#pragma warning restore RESP010
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
@@ -333,10 +353,12 @@ public class ClusterReconnectPolicyTests
         {
             SuppressReply = _ => { connecting.TrySetResult(); return true; },
         };
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(first.Port, second.Port) with
         {
             ConnectTimeout = TimeSpan.FromSeconds(30),
         });
+#pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         var ended = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
@@ -391,12 +413,14 @@ public class ClusterReconnectPolicyTests
                 : command.StartsWith("GET ") ? redirect : null,
         };
         var clock = new GatedDiscoveryClock();
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
                 MaxAttempts = 1, JitterRatio = 0 },
             ClusterDiscoveryClock = clock,
         });
+#pragma warning restore RESP010
         if (connectedTarget)
             await client.Core.Cluster!.GetMultiplexer(new("127.0.0.1", target.Port)).EnsureConnectedAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -420,12 +444,14 @@ public class ClusterReconnectPolicyTests
         await using var target = new FakeRespServer(FakeRespServer.OkReply);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, "*0\r\n"u8.ToArray());
         var clock = new GatedDiscoveryClock();
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
                 MaxAttempts = 1, JitterRatio = 0 },
             ClusterDiscoveryClock = clock,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var source = await router.GetConnectionAsync(null, default, discovery: null, observation: default);
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
@@ -468,11 +494,13 @@ public class ClusterReconnectPolicyTests
         unavailable.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 0));
         var endpoint = new RespireEndpoint("127.0.0.1", ((System.Net.IPEndPoint)unavailable.LocalEndPoint!).Port);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, "*0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
                 MaxAttempts = 1, JitterRatio = 0 },
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var source = await router.GetConnectionAsync(null, default, discovery: null, observation: default);
         var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -512,7 +540,9 @@ public class ClusterReconnectPolicyTests
     public async Task ImmediateRedirectSharesBudgetAndBackoffWithLaterRecovery(string code, string recovery)
     {
         var clock = new GatedDiscoveryClock();
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(1) with { ClusterDiscoveryClock = clock });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var endpoint = new RespireEndpoint("unused.invalid");
         var round = new ClusterRouter.DiscoveryRound(router, new()
@@ -560,7 +590,9 @@ public class ClusterReconnectPolicyTests
     [Arguments("ASK")]
     public async Task ImmediateRedirectCannotRestartExhaustedBudget(string code)
     {
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(1));
+#pragma warning restore RESP010
         var round = new ClusterRouter.DiscoveryRound(client.Core.Cluster!, new() { MaxAttempts = 1 });
         var endpoint = new RespireEndpoint("unused.invalid");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -593,11 +625,13 @@ public class ClusterReconnectPolicyTests
                 : command.StartsWith("GET ") ? redirect : null,
         };
         var clock = new GatedDiscoveryClock();
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
             ReconnectPolicy = SlowPolicy,
             ClusterDiscoveryClock = clock,
         });
+#pragma warning restore RESP010
         // One configured backoff would exceed this bound six times over.
         await Assert.That(await client.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
         await Assert.That(target.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
@@ -615,7 +649,9 @@ public class ClusterReconnectPolicyTests
     {
         await using var target = new FakeRespServer(FakeRespServer.OkReply);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, "*0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with { ReconnectPolicy = SlowPolicy });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var source = await router.GetConnectionAsync(null, default, discovery: null, observation: default);
         var redirect = new RespireServerException($"{code} 42 127.0.0.1:{target.Port}");
@@ -647,12 +683,14 @@ public class ClusterReconnectPolicyTests
     {
         await using var target = new FakeRespServer(FakeRespServer.OkReply);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, "*0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port, target.Port) with
         {
             ConnectTimeout = TimeSpan.FromMilliseconds(500),
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
                 MaxAttempts = 1, JitterRatio = 0 },
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var source = await router.GetConnectionAsync(null, default, discovery: null, observation: default);
         var original = new RespireServerException("READONLY demoted");
@@ -671,8 +709,10 @@ public class ClusterReconnectPolicyTests
         await using var second = new FakeRespServer(2, "-ERR second unavailable\r\n"u8.ToArray());
         await using var last = new FakeRespServer(FakeRespServer.OkReply);
         using var metrics = new DiscoveryMetrics(second.Port);
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(remainingCandidate
             ? Options(first.Port, second.Port, last.Port) : Options(first.Port, second.Port));
+#pragma warning restore RESP010
         var terminal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var episodes = new ConcurrentQueue<long?>();
         var ended = 0;
@@ -713,10 +753,12 @@ public class ClusterReconnectPolicyTests
             return Interlocked.Increment(ref seedQueries) == 1 ? topology : "-ERR seed topology unavailable\r\n"u8.ToArray();
         };
         healthy.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
             ReconnectPolicy = configured ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 } : null,
         });
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(timeout.Token, discovery: null, observation: default);
         await Assert.That(connections.Select(connection => connection.Port)).IsEquivalentTo([seed.Port, healthy.Port]);
@@ -742,10 +784,12 @@ public class ClusterReconnectPolicyTests
             ? Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{healthy.Port}\r\n")
             : null;
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, "-ERR unsupported topology\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
             ReconnectPolicy = configured ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 } : null,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var failedOwner = router.GetMultiplexer(new("127.0.0.1", failed.Port));
         router.SetSlotOwner(42, failedOwner);
@@ -797,11 +841,13 @@ public class ClusterReconnectPolicyTests
             "CLIENT ID" => ":1\r\n"u8.ToArray(),
             _ => null,
         };
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(failedCount == 1
             ? [first.Port, healthy.Port] : [first.Port, second.Port, healthy.Port]) with
         {
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = failedCount },
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         router.SetSlotOwner(42, router.GetMultiplexer(new("127.0.0.1", first.Port)));
         router.SetSlotOwner(43, router.GetMultiplexer(new("127.0.0.1", first.Port)));
@@ -849,7 +895,9 @@ public class ClusterReconnectPolicyTests
         first.ReplyOverride = (_, command) => command != "CLUSTER SLOTS" ? null
             : Interlocked.Increment(ref queries) == 1 ? Topology(first.Port) : "-ERR topology unavailable\r\n"u8.ToArray();
         healthy.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Topology(healthy.Port) : null;
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port, healthy.Port));
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var connections = await router.GetMasterConnectionsAsync(default, discovery: null, observation: default);
         await Assert.That(connections.Single().Port).IsEqualTo(healthy.Port);
@@ -866,7 +914,9 @@ public class ClusterReconnectPolicyTests
         await using var rejected = new FakeRespServer(FakeRespServer.OkReply);
         await using var retired = new FakeRespServer(FakeRespServer.OkReply);
         await using var healthy = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(rejected.Port, retired.Port, healthy.Port));
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var rejectedNode = router.GetMultiplexer(new("127.0.0.1", rejected.Port));
         var retiredNode = router.GetMultiplexer(new("127.0.0.1", retired.Port));
@@ -905,10 +955,12 @@ public class ClusterReconnectPolicyTests
             ? Encoding.ASCII.GetBytes("*2\r\n" + Range(0, 41, originalOwner.Port) + Range(42, 16383, nextOwner.Port)) : null;
         healthy.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? Encoding.ASCII.GetBytes("*1\r\n" + Range(0, 16383, healthy.Port)) : null;
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(probe.Port, originalOwner.Port, healthy.Port) with
         {
             ReconnectPolicy = configured ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 3 } : null,
         });
+#pragma warning restore RESP010
         await using var source = await Respire.Networking.RespireConnection.ConnectAsync("127.0.0.1", sourceServer.Port);
         var router = client.Core.Cluster!;
         var originalNode = router.GetMultiplexer(new("127.0.0.1", originalOwner.Port));
@@ -947,7 +999,9 @@ public class ClusterReconnectPolicyTests
     public async Task RejectedSeedDepletionPreservesOriginalFailure()
     {
         await using var failed = new FakeRespServer(2, "-ERR owner unavailable\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(failed.Port));
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         router.SetSlotOwner(42, router.GetMultiplexer(new("127.0.0.1", failed.Port)));
         var error = await Assert.That(async () => await router.GetConnectionAsync(42, default, discovery: null, observation: default))
@@ -968,7 +1022,9 @@ public class ClusterReconnectPolicyTests
     [Arguments("READONLY", 42, true, false)]
     public async Task FinalRoutingRejectionRequiresRecoverableCommand(string code, int? slot, bool noRedirect, bool failed)
     {
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(1));
+#pragma warning restore RESP010
         var round = new ClusterRouter.DiscoveryRound(client.Core.Cluster!, new());
         var error = new RespireServerException(code + " rejected");
         round.RecordCommandFailure(error, discoveryPending: false, slot, noRedirect);
@@ -981,7 +1037,9 @@ public class ClusterReconnectPolicyTests
     public async Task DiscoveryRoundRejectsConcurrentMutationAndReleasesGuardAfterCancellation()
     {
         var clock = new GatedDiscoveryClock();
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(1) with { ClusterDiscoveryClock = clock });
+#pragma warning restore RESP010
         var router = await Assert.That(client.Core.Cluster).IsNotNull();
         var round = new ClusterRouter.DiscoveryRound(router, new()
         {
@@ -1035,6 +1093,7 @@ public class ClusterReconnectPolicyTests
             ? Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n") : null;
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, "-ERR unsupported topology\r\n"u8.ToArray());
         var clock = new GatedDiscoveryClock(autoCompleteLaterDelays: true);
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port, target.Port) with
         {
             ConnectTimeout = TimeSpan.FromSeconds(4),
@@ -1042,6 +1101,7 @@ public class ClusterReconnectPolicyTests
                 JitterRatio = 0, MaxAttempts = 2 },
             ClusterDiscoveryClock = clock,
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var source = await router.GetConnectionAsync(null, default, discovery: null, observation: default);
         router.SetSlotOwner(cachedOwner ? 42 : 43, router.GetMultiplexer(new("127.0.0.1", candidate.Port)));
@@ -1080,7 +1140,9 @@ public class ClusterReconnectPolicyTests
         {
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null,
         };
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(unavailable.Port, seed.Port));
+#pragma warning restore RESP010
         var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null, observation: default);
         await Assert.That(connections.Select(connection => connection.Port).ToArray())
             .IsEquivalentTo([first.Port, second.Port, third.Port]);
@@ -1098,18 +1160,22 @@ public class ClusterReconnectPolicyTests
     {
         await using var first = new FakeRespServer("-ERR seed unavailable\r\n"u8.ToArray());
         await using var second = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(first.Port, second.Port) with
         {
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
                 JitterRatio = 0, MaxAttempts = 1 },
         });
+#pragma warning restore RESP010
         var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
             if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery || change.NextReconnectDelay is null) return;
             try
             {
+#pragma warning disable RESP009 // Deliberately dispose synchronously inside the discovery observer to exercise reentrant disposal without deadlock.
                 client.DisposeAsync().AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
                 disposed.TrySetResult();
             }
             catch (Exception error) { disposed.TrySetException(error); }
@@ -1128,7 +1194,9 @@ public class ClusterReconnectPolicyTests
         await using var first = new FakeRespServer("-ERR unavailable\r\n"u8.ToArray());
         await using var second = new FakeRespServer(FakeRespServer.OkReply, "-ERR no topology\r\n"u8.ToArray());
         using var logger = new ThrowingWarningLogger();
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(first.Port, second.Port) with { LoggerFactory = logger });
+#pragma warning restore RESP010
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meter) =>
         {
@@ -1162,7 +1230,9 @@ public class ClusterReconnectPolicyTests
         await using var first = new FakeRespServer(8, "-ERR unavailable\r\n"u8.ToArray());
         await using var second = new FakeRespServer(8, "-ERR unavailable\r\n"u8.ToArray());
         await using var unused = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(first.Port, second.Port, unused.Port));
+#pragma warning restore RESP010
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var complete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var exhausted = 0;
@@ -1192,7 +1262,9 @@ public class ClusterReconnectPolicyTests
     public async Task FinishDuringBackoffPreservesExceptionAndPublishesTerminalOnce(bool cancel)
     {
         var clock = new GatedDiscoveryClock();
+#pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(1) with { ClusterDiscoveryClock = clock });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var endpoint = new RespireEndpoint("unused.invalid");
         var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);

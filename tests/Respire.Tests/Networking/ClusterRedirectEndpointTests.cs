@@ -47,7 +47,9 @@ public class ClusterRedirectEndpointTests
     {
         var message = $"{code} {ClusterHash.GetSlot("key")} ?:6379";
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray(), Encoding.ASCII.GetBytes($"-{message}\r\n"));
+#pragma warning disable RESP010 // Test-owned client isolates the scripted redirect endpoints and cached slot routes.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
 
         async Task Execute()
         {
@@ -79,7 +81,9 @@ public class ClusterRedirectEndpointTests
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
+#pragma warning disable RESP010 // Test-owned client isolates the scripted redirect endpoints and cached slot routes.
         await using var client = await RespireClient.ConnectAsync(Options(seed));
+#pragma warning restore RESP010
 
         var error = await Assert.That(async () =>
         {
@@ -96,7 +100,9 @@ public class ClusterRedirectEndpointTests
     public async Task FireAndForget_StillDiscardsOrdinaryServerErrors()
     {
         await using var seed = new FakeRespServer("*0\r\n"u8.ToArray(), "-WRONGTYPE ordinary error\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates the scripted redirect endpoints and cached slot routes.
         await using var client = await RespireClient.ConnectAsync(Options(seed));
+#pragma warning restore RESP010
         await client.ExecuteFireAndForgetAsync(RespireCommands.String.SET, "key", "value");
         await Assert.That(seed.ReceivedCommands[^1]).IsEqualTo("SET key value");
     }
@@ -110,7 +116,9 @@ public class ClusterRedirectEndpointTests
         await using var server = new FakeRespServer(
             "*0\r\n"u8.ToArray(), FakeRespServer.OkReply, Encoding.ASCII.GetBytes($"-{message}\r\n"),
             "-EXECABORT Transaction discarded because of previous errors.\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Test-owned client isolates the scripted redirect endpoints and cached slot routes.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var pending = transaction.Set("key", "value");
 
@@ -133,7 +141,9 @@ public class ClusterRedirectEndpointTests
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
+#pragma warning disable RESP010 // Test-owned client isolates the scripted redirect endpoints and cached slot routes.
         await using var client = await RespireClient.ConnectAsync(Options(seed));
+#pragma warning restore RESP010
         var execution = await client.StartTrackedScriptExecutionAsync(
             RespireScript.Create("return redis.call('GET', KEYS[1])"), ["key"], [], CancellationToken.None);
 
@@ -157,7 +167,9 @@ public class ClusterRedirectEndpointTests
         await using var target = new FakeRespServer(replies);
         await using var seed = new FakeRespServer("*0\r\n"u8.ToArray(),
             Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot("key")} :{target.Port}\r\n"));
+#pragma warning disable RESP010 // Test-owned client isolates the scripted redirect endpoints and cached slot routes.
         await using var client = await RespireClient.ConnectAsync(Options(seed));
+#pragma warning restore RESP010
 
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(target.ReceivedCommands[^1]).IsEqualTo("GET key");

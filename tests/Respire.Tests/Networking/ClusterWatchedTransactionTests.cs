@@ -26,12 +26,14 @@ public class ClusterWatchedTransactionTests
             FakeRespServer.OkReply, "$3\r\nold\r\n"u8.ToArray(),
             FakeRespServer.OkReply, "$5\r\nfresh\r\n"u8.ToArray());
         await using var seed = new FakeRespServer(hello, FakeRespServer.OkReply, Topology(owner.Port));
+#pragma warning disable RESP010 // Test-owned client isolates WATCH leases, cache fences, and slot ownership for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = cluster, Connections = 1, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", cluster ? seed.Port : owner.Port)],
         });
+#pragma warning restore RESP010
         var view = binaryPrefix ? client.WithKeyPrefix((RespireKey)new byte[] { 255, 0, (byte)':' })
             : client.WithKeyPrefix("tenant:");
         await Assert.That(await view.GetStringAsync("{a}:watched")).IsEqualTo("old");
@@ -62,7 +64,9 @@ public class ClusterWatchedTransactionTests
     public async Task CrossSlotWatchFailsBeforeDiscovery()
     {
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // Test-owned client isolates WATCH leases, cache fences, and slot ownership for this scenario.
         await using var client = RespireClient.Create(Options(seed.Port));
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         await Assert.That(async () => await view.CreateTransactionAsync(["{a}:one", "{b}:two"]))
             .ThrowsExactly<InvalidOperationException>();
@@ -77,7 +81,9 @@ public class ClusterWatchedTransactionTests
             FakeRespServer.OkReply, FakeRespServer.OkReply, Queued, "*-1\r\n"u8.ToArray(),
             FakeRespServer.OkReply, FakeRespServer.OkReply, Queued, Committed);
         await using var seed = new FakeRespServer(Topology(owner.Port));
+#pragma warning disable RESP010 // Test-owned client isolates WATCH leases, cache fences, and slot ownership for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         for (var attempt = 0; attempt < 3; attempt++)
         {
@@ -107,7 +113,9 @@ public class ClusterWatchedTransactionTests
         {
             SuppressReply = _ => { discovering.TrySetResult(); return true; },
         };
+#pragma warning disable RESP010 // Test-owned client isolates WATCH leases, cache fences, and slot ownership for this scenario.
         await using var client = RespireClient.Create(Options(seed.Port));
+#pragma warning restore RESP010
         byte[] bytes = "{a}:watched"u8.ToArray();
         RespireKey[] keys = [bytes];
         var creating = client.CreateTransactionAsync(keys).AsTask();
@@ -145,7 +153,9 @@ public class ClusterWatchedTransactionTests
         await using var owner = new FakeRespServer(2, replies);
         await using var seed = new FakeRespServer(Topology(owner.Port));
         using var logger = new FailingDisconnectLogger();
+#pragma warning disable RESP010 // Test-owned client isolates WATCH leases, cache fences, and slot ownership for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with { LoggerFactory = logger });
+#pragma warning restore RESP010
         logger.Armed = failCleanup;
         RespirePending<bool>? pending = null;
         var error = await Assert.That(async () =>
@@ -183,7 +193,9 @@ public class ClusterWatchedTransactionTests
             : [readOnly];
         await using var owner = new FakeRespServer(2, replies);
         await using var seed = new FakeRespServer(Topology(owner.Port));
+#pragma warning disable RESP010 // Test-owned client isolates WATCH leases, cache fences, and slot ownership for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         owner.SuppressReply = command =>
         {
             if (command == (duringCommit ? "SET {a}:watched old" : "WATCH {a}:watched"))
@@ -216,7 +228,9 @@ public class ClusterWatchedTransactionTests
         await using var owner = new FakeRespServer(2, FakeRespServer.OkReply, FakeRespServer.OkReply,
             Queued, Queued, "*2\r\n+OK\r\n-MOVED 15495 127.0.0.1:1\r\n"u8.ToArray());
         await using var seed = new FakeRespServer(Topology(owner.Port));
+#pragma warning disable RESP010 // Test-owned client isolates WATCH leases, cache fences, and slot ownership for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         await using var transaction = await client.CreateTransactionAsync(["{a}:watched"]);
         var success = transaction.Set("{a}:watched", "value");
         var failure = transaction.Set("{a}:other", "value");
@@ -242,7 +256,9 @@ public class ClusterWatchedTransactionTests
             },
         };
         await using var seed = new FakeRespServer(Topology(owner.Port));
+#pragma warning disable RESP010 // Test-owned client isolates WATCH leases, cache fences, and slot ownership for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var creating = client.CreateTransactionAsync(["{a}:watched"], cancellation.Token).AsTask();
         await watching.Task.WaitAsync(TimeSpan.FromSeconds(5));

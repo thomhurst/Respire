@@ -46,6 +46,7 @@ public class ClusterReadOnlyTests
         await using var healthySeed = new FakeRespServer(Topology(replacement.Port));
         using var unavailable = new ReservedUnavailablePort();
         var unavailablePort = unavailable.Port;
+#pragma warning disable RESP010 // Test-owned client isolates READONLY recovery routes, deadlines, and discovery state for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -55,6 +56,7 @@ public class ClusterReadOnlyTests
             Endpoints = [new("127.0.0.1", initialSeed.Port), new("127.0.0.1", healthySeed.Port),
                 new("127.0.0.1", unavailablePort)],
         });
+#pragma warning restore RESP010
         var initialRequest = ObserveCommand(initialSeed, "CLUSTER SLOTS");
         var healthyRequest = ObserveCommand(healthySeed, "CLUSTER SLOTS");
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -107,7 +109,9 @@ public class ClusterReadOnlyTests
                     .. stalledSeeds.Select(seed => new RespireEndpoint("127.0.0.1", seed.Port)),
                     new("127.0.0.1", finalSeed.Port)],
             };
+#pragma warning disable RESP010 // Test-owned client isolates READONLY recovery routes, deadlines, and discovery state for this scenario.
             await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
             var initialRequest = ObserveCommand(initialSeed, "CLUSTER SLOTS");
             var finalRequest = ObserveCommand(finalSeed, "CLUSTER SLOTS");
             var write = client.SetAsync("key", "value").AsTask();
@@ -183,6 +187,7 @@ public class ClusterReadOnlyTests
         await using var first = new FakeRespServer { SuppressReply = _ => { stalledRequest.TrySetResult(); return true; } };
         await using var second = new FakeRespServer { SuppressReply = _ => { stalledRequest.TrySetResult(); return true; } };
         await using var seed = new FakeRespServer(SplitTopology(first.Port, replica.Port));
+#pragma warning disable RESP010 // Test-owned client isolates READONLY recovery routes, deadlines, and discovery state for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -190,6 +195,7 @@ public class ClusterReadOnlyTests
             ClusterRecoveryClock = clock,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var seedRequest = ObserveCommand(seed, "CLUSTER SLOTS");
         var router = client.Core.Cluster!;
         router.SetSlotOwner(1, router.GetMultiplexer(new RespireEndpoint("127.0.0.1", second.Port)));
@@ -358,6 +364,7 @@ public class ClusterReadOnlyTests
         };
         var initial = SplitTopology(stalled.Port, replica.Port);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, initial, Topology(replacement.Port));
+#pragma warning disable RESP010 // Test-owned client isolates READONLY recovery routes, deadlines, and discovery state for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -369,6 +376,7 @@ public class ClusterReadOnlyTests
             CommandTimeout = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
+#pragma warning restore RESP010
         seed.SuppressReply = command =>
         {
             if (command != "CLUSTER SLOTS") return false;
@@ -704,6 +712,7 @@ public class ClusterReadOnlyTests
                 ? Topology(sourceServer.Port)
                 : Topology(replacement.Port);
         };
+#pragma warning disable RESP010 // Test-owned client isolates READONLY recovery routes, deadlines, and discovery state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -712,6 +721,7 @@ public class ClusterReadOnlyTests
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
             Endpoints = [new RespireEndpoint("127.0.0.1", sourceServer.Port)],
         });
+#pragma warning restore RESP010
         await client.Core.Cluster!.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
         var slot = ClusterHash.GetSlot("key");
         var source = await client.Core.Cluster.GetConnectionAsync(slot, CancellationToken.None, discovery: null, observation: default);
@@ -733,6 +743,7 @@ public class ClusterReadOnlyTests
         await using var replica = new FakeRespServer(ReadOnlyReply);
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
         await using var seed = new FakeRespServer(Topology(replica.Port));
+#pragma warning disable RESP010 // Test-owned client isolates READONLY recovery routes, deadlines, and discovery state for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -740,6 +751,7 @@ public class ClusterReadOnlyTests
             ClusterRecoveryClock = clock,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var slot = ClusterHash.GetSlot("key");
         var source = await router.GetConnectionAsync(slot, CancellationToken.None, discovery: null, observation: default);
@@ -780,6 +792,7 @@ public class ClusterReadOnlyTests
         await using var replica = new FakeRespServer(FakeRespServer.OkReply);
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, Topology(replica.Port));
+#pragma warning disable RESP010 // Test-owned client isolates READONLY recovery routes, deadlines, and discovery state for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -788,6 +801,7 @@ public class ClusterReadOnlyTests
             ClusterRecoveryClock = clock,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var source = await router.GetConnectionAsync(100, CancellationToken.None, discovery: null, observation: default);
         seed.SuppressReply = command =>
@@ -832,6 +846,7 @@ public class ClusterReadOnlyTests
         var clock = new ClusterRecoveryTestClock();
         await using var replica = new FakeRespServer(ReadOnlyReply);
         await using var seed = new FakeRespServer(Topology(replica.Port));
+#pragma warning disable RESP010 // Test-owned client isolates READONLY recovery routes, deadlines, and discovery state for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -840,6 +855,7 @@ public class ClusterReadOnlyTests
             ReconnectPolicy = configuredPolicy ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 } : null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var slot = ClusterHash.GetSlot("key");
         var source = await router.GetConnectionAsync(slot, CancellationToken.None, discovery: null, observation: default);
@@ -898,6 +914,7 @@ public class ClusterReadOnlyTests
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Topology(replacement.Port) : null,
         };
         var slot = ClusterHash.GetSlot("key");
+#pragma warning disable RESP010 // Test-owned client isolates READONLY recovery routes, deadlines, and discovery state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -906,6 +923,7 @@ public class ClusterReadOnlyTests
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         await using var source = await Respire.Networking.RespireConnection.ConnectAsync("127.0.0.1", sourceServer.Port);
         using var cancelledWaiter = new CancellationTokenSource();
         var router = client.Core.Cluster!;

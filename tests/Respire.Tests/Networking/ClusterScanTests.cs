@@ -431,7 +431,9 @@ public class ClusterScanTests
     [Test]
     public async Task StandaloneAndInvalidArgumentsFailBeforeConnecting()
     {
+#pragma warning disable RESP010 // Test-owned client isolates scan cursors, node generations, and discovery budgets for this scenario.
         await using var standalone = RespireClient.Create(new RespireOptions { Endpoints = { new RespireEndpoint("unused.invalid") } });
+#pragma warning restore RESP010
         await Assert.That(async () => await standalone.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start))
             .Throws<InvalidOperationException>();
         await Assert.That(async () => await standalone.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start, countHint: 0))
@@ -444,12 +446,14 @@ public class ClusterScanTests
     public async Task RepeatedPageRetirementSharesOneDiscoveryBudget(bool configured)
     {
         await using var cluster = new ScanCluster();
+#pragma warning disable RESP010 // Test-owned client isolates scan cursors, node generations, and discovery budgets for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", cluster.First.Server.Port)],
             ReconnectPolicy = configured ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 } : null,
         });
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var router = client.Core.Cluster!;
         var retired = 0;
@@ -494,12 +498,14 @@ public class ClusterScanTests
     public async Task PageRetirementAtRedirectLimitReportsFailedDiscovery(bool unlimited)
     {
         await using var cluster = new ScanCluster();
+#pragma warning disable RESP010 // Test-owned client isolates scan cursors, node generations, and discovery budgets for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", cluster.First.Server.Port)],
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = unlimited ? null : 5 },
         });
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var router = client.Core.Cluster!;
         var retired = 0;

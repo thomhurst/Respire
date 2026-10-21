@@ -29,11 +29,13 @@ public class ClusterReadyReplyTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
         await using var server = Primary();
+#pragma warning disable RESP010 // Test-owned client isolates ready-reply ownership and recovery state on the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             ReconnectPolicy = reconnectPolicy ? new() : null,
             EnableReplicaRedirects = replicaRedirects,
         });
+#pragma warning restore RESP010
         var operation = shape == "integer" ? "STRLEN" : "GET";
         var connection = client.Core.Cluster!.TryAcquireReadyConnection(ClusterHash.GetSlot("ready"), default)!;
         await Assert.That(connection).IsNotNull();
@@ -90,7 +92,9 @@ public class ClusterReadyReplyTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
         await using var server = Primary();
+#pragma warning disable RESP010 // Test-owned client isolates ready-reply ownership and recovery state on the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var slot = ClusterHash.GetSlot("ready");
         Exception expected = code == "retired"
@@ -141,7 +145,9 @@ public class ClusterReadyReplyTests
             if (code != "ASK") topology = Slots(target.Port);
             return Encoding.ASCII.GetBytes($"-{code} {slot} 127.0.0.1:{target.Port}\r\n");
         };
+#pragma warning disable RESP010 // Test-owned client isolates ready-reply ownership and recovery state on the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(Options(source));
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         switch (shape)
         {
@@ -182,7 +188,9 @@ public class ClusterReadyReplyTests
             "PING" => FakeRespServer.PongReply,
             _ => null,
         };
+#pragma warning disable RESP010 // Test-owned client isolates ready-reply ownership and recovery state on the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(Options(source));
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         for (var round = 0; round < 4; round++)
         {
@@ -204,7 +212,9 @@ public class ClusterReadyReplyTests
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
         await using var source = Primary();
         await using var target = Primary();
+#pragma warning disable RESP010 // Test-owned client isolates ready-reply ownership and recovery state on the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(Options(source));
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var admissions = 0;
         var command = new AdmissionCommand(shape == "integer" ? Verbs.StrLen : Verbs.Get, () =>
@@ -240,7 +250,9 @@ public class ClusterReadyReplyTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
         await using var server = Primary();
+#pragma warning disable RESP010 // Test-owned client isolates ready-reply ownership and recovery state on the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         // Calling must return a task; a synchronous throw fails before the assertion.

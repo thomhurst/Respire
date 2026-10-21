@@ -24,6 +24,7 @@ public class ClusterNotificationRoutingTests
         Configure(first, topology, resp3);
         Configure(second, topology, resp3);
         Configure(third, topology, resp3);
+#pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
@@ -31,6 +32,7 @@ public class ClusterNotificationRoutingTests
             Connections = 1,
             Endpoints = [new("127.0.0.1", first.Port)],
         });
+#pragma warning restore RESP010
 
         var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
         var thirdAckPending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -85,6 +87,7 @@ public class ClusterNotificationRoutingTests
         Configure(first, topology, resp3: false);
         Configure(second, topology, resp3: false);
         Configure(third, topology, resp3: false);
+#pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
@@ -92,6 +95,7 @@ public class ClusterNotificationRoutingTests
             Connections = 1,
             Endpoints = [new("127.0.0.1", first.Port)],
         });
+#pragma warning restore RESP010
 
         var key = Enumerable.Range(0, 100_000).Select(static index => $"tenant:{index}")
             .First(static value => ClusterHash.GetSlot(value) is >= 5461 and <= 10922);
@@ -115,6 +119,7 @@ public class ClusterNotificationRoutingTests
         var topology = Topology(first.Port, second.Port);
         Configure(first, topology, resp3: false);
         Configure(second, topology, resp3: false);
+#pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
@@ -123,6 +128,7 @@ public class ClusterNotificationRoutingTests
             Database = 1,
             Endpoints = [new("127.0.0.1", first.Port)],
         });
+#pragma warning restore RESP010
 
         var key = Enumerable.Range(0, 100_000).Select(static index => $"tenant:{index}")
             .First(static value => ClusterHash.GetSlot(value) is >= 8192 and <= 16383);
@@ -606,6 +612,7 @@ public class ClusterNotificationRoutingTests
         });
         listener.Start();
         Configure(server, SinglePrimaryTopology(server.Port), resp3: false);
+#pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
@@ -626,6 +633,7 @@ public class ClusterNotificationRoutingTests
             },
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var subscription = await client.SubscribeAsync(RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0))
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -748,7 +756,9 @@ public class ClusterNotificationRoutingTests
             },
             Endpoints = [new("127.0.0.1", first.Port)],
         };
-        var client = RespireClient.Create(options);
+#pragma warning disable RESP010 // Test-owned client exercises disposal during pending subscription replay; scope cleanup also handles setup failures.
+        await using var client = RespireClient.Create(options);
+#pragma warning restore RESP010
         client.ConnectionStateChanged += change =>
         {
             if (change.Endpoint.Port == second.Port && change.State == RespireConnectionState.Reconnecting)
@@ -960,6 +970,7 @@ public class ClusterNotificationRoutingTests
             tenantAdmitted.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
@@ -977,6 +988,7 @@ public class ClusterNotificationRoutingTests
             },
             Endpoints = [new("127.0.0.1", first.Port)],
         });
+#pragma warning restore RESP010
         var stable = await client.SubscribeAsync(stableDescriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         var tenant = await client.SubscribeAsync(tenantDescriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -1012,6 +1024,7 @@ public class ClusterNotificationRoutingTests
         var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
         var suppress = true;
         second.SuppressReply = command => suppress && command == $"PSUBSCRIBE {descriptor}";
+#pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
@@ -1020,6 +1033,7 @@ public class ClusterNotificationRoutingTests
             CommandTimeout = TimeSpan.FromMilliseconds(200),
             Endpoints = [new("127.0.0.1", first.Port)],
         });
+#pragma warning restore RESP010
         var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
@@ -1051,6 +1065,7 @@ public class ClusterNotificationRoutingTests
         Configure(second, () => topology, resp3: false);
         var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
         second.SuppressReply = command => command == $"PSUBSCRIBE {descriptor}";
+#pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
@@ -1065,6 +1080,7 @@ public class ClusterNotificationRoutingTests
             },
             Endpoints = [new("127.0.0.1", first.Port)],
         });
+#pragma warning restore RESP010
         var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
@@ -1107,6 +1123,7 @@ public class ClusterNotificationRoutingTests
             }
             return configuredReply(connectionId, command);
         };
+#pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
@@ -1121,6 +1138,7 @@ public class ClusterNotificationRoutingTests
             },
             Endpoints = [new("127.0.0.1", first.Port)],
         });
+#pragma warning restore RESP010
         var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
@@ -1418,6 +1436,7 @@ public class ClusterNotificationRoutingTests
             if (Interlocked.Increment(ref tenantSubscribes) == 3) tenantRetried.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
@@ -1426,6 +1445,7 @@ public class ClusterNotificationRoutingTests
             CommandTimeout = TimeSpan.FromMilliseconds(200),
             Endpoints = [new("127.0.0.1", first.Port)],
         });
+#pragma warning restore RESP010
         await using var stable = await client.SubscribeAsync(stableDescriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await using var tenant = await client.SubscribeAsync(tenantDescriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         var reconnecting = 0;
@@ -1487,6 +1507,7 @@ public class ClusterNotificationRoutingTests
             if (command == $"PSUBSCRIBE {laterDescriptor}") laterAdded.TrySetResult();
             return configured(connectionId, command);
         };
+#pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
@@ -1502,6 +1523,7 @@ public class ClusterNotificationRoutingTests
             },
             Endpoints = [new("127.0.0.1", first.Port)],
         });
+#pragma warning restore RESP010
         var clock = new NotificationRecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
         await using var stable = await hub.SubscribeAsync(
@@ -1606,6 +1628,7 @@ public class ClusterNotificationRoutingTests
             if (command == $"PSUBSCRIBE {rejectedDescriptor}") rejectedAdded.TrySetResult();
             return configured(connectionId, command);
         };
+#pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
@@ -1622,6 +1645,7 @@ public class ClusterNotificationRoutingTests
             },
             Endpoints = [new("127.0.0.1", first.Port)],
         });
+#pragma warning restore RESP010
         var clock = new NotificationRecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
         await using var delayed = await hub.SubscribeAsync(
@@ -1710,6 +1734,7 @@ public class ClusterNotificationRoutingTests
         var topology = Topology(first.Port, second.Port);
         Configure(first, () => topology, resp3: false);
         Configure(second, () => topology, resp3: false);
+#pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
@@ -1727,6 +1752,7 @@ public class ClusterNotificationRoutingTests
             },
             Endpoints = [new("127.0.0.1", first.Port)],
         });
+#pragma warning restore RESP010
         var descriptor = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
         var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         var secondEndpoint = new RespireEndpoint("127.0.0.1", second.Port);
