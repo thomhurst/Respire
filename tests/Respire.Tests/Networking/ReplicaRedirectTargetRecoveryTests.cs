@@ -19,6 +19,82 @@ public class ReplicaRedirectTargetRecoveryTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task SharedRecoveryFailuresKeepTheObservedSocketContinuityFence(bool cancelWaiter)
+    {
+        var rejectHandshake = false;
+        await using var target = new FakeRespServer(8)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("HELLO 3", StringComparison.Ordinal)
+                && Volatile.Read(ref rejectHandshake) ? Bytes("-LOADING dataset\r\n") : TargetReply(command),
+        };
+        await using var source = new FakeRespServer(8) { ReplyOverride = (_, command) => TargetReply(command) };
+        await using var client = await RespireClient.ConnectAsync(Options(source.Port, retry: false));
+        var targets = client.Core.RedirectTargets!;
+        var endpoint = new RespireEndpoint("127.0.0.1", target.Port);
+        // Keep the initialized owner busy, so exhaustion cannot replace it during selection.
+        using var original = await targets.AcquireAsync(endpoint, default);
+        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        original!.Connection.PendingCommandsFailing += () => failed.TrySetResult();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        target.GateCommand("HELLO 3", release.Task, () => started.TrySetResult());
+        using var cancellation = new CancellationTokenSource();
+        var before = client.ClientSideCache!.GetStatistics().ContinuityFlushes;
+        Volatile.Write(ref rejectHandshake, !cancelWaiter);
+        target.CloseConnections();
+        try
+        {
+            await failed.Task.WaitAsync(Limit);
+            await started.Task.WaitAsync(Limit);
+            var second = targets.AcquireAsync(endpoint, cancellation.Token).AsTask();
+            var third = targets.AcquireAsync(endpoint, default).AsTask();
+            await Assert.That(second.IsCompleted).IsFalse();
+            await Assert.That(third.IsCompleted).IsFalse();
+            // This value is covered by the source's uninterrupted tracking connection.
+            // Recovery waiters must not repeat the target socket's completed loss fence.
+            await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("value");
+            if (cancelWaiter)
+            {
+                cancellation.Cancel();
+                var error = await Assert.That(async () => { using var lease = await second.WaitAsync(Limit); })
+                    .Throws<OperationCanceledException>();
+                await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+            }
+            release.TrySetResult();
+            if (cancelWaiter)
+            {
+                using var recovered = await third.WaitAsync(Limit);
+                await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - before).IsEqualTo(1L);
+                await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
+                await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("value");
+                await Assert.That(source.ReceivedCommands.Count(command => command == "GET fresh")).IsEqualTo(1);
+
+                // The replacement socket owns a fresh loss fence, independent of the old waiters.
+                var failedAgain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                recovered!.Connection.PendingCommandsFailing += () => failedAgain.TrySetResult();
+                target.CloseConnections();
+                await failedAgain.Task.WaitAsync(Limit);
+                await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - before).IsEqualTo(2L);
+                await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+            }
+            else
+            {
+                await Assert.That(async () => { using var lease = await second.WaitAsync(Limit); })
+                    .Throws<RespireReconnectLimitException>();
+                await Assert.That(async () => { using var lease = await third.WaitAsync(Limit); })
+                    .Throws<RespireReconnectLimitException>();
+                await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - before).IsEqualTo(1L);
+                await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
+                await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("value");
+                await Assert.That(source.ReceivedCommands.Count(command => command == "GET fresh")).IsEqualTo(1);
+            }
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task SharedInitialAcquisitionFailuresKeepTheOriginalContinuityFence(bool cancelWaiter)
     {
         var rejectHandshake = true;

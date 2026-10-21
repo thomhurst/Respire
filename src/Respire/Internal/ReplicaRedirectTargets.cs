@@ -74,10 +74,10 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
                     }
                     selected.Readers++;
                     selected.LastUse = ++_nextUse;
-                    // All callers sharing an unfinished initial handshake belong to the
-                    // new destination's already-fenced continuity episode. Snapshot this
-                    // before waiting: another caller can connect before this one fails.
-                    continuityFenced |= !selected.Node.IsInitialized;
+                    // Once selected, continuity belongs to the retained owner: admission
+                    // fenced a new destination, and observed sockets fence established
+                    // owners. Canceling or exhausting a waiter creates no new tracking gap.
+                    continuityFenced = true;
                 }
             }
             finally { _selection.Release(); }
@@ -100,8 +100,9 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
         }
         catch
         {
-            // Selection cancellation/disposal and initialized-owner failures need a fence.
-            // Release selection before metrics; initial-handshake waiters share its fence.
+            // Failures before selecting an owner still need a fence. Selected-owner
+            // waiters share its admission/socket fences, including during recovery.
+            // Release selection before publishing metrics.
             if (!continuityFenced) _cache.FlushForContinuityLoss();
             throw;
         }
