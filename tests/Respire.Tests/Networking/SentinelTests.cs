@@ -217,6 +217,7 @@ public class SentinelTests
         await using var peer = new FakeRespServer(PrimaryReply(primary.Port));
         await using var seed = new FakeRespServer(PrimaryReply(stale.Port), PeersReply(peer.Port));
         var opened = new System.Collections.Concurrent.ConcurrentQueue<int>();
+#pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -235,6 +236,7 @@ public class SentinelTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         await client.PingAsync();
         await stale.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(stale.ReceivedCommands).IsEquivalentTo(["ROLE"]);
@@ -252,11 +254,13 @@ public class SentinelTests
     {
         await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
         await using var seed = new FakeRespServer(PrimaryReply(primary.Port), "-NOPERM SENTINELS is denied\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", seed.Port)], SentinelPrimaryName = "mymaster",
         });
+#pragma warning restore RESP010
         await client.PingAsync();
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
     }
@@ -277,6 +281,7 @@ public class SentinelTests
             CloseConnectionAfterCommand = failure == "disconnect" ? 2 : null,
             SuppressReply = command => failure == "timeout" && command == "SENTINEL SENTINELS mymaster",
         };
+#pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -284,6 +289,7 @@ public class SentinelTests
             CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
             LoggerFactory = throwingLogger ? logger : null,
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+#pragma warning restore RESP010
         await client.PingAsync();
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
         await Assert.That(logger.Failures > 0).IsEqualTo(throwingLogger);
@@ -302,12 +308,14 @@ public class SentinelTests
             CloseConnectionAfterCommand = failure == "disconnect" ? 3 : null,
             SuppressReply = command => failure == "timeout" && command == "SENTINEL MASTER mymaster",
         };
+#pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
             CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2), LoggerFactory = logger,
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+#pragma warning restore RESP010
         await client.PingAsync();
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
         await Assert.That(logger.Failures).IsGreaterThan(0);
@@ -500,12 +508,14 @@ public class SentinelTests
         await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
         await using var first = new FakeRespServer(PrimaryReply(stalled.Port), "*0\r\n"u8.ToArray());
         await using var second = new FakeRespServer(PrimaryReply(primary.Port), "*0\r\n"u8.ToArray());
+#pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
             SentinelPrimaryName = "mymaster", CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+#pragma warning restore RESP010
         await client.PingAsync();
         await stalled.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
@@ -636,6 +646,7 @@ public class SentinelTests
         await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
         await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
 
+#pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -643,6 +654,7 @@ public class SentinelTests
             SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(1),
         });
+#pragma warning restore RESP010
 
         _ = await client.PingAsync();
 
@@ -664,6 +676,7 @@ public class SentinelTests
             FakeRespServer.OkReply,
             PrimaryReply(primary.Port));
 
+#pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -677,6 +690,7 @@ public class SentinelTests
             SentinelCredentialProvider = useProviders ? new FixedCredentials("sentinel-user", "sentinel-secret") : null,
             ConnectTimeout = TimeSpan.FromSeconds(1),
         });
+#pragma warning restore RESP010
 
         _ = await client.PingAsync();
 
@@ -710,8 +724,10 @@ public class SentinelTests
             FakeRespServer.PongReply);
         await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
 
+#pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = await RespireClient.ConnectAsync(
             $"redis://:redis-secret@127.0.0.1:{sentinel.Port}?serviceName=mymaster&sentinelPassword=&protocol=2");
+#pragma warning restore RESP010
 
         _ = await client.PingAsync();
 
@@ -750,7 +766,9 @@ public class SentinelTests
             options = RespireOptions.Parse(
                 $"127.0.0.1:{invalidSentinel.Port},127.0.0.1:{validSentinel.Port},serviceName=mymaster,connectTimeout=1000,protocol=2");
         }
+#pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
 
         _ = await client.PingAsync();
 
@@ -770,6 +788,7 @@ public class SentinelTests
         unresponsiveSentinel.SuppressReply = static _ => true;
         await using var responsiveSentinel = new FakeRespServer(PrimaryReply(primary.Port));
 
+#pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -784,6 +803,7 @@ public class SentinelTests
             CommandTimeout = null,
             ConnectTimeout = TimeSpan.FromSeconds(5),
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(20));
+#pragma warning restore RESP010
 
         _ = await client.PingAsync();
 
@@ -805,6 +825,7 @@ public class SentinelTests
         await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
         sentinel.DelayReply(0, 2_400);
 
+#pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -818,6 +839,7 @@ public class SentinelTests
             CommandTimeout = TimeSpan.FromSeconds(4),
             ConnectTimeout = TimeSpan.FromSeconds(6),
         });
+#pragma warning restore RESP010
 
         _ = await client.PingAsync();
 
@@ -841,6 +863,7 @@ public class SentinelTests
         await using var staleSentinel = new FakeRespServer(PrimaryReply(unavailablePrimaryPort));
         await using var currentSentinel = new FakeRespServer(PrimaryReply(primary.Port));
 
+#pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -852,6 +875,7 @@ public class SentinelTests
             SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(1),
         });
+#pragma warning restore RESP010
 
         _ = await client.PingAsync();
 
@@ -897,12 +921,14 @@ public class SentinelTests
     [Test]
     public async Task Create_DoesNotContactSentinelBeforeFirstOperation()
     {
+#pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", 26379) },
             SentinelPrimaryName = "mymaster",
         });
+#pragma warning restore RESP010
 
         await Assert.That(client.IsConnected).IsFalse();
     }

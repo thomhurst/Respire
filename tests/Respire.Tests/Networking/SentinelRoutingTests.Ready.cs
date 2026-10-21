@@ -21,7 +21,9 @@ public partial class SentinelRoutingTests
         await using var primary = Primary();
         primary.SuppressReply = command => command.StartsWith("GET ") || command.StartsWith("INCR");
         await using var sentinel = Sentinel(() => primary.Port);
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
 
         var generation = client.Core.Sentinel!.Current!;
@@ -112,7 +114,9 @@ public partial class SentinelRoutingTests
         await using var sentinel = useSentinel ? Sentinel(() => primary.Port) : null;
         var options = sentinel is not null ? Options(sentinel.Port)
             : Options(primary.Port) with { SentinelPrimaryName = null };
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         if (sentinel is not null) await WaitForInitialSentinelValidationAsync(client, sentinel);
         var operation = shape == "integer" ? "INCR" : shape == "raw" ? "CONTROL" : "GET";
         var expectsAsync = useSentinel || RespireTelemetry.IsOperationEnabled(operation);
@@ -215,7 +219,9 @@ public partial class SentinelRoutingTests
             ? "$8\r\npromoted\r\n"u8.ToArray() : null);
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+#pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+#pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var generation = client.Core.Sentinel!.Current!;
         Volatile.Write(ref primaryPort, promoted.Port);
