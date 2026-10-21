@@ -29,16 +29,6 @@ on:
           - default
           - medium
           - long
-      profile-pubsub:
-        description: 'Also collect pub/sub phase samples and a separate EventPipe trace (timings are diagnostic only)'
-        required: false
-        default: false
-        type: boolean
-      server-latency-diagnostics:
-        description: 'Investigate #1744: 21 server-operation ties and two GET controls, plus separate CPU/topology diagnostics'
-        required: false
-        default: false
-        type: boolean
 
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
@@ -52,7 +42,7 @@ jobs:
   comparison-benchmarks:
     name: Benchmark (${{ matrix.framework }})
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.server-latency-diagnostics && 180 || 360 }}
+    timeout-minutes: 360
     env:
       STACKEXCHANGE_REDIS_BENCHMARK_VERSION: ${{ inputs.stackexchange-version || 'repository' }}
 
@@ -133,44 +123,14 @@ jobs:
           BENCH_FILTER: ${{ github.event.inputs.filter || '*' }}
           # The scheduled/default manual run uses medium; dry validates setup only.
           BENCH_JOB: ${{ github.event.inputs.job || (github.event_name == 'schedule' && 'medium' || 'short') }}
-          SERVER_LATENCY_DIAGNOSTICS: ${{ inputs.server-latency-diagnostics || false }}
         run: |
-          filters=("$BENCH_FILTER")
-          if [ "$SERVER_LATENCY_DIAGNOSTICS" = true ]; then
-            filters=('*CommonOperationsBenchmarks.*' '*ClientSideCachingBenchmarks.*ServerRead')
-          fi
           dotnet run -c Release -f ${{ matrix.framework }} --no-build -- \
-            --filter "${filters[@]}" \
+            --filter "$BENCH_FILTER" \
             --job "$BENCH_JOB" \
             --launchCount 2 \
             --statisticalTest 5% \
             --exporters json markdown \
             --artifacts ./BenchmarkDotNet.Artifacts
-
-      - name: Profile pub/sub acknowledgement and consumer scheduling separately
-        if: inputs.profile-pubsub == true
-        working-directory: benchmarks/Respire.ComparisonBenchmarks
-        env:
-          REDIS_HOST: localhost
-          REDIS_PORT: 6379
-        run: |
-          set -euo pipefail
-          mkdir -p BenchmarkDotNet.Artifacts/pubsub-profile
-          dotnet run -c Release -f net10.0 --no-build -- \
-            --profile-pubsub BenchmarkDotNet.Artifacts/pubsub-profile/phases.json \
-            > BenchmarkDotNet.Artifacts/pubsub-profile/phases.log 2>&1
-          # EP attaches to measurement iterations. Keep its perturbed timings out of
-          # the unprofiled comparison reports and never use them for a speed claim.
-          dotnet run -c Release -f net10.0 --no-build -- \
-            --filter '*PubSubComparisonBenchmarks*' --job short --profiler EP --threading \
-            --exporters json markdown --artifacts ./BenchmarkDotNet.Artifacts/pubsub-profile/eventpipe \
-            > BenchmarkDotNet.Artifacts/pubsub-profile/eventpipe.log 2>&1
-
-      - name: Collect separate server latency diagnostics
-        if: inputs.server-latency-diagnostics
-        env:
-          REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
-        run: python3 scripts/benchmarks/ServerLatencyDiagnostics.py
 
       - name: Publish results to job summary
         if: always()
@@ -195,42 +155,6 @@ jobs:
             echo "No benchmark results found in $RESULTS_DIR" >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Validate and summarize pub/sub diagnostics
-        if: inputs.profile-pubsub == true
-        shell: python
-        run: |
-          import json
-          import math
-          import os
-          from pathlib import Path
-          root = Path('benchmarks/Respire.ComparisonBenchmarks/BenchmarkDotNet.Artifacts/pubsub-profile')
-          profile = json.loads((root / 'phases.json').read_text())
-          assert profile['SchemaVersion'] == 1
-          samples = profile['Samples']
-          assert len(samples) == 10000
-          assert {s['Client'] for s in samples} == {'Respire', 'StackExchange.Redis'}
-          lines = ['## Pub/sub diagnostic phases (instrumented, not comparison timings)', '',
-                   profile['Notes'], '',
-                   '| Client | Phase | Mean us | P50 us | P95 us | P99 us | Synchronous reads |',
-                   '| --- | --- | ---: | ---: | ---: | ---: | ---: |']
-          for client in ('Respire', 'StackExchange.Redis'):
-              rows = [s for s in samples if s['Client'] == client]
-              assert len(rows) == 5000
-              synchronous = sum(s['ReadCompletedSynchronously'] for s in rows)
-              for phase in ('AckMicroseconds', 'AfterAckMicroseconds'):
-                  values = sorted(s[phase] for s in rows)
-                  assert all(math.isfinite(v) and v >= 0 for v in values)
-                  percentiles = [values[math.ceil(len(values) * p) - 1] for p in (.50, .95, .99)]
-                  cells = ' | '.join(f'{v:.3f}' for v in [sum(values) / len(values), *percentiles])
-                  lines.append(f'| {client} | {phase} | {cells} | {synchronous}/5000 |')
-          for method in ('Respire_PublishAndConsume', 'StackExchange_PublishAndConsume'):
-              assert list((root / 'eventpipe').rglob(f'*{method}*.nettrace')), f'Missing trace: {method}'
-              assert list((root / 'eventpipe').rglob(f'*{method}*.speedscope.json')), f'Missing CPU profile: {method}'
-          summary = '\n'.join(lines) + '\n'
-          (root / 'summary.md').write_text(summary)
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
-              output.write(summary)
-
       - name: Upload benchmark artifacts
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -247,8 +171,6 @@ jobs:
     # measurement job longer than short. Version-specific runs are reviewed separately.
     if: >-
       github.ref == 'refs/heads/main' &&
-      inputs.profile-pubsub != true &&
-      !inputs.server-latency-diagnostics &&
       (github.event_name == 'schedule' ||
        (github.event_name == 'workflow_dispatch' &&
         github.event.inputs.filter == '*' &&

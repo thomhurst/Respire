@@ -96,7 +96,6 @@
     <Project Path="tests/Respire.VectorData.Conformance.Tests/Respire.VectorData.Conformance.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
-    <Project Path="tools/Respire.ServerLatencyDiagnostics/Respire.ServerLatencyDiagnostics.csproj" />
     <Project Path="tools/Respire.StressTests/Respire.StressTests.csproj" />
   </Folder>
   <Project Path="Respire.Pipeline/Respire.Pipeline.csproj" />

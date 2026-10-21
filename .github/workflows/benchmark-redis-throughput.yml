@@ -12,7 +12,7 @@ on:
         required: false
         default: '100'
   schedule:
-    # Run weekly on Sunday at 2 AM UTC
+    # Weekly, Sunday 02:00 UTC
     - cron: '0 2 * * 0'
 
 env:
@@ -20,15 +20,22 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
 
+permissions:
+  contents: read
+
 jobs:
   redis-throughput-benchmarks:
     name: Run Redis Throughput Benchmarks
     runs-on: ubuntu-latest
-    
+    env:
+      # The scheduled run has no inputs, so it falls back to the dispatch defaults.
+      RESPIRE_THROUGHPUT_CLIENTS: ${{ inputs.concurrent-clients || '1,10,50' }}
+      RESPIRE_THROUGHPUT_OPERATIONS: ${{ inputs.operations-per-client || '100' }}
+
     strategy:
       matrix:
         framework: [net10.0]
-    
+
     steps:
       # Load infrastructure from the workflow revision, independently of benchmark source revisions.
       - name: Checkout Docker mirror action
@@ -49,125 +56,58 @@ jobs:
         shell: bash
         run: echo '::warning::Could not load Docker mirror action; pulls go straight to Docker Hub'
       - name: Checkout code
-        uses: actions/checkout@v7
-      
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Setup .NET SDKs
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
             10.0.x
-      
-      - name: Restore dependencies
-        run: dotnet restore
-      
-      - name: Build
-        run: dotnet build -c Release --no-restore
-      
-      - name: Set benchmark parameters
-        id: params
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "concurrent_clients=${{ github.event.inputs.concurrent-clients }}" >> $GITHUB_OUTPUT
-            echo "operations=${{ github.event.inputs.operations-per-client }}" >> $GITHUB_OUTPUT
-          else
-            echo "concurrent_clients=1,10,50" >> $GITHUB_OUTPUT
-            echo "operations=100" >> $GITHUB_OUTPUT
-          fi
-      
+
+      - name: Build benchmarks
+        run: dotnet build benchmarks/Respire.Benchmarks -c Release -f ${{ matrix.framework }}
+
       - name: Run Redis Throughput Benchmarks
-        env:
-          RESPIRE_THROUGHPUT_CLIENTS: ${{ steps.params.outputs.concurrent_clients }}
-          RESPIRE_THROUGHPUT_OPERATIONS: ${{ steps.params.outputs.operations }}
+        working-directory: benchmarks/Respire.Benchmarks
+        # One run covers every client count; the benchmark reads its params from the environment.
         run: |
-          cd benchmarks/Respire.Benchmarks
-          
-          # One run covers every client count; the benchmark reads its params from the environment.
-          dotnet run -c Release -f ${{ matrix.framework }} -- \
+          dotnet run -c Release -f ${{ matrix.framework }} --no-build -- \
             --filter "*RedisThroughputBenchmarks*" \
             --exporters json markdown html \
             --artifacts ./BenchmarkDotNet.Artifacts \
             --iterationCount 5 \
             --warmupCount 3
-      
+
       - name: Generate throughput report
+        if: always()
         run: |
           report=benchmarks/Respire.Benchmarks/throughput-report.md
+          results=benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/results
           {
-            echo "# Redis Throughput Benchmark Report"
+            echo "## Redis Throughput Benchmark Results"
             echo ""
-            echo "## Configuration"
-            echo "- Framework: ${{ matrix.framework }}"
-            echo "- Concurrent Clients: ${{ steps.params.outputs.concurrent_clients }}"
-            echo "- Operations per Client: ${{ steps.params.outputs.operations }}"
-            echo "- Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            echo "| Parameter | Value |"
+            echo "| --- | --- |"
+            echo "| Framework | ${{ matrix.framework }} |"
+            echo "| Concurrent clients | $RESPIRE_THROUGHPUT_CLIENTS |"
+            echo "| Operations per client | $RESPIRE_THROUGHPUT_OPERATIONS |"
+            echo "| Runner | ${{ runner.os }} - ${{ runner.arch }} |"
+            echo "| Date | $(date -u +'%Y-%m-%d %H:%M:%S UTC') |"
             echo ""
-            echo "## Results Summary"
-            echo ""
-            cat benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/results/*-report-github.md
+            if compgen -G "$results/*-report-github.md" > /dev/null; then
+              cat "$results"/*-report-github.md
+            else
+              echo "No benchmark results found in $results"
+            fi
           } > "$report"
-      
-      - name: Generate GitHub Summary
-        run: |
-          echo "## 🚀 Redis Throughput Benchmark Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Framework** | ${{ matrix.framework }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Concurrent Clients** | ${{ steps.params.outputs.concurrent_clients }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Operations per Client** | ${{ steps.params.outputs.operations }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Runner** | ${{ runner.os }} - ${{ runner.arch }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Timestamp** | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Add throughput report if it exists
-          if [ -f "benchmarks/Respire.Benchmarks/throughput-report.md" ]; then
-            echo "### 📈 Throughput Analysis" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            # Extract key sections from the report
-            sed -n '/## Results Summary/,/^##/p' benchmarks/Respire.Benchmarks/throughput-report.md | head -n -1 >> $GITHUB_STEP_SUMMARY
-            
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          # Add comparison insights
-          echo "### 💡 Benchmark Insights" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- Higher **Ops/sec** indicates better throughput" >> $GITHUB_STEP_SUMMARY
-          echo "- Lower **Mean** time indicates better latency" >> $GITHUB_STEP_SUMMARY
-          echo "- **P95** shows the 95th percentile latency (consistency indicator)" >> $GITHUB_STEP_SUMMARY
-          echo "- Compare Respire performance against StackExchange.Redis baseline" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Add full report as collapsed section
-          if [ -f "benchmarks/Respire.Benchmarks/throughput-report.md" ]; then
-            echo "<details>" >> $GITHUB_STEP_SUMMARY
-            echo "<summary>📄 View Complete Throughput Report</summary>" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo '```markdown' >> $GITHUB_STEP_SUMMARY
-            cat benchmarks/Respire.Benchmarks/throughput-report.md >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "</details>" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "*Throughput benchmarks powered by [BenchmarkDotNet](https://benchmarkdotnet.org/)*" >> $GITHUB_STEP_SUMMARY
-      
+          cat "$report" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v7
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: redis-throughput-benchmarks-${{ matrix.framework }}
           path: |
             benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/
             benchmarks/Respire.Benchmarks/throughput-report.md
           retention-days: 30
-      
-      - name: Upload throughput report as release asset (if tag)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v3
-        with:
-          files: benchmarks/Respire.Benchmarks/throughput-report.md
-          name: Throughput Benchmark Report - ${{ matrix.framework }}

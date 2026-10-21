@@ -89,8 +89,9 @@ in the [server-latency investigation below](#server-latency-investigation-outcom
 The older [10KB SET investigation](https://github.com/thomhurst/Respire/issues/1553) concerned
 a different, noisy run; these measurements do not establish a continuing 15% regression.
 
-The comparison workflow has an opt-in `server-latency-diagnostics` dispatch input for
-that investigation. It runs the unchanged CommonOperationsBenchmarks methods and the
+The comparison workflow had an opt-in `server-latency-diagnostics` dispatch input for
+that investigation; it was removed once the investigation closed, and the tooling remains
+in [09e062d8](https://github.com/thomhurst/Respire/commit/09e062d8). It ran the unchanged CommonOperationsBenchmarks methods and the
 four uncached ClientSideCachingBenchmarks pairs, including concurrent/pipelined GET
 controls, with the selected BenchmarkDotNet job and the existing 5% statistical test.
 Use the `3.4.5` dependency and `medium` job when reproducing these ties.
@@ -382,7 +383,8 @@ impossible. A future candidate needs an isolated attribution experiment, a contr
 before/after comparison on the same rig, and correctness coverage for those contracts.
 Fan-out, slow consumers, reconnects and other payload sizes remain outside this measurement.
 
-Manual comparison runs can enable `profile-pubsub` to reproduce the diagnostic collection.
+The `profile-pubsub` collection that produced these diagnostics was removed after the
+investigation closed; it remains in [9b570e2c](https://github.com/thomhurst/Respire/commit/9b570e2c).
 Only the unprofiled reports support the published latency/allocation comparisons; the
 instrumented ShortRun results do not establish a win.
 
