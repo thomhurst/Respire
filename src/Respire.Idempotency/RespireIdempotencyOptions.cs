@@ -5,10 +5,10 @@ namespace Respire.Idempotency;
 /// <summary>Controls buffering, retention, and caller isolation for HTTP idempotency.</summary>
 public sealed class RespireIdempotencyOptions
 {
-    /// <summary>Returns a stable, trusted caller/tenant identity. Required; a missing identity rejects keyed requests with 400.</summary>
+    /// <summary>Returns a stable, trusted caller/tenant identity. Required; a missing or malformed UTF-16 identity rejects keyed requests with 400.</summary>
     public Func<HttpContext, string?>? CallerScope { get; set; }
 
-    /// <summary>A namespace unique to this application and response format. Defaults to respire:http-idempotency:v1:.</summary>
+    /// <summary>A nonblank, well-formed UTF-16 namespace unique to this application and response format. Invalid values fail startup validation. Defaults to respire:http-idempotency:v1:.</summary>
     public string KeyPrefix { get; set; } = "respire:http-idempotency:v1:";
 
     /// <summary>Lifetime of a pending claim and, from completion, its stored result. Defaults to 24 hours.</summary>

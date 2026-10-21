@@ -12,6 +12,7 @@ namespace Respire.Idempotency;
 internal sealed class RespireIdempotencyMiddleware(RequestDelegate next, RespireIdempotency store,
     IOptions<RespireIdempotencyOptions> options, ILogger<RespireIdempotencyMiddleware> logger)
 {
+    private static readonly Encoding IdentityEncoding = new UTF8Encoding(false, true);
     private readonly RespireIdempotencyOptions _options = options.Value;
 
     public async Task InvokeAsync(HttpContext context)
@@ -33,6 +34,17 @@ internal sealed class RespireIdempotencyMiddleware(RequestDelegate next, Respire
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             return;
         }
+        string key;
+        try
+        {
+            key = BuildKey(context, endpoint.Name, caller, keys[0]!);
+        }
+        catch (EncoderFallbackException)
+        {
+            // Lossy encoding would let distinct identities share a claim and stored response.
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
         string? fingerprint = null;
         if (_options.VerifyRequestBody)
         {
@@ -43,7 +55,6 @@ internal sealed class RespireIdempotencyMiddleware(RequestDelegate next, Respire
                 return;
             }
         }
-        var key = BuildKey(context, endpoint.Name, caller, keys[0]!);
         // Keep waiting for ownership after a disconnect so we can release an accepted claim.
         using var acquisition = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var claim = await store.TryBeginAsync(key, _options.TimeToLive, fingerprint, acquisition.Token).ConfigureAwait(false);
@@ -143,7 +154,7 @@ internal sealed class RespireIdempotencyMiddleware(RequestDelegate next, Respire
     private string BuildKey(HttpContext context, string endpoint, string caller, string key)
     {
         using var bytes = new MemoryStream();
-        using var writer = new BinaryWriter(bytes, Encoding.UTF8, leaveOpen: true);
+        using var writer = new BinaryWriter(bytes, IdentityEncoding, leaveOpen: true);
         foreach (var part in new[] { endpoint, caller, context.Request.Method, context.Request.Host.Value ?? "",
                      context.Request.PathBase.Value ?? "", context.Request.Path.Value ?? "", context.Request.QueryString.Value ?? "", key })
             writer.Write(part);
