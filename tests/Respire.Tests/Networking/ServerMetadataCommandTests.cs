@@ -58,7 +58,9 @@ public class ServerMetadataCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         foreach (var operation in Mutations(client.Server))
             await Assert.That(operation).ThrowsExactly<NotSupportedException>();
+#pragma warning disable RESP010 // This pre-cancellation test creates a separate unconnected admin client to verify metadata operations send nothing.
         await using var admin = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], AllowAdmin = true });
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         foreach (var operation in Mutations(admin.Server, cancellation.Token))
@@ -77,7 +79,9 @@ public class ServerMetadataCommandTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply, FakeRespServer.OkReply,
             "+Background saving started\r\n"u8.ToArray(), "+Background saving scheduled\r\n"u8.ToArray(),
             "+Background append only file rewriting scheduled\r\n"u8.ToArray(), "-ERR Background save already in progress\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This persistence test owns an admin client with scripted acceptance replies and a final server error.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true });
+#pragma warning restore RESP010
         await client.Server.ConfigRewriteAsync();
         await client.Server.ConfigResetStatisticsAsync();
         await client.Server.SaveAsync();
@@ -103,7 +107,9 @@ public class ServerMetadataCommandTests
             discovering.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // This metadata fan-out test owns its cluster client and pauses discovery to verify binary input snapshots.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
+#pragma warning restore RESP010
         var task = client.WithKeyPrefix("ignored:").Server.CommandGetKeysOnAllNodesAsync("GET", [key]).AsTask();
         await discovering.Task.WaitAsync(TimeSpan.FromSeconds(5));
         key.AsSpan().Clear();
@@ -126,7 +132,9 @@ public class ServerMetadataCommandTests
         {
             SuppressReply = command => { if (command != "SAVE") return false; received.TrySetResult(); return true; },
         };
+#pragma warning disable RESP010 // This cancellation test owns the admin client whose SAVE reply is withheld for single-node and fan-out calls.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var task = allNodes ? CheckAll() : client.Server.SaveAsync(cancellation.Token).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -168,11 +176,13 @@ public class ServerMetadataCommandTests
                 received.TrySetResult(server.ReceivedConnectionIds[^1]);
                 return true;
             };
+#pragma warning disable RESP010 // Each metadata mutation scenario owns its cached client to isolate success/failure fences from other operations.
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
                 Protocol = RespireProtocol.Resp2,
                 Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true, ClientSideCache = new(),
             });
+#pragma warning restore RESP010
             var cache = client.Core.ClientCache!;
             Insert(cache);
             var mutation = allNodes ? MutateAll() : Mutations(client.Server)[operationIndex]();
@@ -222,11 +232,13 @@ public class ServerMetadataCommandTests
             _ = server.SendRawAsync("%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
             return true;
         };
+#pragma warning disable RESP010 // This read-only metadata test owns its populated cache to verify single-node and fan-out reads preserve entries.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         RespireKey key = "cached";
         var token = cache.BeginRead(in key);

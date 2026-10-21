@@ -28,11 +28,13 @@ public class ServerClientCommandTests
                 _ => command.StartsWith("GET ", StringComparison.Ordinal) ? Bulk("value") : FakeRespServer.OkReply,
             },
         };
+#pragma warning disable RESP010 // This pinned inspection test owns its populated cache and scripted CLIENT replies.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
+#pragma warning restore RESP010
         // Populate after obtaining the handle so each non-ID case isolates its own command.
         var handle = inspection == "ID" ? null : await client.Server.GetClientConnectionAsync();
         foreach (var key in new[] { "first", "second" })
@@ -82,7 +84,9 @@ public class ServerClientCommandTests
         };
         System.Diagnostics.ActivitySource.AddActivityListener(listener);
         await using var server = new FakeRespServer(2, Integer(0));
+#pragma warning disable RESP010 // This retirement test owns two connections so a healthy sibling can detect an unintended reroute.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with { Connections = 2 });
+#pragma warning restore RESP010
         var original = client.Core.Multiplexer.GetConnection();
         var handle = new RespireServerClientConnection(client, original, 42);
         await original.RetireAsync().WaitAsync(TimeSpan.FromSeconds(5));
@@ -114,7 +118,9 @@ public class ServerClientCommandTests
             Sequence(resp3 ? '%' : '*', fields), Bulk(binary)];
         if (resp3) replies = ["%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), .. replies];
         await using var server = new FakeRespServer(replies);
+#pragma warning disable RESP010 // This protocol/ownership test disposes its client before checking that pinned results remain valid.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with { Protocol = resp3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2 });
+#pragma warning restore RESP010
         var connection = await client.WithKeyPrefix("ignored:").Server.GetClientConnectionAsync();
         await Assert.That(connection.Id).IsEqualTo(42);
         await Assert.That(connection.Endpoint.Port).IsEqualTo(server.Port);
@@ -153,7 +159,9 @@ public class ServerClientCommandTests
     public async Task AdminAndInvalidOptionsFailBeforeSending()
     {
         await using var server = new FakeRespServer(Integer(1));
+#pragma warning disable RESP010 // This admin-gate test owns a client with AllowAdmin disabled to verify rejection before sending.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with { AllowAdmin = false });
+#pragma warning restore RESP010
         var connection = await client.Server.GetClientConnectionAsync();
         Func<ValueTask>[] changes = [() => connection.SetInfoAsync(RespireClientInfoAttribute.LibraryName, "name"),
             () => connection.SetNoEvictAsync(true), () => connection.SetNoTouchAsync(true),
@@ -168,7 +176,9 @@ public class ServerClientCommandTests
     public async Task InvalidArgumentsAndPreCancellationDoNotTouchSocket()
     {
         await using var server = new FakeRespServer(Integer(1));
+#pragma warning disable RESP010 // This validation test creates an unconnected client to verify pre-cancellation and disposal of its handle.
         await using var client = RespireClient.Create(Options(server.Port));
+#pragma warning restore RESP010
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
         await Assert.That(async () => await client.Server.GetClientConnectionAsync(cancelled.Token)).Throws<OperationCanceledException>();
@@ -206,12 +216,14 @@ public class ServerClientCommandTests
                 Bulk("redirect"), Integer(0), Bulk("prefixes"), Sequence('*')),
             _ => FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // This pinning test owns two connections and optional cache state to detect handle rotation.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
         {
             Connections = 2, Protocol = caching ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
             ClientSideCache = caching ? new() : null,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
+#pragma warning restore RESP010
         var first = await client.Server.GetClientConnectionAsync();
         var second = await client.Server.GetClientConnectionAsync();
         await Assert.That(first.Id).IsNotEqualTo(second.Id);
@@ -233,7 +245,9 @@ public class ServerClientCommandTests
     public async Task ServerErrorsDoNotReplayOrDisturbFollowingReplies()
     {
         await using var server = new FakeRespServer(Integer(1), "-ERR unknown subcommand\r\n"u8.ToArray(), Bulk("after"));
+#pragma warning disable RESP010 // This error-ordering test owns the connection that receives an error followed by a valid reply.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port));
+#pragma warning restore RESP010
         var connection = await client.Server.GetClientConnectionAsync();
         await Assert.That(async () => await connection.SetNoTouchAsync(true)).ThrowsExactly<RespireServerException>();
         await Assert.That(await connection.GetNameAsync()).IsEqualTo("after");
@@ -253,7 +267,9 @@ public class ServerClientCommandTests
             received.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // This cancellation/disposal test owns the client whose pinned command is deliberately left pending.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port));
+#pragma warning restore RESP010
         var connection = await client.Server.GetClientConnectionAsync();
         using var cancellation = new CancellationTokenSource();
         var pending = connection.InfoAsync(cancellation.Token).AsTask();
@@ -289,7 +305,9 @@ public class ServerClientCommandTests
                 : Bulk(topology));
             return true;
         };
+#pragma warning disable RESP010 // This fan-out test owns its cluster client and scripted per-endpoint CLIENT LIST results.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with { UseCluster = true });
+#pragma warning restore RESP010
         var results = filtered
             ? await client.Server.ClientsOnAllNodesAsync(new() { Type = RespireClientType.Normal, Ids = [7] }, default)
             : await client.Server.ClientsOnAllNodesAsync();
@@ -326,11 +344,13 @@ public class ServerClientCommandTests
                 _ => Encoding.ASCII.GetBytes($"-MOVED 0 127.0.0.1:{target.Port}\r\n"),
             },
         };
+#pragma warning disable RESP010 // This redirect test owns its cluster/cache configuration to verify pinned controls stay on the seed.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
             UseCluster = true, Protocol = RespireProtocol.Resp3, ClientSideCache = caching ? new() : null,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
+#pragma warning restore RESP010
         var connection = await client.Server.GetClientConnectionAsync();
         var commandsBefore = seed.CommandsSeen;
         var error = await Assert.That(async () =>
@@ -357,7 +377,9 @@ public class ServerClientCommandTests
     public async Task MalformedTrackingInfoFailsAsAProtocolError(string reply)
     {
         await using var server = new FakeRespServer(Integer(1), Encoding.ASCII.GetBytes(reply));
+#pragma warning disable RESP010 // This malformed-reply test owns the client connected to its single scripted protocol error.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port));
+#pragma warning restore RESP010
         var connection = await client.Server.GetClientConnectionAsync();
         await Assert.That(async () => await connection.TrackingInfoAsync()).ThrowsExactly<RespireProtocolException>();
     }

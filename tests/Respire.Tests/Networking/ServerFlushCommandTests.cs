@@ -28,11 +28,13 @@ public class ServerFlushCommandTests
             "EXEC" => "*2\r\n+OK\r\n+OK\r\n"u8.ToArray(),
             _ => transaction ? "+QUEUED\r\n"u8.ToArray() : FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // This flush-routing test owns a cluster client whose seed can be demoted before queue execution.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, AllowAdmin = true, ClusterTopologyRefreshInterval = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
+#pragma warning restore RESP010
         topology = Topology(primary.Port, seed.Port);
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
@@ -69,11 +71,13 @@ public class ServerFlushCommandTests
             // Topology discovery uses the seed; flushes must select a slot-owning primary.
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // This flush test owns its cluster client and scripted batch/transaction replies to identify the sole execution node.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, UseCluster = true, AllowAdmin = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
         IRespireCommandQueue queue = transaction ? tx : batch;
@@ -109,11 +113,13 @@ public class ServerFlushCommandTests
             replies = [FakeRespServer.OkReply, .. Enumerable.Repeat("+QUEUED\r\n"u8.ToArray(), 6),
                 [.. "*6\r\n"u8, .. replies.SelectMany(reply => reply)]];
         await using var server = new FakeRespServer(replies);
+#pragma warning disable RESP010 // This wire-format test owns an admin client shared only by its prefixed view, batch and transaction.
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, AllowAdmin = true, Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
+#pragma warning restore RESP010
         var client = owner.WithKeyPrefix("tenant:");
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
@@ -153,11 +159,13 @@ public class ServerFlushCommandTests
     public async Task ValidationRejectsBeforeSendingOrQueueing(bool allowAdmin)
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
+#pragma warning disable RESP010 // This validation test owns its AllowAdmin setting and queues to verify rejection before sending or queueing.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, AllowAdmin = allowAdmin, Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
         if (allowAdmin)

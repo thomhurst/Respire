@@ -34,11 +34,13 @@ public class ServerPubSubCommandTests
                     return true;
                 };
             }
+#pragma warning disable RESP010 // This fan-out test owns its cluster client and ten fake nodes to inspect the concurrency cap and queued cancellation.
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
                 Protocol = RespireProtocol.Resp2,
                 UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", servers[0].Port)],
             });
+#pragma warning restore RESP010
             using var cancellation = new CancellationTokenSource();
             var executing = client.Server.PubSubPatternCountOnAllNodesAsync(cancellation.Token).AsTask();
             await firstWave.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -111,11 +113,13 @@ public class ServerPubSubCommandTests
             _ = seed.SendRawAsync(Bulk(Encoding.ASCII.GetBytes(topology)));
             return true;
         };
+#pragma warning disable RESP010 // This membership test owns its cluster client and logger to count sockets closed between fan-out discoveries.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)], LoggerFactory = logger,
         });
+#pragma warning restore RESP010
         var first = await client.Server.PubSubPatternCountOnAllNodesAsync();
         await Assert.That(first.Single(x => x.Endpoint.Port == firstReplica.Port).Value).IsEqualTo(7);
         await Assert.That(logger.DisconnectCount).IsEqualTo(2);
@@ -148,11 +152,13 @@ public class ServerPubSubCommandTests
                 return true;
             },
         };
+#pragma warning disable RESP010 // This disposal test owns the client whose fan-out handshake or command reply is deliberately withheld.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Connections = 1, Database = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
+#pragma warning restore RESP010
         var execution = client.Server.PubSubPatternCountOnAllNodesAsync().AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -243,11 +249,13 @@ public class ServerPubSubCommandTests
             if (command == "CLUSTER NODES") { Interlocked.Increment(ref step); _ = seed.SendRawAsync(Bulk(Encoding.ASCII.GetBytes(topology))); return true; }
             return false;
         };
+#pragma warning disable RESP010 // This fan-out test owns its cluster client and distinct seed, replica and failing-node outcomes.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var results = await client.Server.PubSubPatternCountOnAllNodesAsync();
         await Assert.That(results.Length).IsEqualTo(3);
         await Assert.That(results.Single(x => x.Endpoint.Port == seed.Port).Value).IsEqualTo(3);
@@ -294,7 +302,9 @@ public class ServerPubSubCommandTests
     public async Task CancellationBeforeDiscoveryDoesNotSend()
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // This pre-cancellation test creates an unconnected client to verify discovery never sends a command.
         await using var client = RespireClient.Create($"localhost:{server.Port},protocol=2");
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.That(async () => await client.Server.PubSubPatternCountOnAllNodesAsync(cancellation.Token))
