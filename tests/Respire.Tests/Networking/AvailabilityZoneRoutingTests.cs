@@ -1223,6 +1223,7 @@ public class AvailabilityZoneRoutingTests
     // read never returns to the primary. PinnedCursorKeepsLocalPhysicalSocket covers both policies
     // and shared/per-enumeration pins without changing the server that owns the cursor.
     [Test]
+    [NotInParallel] // Concurrent cold AZ handshakes can exhaust the unchanged five-second read budget (#1749).
     [Arguments("ASK", 0, false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
     [Arguments("ASK", 0, true, RespireReadFrom.AzAffinityReplicasAndPrimary)]
     [Arguments("ASK", 1, false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
@@ -1321,6 +1322,7 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
+    [NotInParallel] // Keep cold MOVED/replica replacement within its original deadline, even beside other AZ rows.
     [Arguments(0, false)]
     [Arguments(1, false)]
     [Arguments(2, false)]
@@ -1332,6 +1334,7 @@ public class AvailabilityZoneRoutingTests
         => await RunReplicaRoleFallbackAsync(mode, mixedSockets);
 
     [Test]
+    [NotInParallel] // This uses the same cold fixture and must reach the deliberate refresh cancellation.
     public async Task ReplicaRoleFallbackFailureReportsProtocolAndRuntimeEvidence()
     {
         // Cancel at a protocol milestone, not after a delay: this exercises the real batch
