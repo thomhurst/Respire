@@ -53,6 +53,11 @@ public class GeneratedSearchSchemaIntegrationTests(ModernRedisTestContainer fixt
         {
             await client.Search.CreateIndexAsync(index, schema);
             created = true;
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            // Vector visibility can precede the initial scan rebuilding text/numeric indexes.
+            // Finish that scan before publishing the document, as in the Search profile tests.
+            while ((await client.Search.GetIndexInfoAsync(index, deadline.Token)).Properties["indexing"].Scalar != "0")
+                await Task.Delay(20, deadline.Token);
             if (json)
             {
                 var jsonClient = new RespireJsonClient(client);
@@ -67,7 +72,6 @@ public class GeneratedSearchSchemaIntegrationTests(ModernRedisTestContainer fixt
                 partial.Embedding.Value.Should().Equal(vector);
                 partial.Rating.Value.Should().Be(42);
             }
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             while (true)
             {
                 var info = await client.Search.GetIndexInfoAsync(index, deadline.Token);
