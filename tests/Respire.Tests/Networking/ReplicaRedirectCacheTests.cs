@@ -11,6 +11,50 @@ public class ReplicaRedirectCacheTests
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task TrackedTargetAcquisitionFailureFencesPreviouslyCachedReads(bool retry, bool circuitRejection)
+    {
+        await using var target = Target();
+        target.CloseConnectionAfterCommand = 1;
+        await using var source = Source(target.Port);
+        var value = "old";
+        source.ReplyOverride = (_, command) => command == "GET cached"
+            ? Bytes($"$3\r\n{value}\r\n")
+            : command.StartsWith("GET ", StringComparison.Ordinal)
+                ? Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : Handshake(command);
+        await using var client = await RespireClient.ConnectAsync(Options(source.Port, retry) with
+        {
+            CircuitBreaker = new() { MinimumFailureCount = 1, OpenDuration = TimeSpan.FromMinutes(1) },
+            RetryPolicy = retry ? new() { RetryableErrors = RespireRetryableErrors.Loading } : null,
+        });
+        await Assert.That(await client.GetStringAsync("cached")).IsEqualTo("old");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        if (circuitRejection)
+        {
+            // Reject before target selection can run its new-destination continuity fence.
+            var admission = client.Core.Circuits!.Acquire(new("127.0.0.1", target.Port), default);
+            try { admission.ConnectionFailed(new IOException("Target unavailable."), default); }
+            finally { admission.Dispose(); }
+        }
+        value = "new";
+
+        if (circuitRejection)
+            await Assert.That(async () => await client.GetStringAsync("redirected")).Throws<RespireCircuitOpenException>();
+        else
+            await Assert.That(async () => await client.GetStringAsync("redirected")).Throws<RespireConnectionException>();
+
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+        await Assert.That(await client.GetStringAsync("cached")).IsEqualTo("new");
+        await Assert.That(source.ReceivedCommands.Count(command => command == "GET cached")).IsEqualTo(2);
+        // A setup failure must still count against the target circuit and preserve the source.
+        await Assert.That(async () => await client.GetStringAsync("redirected")).Throws<RespireCircuitOpenException>();
+        if (circuitRejection) await Assert.That(target.ReceivedCommands.Count).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments(false, RespireClientTrackingMode.OptIn)]
     [Arguments(true, RespireClientTrackingMode.OptIn)]
     [Arguments(false, RespireClientTrackingMode.OptOut)]
