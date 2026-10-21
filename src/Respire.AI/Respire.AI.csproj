@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PackageId>Respire.AI</PackageId>
     <Title>Respire.AI</Title>
     <Description>Redis chat history, agent memory, semantic response caching, and exact-text embedding caching for Microsoft.Extensions.AI.</Description>

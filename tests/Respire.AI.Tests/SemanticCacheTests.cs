@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 using Respire.IntegrationTests;
@@ -426,6 +427,174 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
         scenario.Provider.Calls.Should().Be(2);
     }
 
+    private static readonly string[] MalformedIdentities =
+        ["\uD800", "\uD801", "\uDC00", "prefix\uD800", "\uD800suffix", "\uD800\uD801", "\uDC00\uD800"];
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task WellFormedScopesKeepTheirExistingHashes(int protocol)
+    {
+        const string identity = "tenant é \uFFFD \uD800\uDC00";
+        await using var scenario = await Create(protocol, new() { Dimensions = 2, ScopeSelector = (_, _) => identity });
+        var options = new ChatOptions { Instructions = identity, AdditionalProperties = new() { [identity] = identity } };
+        var history = new ChatMessage(ChatRole.System, identity);
+        var final = new ChatMessage(ChatRole.User, "near") { AuthorName = identity };
+        // The pre-fix scope format used the default writer and upstream AI JSON metadata.
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartArray();
+            writer.WriteStringValue(identity);
+            writer.WriteStringValue("fake");
+            writer.WriteNullValue();
+            writer.WriteStringValue("fake-model");
+            writer.WriteStringValue("fake");
+            writer.WriteNullValue();
+            writer.WriteStringValue("fake-embedding");
+            JsonSerializer.Serialize(writer, options, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatOptions)));
+            JsonSerializer.Serialize(writer, history, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatMessage)));
+            var scopedFinal = final.Clone();
+            scopedFinal.Contents = [];
+            JsonSerializer.Serialize(writer, scopedFinal, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatMessage)));
+            writer.WriteEndArray();
+        }
+        var expected = Convert.ToHexString(SHA256.HashData(stream.ToArray()));
+        var first = await scenario.Chat.GetResponseAsync([history, final], options);
+        var entry = (await ReadEntries(scenario)).Should().ContainSingle().Subject.Value;
+        Encoding.UTF8.GetString(entry.Scope!).Should().Be(expected);
+        final = new(ChatRole.User, "near paraphrase") { AuthorName = identity };
+        (await scenario.Chat.GetResponseAsync([history, final], options)).Text.Should().Be(first.Text);
+        scenario.Provider.Calls.Should().Be(1);
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task MalformedCacheNamesCannotAliasValidNamespaces(int protocol)
+    {
+        var name = Guid.NewGuid().ToString("N");
+        foreach (var invalid in MalformedIdentities)
+        {
+            var replacement = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(invalid));
+            var redis = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+            await using var scenario = new Scenario(redis, new() { Dimensions = 2, CacheName = name + replacement });
+            var original = await scenario.Ask("near");
+            var before = await ReadEntries(scenario);
+            Action register = () => new ChatClientBuilder(scenario.Provider).UseRespireSemanticCache(redis, scenario.Embeddings,
+                scenario.Options with { CacheName = name + invalid });
+            register.Should().Throw<EncoderFallbackException>();
+            (await ReadEntries(scenario)).Should().BeEquivalentTo(before);
+            (await scenario.Ask("near paraphrase")).Text.Should().Be(original.Text);
+            scenario.Provider.Calls.Should().Be(1);
+        }
+
+        // Both valid replacement characters and supplementary scalars remain cacheable,
+        // using the existing UTF-8 namespace hash, and separate wrappers share only matching names.
+        foreach (var valid in new[] { "\uFFFD", "\uD800\uDC00", "\uD800\uDC01" })
+        {
+            var redis = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+            await using var scenario = new Scenario(redis, new() { Dimensions = 2, CacheName = name + valid });
+            await scenario.Ask("near");
+            using var other = new ChatClientBuilder(scenario.Provider)
+                .UseRespireSemanticCache(redis, scenario.Embeddings, scenario.Options).Build();
+            await other.GetResponseAsync([new(ChatRole.User, "near paraphrase")]);
+            scenario.Provider.Calls.Should().Be(1);
+            (await ReadEntries(scenario)).Should().ContainSingle();
+        }
+    }
+
+    [Test, Arguments(2, true), Arguments(3, true), Arguments(2, false), Arguments(3, false)]
+    public async Task MalformedExactIdentitiesNeverReadOrMutateTheCache(int protocol, bool failOpen)
+    {
+        foreach (var field in new[] { "scope", "provider", "model", "embeddingProvider", "embeddingModel", "optionsModel",
+            "instructions", "stop", "optionValue", "optionKey", "history", "role", "author", "messageId",
+            "messageValue", "messageKey", "contentValue", "contentKey", "finalAuthor", "finalValue", "jsonValue", "jsonKey" })
+        {
+            var identity = "";
+            await using var scenario = await Create(protocol, new()
+            {
+                Dimensions = 2, FailOpen = failOpen, ScopeSelector = (_, _) => field == "scope" ? identity : "",
+            });
+            foreach (var invalid in MalformedIdentities)
+            {
+                // Prime the exact identity that replacement fallback would otherwise alias.
+                identity = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(invalid));
+                var original = await AskWithIdentity(scenario, field, identity);
+                (await AskWithIdentity(scenario, field, identity)).Text.Should().Be(original.Text);
+                var before = await ReadEntries(scenario);
+                var embeddings = scenario.Embeddings.Calls;
+                identity = invalid;
+                Func<Task> request = () => AskWithIdentity(scenario, field, identity);
+                if (failOpen)
+                    (await AskWithIdentity(scenario, field, identity)).Text.Should().NotBe(original.Text, field);
+                else if (field is "jsonValue" or "jsonKey")
+                    await request.Should().ThrowAsync<Exception>($"{field} must not use replacement fallback");
+                else
+                    await request.Should().ThrowAsync<EncoderFallbackException>($"{field} must not use replacement fallback");
+                scenario.Embeddings.Calls.Should().Be(embeddings, field);
+                (await ReadEntries(scenario)).Should().BeEquivalentTo(before, field);
+            }
+
+            // Valid surrogate pairs remain distinct exact scopes and continue to hit normally.
+            foreach (var valid in new[] { "\uFFFD", "\uD800\uDC00", "\uD800\uDC01" })
+            {
+                identity = valid;
+                var calls = scenario.Provider.Calls;
+                var original = await AskWithIdentity(scenario, field, identity);
+                (await AskWithIdentity(scenario, field, identity)).Text.Should().Be(original.Text);
+                scenario.Provider.Calls.Should().Be(calls + (valid == "\uFFFD" ? 0 : 1), field);
+            }
+        }
+    }
+
+    private static Task<ChatResponse> AskWithIdentity(Scenario scenario, string field, string identity)
+    {
+        var messages = new List<ChatMessage> { new(ChatRole.System, "policy"), new(ChatRole.User, "near") };
+        var options = new ChatOptions();
+        switch (field)
+        {
+            case "provider": scenario.Provider.ProviderName = identity; break;
+            case "model": scenario.Provider.ModelId = identity; break;
+            case "embeddingProvider": scenario.Embeddings.ProviderName = identity; break;
+            case "embeddingModel": scenario.Embeddings.ModelId = identity; break;
+            case "optionsModel": options.ModelId = identity; break;
+            case "instructions": options.Instructions = identity; break;
+            case "stop": options.StopSequences = [identity]; break;
+            case "optionValue": options.AdditionalProperties = new() { ["nested"] = new Dictionary<string, object?> { ["list"] = new[] { identity } } }; break;
+            case "optionKey": options.AdditionalProperties = new() { [identity] = "value" }; break;
+            case "history": messages[0] = new(ChatRole.System, identity); break;
+            case "role": messages[0].Role = new ChatRole(identity); break;
+            case "author": messages[0].AuthorName = identity; break;
+            case "messageId": messages[0].MessageId = identity; break;
+            case "messageValue": messages[0].AdditionalProperties = new() { ["identity"] = identity }; break;
+            case "messageKey": messages[0].AdditionalProperties = new() { [identity] = "value" }; break;
+            case "contentValue": messages[0].Contents[0].AdditionalProperties = new() { ["identity"] = identity }; break;
+            case "contentKey": messages[0].Contents[0].AdditionalProperties = new() { [identity] = "value" }; break;
+            case "finalAuthor": messages[1].AuthorName = identity; break;
+            case "finalValue": messages[1].AdditionalProperties = new() { ["identity"] = identity }; break;
+            case "jsonValue": options.AdditionalProperties = new() { ["json"] = ParseJsonIdentity(identity, propertyName: false) }; break;
+            case "jsonKey": options.AdditionalProperties = new() { ["json"] = ParseJsonIdentity(identity, propertyName: true) }; break;
+        }
+        return scenario.Chat.GetResponseAsync(messages, options);
+    }
+
+    private static JsonElement ParseJsonIdentity(string identity, bool propertyName)
+    {
+        // Preserve the original code units in JSON escapes rather than using the serializer's fallback.
+        var escaped = string.Concat(identity.Select(character => "\\u" + ((int)character).ToString("X4")));
+        using var document = JsonDocument.Parse(propertyName ? "{\"" + escaped + "\":0}" : "\"" + escaped + "\"");
+        return document.RootElement.Clone();
+    }
+
+    private static async Task<Dictionary<string, (byte[]? Scope, byte[]? Response, long Expiry)>> ReadEntries(Scenario scenario)
+    {
+        var entries = new Dictionary<string, (byte[]?, byte[]?, long)>();
+        await foreach (var key in scenario.Redis.Keys.ScanAsync(match: scenario.Prefix + "*"))
+        {
+            using var expiry = await scenario.Redis.ExecuteAsync("PEXPIRETIME", [key]);
+            entries.Add(key.ToString(), (await scenario.Redis.Hashes.GetBytesAsync(key, "scope"),
+                await scenario.Redis.Hashes.GetBytesAsync(key, "response"), expiry.AsInteger()));
+        }
+        return entries;
+    }
+
     private async Task<Scenario> Create(int protocol, RespireSemanticCacheOptions? options = null)
     {
         var redis = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
@@ -471,6 +640,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
         public bool ReturnEmpty { get; set; }
         public Exception? Failure { get; set; }
         public string ModelId { get; set; } = "fake-embedding";
+        public string ProviderName { get; set; } = "fake";
         public Task<GeneratedEmbeddings<Embedding<float>>> GenerateAsync(IEnumerable<string> values,
             EmbeddingGenerationOptions? options = null, CancellationToken cancellationToken = default)
         {
@@ -482,7 +652,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
                 : new GeneratedEmbeddings<Embedding<float>>([new(Vector ?? (LastInput.StartsWith("near", StringComparison.Ordinal) ? [1, 0] : [0, 1]))]));
         }
         public object? GetService(Type serviceType, object? serviceKey = null)
-            => serviceType == typeof(EmbeddingGeneratorMetadata) ? new EmbeddingGeneratorMetadata("fake", defaultModelId: ModelId, defaultModelDimensions: 2) : null;
+            => serviceType == typeof(EmbeddingGeneratorMetadata) ? new EmbeddingGeneratorMetadata(ProviderName, defaultModelId: ModelId, defaultModelDimensions: 2) : null;
         public void Dispose() => Disposed = true;
     }
 
@@ -493,6 +663,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
         public int StreamCalls { get; private set; }
         public bool Disposed { get; private set; }
         public string ModelId { get; set; } = "fake-model";
+        public string ProviderName { get; set; } = "fake";
         public Func<ChatResponse>? ResponseFactory { get; set; }
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
@@ -513,7 +684,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
             yield return new(ChatRole.Assistant, "stream");
         }
         public object? GetService(Type serviceType, object? serviceKey = null)
-            => serviceType == typeof(ChatClientMetadata) ? new ChatClientMetadata("fake", defaultModelId: ModelId) : null;
+            => serviceType == typeof(ChatClientMetadata) ? new ChatClientMetadata(ProviderName, defaultModelId: ModelId) : null;
         public void Dispose() => Disposed = true;
     }
 }

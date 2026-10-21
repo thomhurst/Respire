@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Respire.Search;
@@ -31,7 +30,7 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
         _client = client;
         _embeddingGenerator = embeddingGenerator;
         _options = options;
-        _prefix = "respire:semantic:v1:" + Hash(Encoding.UTF8.GetBytes(options.CacheName))
+        _prefix = "respire:semantic:v1:" + Hash(StrictUnicodeJsonEncoder.Utf8.GetBytes(options.CacheName))
             + ":" + options.Dimensions.ToString(CultureInfo.InvariantCulture) + ":entry:";
         _index = _prefix + "index";
     }
@@ -168,7 +167,7 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
         var metadata = InnerClient.GetService(typeof(ChatClientMetadata)) as ChatClientMetadata;
         var embeddingMetadata = _embeddingGenerator.GetService(typeof(EmbeddingGeneratorMetadata)) as EmbeddingGeneratorMetadata;
         using var stream = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(stream))
+        using (var writer = new Utf8JsonWriter(stream, new() { Encoder = StrictUnicodeJsonEncoder.Instance }))
         {
             writer.WriteStartArray();
             writer.WriteStringValue(userScope);

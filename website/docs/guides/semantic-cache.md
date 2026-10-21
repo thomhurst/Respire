@@ -79,6 +79,8 @@ Indexes:
 
 Besides the scope, these must match exactly (including case): model/provider identity, generation options (including `Instructions` and request properties such as `UserId`), and **every message before the final user prompt**. Only the final user text matches semantically.
 
+`CacheName` must be well-formed UTF-16: registration rejects unpaired surrogates with `EncoderFallbackException` before accessing Redis. Scope strings, provider/model metadata, and serialized generation options and message metadata must also be well-formed, including nested string values and property names. Malformed scope inputs follow `FailOpen`: the default calls the provider without embedding, cache reads or writes; `FailOpen = false` propagates the encoding or serialization error. Valid replacement characters (`U+FFFD`) and surrogate pairs remain cacheable, and well-formed identities keep their existing namespace and scope hashes.
+
 Set `RespireSemanticCacheOptions.DisableCacheKey` to `true` in `ChatOptions.AdditionalProperties` to bypass reads and writes for one request:
 
 <!-- doc-test-declaration -->
