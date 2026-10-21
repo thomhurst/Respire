@@ -55,6 +55,7 @@ public class ServerNodeCommandTests
     {
         await using var target = Server(1);
         var opened = new TaskCompletionSource<RespireEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+#pragma warning disable RESP010 // This endpoint test owns a lazy client with a redirected test transport to inspect Unix node setup from a TCP client.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 6379)], Protocol = RespireProtocol.Resp3, AllowAdmin = true,
@@ -71,6 +72,7 @@ public class ServerNodeCommandTests
                 catch { socket.Dispose(); throw; }
             },
         });
+#pragma warning restore RESP010
         var endpoint = RespireEndpoint.UnixSocket("/tmp/respire-node.sock");
         var node = client.Server.OnNode(endpoint);
         await (control ? node.ScriptKillAsync() : node.AclSaveAsync());
@@ -94,12 +96,14 @@ public class ServerNodeCommandTests
         };
         var shortBudget = TimeSpan.FromMilliseconds(100);
         var longBudget = TimeSpan.FromSeconds(30);
+#pragma warning disable RESP010 // This timeout test owns the client whose inherited budget must remain unchanged by a node MIGRATE override.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 6379)], Protocol = RespireProtocol.Resp2, AllowAdmin = true,
             CommandTimeout = extend ? shortBudget : longBudget,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
+#pragma warning restore RESP010
         var node = client.Server.OnNode(new("127.0.0.1", target.Port));
         var migration = node.MigrateAsync(new("destination", 6382), ["key"], 0, TimeSpan.FromSeconds(1),
             new() { CommandTimeout = extend ? longBudget : shortBudget }).AsTask();
@@ -130,10 +134,12 @@ public class ServerNodeCommandTests
     public async Task InvalidMigrateClientTimeoutDoesNotConnect(long ticks)
     {
         await using var target = Server(1);
+#pragma warning disable RESP010 // This validation test creates an unconnected client to prove invalid MIGRATE timeouts never open a socket.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 6379)], AllowAdmin = true,
         });
+#pragma warning restore RESP010
         var error = await Assert.That(async () => await client.Server.OnNode(new("127.0.0.1", target.Port))
             .MigrateAsync(new("destination", 6382), ["key"], 0, TimeSpan.FromSeconds(1),
                 new() { CommandTimeout = TimeSpan.FromTicks(ticks) })).ThrowsExactly<ArgumentOutOfRangeException>();
@@ -148,6 +154,7 @@ public class ServerNodeCommandTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         target.SuppressReply = _ => { received.TrySetResult(); return true; };
         var opened = new TaskCompletionSource<GatedWriteStream>(TaskCreationOptions.RunContinuationsAsynchronously);
+#pragma warning disable RESP010 // This shutdown test owns a client with a gated write transport to inspect completion and disposal ordering.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 6379)], AllowAdmin = true,
@@ -158,6 +165,7 @@ public class ServerNodeCommandTests
                 return stream;
             },
         });
+#pragma warning restore RESP010
         var pending = client.Server.OnNode(new("127.0.0.1", target.Port)).SendShutdownAsync().AsTask();
         var transport = await opened.Task.WaitAsync(TimeSpan.FromSeconds(5));
         try
@@ -215,12 +223,14 @@ public class ServerNodeCommandTests
         };
         using var logger = new DiagnosticCapture();
         using var metrics = new MetricConfigurationScope();
+#pragma warning disable RESP010 // This telemetry test owns its client and logger to check MIGRATE credentials against captured diagnostics.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", seed.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
             AllowAdmin = true, LoggerFactory = logger,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
+#pragma warning restore RESP010
         var activities = new ConcurrentQueue<Activity>();
         using var listener = new ActivityListener
         {
@@ -368,11 +378,13 @@ public class ServerNodeCommandTests
             _ when command.StartsWith("COMMAND GETKEYSANDFLAGS ", StringComparison.Ordinal) => "*0\r\n"u8.ToArray(),
             _ => FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // This snapshot test owns an authenticated client whose node handshake is paused while binary inputs change.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", seed.Port)], Protocol = RespireProtocol.Resp2, Connections = 1,
             Username = "user", Password = "password", AllowAdmin = true,
         });
+#pragma warning restore RESP010
         byte[] bytes = [255, 0];
         var node = client.Server.OnNode(new("127.0.0.1", target.Port));
         var pending = operation switch
@@ -389,7 +401,9 @@ public class ServerNodeCommandTests
         await pending.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(target.ReceivedArguments[^1].Any(argument => argument.SequenceEqual(new byte[] { 255, 0 }))).IsTrue();
 
+#pragma warning disable RESP011 // The fake node returns a fixed empty KEYS array; this probe checks input snapshots across its gated AUTH handshake.
         async Task ReadKeys() => _ = await node.KeysAsync(bytes);
+#pragma warning restore RESP011
         async Task ReadCommandKeys() => _ = await node.CommandGetKeysAndFlagsAsync("GET", [bytes]);
         async Task Migrate() => _ = await node.MigrateAsync(new("destination", 6379), [bytes], 0, TimeSpan.FromSeconds(1));
     }
@@ -407,12 +421,14 @@ public class ServerNodeCommandTests
             parked.TrySetResult(server.ReceivedConnectionIds[^1]);
             return true;
         };
+#pragma warning disable RESP010 // This busy-control test owns a configured client whose ordinary INFO socket is parked while a control socket runs.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespireProtocol.Resp3,
             Database = 4, ClientName = "configured", Username = "default", Password = "password", AllowAdmin = true,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
+#pragma warning restore RESP010
         var pending = client.Server.InfoAsync().AsTask();
         var originalConnection = await parked.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var node = client.Server.OnNode(new("127.0.0.1", server.Port));
@@ -438,11 +454,13 @@ public class ServerNodeCommandTests
             received.TrySetResult(target.ReceivedConnectionIds[^1]);
             return true;
         };
+#pragma warning disable RESP010 // This node-mutation test owns its cached client to isolate SWAPDB success and failure fences.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", seed.Port)], Protocol = RespireProtocol.Resp2, Connections = 1,
             ClientSideCache = new(), AllowAdmin = true,
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         Insert();
         var pending = client.Server.OnNode(new("127.0.0.1", target.Port)).SwapDatabasesAsync(0, 1).AsTask();
@@ -484,6 +502,7 @@ public class ServerNodeCommandTests
         await using var target = Server(1);
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         target.SuppressReply = _ => { received.TrySetResult(); return true; };
+#pragma warning disable RESP010 // This shutdown test owns its client and test transport until the peer records the command without replying.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", target.Port)], Protocol = RespireProtocol.Resp3, AllowAdmin = true,
@@ -494,6 +513,7 @@ public class ServerNodeCommandTests
                 return stream;
             },
         });
+#pragma warning restore RESP010
         await client.Server.OnNode(new("127.0.0.1", target.Port)).SendShutdownAsync(new()
         { SaveMode = RespireShutdownSaveMode.NoSave, Now = true, Force = true }).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(target.ReceivedCommands).IsEquivalentTo(["SHUTDOWN NOSAVE NOW FORCE"]);
@@ -516,11 +536,13 @@ public class ServerNodeCommandTests
             received.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // This shutdown test owns an authenticated client whose peer read is gated to distinguish local write completion.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", target.Port)], Protocol = RespireProtocol.Resp3,
             AllowAdmin = true, Password = "password",
         });
+#pragma warning restore RESP010
         try
         {
             await client.Server.OnNode(new("127.0.0.1", target.Port)).SendShutdownAsync(new()

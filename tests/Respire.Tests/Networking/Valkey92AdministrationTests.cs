@@ -65,10 +65,12 @@ public class Valkey92AdministrationTests
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray(),
             "-ERR unknown subcommand 'DIGEST'\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This role-command test owns its admin client and fixed success/error replies to verify exact token boundaries.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true, Protocol = RespireProtocol.Resp2,
         });
+#pragma warning restore RESP010
         await client.WithKeyPrefix("tenant:").Server.AclSetRoleAsync("r", ["(+get ~cache:*)"]);
         await Assert.That(await client.Server.AclDeleteRolesAsync(["r"])).IsEqualTo(1);
         await Assert.That(async () => await client.Server.AclDigestAsync()).Throws<RespireServerException>();

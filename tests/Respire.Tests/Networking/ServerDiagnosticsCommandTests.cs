@@ -42,7 +42,9 @@ public class ServerDiagnosticsCommandTests
     public async Task AdminValidationAndCancellationHappenBeforeIo()
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // This validation test creates an unconnected non-admin client to prove checks and cancellation send nothing.
         await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Server.PurgeMemoryAsync()).ThrowsExactly<NotSupportedException>();
         await Assert.That(async () => await client.Server.PurgeMemoryOnAllNodesAsync()).ThrowsExactly<NotSupportedException>();
         await Assert.That(async () => await client.Server.LatencyHistoryAsync(" ")).ThrowsExactly<ArgumentException>();
@@ -84,11 +86,13 @@ public class ServerDiagnosticsCommandTests
             discovering.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // This diagnostic fan-out test owns the cluster client whose discovery is paused while command names change.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var original = await client.Core.Cluster!.GetConnectionAsync(42, default, discovery: null, observation: default);
         string[] commands = ["get", "config|get"];
         var execution = client.Server.LatencyHistogramsOnAllNodesAsync(commands).AsTask();
@@ -142,11 +146,13 @@ public class ServerDiagnosticsCommandTests
             _ = server.SendRawAsync(reply, server.ReceivedConnectionIds[^1]);
             return true;
         };
+#pragma warning disable RESP010 // This diagnostic test owns its cache and in-flight read tokens to verify single-node and fan-out reads.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         RespireKey cached = "cached", pending = "pending";
         var inserted = cache.BeginRead(in cached);

@@ -26,8 +26,10 @@ public class ServerHotKeysTests
             if (reply is null) return false;
             _ = server.SendRawAsync(reply, server.ReceivedConnectionIds[^1]); return true;
         };
+#pragma warning disable RESP010 // This tracker test owns two connections and protocol/cache options to check pinning and results after disposal.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
             { Connections = 2, Protocol = (RespireProtocol)protocol, ClientSideCache = protocol == 3 ? new() : null });
+#pragma warning restore RESP010
         var tracker = await client.WithKeyPrefix("ignored:").Server.GetHotKeysTrackerAsync();
         var second = await client.Server.GetHotKeysTrackerAsync();
         int[] slots = [1, 3];
@@ -76,8 +78,10 @@ public class ServerHotKeysTests
             if (command != "HOTKEYS GET") return false;
             _ = server.SendRawAsync(WireSnapshot(true), server.ReceivedConnectionIds[^1]); return true;
         };
+#pragma warning disable RESP010 // This diagnostic test owns its populated cache while exercising pinned, fan-out and raw HOTKEYS controls.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
             { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         RespireKey key = "cached"; var token = cache.BeginRead(in key); var value = RespValue.BulkString("retained");
         cache.CompleteRead(in token, in value, allowInsert: true);
@@ -139,7 +143,9 @@ public class ServerHotKeysTests
     public async Task AdminValidationAndCancellationSendNothing()
     {
         await using var server = new FakeRespServer(2);
+#pragma warning disable RESP010 // This admin-gate test owns its non-admin client and pinned tracker to verify rejection before commands are sent.
         await using var client = RespireClient.Create(Options(server.Port) with { AllowAdmin = false });
+#pragma warning restore RESP010
         Func<Task>[] denied = [async () => await client.Server.StartHotKeysOnAllNodesAsync(new()),
             async () => await client.Server.StopHotKeysOnAllNodesAsync(), async () => await client.Server.ResetHotKeysOnAllNodesAsync()];
         foreach (var action in denied) await Assert.That(action).Throws<NotSupportedException>();
@@ -149,7 +155,9 @@ public class ServerHotKeysTests
         var tracker = await client.Server.GetHotKeysTrackerAsync();
         Func<Task>[] pinnedDenied = [async () => await tracker.StartAsync(new()), async () => await tracker.StopAsync(), async () => await tracker.ResetAsync()];
         foreach (var action in pinnedDenied) await Assert.That(action).Throws<NotSupportedException>();
+#pragma warning disable RESP010 // This validation test owns a separate admin client so invalid options and pre-cancellation reach their own checks.
         await using var admin = await RespireClient.ConnectAsync(Options(server.Port));
+#pragma warning restore RESP010
         var allowed = await admin.Server.GetHotKeysTrackerAsync();
         RespireHotKeysOptions[] invalid = [new() { Metrics = 0 }, new() { Metrics = (RespireHotKeysMetrics)4 },
             new() { Count = 0 }, new() { Count = 65 }, new() { DurationSeconds = 0 }, new() { DurationSeconds = 1_000_001 },
@@ -172,7 +180,9 @@ public class ServerHotKeysTests
     {
         await using var target = new FakeRespServer(FakeRespServer.OkReply);
         await using var seed = new FakeRespServer("*0\r\n"u8.ToArray(), Encoding.ASCII.GetBytes($"-MOVED 0 127.0.0.1:{target.Port}\r\n"), "$-1\r\n"u8.ToArray());
+#pragma warning disable RESP010 // This redirect test owns its cluster client to prove the tracker never follows MOVED.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with { UseCluster = true });
+#pragma warning restore RESP010
         var tracker = await client.Server.GetHotKeysTrackerAsync();
         var error = await Assert.That(async () => await tracker.StartAsync(new())).Throws<RespireServerException>();
         await Assert.That(error!.Code).IsEqualTo("MOVED");
@@ -185,7 +195,9 @@ public class ServerHotKeysTests
     public async Task DisconnectedTrackerDoesNotSwitchToReplacementConnection()
     {
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply) { CloseConnectionAfterCommand = 1 };
+#pragma warning disable RESP010 // This reconnect test owns the client and retired tracker to verify it never switches to the replacement socket.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port));
+#pragma warning restore RESP010
         var tracker = await client.Server.GetHotKeysTrackerAsync();
         await Assert.That(async () => await tracker.StartAsync(new())).Throws<RespireConnectionException>();
         using var reconnected = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -212,7 +224,9 @@ public class ServerHotKeysTests
             if (reply is null) return false;
             _ = seed.SendRawAsync(reply, seed.ReceivedConnectionIds[^1]); return true;
         };
+#pragma warning disable RESP010 // This HOTKEYS fan-out test owns its cluster client and scripted seed/replica outcomes.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with { UseCluster = true });
+#pragma warning restore RESP010
         var start = await client.Server.StartHotKeysOnAllNodesAsync(new());
         var get = await client.Server.GetHotKeysOnAllNodesAsync();
         var stop = await client.Server.StopHotKeysOnAllNodesAsync();
@@ -235,7 +249,9 @@ public class ServerHotKeysTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         { SuppressReply = command => { if (!command.StartsWith("HOTKEYS ")) return false; received.TrySetResult(); return true; } };
+#pragma warning disable RESP010 // This cancellation test owns the client whose HOTKEYS reply is withheld to detect replay after dispatch.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var tracker = await client.Server.GetHotKeysTrackerAsync();
         var task = allNodes ? AllNodes() : tracker.StartAsync(new(), cancellation.Token).AsTask();

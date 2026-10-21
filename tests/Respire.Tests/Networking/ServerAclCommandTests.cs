@@ -43,11 +43,13 @@ public class ServerAclCommandTests
             received.TrySetResult(server.ReceivedConnectionIds[^1]);
             return true;
         };
+#pragma warning disable RESP010 // This ACL mutation test owns its cached client to isolate success and failure fences.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         Insert(cache);
         var mutation = allNodes ? MutateAll() : client.Server.AclSetUserAsync("u", []).AsTask();
@@ -159,11 +161,13 @@ public class ServerAclCommandTests
             discovering.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // This ACL fan-out test owns the cluster client whose discovery is paused while binary inputs change.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, AllowAdmin = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         byte[] username = [255, 0];
         byte[] rule = [(byte)'>', 254];
         var task = client.Server.AclSetUserOnAllNodesAsync(username, [rule]).AsTask();

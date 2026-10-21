@@ -28,11 +28,13 @@ public class ServerCommandLogTests
             _ = server.SendRawAsync(reply, server.ReceivedConnectionIds[^1]);
             return true;
         };
+#pragma warning disable RESP010 // This command-log test owns its protocol/cache configuration and disposes the client before checking result ownership.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = (RespireProtocol)protocol,
             AllowAdmin = true, ClientSideCache = protocol == 3 ? new() : null,
         });
+#pragma warning restore RESP010
         var commands = client.WithKeyPrefix("ignored:").Server;
         List<RespireCommandLogEntry> owned = [];
         foreach (var type in Enum.GetValues<RespireCommandLogType>())
@@ -103,7 +105,9 @@ public class ServerCommandLogTests
     public async Task AdminValidationAndPreCancellationPreventIo()
     {
         await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // This validation test creates an unconnected non-admin client to verify rejection before I/O.
         await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Server.ResetCommandLogAsync(RespireCommandLogType.Slow)).Throws<NotSupportedException>();
         await Assert.That(async () => await client.Server.ResetCommandLogOnAllNodesAsync(RespireCommandLogType.Slow)).Throws<NotSupportedException>();
         await Assert.That(async () => await client.Server.CommandLogAsync(RespireCommandLogType.Slow, -2)).Throws<ArgumentOutOfRangeException>();
@@ -112,8 +116,10 @@ public class ServerCommandLogTests
         await Assert.That(async () => await client.Server.CommandLogLengthOnAllNodesAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Server.CommandLogAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Server.CommandLogOnAllNodesAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
+#pragma warning disable RESP010 // This validation test owns a separate unconnected admin client to exercise argument checks after the admin gate.
         await using var admin = RespireClient.Create(new RespireOptions
             { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], AllowAdmin = true });
+#pragma warning restore RESP010
         await Assert.That(async () => await admin.Server.ResetCommandLogAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await admin.Server.ResetCommandLogOnAllNodesAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
         using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
@@ -141,8 +147,10 @@ public class ServerCommandLogTests
             _ = seed.SendRawAsync(reply, seed.ReceivedConnectionIds[^1]);
             return true;
         };
+#pragma warning disable RESP010 // This command-log fan-out test owns its cluster client and distinct seed/replica replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
             { Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
+#pragma warning restore RESP010
         var results = await client.Server.CommandLogOnAllNodesAsync(RespireCommandLogType.LargeRequest);
         await Assert.That(results.Length).IsEqualTo(2);
         await Assert.That(results.Single(x => x.Endpoint.Port == seed.Port).Value[0].RequestBytes).IsEqualTo(42);

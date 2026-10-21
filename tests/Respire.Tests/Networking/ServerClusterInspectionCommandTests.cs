@@ -106,11 +106,13 @@ public class ServerClusterInspectionCommandTests
             _ = seed.SendRawAsync(Array(Map(true, Bulk("slots"), Array(Integer(0), Integer(16383)), Bulk("nodes"), Array(node))), seed.ReceivedConnectionIds[^1]);
             return true;
         };
+#pragma warning disable RESP010 // This inspection test owns its cluster client to prove inspected topology never replaces the active slot map.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
+#pragma warning restore RESP010
         var results = await client.Server.ClusterShardsOnAllNodesAsync();
         await Assert.That(results.Length).IsEqualTo(2);
         await Assert.That(results.Single(x => x.Endpoint.Port == seed.Port).Value[0].Nodes[0].Endpoint).IsEqualTo("not-a-real-host.invalid");
@@ -155,11 +157,13 @@ public class ServerClusterInspectionCommandTests
             _ = server.SendRawAsync(reply, server.ReceivedConnectionIds[^1]);
             return true;
         };
+#pragma warning disable RESP010 // This inspection test owns its cache and scripted RESP3 replies to verify reads preserve cached entries.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         RespireKey key = "cached";
         var token = cache.BeginRead(in key);

@@ -31,6 +31,7 @@ public class ServerCommandSafetyTests
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply);
+#pragma warning disable RESP010 // This admin-gate test owns an AllowAdmin-enabled client to verify the three scripted destructive commands.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
@@ -38,6 +39,7 @@ public class ServerCommandSafetyTests
             AllowAdmin = true,
             Connections = 1,
         });
+#pragma warning restore RESP010
 
         await client.Server.FlushDatabaseAsync();
         await client.Server.FlushAllAsync();
