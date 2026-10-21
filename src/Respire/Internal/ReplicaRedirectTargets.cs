@@ -24,66 +24,81 @@ internal sealed class ReplicaRedirectTargets(ClientCore core) : IAsyncDisposable
     // cannot grow without bound. Established owners still multiplex concurrent reads.
     internal async ValueTask<Lease?> AcquireAsync(RespireEndpoint endpoint, CancellationToken cancellationToken)
     {
-        await _selection.WaitAsync(cancellationToken).ConfigureAwait(false);
-        Entry? selected = null;
-        int? cacheEvictions = null;
+        var continuityFenced = false;
         try
         {
-            Entry? evicted = null;
-            lock (_gate)
+            await _selection.WaitAsync(cancellationToken).ConfigureAwait(false);
+            Entry? selected = null;
+            int? cacheEvictions = null;
+            try
             {
-                ObjectDisposedException.ThrowIf(_disposed || core.Disposed, this);
-                if (_entries.TryGetValue(endpoint, out selected) && selected.Readers == 0
-                    && selected.RecoveryExhausted)
+                Entry? evicted = null;
+                lock (_gate)
                 {
-                    evicted = selected;
-                    _entries.Remove(endpoint);
-                    selected = null;
+                    ObjectDisposedException.ThrowIf(_disposed || core.Disposed, this);
+                    if (_entries.TryGetValue(endpoint, out selected) && selected.Readers == 0
+                        && selected.RecoveryExhausted)
+                    {
+                        evicted = selected;
+                        _entries.Remove(endpoint);
+                        selected = null;
+                    }
+                    if (!_entries.TryGetValue(endpoint, out selected) && _entries.Count == MaximumTargets)
+                    {
+                        evicted = _entries.Values.Where(static entry => entry.Readers == 0)
+                            .MinBy(static entry => entry.LastUse);
+                        // A temporary, untracked send remains safe when every retained owner is busy.
+                        if (evicted is null) return null;
+                        _entries.Remove(evicted.Endpoint);
+                    }
                 }
-                if (!_entries.TryGetValue(endpoint, out selected) && _entries.Count == MaximumTargets)
-                {
-                    evicted = _entries.Values.Where(static entry => entry.Readers == 0)
-                        .MinBy(static entry => entry.LastUse);
-                    // A temporary, untracked send remains safe when every retained owner is busy.
-                    if (evicted is null) return null;
-                    _entries.Remove(evicted.Endpoint);
-                }
-            }
-            // A newly seen destination can represent failover. Reusing a retained owner
-            // keeps unrelated cached keys warm while its invalidation stream remains live.
-            if (selected is null) cacheEvictions = core.ClientCache!.FlushForContinuityLossWithoutMetrics();
-            if (evicted is not null)
-            {
-                // Fence both published values and fills before giving up invalidation delivery.
-                await evicted.DisposeAsync().ConfigureAwait(false);
-            }
-            lock (_gate)
-            {
-                ObjectDisposedException.ThrowIf(_disposed || core.Disposed, this);
+                // A newly seen destination can represent failover. Reusing a retained owner
+                // keeps unrelated cached keys warm while its invalidation stream remains live.
                 if (selected is null)
                 {
-                    selected = new Entry(core, endpoint);
-                    _entries.Add(endpoint, selected);
+                    cacheEvictions = _cache.FlushForContinuityLossWithoutMetrics();
+                    continuityFenced = true;
                 }
-                selected.Readers++;
-                selected.LastUse = ++_nextUse;
+                if (evicted is not null)
+                {
+                    // Fence both published values and fills before giving up invalidation delivery.
+                    await evicted.DisposeAsync().ConfigureAwait(false);
+                }
+                lock (_gate)
+                {
+                    ObjectDisposedException.ThrowIf(_disposed || core.Disposed, this);
+                    if (selected is null)
+                    {
+                        selected = new Entry(core, endpoint);
+                        _entries.Add(endpoint, selected);
+                    }
+                    selected.Readers++;
+                    selected.LastUse = ++_nextUse;
+                }
             }
-        }
-        finally { _selection.Release(); }
+            finally { _selection.Release(); }
 
-        var lease = new Lease(this, selected);
-        try
-        {
-            // Metrics listeners may synchronously dispose the client; selection owns no
-            // gate here, and the lease already guarantees rollback if an observer throws.
-            if (cacheEvictions is { } removed) ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed);
-            await selected.EnsureConnectedAsync(core, cancellationToken).ConfigureAwait(false);
-            lease.UseConnection(await selected.Node.GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false));
-            return lease;
+            var lease = new Lease(this, selected);
+            try
+            {
+                // Metrics listeners may synchronously dispose the client; selection owns no
+                // gate here, and the lease already guarantees rollback if an observer throws.
+                if (cacheEvictions is { } removed) ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed);
+                await selected.EnsureConnectedAsync(core, cancellationToken).ConfigureAwait(false);
+                lease.UseConnection(await selected.Node.GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false));
+                return lease;
+            }
+            catch
+            {
+                lease.Dispose();
+                throw;
+            }
         }
         catch
         {
-            lease.Dispose();
+            // Selection cancellation/disposal and reused-owner failures still need a fence.
+            // Release selection before publishing metrics, and never repeat a new-owner fence.
+            if (!continuityFenced) _cache.FlushForContinuityLoss();
             throw;
         }
     }

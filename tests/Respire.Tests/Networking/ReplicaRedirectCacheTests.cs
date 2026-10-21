@@ -11,6 +11,38 @@ public class ReplicaRedirectCacheTests
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TargetSelectionFailureFencesContinuityOnce(bool disposed)
+    {
+        await using var source = Target();
+        await using var target = Target();
+        await using var client = await RespireClient.ConnectAsync(Options(source.Port, retry: false));
+        var targets = client.Core.RedirectTargets!;
+        if (disposed) await targets.DisposeAsync();
+        await Assert.That(await client.GetStringAsync("cached")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        var flushes = client.ClientSideCache.GetStatistics().ContinuityFlushes;
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var endpoint = new RespireEndpoint("127.0.0.1", target.Port);
+
+        if (disposed)
+            await Assert.That(async () => { using var lease = await targets.AcquireAsync(endpoint, default); })
+                .Throws<ObjectDisposedException>();
+        else
+        {
+            var error = await Assert.That(async () => { using var lease = await targets.AcquireAsync(endpoint, cancellation.Token); })
+                .Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        }
+
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+        await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - flushes).IsEqualTo(1L);
+        await Assert.That(target.ReceivedCommands.Count).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(false, true)]
@@ -32,6 +64,7 @@ public class ReplicaRedirectCacheTests
         });
         await Assert.That(await client.GetStringAsync("cached")).IsEqualTo("old");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        var flushes = client.ClientSideCache.GetStatistics().ContinuityFlushes;
         if (circuitRejection)
         {
             // Reject before target selection can run its new-destination continuity fence.
@@ -47,6 +80,7 @@ public class ReplicaRedirectCacheTests
             await Assert.That(async () => await client.GetStringAsync("redirected")).Throws<RespireConnectionException>();
 
         await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+        await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - flushes).IsEqualTo(1L);
         await Assert.That(await client.GetStringAsync("cached")).IsEqualTo("new");
         await Assert.That(source.ReceivedCommands.Count(command => command == "GET cached")).IsEqualTo(2);
         // A setup failure must still count against the target circuit and preserve the source.

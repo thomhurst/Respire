@@ -212,20 +212,19 @@ public sealed partial class RespireClient
     private async ValueTask<ReplicaRedirectTargets.Lease?> AcquireTrackedReplicaTargetAsync(
         ReplicaRedirectTargets targets, RespireEndpoint endpoint, CancellationToken cancellationToken)
     {
-        CircuitAdmission admission = default;
+        CircuitAdmission admission;
         try
         {
             admission = _core.Circuits?.Acquire(endpoint, cancellationToken) ?? default;
-            return await targets.AcquireAsync(endpoint, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception error)
+        catch
         {
-            admission.ConnectionFailed(error, cancellationToken);
-            // REDIRECT skipped its unconditional fence while trying to retain tracking.
-            // No selected owner guarantees continuity when admission or acquisition fails.
+            // Admission failed before the target owner could fence continuity.
             _core.ClientCache?.FlushForContinuityLoss();
             throw;
         }
+        try { return await targets.AcquireAsync(endpoint, cancellationToken).ConfigureAwait(false); }
+        catch (Exception error) { admission.ConnectionFailed(error, cancellationToken); throw; }
         finally { admission.Dispose(); }
     }
 
