@@ -46,6 +46,8 @@ File.WriteAllText(Environment.GetEnvironmentVariable("RESPIRE_SDK_PROBE_PID")!,
     JsonSerializer.Serialize(new { ProcessId = self.Id, StartTimeUtcTicks = self.StartTime.ToUniversalTime().Ticks }));
 if (Environment.GetEnvironmentVariable("RESPIRE_AGENT_DOTNET_INVOCATION") is not null) return 7;
 var mode = Environment.GetEnvironmentVariable("RESPIRE_SDK_PROBE_MODE");
+Console.Error.WriteLine($"sdk-probe childPid={self.Id} mode={mode}");
+if (mode == "failure") { Console.Error.WriteLine("SDK probe failure sentinel"); return 73; }
 if (mode == "descendant")
 {
     using var child = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "child") { UseShellExecute = false, CreateNoWindow = true })!;
@@ -74,15 +76,57 @@ return 0;
     $probeName = if ($IsWindows) { 'SdkProbe.exe' } else { 'SdkProbe' }
     $probe = Join-Path $testRoot "bin/Debug/net10.0/$probeName"
     $env:DOTNET_TEST_RUNNER = 'VSTest'
-    foreach ($mode in @('descendant', 'timeout', 'memory')) {
+    foreach ($mode in @('descendant', 'timeout', 'memory', 'failure')) {
         $env:RESPIRE_SDK_PROBE_MODE = $mode
         $env:RESPIRE_SDK_PROBE_PID = Join-Path $testRoot "$mode-pid.json"
         $env:RESPIRE_SDK_PROBE_CHILD_PID = Join-Path $testRoot "$mode-child-pid.json"
         $env:RESPIRE_SDK_PROBE_WORKLOAD = Join-Path $testRoot "$mode-workload.txt"
         $timeout = if ($mode -eq 'timeout') { 4 } else { 30 }
-        $expectedExit = switch ($mode) { 'timeout' { 124 } 'memory' { 137 } default { 0 } }
-        & $guardScript -SingleNode -DotNetPath $probe -TimeoutSeconds $timeout -MemoryLimitMb 512 -PollIntervalMilliseconds 100 -DotNetArguments @('test', 'project')
-        if ($LASTEXITCODE -ne $expectedExit) { throw "SDK probe $mode returned $LASTEXITCODE instead of $expectedExit." }
+        $expectedExit = switch ($mode) { 'timeout' { 124 } 'memory' { 137 } 'failure' { 1 } default { 0 } }
+        if ($mode -in @('timeout', 'failure')) {
+            # Capture a fresh host's OS stderr, as Actions does. The marker must
+            # arrive while the SDK probe is still blocked, before guard timeout.
+            $probeHostScript = Join-Path $testRoot 'ProbeHost.ps1'
+            @'
+param($GuardScript, $Probe, [int]$TimeoutSeconds)
+& $GuardScript -SingleNode -DotNetPath $Probe -TimeoutSeconds $TimeoutSeconds -MemoryLimitMb 512 -PollIntervalMilliseconds 100 -DotNetArguments @('test', 'project')
+exit $LASTEXITCODE
+'@ | Set-Content -LiteralPath $probeHostScript
+            $hostInfo = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
+            $hostInfo.UseShellExecute = $false
+            $hostInfo.WorkingDirectory = $testRoot
+            $hostInfo.RedirectStandardError = $true
+            $hostInfo.RedirectStandardOutput = $true
+            foreach ($argument in @('-NoProfile', '-File', $probeHostScript, '-GuardScript', $guardScript,
+                '-Probe', $probe, '-TimeoutSeconds', "$timeout")) { $hostInfo.ArgumentList.Add($argument) }
+            $guardHost = [Diagnostics.Process]::Start($hostInfo)
+            try {
+                $stdout = $guardHost.StandardOutput.ReadToEndAsync()
+                $marker = $guardHost.StandardError.ReadLineAsync().WaitAsync([TimeSpan]::FromSeconds(30)).GetAwaiter().GetResult()
+                if ($marker -notmatch ('^sdk-probe childPid=\d+ mode={0}$' -f $mode) -or ($mode -eq 'timeout' -and $guardHost.HasExited)) {
+                    throw "SDK probe marker did not reach live stderr before timeout: $marker"
+                }
+                [Console]::Error.WriteLine($marker)
+                $stderr = $guardHost.StandardError.ReadToEndAsync()
+                if (-not $guardHost.WaitForExit(30000)) { throw 'SDK probe host did not exit after guard timeout.' }
+                $errorText = $stderr.GetAwaiter().GetResult()
+                [Console]::Error.Write($errorText)
+                if ($mode -eq 'failure' -and -not $errorText.Contains('SDK probe failure sentinel')) {
+                    throw 'Failed SDK probe lost its stderr.'
+                }
+                if ($stdout.GetAwaiter().GetResult()) { throw 'Failed SDK probe emitted unexpected stdout.' }
+                $guardResult = $guardHost.ExitCode
+            }
+            finally {
+                if (-not $guardHost.HasExited) { $guardHost.Kill($true); $guardHost.WaitForExit() }
+                $guardHost.Dispose()
+            }
+        }
+        else {
+            & $guardScript -SingleNode -DotNetPath $probe -TimeoutSeconds $timeout -MemoryLimitMb 512 -PollIntervalMilliseconds 100 -DotNetArguments @('test', 'project')
+            $guardResult = $LASTEXITCODE
+        }
+        if ($guardResult -ne $expectedExit) { throw "SDK probe $mode returned $guardResult instead of $expectedExit." }
         $identity = Get-Content -LiteralPath $env:RESPIRE_SDK_PROBE_PID -Raw | ConvertFrom-Json
         if (Test-RecordedProcess $identity) { throw "SDK probe $mode is still running." }
         if ($mode -eq 'descendant') {
@@ -90,9 +134,9 @@ return 0;
             if (Test-RecordedProcess $childIdentity) { throw 'SDK probe descendant is still running after normal command exit.' }
             if (-not (Test-Path -LiteralPath $env:RESPIRE_SDK_PROBE_WORKLOAD)) { throw 'Normal SDK probe did not launch the workload.' }
         }
-        elseif (Test-Path -LiteralPath $env:RESPIRE_SDK_PROBE_WORKLOAD) { throw "SDK probe $mode launched a workload after exceeding its limit." }
+        elseif (Test-Path -LiteralPath $env:RESPIRE_SDK_PROBE_WORKLOAD) { throw "SDK probe $mode launched a workload after probe failure." }
     }
-    Write-Output 'OK SDK probe normal-exit descendant cleanup, timeout, memory limit, and prevention of workload launch after probe failure.'
+    Write-Output 'OK SDK probe live stderr before timeout, failure diagnostics, normal-exit descendant cleanup, timeout, memory limit, and prevention of workload launch after probe failure.'
 }
 finally {
     foreach ($identityFile in Get-ChildItem -LiteralPath $testRoot -Filter '*-pid.json') {

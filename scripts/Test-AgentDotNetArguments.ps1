@@ -1,17 +1,65 @@
+param([string]$DiagnosticsDirectory)
+
 $ErrorActionPreference = 'Stop'
 $guardScript = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-dotnet-arguments-{0}" -f [guid]::NewGuid())
+$phaseLog = $null
+$caseNumber = 0
+$locationPushed = $false
+if ($DiagnosticsDirectory) {
+    try {
+        $diagnosticsRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DiagnosticsDirectory)
+        [IO.Directory]::CreateDirectory($diagnosticsRoot) | Out-Null
+        $phaseLog = Join-Path $diagnosticsRoot 'arguments-phases.log'
+    }
+    catch {
+        try { [Console]::Error.WriteLine("Argument smoke diagnostics unavailable: $_") } catch { }
+    }
+}
+
+function Write-ArgumentPhase([string]$Phase) {
+    $line = '{0:o} arguments hostPid={1} {2}' -f [DateTimeOffset]::UtcNow, $PID, $Phase
+    try { [Console]::WriteLine($line) } catch { }
+    if ($phaseLog) {
+        try { [IO.File]::AppendAllText($phaseLog, $line + [Environment]::NewLine) }
+        catch { } # Diagnostics must not replace a guard failure or prevent cleanup.
+    }
+}
+
+function Invoke-ArgumentGuard(
+    [string]$Phase,
+    [string[]]$Arguments,
+    [int]$TimeoutSeconds = 30,
+    [string]$Executable = 'dotnet',
+    [switch]$SingleNode) {
+    Write-ArgumentPhase "$Phase guard-enter timeoutSeconds=$TimeoutSeconds singleNode=$SingleNode executable=$Executable cwd=$((Get-Location).ProviderPath)"
+    try {
+        & $guardScript -TimeoutSeconds $TimeoutSeconds -DotNetPath $Executable -SingleNode:$SingleNode -DotNetArguments $Arguments
+        # Keep a named result; shadowing the automatic variable hides later native exits.
+        $script:argumentGuardExitCode = $LASTEXITCODE
+        Write-ArgumentPhase "$Phase guard-return exit=$argumentGuardExitCode"
+    }
+    catch {
+        Write-ArgumentPhase "$Phase guard-throw: $_"
+        throw
+    }
+}
+
 $previousCapturePath = $env:RESPIRE_GUARD_TEST_CAPTURE
 $previousDirectoryCapturePath = $env:RESPIRE_GUARD_TEST_DIRECTORY
 $previousTestRunner = $env:DOTNET_TEST_RUNNER
 $previousSdkVersion = $env:RESPIRE_GUARD_TEST_SDK_VERSION
+$previousPhaseLog = $env:RESPIRE_GUARD_TEST_PHASE_LOG
+$env:RESPIRE_GUARD_TEST_PHASE_LOG = $phaseLog
 $env:DOTNET_TEST_RUNNER = $null
-New-Item -ItemType Directory -Path $testRoot | Out-Null
-$configuration = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../global.json') -Raw | ConvertFrom-Json
-$configuration.test.runner = 'VSTest'
-$configuration | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $testRoot 'global.json')
-Push-Location $testRoot
+Write-ArgumentPhase "setup-enter fixture=$testRoot pwsh=$($PSVersionTable.PSVersion) os=$([Environment]::OSVersion)"
 try {
+    New-Item -ItemType Directory -Path $testRoot | Out-Null
+    $configuration = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../global.json') -Raw | ConvertFrom-Json
+    $configuration.test.runner = 'VSTest'
+    $configuration | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $testRoot 'global.json')
+    Push-Location $testRoot
+    $locationPushed = $true
     $project = Join-Path $testRoot 'ArgumentProbe.csproj'
     @'
 <Project Sdk="Microsoft.NET.Sdk">
@@ -24,6 +72,15 @@ try {
 '@ | Set-Content -LiteralPath $project
     @'
 using System.Text.Json;
+var mode = args is ["--version"] ? "sdk-probe" : "workload";
+var phase = $"{DateTimeOffset.UtcNow:o} arguments childPid={Environment.ProcessId} mode={mode} argc={args.Length} cwd={Environment.CurrentDirectory}";
+try { Console.Error.WriteLine(phase); } catch { } // --version stdout must remain a single SDK version.
+try
+{
+    if (Environment.GetEnvironmentVariable("RESPIRE_GUARD_TEST_PHASE_LOG") is { Length: > 0 } log)
+        File.AppendAllText(log, phase + Environment.NewLine);
+}
+catch { } // Evidence is best-effort; keep the native argument assertions authoritative.
 if (Environment.GetEnvironmentVariable("RESPIRE_AGENT_DOTNET_INVOCATION") is not null)
     return 7;
 if (args is ["--version"])
@@ -36,8 +93,8 @@ File.WriteAllText(Environment.GetEnvironmentVariable("RESPIRE_GUARD_TEST_DIRECTO
 return 0;
 '@ | Set-Content -LiteralPath (Join-Path $testRoot 'Program.cs')
     # Build the native probe without relying on SingleNode injection under test.
-    & $guardScript -TimeoutSeconds 60 -DotNetArguments @('build', $project, '/m:1', '--nologo')
-    if ($LASTEXITCODE -ne 0) { throw 'Argument probe build failed.' }
+    Invoke-ArgumentGuard -Phase 'fixture-build' -TimeoutSeconds 60 -Arguments @('build', $project, '/m:1', '--nologo')
+    if ($argumentGuardExitCode -ne 0) { throw 'Argument probe build failed.' }
     $probeName = if ($IsWindows) { 'ArgumentProbe.exe' } else { 'ArgumentProbe' }
     $probe = Join-Path $testRoot "bin/Debug/net10.0/$probeName"
     $env:RESPIRE_GUARD_TEST_CAPTURE = Join-Path $testRoot 'arguments.json'
@@ -45,10 +102,12 @@ return 0;
     $directoryMarkerName = "guard-location-$([guid]::NewGuid()).txt"
 
     function Assert-Arguments([string[]]$InputArguments, [string[]]$Expected, [switch]$SingleNode) {
+        $script:caseNumber++
+        $phase = "case=$caseNumber verb=$($InputArguments[0]) argc=$($InputArguments.Count) runner=$env:DOTNET_TEST_RUNNER sdk=$env:RESPIRE_GUARD_TEST_SDK_VERSION"
         $markerPath = Join-Path (Get-Location).ProviderPath $directoryMarkerName
         [IO.File]::WriteAllText($markerPath, $directoryMarkerName)
-        & $guardScript -TimeoutSeconds 30 -DotNetPath $probe -SingleNode:$SingleNode -DotNetArguments $InputArguments
-        if ($LASTEXITCODE -ne 0) { throw "Argument probe failed: $LASTEXITCODE" }
+        Invoke-ArgumentGuard -Phase $phase -Executable $probe -SingleNode:$SingleNode -Arguments $InputArguments
+        if ($argumentGuardExitCode -ne 0) { throw "Argument probe failed: $argumentGuardExitCode" }
         $actualDirectory = [IO.File]::ReadAllText($env:RESPIRE_GUARD_TEST_DIRECTORY)
         # Native cwd may resolve aliases such as macOS /var to /private/var.
         # A unique marker proves directory identity without assuming path spelling.
@@ -72,6 +131,7 @@ return 0;
                 throw "Argument $index changed: expected '$($Expected[$index])', actual '$($actual[$index])'."
             }
         }
+        Write-ArgumentPhase "case=$caseNumber assertions-passed"
     }
 
     $special = @('build', '-p:Version=1.2.3', '-p:Label=two words', '', 'quote"value', "apostrophe'value", 'literal$(never-run)', 'C:\path with spaces\', '--flag:false', '2024-01-01T00:00:00Z', '2024-01-01T03:04:05.1234567+02:00')
@@ -110,7 +170,8 @@ return 0;
             '{ invalid json' | Set-Content -LiteralPath $malformedPath
             Remove-Item -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE
             $configurationRejected = $false
-            try { & $guardScript -SingleNode -DotNetPath $probe -DotNetArguments @('test', 'project') }
+            # Retain the guard's existing default for this validation-before-launch control.
+            try { Invoke-ArgumentGuard -Phase 'malformed-configuration-control' -TimeoutSeconds 600 -SingleNode -Executable $probe -Arguments @('test', 'project') }
             catch {
                 if (-not $_.Exception.Message.StartsWith("Cannot read test runner configuration '$malformedPath':")) { throw }
                 $configurationRejected = $true
@@ -169,8 +230,8 @@ return 0;
     Assert-Arguments @('build', 'project') @('build', 'project', '-m:1') -SingleNode
     $env:RESPIRE_GUARD_TEST_SDK_VERSION = 'not-a-version'
     Remove-Item -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE
-    & $guardScript -TimeoutSeconds 30 -SingleNode -DotNetPath $probe -DotNetArguments @('test', 'project')
-    if ($LASTEXITCODE -ne 1 -or (Test-Path -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE)) {
+    Invoke-ArgumentGuard -Phase 'unrecognized-sdk-control' -SingleNode -Executable $probe -Arguments @('test', 'project')
+    if ($argumentGuardExitCode -ne 1 -or (Test-Path -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE)) {
         throw 'Unrecognized effective SDK did not fail before launching the workload.'
     }
     $configuration.test.runner = 'VSTest'
@@ -187,22 +248,30 @@ return 0;
     }
 
     # Exercise real MSBuild with the injected switch, not only the probe.
-    & $guardScript -SingleNode -TimeoutSeconds 60 -DotNetArguments @('pack', $project, '--no-restore', '--nologo')
-    if ($LASTEXITCODE -ne 0) { throw 'SingleNode pack failed.' }
+    Invoke-ArgumentGuard -Phase 'single-node-pack' -SingleNode -TimeoutSeconds 60 -Arguments @('pack', $project, '--no-restore', '--nologo')
+    if ($argumentGuardExitCode -ne 0) { throw 'SingleNode pack failed.' }
     Write-Output 'OK native arguments, SDK-aware runner overrides, nearest MTP configuration, existing switches, separator, and pack passed.'
+    Write-ArgumentPhase 'smoke-passed'
+}
+catch {
+    Write-ArgumentPhase "smoke-failed: $_"
+    throw
 }
 finally {
-    Pop-Location
+    Write-ArgumentPhase 'cleanup-enter'
+    if ($locationPushed) { Pop-Location }
     $env:RESPIRE_GUARD_TEST_CAPTURE = $previousCapturePath
     $env:RESPIRE_GUARD_TEST_DIRECTORY = $previousDirectoryCapturePath
     $env:DOTNET_TEST_RUNNER = $previousTestRunner
     $env:RESPIRE_GUARD_TEST_SDK_VERSION = $previousSdkVersion
+    $env:RESPIRE_GUARD_TEST_PHASE_LOG = $previousPhaseLog
     $resolvedRoot = [IO.Path]::GetFullPath($testRoot)
     $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $resolvedRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing cleanup outside temp root: $resolvedRoot"
     }
-    Remove-Item -LiteralPath $resolvedRoot -Recurse -Force
+    if (Test-Path -LiteralPath $resolvedRoot) { Remove-Item -LiteralPath $resolvedRoot -Recurse -Force }
+    Write-ArgumentPhase 'cleanup-return'
 }
 
 exit 0

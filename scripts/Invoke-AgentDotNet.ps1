@@ -653,18 +653,17 @@ if ($probeSdk) {
     $probeInfo.WorkingDirectory = $startInfo.WorkingDirectory
     $probeInfo.Environment.Remove('RESPIRE_AGENT_DOTNET_INVOCATION') | Out-Null
     $probeInfo.RedirectStandardOutput = $true
-    $probeInfo.RedirectStandardError = $true
+    # Inherit stderr so startup markers and failures are visible even while the
+    # probe is stalled. Only stdout carries the single-line SDK version protocol.
     $probeInfo.ArgumentList.Add('--version')
     $probe = [Diagnostics.Process]::Start($probeInfo)
     try {
         # --version emits one line. A surviving probe descendant can inherit the
         # pipe, so waiting for EOF would prevent the workload from starting.
         $output = $probe.StandardOutput.ReadLineAsync()
-        $errorOutput = $probe.StandardError.ReadLineAsync()
         $probe.WaitForExit()
         if ($probe.ExitCode -ne 0) {
-            $errorText = if ($errorOutput.IsCompletedSuccessfully) { $errorOutput.GetAwaiter().GetResult() } else { '' }
-            throw "SDK runner probe failed with exit $($probe.ExitCode): $errorText"
+            throw "SDK runner probe failed with exit $($probe.ExitCode); see stderr above."
         }
         $versionText = ($output.GetAwaiter().GetResult() ?? '').Trim()
         try { $sdkVersion = [semver]$versionText }
