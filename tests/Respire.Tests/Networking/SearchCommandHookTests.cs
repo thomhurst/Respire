@@ -30,7 +30,9 @@ public class SearchCommandHookTests
         await using var server = Server();
         var rejected = new InvalidOperationException("rejected");
         var hook = new Hook { Before = _ => throw rejected };
+#pragma warning disable RESP010 // This search hook scenario owns its client and scripted query/cursor cleanup state.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
 
         var error = await Failure(() => Call(client.Search, route));
@@ -65,7 +67,9 @@ public class SearchCommandHookTests
         server.ReplyOverride = (_, command) => command.StartsWith("FT.", StringComparison.Ordinal)
             ? "$3\r\nbad\r\n"u8.ToArray() : null;
         var hook = new Hook();
+#pragma warning disable RESP010 // This search hook scenario owns its client and scripted query/cursor cleanup state.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
 
         var error = await Failure(() => Call(client.Search, route));
 
@@ -80,7 +84,9 @@ public class SearchCommandHookTests
     {
         await using var server = Server();
         var hook = new Hook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
@@ -101,7 +107,9 @@ public class SearchCommandHookTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.GateCommand("FT.SEARCH", release.Task, () => received.TrySetResult());
         var hook = new Hook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         try
         {
@@ -130,10 +138,12 @@ public class SearchCommandHookTests
             _ => FakeRespServer.OkReply,
         };
         var hook = new Hook();
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and hooks to verify rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         await client.Strings.GetStringAsync("cached");
         hook.Before = context => { if (context.Command == "FT.ALIASADD") throw new InvalidOperationException("rejected"); };
         await Failure(() => client.Search.AddAliasAsync("alias", "idx").AsTask());
@@ -166,7 +176,9 @@ public class SearchCommandHookTests
             Before = context => { if (context.Command == "COMMAND INFO") throw new InvalidOperationException("application probe rejected"); },
             After = _ => probeFinished = server.ReceivedCommands.Contains("COMMAND INFO FT.HYBRID"),
         };
+#pragma warning disable RESP010 // This search hook scenario owns its client and scripted query/cursor cleanup state.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
 
         var error = await Failure(() => Call(client.Search, "hybrid"));
 
@@ -198,7 +210,9 @@ public class SearchCommandHookTests
             Before = context => { if (context.Command == "FT.CURSOR DEL") throw new InvalidOperationException("application delete rejected"); },
             After = _ => cleanedUp = server.ReceivedCommands.Contains("FT.CURSOR DEL idx 42"),
         };
+#pragma warning disable RESP010 // This search hook scenario owns its client and scripted query/cursor cleanup state.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
 
         var error = await Failure(() => Call(client.Search, route));
 
@@ -221,7 +235,9 @@ public class SearchCommandHookTests
             _ => null,
         };
         var hook = new Hook();
+#pragma warning disable RESP010 // This search hook scenario owns its client and scripted query/cursor cleanup state.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var pages = 0;
 
         await foreach (var page in client.Search.AggregatePagesAsync("idx", RespireSearchExpression.FromRaw("*")))
@@ -242,7 +258,9 @@ public class SearchCommandHookTests
     {
         await using var server = Server();
         var hook = new Hook();
+#pragma warning disable RESP010 // This reentrancy/concurrency scenario owns its client and shared callback state until all calls finish.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         Task? nested = null;
         hook.Before = context =>
         {
@@ -272,7 +290,9 @@ public class SearchCommandHookTests
             "COMMAND INFO FT.HYBRID" => "*1\r\n$-1\r\n"u8.ToArray(),
             _ => null,
         };
+#pragma warning disable RESP010 // This search hook scenario owns its client and scripted query/cursor cleanup state.
         await using var client = await RespireClient.ConnectAsync(Options(server, null));
+#pragma warning restore RESP010
         var decorated = DispatchProxy.Create<IRespireClient, ForwardingClient>();
         var proxy = (ForwardingClient)decorated;
         proxy.Inner = client;
@@ -299,7 +319,9 @@ public class SearchCommandHookTests
             "FT.CURSOR DEL idx 42" => FakeRespServer.OkReply,
             _ => null,
         };
+#pragma warning disable RESP010 // This search hook scenario owns its client and scripted query/cursor cleanup state.
         await using var client = await RespireClient.ConnectAsync(Options(server, null));
+#pragma warning restore RESP010
         var expected = await Failure(() => Call(client.Search, route));
         var decorated = DispatchProxy.Create<IRespireClient, ForwardingClient>();
         var proxy = (ForwardingClient)decorated;
@@ -323,7 +345,9 @@ public class SearchCommandHookTests
         await using var server = Server();
         server.ReplyOverride = (_, command) => command.StartsWith("FT.AGGREGATE", StringComparison.Ordinal)
             ? "*2\r\n*1\r\n:0\r\n:42\r\n"u8.ToArray() : null;
+#pragma warning disable RESP010 // This search hook scenario owns its client and scripted query/cursor cleanup state.
         await using var client = await RespireClient.ConnectAsync(Options(server, null));
+#pragma warning restore RESP010
         var decorated = DispatchProxy.Create<IRespireClient, ForwardingClient>();
         var proxy = (ForwardingClient)decorated;
         proxy.Inner = client;

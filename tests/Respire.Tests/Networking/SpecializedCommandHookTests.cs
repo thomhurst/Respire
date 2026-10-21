@@ -60,12 +60,14 @@ public class SpecializedCommandHookTests
                 return Bytes("*2\r\n$1\r\n0\r\n*0\r\n");
             return null;
         };
+#pragma warning disable RESP010 // This specialized-owner scenario owns the client and route-specific hook/topology state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
             CommandTimeout = TimeSpan.FromSeconds(5), AllowAdmin = true, CommandHook = hook,
         });
+#pragma warning restore RESP010
         var pinned = route == "pinned" ? await client.Server.GetClientConnectionAsync() : null;
         hook.Reset();
         var baseline = server.CommandsSeen;
@@ -187,12 +189,14 @@ public class SpecializedCommandHookTests
         foreach (var enabled in new[] { false, true })
         {
             var hook = new RecordingHook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
                 Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
                 Connections = 1, ThreadPoolMonitoring = false, AllowAdmin = true,
                 CommandHook = enabled ? hook : null,
             });
+#pragma warning restore RESP010
             hook.Reset();
             var baseline = server.CommandsSeen;
             var error = await Failure(Execute);

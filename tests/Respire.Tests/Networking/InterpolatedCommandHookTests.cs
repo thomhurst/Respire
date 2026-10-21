@@ -37,7 +37,9 @@ public partial class CommandHookTests
                 if (phase == "cancellation") cancellation.Cancel();
             },
         };
+#pragma warning disable RESP010 // This interpolation hook scenario owns its client, observer state and scripted replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var errors = new InterpolatedErrorCapture();
         var baseline = server.CommandsSeen;
         RespireCommandInterpolatedStringHandler command = $"GET {"key"}";
@@ -94,7 +96,9 @@ public partial class CommandHookTests
                 command.AppendLiteral("extra");
             },
         };
+#pragma warning disable RESP010 // This interpolation hook scenario owns its client, observer state and scripted replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         await SendInterpolated(client, route, command);
         // A reply-bearing command drains the connection after fire-and-forget writes.
         await client.Strings.LengthAsync("barrier");
@@ -114,7 +118,9 @@ public partial class CommandHookTests
         await using var server = Server();
         var rejected = new InvalidOperationException("denied");
         var hook = new RecordingHook { Before = _ => throw rejected };
+#pragma warning disable RESP010 // This interpolation hook scenario owns its client, observer state and scripted replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         foreach (var formattedSubcommand in new[] { false, true })
         {
@@ -140,8 +146,12 @@ public partial class CommandHookTests
         using var endpoint = new ReservedUnavailablePort();
         var hook = new RecordingHook { Before = _ => throw new InvalidOperationException("denied") };
         var options = OptionsForUnavailableEndpoint(endpoint.Port);
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and hooks to verify rejection before I/O.
         await using var plain = RespireClient.Create(options);
+#pragma warning restore RESP010
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and hooks to verify rejection before I/O.
         await using var hooked = RespireClient.Create(options with { CommandHook = hook });
+#pragma warning restore RESP010
         var empty = new RespireCommandInterpolatedStringHandler(0, 0);
         await Check(empty);
         await Check($"MGET {"{a}:one"} {"{b}:two"}");
@@ -187,7 +197,9 @@ public partial class CommandHookTests
             return true;
         };
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         using var cancellation = new CancellationTokenSource();
         if (!pending) cancellation.Cancel();
@@ -215,7 +227,9 @@ public partial class CommandHookTests
         await using var server = Server();
         server.ReplyOverride = (_, command) => command == "GET key" ? "-ERR failed\r\n"u8.ToArray() : null;
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This interpolation hook scenario owns its client, observer state and scripted replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var error = await Failure(() => SendInterpolated(client, route, $"GET {"key"}"));
         var completion = hook.Completed.Single();
         await Assert.That(completion.Outcome).IsEqualTo(RespireCommandOutcome.Failed);
@@ -232,11 +246,13 @@ public partial class CommandHookTests
         await using var server = Server();
         server.ReplyOverride = (_, command) => command == "GET key" ? "-TRYAGAIN busy\r\n"u8.ToArray() : null;
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This interpolation hook scenario owns its client, observer state and scripted replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         {
             CommandHook = configured ? hook : null,
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         var error = await Failure(() => SendInterpolated(client, route, $"GET {"key"}"));
         await Assert.That(error is RespireServerException).IsTrue();
         // DynamicCommand deliberately defaults to Never; a name must not grant replay permission.
@@ -258,7 +274,9 @@ public partial class CommandHookTests
         await using var server = Server();
         server.ReplyOverride = (_, command) => command == "GET key" ? "$3\r\nbad\r\n"u8.ToArray() : null;
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This interpolation hook scenario owns its client, observer state and scripted replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var result = lease ? await client.ExecuteLeaseAsync($"GET {"key"}")
             : await client.ExecuteAsync($"GET {"key"}");
         await Assert.That(result.AsString()).IsEqualTo("bad");
@@ -286,10 +304,12 @@ public partial class CommandHookTests
         target.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology
             : command == "GET key" ? "$2\r\n42\r\n"u8.ToArray() : null;
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This reentrancy/concurrency scenario owns its client and shared callback state until all calls finish.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         {
             UseCluster = true, ClusterTopologyRefreshInterval = null,
         });
+#pragma warning restore RESP010
         Task<long>? nested = null;
         hook.Before = context =>
         {
@@ -312,10 +332,12 @@ public partial class CommandHookTests
     {
         await using var server = new FakeRespServer("%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), FakeRespServer.OkReply);
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This interpolation hook scenario owns its client, observer state and scripted replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         {
             Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var activeAtAdmission = -1;
         var activeAtCompletion = -1;
         hook.Before = _ => activeAtAdmission = client.Core.ClientCache!.InspectForTests().ActiveMutationCount;

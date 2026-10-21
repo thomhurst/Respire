@@ -248,11 +248,13 @@ public class JsonCommandHookTests
             ReplyOverride = (_, command) => command.StartsWith("JSON.DEL ", StringComparison.Ordinal) ? Bytes(":1\r\n") : null,
         };
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This JSON mutation scenario owns the client and cache entries inspected around admission.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp3,
             Connections = 1, ThreadPoolMonitoring = false, CommandHook = hook, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         var key = new RespireKey("tenant:key");
         var other = new RespireKey("tenant:other");

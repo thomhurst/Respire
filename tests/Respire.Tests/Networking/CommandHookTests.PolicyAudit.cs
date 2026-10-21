@@ -34,10 +34,12 @@ public partial class CommandHookTests
         {
             var rejected = new InvalidOperationException("policy denied");
             var hook = new RecordingHook { Before = policy == "reject" ? _ => throw rejected : null };
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
             await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
             {
                 CommandHook = policy == "absent" ? null : hook,
             });
+#pragma warning restore RESP010
             var baseline = server.CommandsSeen;
             var error = await Failure(async () =>
             {
@@ -99,7 +101,9 @@ public partial class CommandHookTests
         await using var server = new FakeRespServer("*2\r\n*2\r\n:0\r\n$1\r\n1\r\n*2\r\n:1\r\n$1\r\n2\r\n"u8.ToArray());
         using var cancellation = new CancellationTokenSource();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with { CommandHook = configured ? hook : null });
+#pragma warning restore RESP010
         if (typed) await Check(client.Arrays.ScanAsync<int>("key", 0, 10, cancellationToken: cancellation.Token));
         else await Check(client.Arrays.ScanAsync("key", 0, 10, cancellationToken: cancellation.Token));
 
@@ -128,7 +132,9 @@ public partial class CommandHookTests
         await using var server = new FakeRespServer(4, "*2\r\n*2\r\n:1\r\n$1\r\n1\r\n*2\r\n:2\r\n$1\r\n2\r\n"u8.ToArray());
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with { CommandHook = configured ? hook : null });
+#pragma warning restore RESP010
         await using var iterator = new RespireTimeSeriesClient(client).FollowAsync("key", 0,
             cancellationToken: cancellation.Token).GetAsyncEnumerator();
         await Assert.That(await iterator.MoveNextAsync()).IsTrue();
@@ -154,7 +160,9 @@ public partial class CommandHookTests
         server.ReplyOverride = (_, command) => command.StartsWith("ARSCAN ", StringComparison.Ordinal)
             ? "*0\r\n"u8.ToArray() : "$2\r\n42\r\n"u8.ToArray();
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This policy scenario owns the hook configuration and scripted cursor/command state.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var view = route == "raw" ? client.WithoutClientCache() : client.WithKeyPrefix("tenant:").WithoutClientCache();
         var proxy = DispatchProxy.Create<IRespireClient, PolicyForwarder>();
         ((PolicyForwarder)proxy).Inner = view;
@@ -206,10 +214,12 @@ public partial class CommandHookTests
             await using var server = new FakeRespServer("*1\r\n*2\r\n:0\r\n$1\r\n1\r\n"u8.ToArray());
             using var cancellation = new CancellationTokenSource();
             var hook = new RecordingHook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
             await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
             {
                 CommandHook = policy == "absent" ? null : hook,
             });
+#pragma warning restore RESP010
             ulong end = finalPage ? 0UL : 10UL;
             if (typed) await Check(client.Arrays.ScanAsync<int>("key", 0, end, pageSize: 1, cancellationToken: cancellation.Token));
             else await Check(client.Arrays.ScanAsync("key", 0, end, pageSize: 1, cancellationToken: cancellation.Token));

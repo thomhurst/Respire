@@ -20,7 +20,9 @@ public partial class CommandHookTests
         await using var server = LockHookServer();
         var rejection = new InvalidOperationException("Lock policy");
         var hook = new RecordingHook { Before = _ => throw rejection };
+#pragma warning disable RESP010 // This lock hook scenario owns its client and scripted ownership/fencing state.
         await using var client = RespireClient.Create(Options(server, hook));
+#pragma warning restore RESP010
         var error = await Failure(async () =>
         {
             switch (route)
@@ -52,24 +54,29 @@ public partial class CommandHookTests
     {
         await using var server = LockHookServer();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This retry/fallback scenario owns its client and scripted attempt counters across one logical call.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with { CommandTimeout = null });
-        var mutex = await client.Locks.AcquireOrThrowAsync("lock", TimeSpan.FromMinutes(1));
+#pragma warning restore RESP010
+        await using var mutex = await client.Locks.AcquireOrThrowAsync("lock", TimeSpan.FromMinutes(1));
         var baseline = server.CommandsSeen;
         hook.Before = _ => throw new InvalidOperationException("Lock policy");
-        await Failure(async () =>
+        try
         {
-            switch (route)
+            await Failure(async () =>
             {
-                case "release": await mutex.ReleaseAsync(); break;
-                case "dispose": await mutex.DisposeAsync(); break;
-                case "renew": await mutex.ResetExpiryAsync(TimeSpan.FromMinutes(2)); break;
-                case "verify": await mutex.VerifyStillHeldAsync(); break;
-                case "keepalive": await mutex.KeepAliveAsync(); break;
-            }
-        });
-        await Assert.That(mutex.IsReleased).IsFalse();
-        await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
-        hook.Before = null;
+                switch (route)
+                {
+                    case "release": await mutex.ReleaseAsync(); break;
+                    case "dispose": await mutex.DisposeAsync(); break;
+                    case "renew": await mutex.ResetExpiryAsync(TimeSpan.FromMinutes(2)); break;
+                    case "verify": await mutex.VerifyStillHeldAsync(); break;
+                    case "keepalive": await mutex.KeepAliveAsync(); break;
+                }
+            });
+            await Assert.That(mutex.IsReleased).IsFalse();
+            await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+        }
+        finally { hook.Before = null; } // Failure cleanup must be allowed to release the owned lock.
         await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(mutex.IsReleased).IsTrue();
         await Assert.That(hook.Completed.Select(c => c.Outcome).ToArray()).IsEquivalentTo(new[]
@@ -87,8 +94,10 @@ public partial class CommandHookTests
             ? Interlocked.Increment(ref attempts) < 3 ? "$-1\r\n"u8.ToArray() : FakeRespServer.OkReply
             : ":1\r\n"u8.ToArray();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This lock hook scenario owns its client and scripted ownership/fencing state.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with { CommandTimeout = null });
-        var mutex = await client.Locks.AcquireOrThrowAsync("lock", TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(1));
+#pragma warning restore RESP010
+        await using var mutex = await client.Locks.AcquireOrThrowAsync("lock", TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(1));
         await Assert.That(attempts).IsEqualTo(3);
         await Assert.That(hook.Completed.Count).IsEqualTo(1);
         await Assert.That(hook.Completed.Single().Context.Command).IsEqualTo("LOCK ACQUIRE");
@@ -108,7 +117,9 @@ public partial class CommandHookTests
             : command.StartsWith("EVALSHA ", StringComparison.Ordinal) ? "-NOSCRIPT missing\r\n"u8.ToArray()
             : command.StartsWith("GET ", StringComparison.Ordinal) ? "$2\r\n42\r\n"u8.ToArray() : ":1\r\n"u8.ToArray();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This retry/fallback scenario owns its client and scripted attempt counters across one logical call.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         Task<string?>? reentrant = null;
         hook.Before = context =>
         {
@@ -135,10 +146,12 @@ public partial class CommandHookTests
             return true;
         };
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with { CommandTimeout = null });
+#pragma warning restore RESP010
         await client.EnsureReliableCorrectionOrderingAsync();
         server.GateCommand("CLIENT KILL ID 41", finishFence.Task, () => fenceSent.TrySetResult());
-        var mutex = await client.Locks.AcquireOrThrowAsync("lock", TimeSpan.FromMinutes(1));
+        await using var mutex = await client.Locks.AcquireOrThrowAsync("lock", TimeSpan.FromMinutes(1));
         using var cancellation = new CancellationTokenSource();
         var pending = mutex.ResetExpiryAsync(TimeSpan.FromMinutes(2), cancellation.Token).AsTask();
         try
@@ -162,7 +175,9 @@ public partial class CommandHookTests
     {
         await using var server = LockHookServer();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and hooks to verify rejection before I/O.
         await using var client = RespireClient.Create(Options(server, hook));
+#pragma warning restore RESP010
         await Assert.That(async () => await client.Locks.AcquireAsync("lock", TimeSpan.Zero)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(hook.Entered).IsEmpty();
         using var cancellation = new CancellationTokenSource();
@@ -185,7 +200,9 @@ public partial class CommandHookTests
             return replies(id, command);
         };
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This lock hook scenario owns its client and scripted ownership/fencing state.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with { CommandTimeout = null });
+#pragma warning restore RESP010
         var attempt = await client.Locks.AcquireAsync("lock", TimeSpan.FromSeconds(2), keepAlive: true);
         var lifetime = attempt.Lock.KeepAliveCancellationToken;
         try
@@ -207,8 +224,10 @@ public partial class CommandHookTests
         await using var server = LockHookServer();
         server.GateCommand("DELEX ", finish.Task, () => sent.TrySetResult());
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This reentrancy/concurrency scenario owns its client and shared callback state until all calls finish.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with { CommandTimeout = null });
-        var mutex = await client.Locks.AcquireOrThrowAsync("lock", TimeSpan.FromMinutes(1));
+#pragma warning restore RESP010
+        await using var mutex = await client.Locks.AcquireOrThrowAsync("lock", TimeSpan.FromMinutes(1));
         var first = mutex.ReleaseAsync().AsTask();
         Task<RespireLockReleaseOutcome>? second = null;
         try

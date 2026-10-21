@@ -18,7 +18,9 @@ public class AggregateCommandHookTests
         await using var server = Server();
         var hook = new Hook();
         var outer = pipeline ? new Pipeline(hook.Events) : null;
+#pragma warning disable RESP010 // This aggregate hook scenario owns its client and scripted batch/transaction replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook, outer));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         hook.Before = _ =>
         {
@@ -63,7 +65,9 @@ public class AggregateCommandHookTests
         var error = new OperationCanceledException("Rejected by policy");
         var hook = new Hook { Before = c => { if (c.Command == "STRLEN") throw error; } };
         var outer = new Pipeline(hook.Events) { Rejection = rejectPipeline ? error : null };
+#pragma warning disable RESP010 // This aggregate hook scenario owns its client and scripted batch/transaction replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook, outer));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         RespirePending<string?> first;
         RespirePending<long> second;
@@ -109,7 +113,9 @@ public class AggregateCommandHookTests
     {
         await using var server = Server(failRead: serverError);
         var hook = new Hook { After = () => throw new Exception("ignored observer") };
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var cts = new CancellationTokenSource();
         if (cancel) cts.Cancel();
         RespirePending<int> pending;
@@ -142,7 +148,9 @@ public class AggregateCommandHookTests
     {
         await using var server = Server();
         var hook = new Hook();
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and hooks to verify rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         if (transaction)
         {
@@ -170,7 +178,9 @@ public class AggregateCommandHookTests
         await using var server = Server();
         var hook = new Hook();
         var outer = pipeline ? new Pipeline(hook.Events) : null;
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, command ? hook : null, outer));
+#pragma warning restore RESP010
         using var cts = new CancellationTokenSource();
         cts.Cancel();
         var baseline = server.CommandsSeen;
@@ -203,7 +213,9 @@ public class AggregateCommandHookTests
         await using var server = Server();
         var hook = new Hook();
         var outer = pipeline ? new Pipeline(hook.Events) : null;
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, command ? hook : null, outer));
+#pragma warning restore RESP010
         using var cts = new CancellationTokenSource();
         cts.Cancel();
         var baseline = server.CommandsSeen;
@@ -227,7 +239,9 @@ public class AggregateCommandHookTests
         await using var server = Server(failAcknowledgement: true);
         var name = aof ? "WAITAOF" : "WAIT";
         var hook = new Hook { Before = c => { if (reject && c.Command == name) throw new Exception("No durability"); } };
+#pragma warning disable RESP010 // This aggregate hook scenario owns its client and scripted batch/transaction replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         using var batch = client.CreateBatch();
         var pending = batch.Set("key", "value");
@@ -252,7 +266,9 @@ public class AggregateCommandHookTests
     {
         await using var server = Server(abort: true);
         var hook = new Hook { Before = c => { if (reject && c.Command == "WATCH") throw new Exception("No watch"); } };
+#pragma warning disable RESP010 // This aggregate hook scenario owns its client and scripted batch/transaction replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         if (reject)
         {
@@ -292,8 +308,10 @@ public class AggregateCommandHookTests
             return original!(connection, command);
         };
         var hook = new Hook();
+#pragma warning disable RESP010 // This retry/fallback scenario owns its client and scripted attempt counters across one logical call.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero } });
+#pragma warning restore RESP010
         if (transaction)
         {
             await using var tx = client.CreateTransaction();
@@ -322,7 +340,9 @@ public class AggregateCommandHookTests
     {
         await using var server = Server();
         var hook = new Hook();
+#pragma warning disable RESP010 // This aggregate hook scenario owns its client and scripted batch/transaction replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         hook.Completed.Clear();
@@ -365,7 +385,9 @@ public class AggregateCommandHookTests
             return true;
         };
         var hook = new Hook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var cts = new CancellationTokenSource();
         if (transaction)
         {
@@ -398,7 +420,9 @@ public class AggregateCommandHookTests
     {
         await using var server = Server();
         var hook = new Hook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var cts = new CancellationTokenSource();
         if (cancel) cts.Cancel();
         var baseline = server.CommandsSeen;
@@ -418,7 +442,9 @@ public class AggregateCommandHookTests
             await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
             await Assert.That(pending.Error is OperationCanceledException).IsTrue();
         }
+#pragma warning disable RESP002 // Both durability branches above await execution; only the successful, non-canceled path reads the result.
         else await Assert.That(pending.Result).IsTrue();
+#pragma warning restore RESP002
     }
 
     [Test]
@@ -426,7 +452,9 @@ public class AggregateCommandHookTests
     {
         await using var server = Server();
         var hook = new Hook { Before = c => { if (c.Command == "GET") throw new Exception("No GET"); } };
+#pragma warning disable RESP010 // This aggregate hook scenario owns its client and scripted batch/transaction replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         await using var tx = await client.CreateTransactionAsync(["key"]);
         var pending = tx.GetString("key");
         var baseline = server.CommandsSeen;
@@ -447,7 +475,9 @@ public class AggregateCommandHookTests
         server.ReplyOverride = (connection, command) => command.StartsWith("WATCH ")
             ? "-ERR watch failed\r\n"u8.ToArray() : original!(connection, command);
         var hook = new Hook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var cts = new CancellationTokenSource();
         if (cancel) cts.Cancel();
         var baseline = server.CommandsSeen;
@@ -465,11 +495,15 @@ public class AggregateCommandHookTests
     {
         await using var server = Server();
         var hook = new Hook();
+#pragma warning disable RESP010 // This aggregate hook scenario owns its client and scripted batch/transaction replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         hook.Before = context =>
         {
             if (context.Command == "STRLEN")
+#pragma warning disable RESP009 // Synchronous admission must finish the nested command before returning; the scripted peer replies within the command timeout.
                 _ = client.GetStringAsync("nested").AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
         };
         if (transaction)
         {

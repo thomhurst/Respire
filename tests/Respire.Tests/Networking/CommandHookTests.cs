@@ -22,7 +22,9 @@ public partial class CommandHookTests
         {
             Before = context => { if (context.Command == "SCRIPT FLUSH") throw rejected; },
         };
+#pragma warning disable RESP010 // This command hook scenario owns its client, observer state and scripted transport.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         (RespireCommand Command, RespireValue[] Args)[] cases =
         [
@@ -71,8 +73,12 @@ public partial class CommandHookTests
             Endpoints = [new("127.0.0.1", endpoint.Port)], UseCluster = true,
             Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
         };
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and hooks to verify rejection before I/O.
         await using var plain = RespireClient.Create(options);
+#pragma warning restore RESP010
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and hooks to verify rejection before I/O.
         await using var hooked = RespireClient.Create(options with { CommandHook = hook });
+#pragma warning restore RESP010
         (string Name, RespireValue[] Args, bool Prefix, RespireCommandFlags Flags)[] cases =
         [
             ("MGET", ["{a}:one", "{b}:two"], false, RespireCommandFlags.None),
@@ -138,7 +144,9 @@ public partial class CommandHookTests
     {
         await using var server = Server();
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This command hook scenario owns its client, observer state and scripted transport.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         hook.Before = _ =>
         {
@@ -171,7 +179,9 @@ public partial class CommandHookTests
         await using var server = Server();
         var rejected = new InvalidOperationException("Rejected");
         var hook = new RecordingHook { Before = _ => throw rejected, ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This command hook scenario owns its client, observer state and scripted transport.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         var error = await Failure(() => Execute(client, route));
         await Assert.That(ReferenceEquals(error, rejected)).IsTrue();
@@ -191,7 +201,9 @@ public partial class CommandHookTests
         server.ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal)
             ? conversion ? "$3\r\nbad\r\n"u8.ToArray() : "-ERR failed\r\n"u8.ToArray() : null;
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This command hook scenario owns its client, observer state and scripted transport.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var error = await Failure(async () => _ = await client.GetAsync<int>("key"));
         var result = hook.Completed.Single();
         await Assert.That(result.Outcome).IsEqualTo(RespireCommandOutcome.Failed);
@@ -212,7 +224,9 @@ public partial class CommandHookTests
             return true;
         };
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         if (!pending) cancellation.Cancel();
         var response = client.GetStringAsync("key", cancellation.Token).AsTask();
@@ -239,12 +253,14 @@ public partial class CommandHookTests
     {
         using var endpoint = new ReservedUnavailablePort();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This command hook scenario owns its client, observer state and scripted transport.
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", endpoint.Port)],
             ClientSideCache = new() { CoalesceConcurrentMisses = route == "raw-coalesced" },
             CommandHook = hook, ThreadPoolMonitoring = false,
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         var key = new RespireKey("key");
         var value = RespValue.BulkString("42"u8.ToArray());
@@ -285,11 +301,13 @@ public partial class CommandHookTests
             },
         };
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This command hook scenario owns its client, observer state and scripted transport.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         {
             Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
         });
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var leader = client.GetStringAsync("key", cancelLeader ? cancellation.Token : default).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -333,8 +351,10 @@ public partial class CommandHookTests
             ? Interlocked.Increment(ref attempts) == 1 ? "-TRYAGAIN busy\r\n"u8.ToArray() : "$2\r\n42\r\n"u8.ToArray()
             : null;
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This retry/fallback scenario owns its client and scripted attempt counters across one logical call.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero } });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("42");
         await Assert.That(attempts).IsEqualTo(2);
         await Assert.That(hook.Entered.Count).IsEqualTo(1);
@@ -355,12 +375,14 @@ public partial class CommandHookTests
             ReplyOverride = (_, command) => command == "PING" ? FakeRespServer.PongReply : null,
         };
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This command hook scenario owns its client, observer state and scripted transport.
         await using var client = RespireClient.Create(Options(primary, hook) with
         {
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             ReadFrom = RespireReadFrom.ReplicaPreferred,
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(10), MaximumExtraLoadPercent = 100 },
         });
+#pragma warning restore RESP010
         // Cold connection/ROLE setup consumed the old read deadline under concurrent load.
         // Establish both routes without admitting an application command before timing the race.
         using var setupDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -414,7 +436,9 @@ public partial class CommandHookTests
     {
         await using var server = Server();
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This reentrancy/concurrency scenario owns its client and shared callback state until all calls finish.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var reentrant = new ConcurrentQueue<Task<long>>();
         hook.Before = context =>
         {
@@ -434,7 +458,9 @@ public partial class CommandHookTests
     {
         await using var server = Server();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This command hook scenario owns its client, observer state and scripted transport.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var result = await client.ExecuteAsync("get secret-key");
         await client.WithKeyPrefix("prefix:").Strings.GetStringAsync("key");
         await Assert.That(hook.Entered.All(c => c.Command == "GET")).IsTrue();

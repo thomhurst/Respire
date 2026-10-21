@@ -37,12 +37,14 @@ public class ConnectionHookTests
             },
         };
         using var cancellation = new CancellationTokenSource(Limit);
+#pragma warning disable RESP010 // This connection hook scenario owns the client and its handshake/topology transports.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
             Protocol = RespireProtocol.Resp2, Password = "secret", Database = 2, ConnectionHook = hook,
             ConnectionFactory = OpenStreamAsync,
         }, cancellation.Token);
+#pragma warning restore RESP010
 
         await Assert.That(server.ReceivedCommands.Contains("AUTH secret")).IsTrue();
         var attempt = hook.Completed.Single();
@@ -222,6 +224,7 @@ public class ConnectionHookTests
         var hook = new Hook();
         var opened = new ConcurrentQueue<RespireEndpoint>();
         using var cancellation = new CancellationTokenSource(Limit);
+#pragma warning disable RESP010 // This connection hook scenario owns the client and its handshake/topology transports.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
@@ -229,6 +232,7 @@ public class ConnectionHookTests
             ConnectionFactory = (endpoint, token) => { opened.Enqueue(endpoint); return OpenStreamAsync(endpoint, token); },
             ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
         }, cancellation.Token);
+#pragma warning restore RESP010
         var value = await client.WithReadFrom(RespireReadFrom.Replica).GetStringAsync("key", cancellation.Token);
         await Assert.That(value).IsEqualTo("value");
         await Assert.That(hook.Completed.Any(attempt => attempt.Context.Endpoint.Port == primary.Port)).IsTrue();

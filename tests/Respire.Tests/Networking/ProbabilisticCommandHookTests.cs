@@ -234,11 +234,13 @@ public class ProbabilisticCommandHookTests
     {
         await using var server = Server(command, ValidReply(command));
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This probabilistic mutation scenario owns the client and cache entries inspected around admission.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp3,
             Connections = 1, ThreadPoolMonitoring = false, CommandHook = hook, ClientSideCache = new(),
         });
+#pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         var key = new RespireKey("tenant:key");
         var source = new RespireKey("tenant:source");
