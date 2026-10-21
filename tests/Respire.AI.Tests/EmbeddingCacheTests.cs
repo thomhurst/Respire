@@ -89,6 +89,7 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
     [Test]
     [Arguments(2, "provider"), Arguments(3, "provider")]
     [Arguments(2, "uri"), Arguments(3, "uri")]
+    [Arguments(2, "absolute-uri"), Arguments(3, "absolute-uri")]
     [Arguments(2, "default-model"), Arguments(3, "default-model")]
     [Arguments(2, "request-model"), Arguments(3, "request-model")]
     public async Task MalformedProviderAndModelIdentitiesBypassReadsAndWrites(int protocol, string component)
@@ -103,6 +104,14 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
             {
                 case "provider": provider.Provider = identity; break;
                 case "uri": provider.Uri = new(identity, UriKind.Relative); break;
+                case "absolute-uri":
+                    var originalUri = "https://provider.example/" + identity;
+                    provider.Uri = new(originalUri, UriKind.Absolute);
+                    provider.Uri.OriginalString.Should().Be(originalUri);
+                    // URI escaping sanitizes the displayed text, so only OriginalString
+                    // can expose the malformed identity to the cache scope guard.
+                    provider.Uri.ToString().Any(char.IsSurrogate).Should().BeFalse();
+                    break;
                 case "default-model": provider.Model = identity; break;
                 case "request-model": options.ModelId = identity; break;
             }
