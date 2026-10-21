@@ -89,6 +89,8 @@ public class DependencyInjectionOptionsTests
             return new Dictionary<RespireEndpoint, RespireEndpoint> { ["private:6379"] = "localhost:7001" };
         if (type == typeof(Func<RespireEndpoint, RespireEndpoint>))
             return (Func<RespireEndpoint, RespireEndpoint>)(endpoint => endpoint);
+        if (type == typeof(Func<RespireEndpoint, bool>))
+            return (Func<RespireEndpoint, bool>)(endpoint => endpoint.Port == 6379);
         return Activator.CreateInstance(type)!;
     }
 
@@ -138,7 +140,7 @@ public class DependencyInjectionOptionsTests
         // Mapping is tested separately from validation: this exercises all fields, including
         // settings that cannot be enabled together on one client (replicas and circuit breaker).
         var options = RespireConfiguration.Apply(section, new RespireOptions());
-        string[] runtimeServices = ["CredentialProvider", "SentinelCredentialProvider", "ConnectionFactory", "ConnectionHook", "Serializer", "LoggerFactory", "PipelineHook", "CommandHook", "NodeAddressResolver"];
+        string[] runtimeServices = ["CredentialProvider", "SentinelCredentialProvider", "ConnectionFactory", "ConnectionHook", "Serializer", "LoggerFactory", "PipelineHook", "CommandHook", "NodeAddressResolver", "ReplicaRedirectValidator"];
         foreach (var property in typeof(RespireOptions).GetProperties())
         {
             if (runtimeServices.Contains(property.Name)) continue;

@@ -739,12 +739,38 @@ different endpoint. Unsupported-command and ACL errors during capability negotia
 ignored, so Redis and older compatible servers keep their existing behavior.
 
 **Trust boundary:** the server chooses each redirect target, and Respire sends the configured
-authentication credentials to that target using the configured TLS settings. There is no
-redirect-target allowlist or validator. A compromised or misconfigured replica can therefore
-direct credentials to an unintended host. Enable this option only when you trust the servers
-to select destinations, and restrict network egress to trusted endpoints. TLS does not itself
-restrict which destinations a server may name. Leave the option disabled and configure the
-primary endpoint directly when you cannot grant that trust.
+authentication credentials to allowed targets using the configured TLS settings. Set
+`ReplicaRedirectValidator` to restrict destinations before Respire creates a target pool,
+opens a connection, or sends AUTH. The callback runs on every hop for ordinary commands,
+scripts, and retry-enabled dispatch. For example:
+
+```csharp
+var options = new RespireOptions
+{
+    Endpoints = [new("replica.example", 6379)],
+    EnableReplicaRedirects = true,
+    ReplicaRedirectValidator = endpoint =>
+        endpoint.Port == 6379 &&
+        string.Equals(endpoint.Host, "primary.example", StringComparison.OrdinalIgnoreCase),
+};
+```
+
+The callback receives the parsed server host and port **before address mapping and DNS
+resolution**. IPv6 hosts have no brackets; a redirect with an omitted host uses the source
+host. Return `false` to fail the command with `RespireException`; its `Endpoint` identifies
+the rejected destination. A callback exception also fails closed with `RespireException`
+and preserves the cause in `InnerException`. Neither failure is retried by `RetryPolicy`.
+Callbacks may run concurrently and should return promptly. Configure this runtime callback
+on `RespireOptions` or the DI options builder; it cannot be set through configuration text.
+It applies only to replica `REDIRECT`, not Cluster `MOVED`/`ASK` or other discovery.
+
+With a null validator (the default), enabling replica redirects trusts every server-selected
+destination. A compromised or misconfigured replica can direct credentials to an unintended
+host. Endpoint validation constrains the advertised name and port; TLS authenticates the
+connected peer according to your TLS settings, and network egress controls constrain the
+addresses the process can reach. Use these together: a hostname check does not pin DNS
+results or constrain custom address mapping, and TLS alone does not restrict destinations.
+Leave redirects disabled and configure the primary directly when you cannot grant that trust.
 
 Valkey returns `REDIRECT host:port` when a command belongs on its primary. Respire follows
 these replies for individual buffered commands, including keyless writes such as `FLUSHDB`.

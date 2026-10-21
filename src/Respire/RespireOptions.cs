@@ -245,10 +245,20 @@ public sealed record RespireOptions
     /// <summary>Advertise Valkey's CLIENT CAPA REDIRECT and follow standalone replica redirects for individual commands.</summary>
     /// <remarks>Disabled by default. Replica read connections also request READONLY when the capability succeeds.
     /// Redirect targets are chosen by the server and receive the configured authentication credentials and TLS settings.
-    /// There is no redirect-target allowlist: a compromised or misconfigured server can direct credentials to an unintended host.
+    /// Use ReplicaRedirectValidator to constrain server-selected destinations before connecting.
     /// Enable only when you trust the servers to select destinations; restrict network egress to trusted endpoints.
     /// Server-cursor commands, endpoint-bound server operations, transactions, and streamed payloads retain their connection affinity.</remarks>
     public bool EnableReplicaRedirects { get; init; }
+
+    /// <summary>Optional policy that permits a replica REDIRECT destination when it returns true.</summary>
+    /// <remarks>Called for every hop before creating a target pool, connecting, or forwarding credentials.
+    /// Receives the parsed server endpoint before address mapping or DNS resolution; an omitted host uses the source host,
+    /// and IPv6 hosts have no brackets. Null allows all destinations when EnableReplicaRedirects is enabled.
+    /// False throws RespireException with the rejected Endpoint; callback exceptions are wrapped in RespireException.
+    /// Neither failure is retried by RetryPolicy. Callbacks must be thread-safe and should return promptly.
+    /// Applies only to replica REDIRECT replies, not Cluster MOVED/ASK or other discovered endpoints.
+    /// Endpoint validation does not authenticate a TLS peer or constrain DNS results, address mapping, or network egress.</remarks>
+    public Func<RespireEndpoint, bool>? ReplicaRedirectValidator { get; init; }
 
     /// <summary>Optional bounded duplication of slow idempotent reads. Null (the default) disables hedging.</summary>
     [Experimental("RSP0003", UrlFormat = "https://respire.tomlonghurst.dev/docs/diagnostics/{0}")]
