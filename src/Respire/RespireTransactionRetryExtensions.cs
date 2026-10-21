@@ -100,7 +100,7 @@ public static class RespireTransactionRetryExtensions
         var commandTimeout = core?.Options.CommandTimeout;
         var deadline = LogicalCommandRetry.CreateDeadline(commandTimeout);
         using var timeout = deadline.IsSet
-            ? CommandTimeoutCancellation.Create(cancellationToken, TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
+            ? options.TimeoutFactory(cancellationToken, TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
             : null;
         var token = timeout?.Token ?? cancellationToken;
         var conflicts = 0;
