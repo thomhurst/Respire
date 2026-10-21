@@ -12,11 +12,12 @@ internal sealed class SentinelMonitorProbe
     internal readonly TaskCompletionSource MessageProcessed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     internal Func<ValueTask> DisposeClient = static () => ValueTask.CompletedTask;
     internal Func<ValueTask> DisposeSubscription = static () => ValueTask.CompletedTask;
-    internal Action? CancellationCallback;
-    internal Action? Subscribed;
+    // Explicit defaults avoid CS0649 when focused builds exclude the assigning tests.
+    internal Action? CancellationCallback = null;
+    internal Action? Subscribed = null;
     internal event Action<RespireConnectionStateChange>? ConnectionStateChanged;
     internal void ChangeConnectionState(RespireConnectionStateChange change) => ConnectionStateChanged?.Invoke(change);
-    internal bool IgnoreCancellation;
+    internal bool IgnoreCancellation = false;
     internal CancellationToken SubscriptionToken;
     private CancellationTokenRegistration _cancellation;
 
