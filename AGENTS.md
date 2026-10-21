@@ -51,6 +51,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-command-retry.yml` | `run-command-retry-benchmarks` |
 | `benchmark-command-retry-jit.yml` | `run-command-retry-jit-benchmarks` |
 | `benchmark-command-retry-synchronization.yml` | `run-command-retry-synchronization-benchmarks` |
+| `benchmark-command-retry-profile.yml` | `run-command-retry-profile-benchmarks` |
 | `benchmark-connection-contention.yml` | `run-connection-contention-benchmarks` |
 | `benchmark-connection-establishment.yml` | `run-connection-establishment-benchmarks` |
 | `benchmark-dedicated-pool.yml` | `run-dedicated-pool-benchmarks` |

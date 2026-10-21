@@ -16,6 +16,70 @@ public class ReplicaRedirectTargetRecoveryTests
 {
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SharedInitialAcquisitionFailuresKeepTheOriginalContinuityFence(bool cancelWaiter)
+    {
+        var rejectHandshake = true;
+        await using var target = new FakeRespServer(8)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("HELLO 3", StringComparison.Ordinal)
+                && Volatile.Read(ref rejectHandshake) ? Bytes("-ERR handshake rejected\r\n") : TargetReply(command),
+        };
+        await using var source = new FakeRespServer(8) { ReplyOverride = (_, command) => TargetReply(command) };
+        await using var client = await RespireClient.ConnectAsync(Options(source.Port, retry: false) with
+        { ReconnectPolicy = null });
+        var targets = client.Core.RedirectTargets!;
+        var endpoint = new RespireEndpoint("127.0.0.1", target.Port);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        target.GateCommand("HELLO 3", release.Task, () => started.TrySetResult());
+        using var cancellation = new CancellationTokenSource();
+        var before = client.ClientSideCache!.GetStatistics().ContinuityFlushes;
+        var first = targets.AcquireAsync(endpoint, default).AsTask();
+        try
+        {
+            await started.Task.WaitAsync(Limit);
+            // Both calls synchronously select the retained entry before waiting for its
+            // initialization gate. The server barrier keeps that first handshake pending.
+            var second = targets.AcquireAsync(endpoint, cancellation.Token).AsTask();
+            var third = targets.AcquireAsync(endpoint, default).AsTask();
+            await Assert.That(second.IsCompleted).IsFalse();
+            await Assert.That(third.IsCompleted).IsFalse();
+            await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("value");
+            if (cancelWaiter) cancellation.Cancel();
+            release.TrySetResult();
+
+            await Assert.That(async () => { using var lease = await first.WaitAsync(Limit); }).Throws<RespireConnectionException>();
+            if (cancelWaiter)
+            {
+                var error = await Assert.That(async () => { using var lease = await second.WaitAsync(Limit); })
+                    .Throws<OperationCanceledException>();
+                await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+            }
+            else
+                await Assert.That(async () => { using var lease = await second.WaitAsync(Limit); }).Throws<RespireConnectionException>();
+            await Assert.That(async () => { using var lease = await third.WaitAsync(Limit); }).Throws<RespireConnectionException>();
+
+            await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - before).IsEqualTo(1L);
+            await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
+            await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("value");
+            await Assert.That(source.ReceivedCommands.Count(command => command == "GET fresh")).IsEqualTo(1);
+
+            // A successful tracking handshake ends this initial acquisition episode.
+            Volatile.Write(ref rejectHandshake, false);
+            using var recovered = await targets.AcquireAsync(endpoint, default);
+            var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            recovered!.Connection.PendingCommandsFailing += () => failed.TrySetResult();
+            target.CloseConnections();
+            await failed.Task.WaitAsync(Limit);
+            await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - before).IsEqualTo(2L);
+            await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+        }
+        finally { release.TrySetResult(); }
+    }
+
     [Test, NotInParallel]
     [Arguments(false, false)]
     [Arguments(false, true)]
