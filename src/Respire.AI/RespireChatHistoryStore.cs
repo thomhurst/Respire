@@ -9,9 +9,14 @@ namespace Respire.AI;
 /// <remarks>The caller owns the Redis client. Concurrent append batches remain contiguous in Redis execution order.
 /// Retrying an append after an ambiguous network failure can duplicate messages; appends are not idempotent.
 /// Retention and reads use exact message-count windows, which can split tool exchanges.
-/// Applications must choose valid conversation boundaries before sending history to a provider.</remarks>
+/// Applications must choose valid conversation boundaries before sending history to a provider.
+/// Store names and conversation IDs must be nonblank, well-formed UTF-16; unpaired surrogates
+/// throw <see cref="EncoderFallbackException"/> before Redis is accessed.</remarks>
 public sealed class RespireChatHistoryStore
 {
+    // Replacement fallback would alias distinct unpaired surrogates with the valid U+FFFD identity.
+    private static readonly Encoding IdentityEncoding = new UTF8Encoding(false, true);
+
     private static readonly RespireScript Append = RespireScript.Create("""
         for i = 3, #ARGV do
             redis.call('RPUSH', KEYS[1], ARGV[i])
@@ -101,5 +106,5 @@ public sealed class RespireChatHistoryStore
         return _prefix + Hash(conversationId);
     }
 
-    private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(IdentityEncoding.GetBytes(value)));
 }

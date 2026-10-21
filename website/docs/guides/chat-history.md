@@ -46,6 +46,11 @@ public static class ConversationSetup
 Supply a stable, trusted conversation ID and an application/tenant `StoreName`. Both are
 hashed separately into `respire:history:v1:<store-hash>:<conversation-hash>`. Hashing
 avoids delimiter collisions; it does not authorize access or encrypt stored messages.
+Both names must be nonblank, well-formed UTF-16. Unpaired high or low surrogates throw
+`EncoderFallbackException` (an `ArgumentException`) before Redis is accessed, including
+through the chat middleware and agent provider. Valid surrogate pairs and the replacement
+character U+FFFD are accepted. Well-formed names retain their existing UTF-8/SHA-256 keys;
+names are not Unicode-normalized.
 The caller owns the Redis client. Disposing a chat pipeline disposes its inner provider.
 
 Use the store directly with `AppendAsync`, `ReadAsync`, `TrimAsync`, `ExpireAsync`, and
