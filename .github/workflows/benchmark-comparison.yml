@@ -63,7 +63,7 @@ jobs:
 
     services:
       redis:
-        image: mirror.gcr.io/library/redis:8.10
+        image: public.ecr.aws/docker/library/redis:8.10@sha256:5c02d7c0f8d75af45958c0294a8004f2e14b42df98a1103e3a669aa7ec787be6
         ports:
           - 6379:6379
         options: >-
@@ -116,7 +116,7 @@ jobs:
             echo "Requested StackExchange.Redis: $STACKEXCHANGE_REDIS_BENCHMARK_VERSION"
             echo "Runner image: $ImageOS $ImageVersion"
             echo 'Redis endpoint: localhost:6379 (Docker port mapping, no TLS)'
-            echo 'Redis image: mirror.gcr.io/library/redis:8.10'
+            echo 'Redis image: public.ecr.aws/docker/library/redis:8.10@sha256:5c02d7c0f8d75af45958c0294a8004f2e14b42df98a1103e3a669aa7ec787be6'
             docker inspect "$REDIS_CONTAINER_ID" --format 'Redis image ID: {{.Image}}'
             docker exec "$REDIS_CONTAINER_ID" redis-server --version
             uname -a

@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 30
     services:
       redis:
-        image: mirror.gcr.io/library/redis:8.10@sha256:5c02d7c0f8d75af45958c0294a8004f2e14b42df98a1103e3a669aa7ec787be6
+        image: public.ecr.aws/docker/library/redis:8.10@sha256:5c02d7c0f8d75af45958c0294a8004f2e14b42df98a1103e3a669aa7ec787be6
         ports:
           - 6379:6379
         options: >-

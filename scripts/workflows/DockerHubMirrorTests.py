@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -14,6 +15,31 @@ HOSTED_LINUX = "runner.os == 'Linux' && runner.environment == 'github-hosted'"
 
 
 class DockerHubMirrorWorkflowTests(unittest.TestCase):
+    def test_redis_services_use_digest_pinned_ecr_images_before_steps_run(self):
+        # Services are pulled before checkout/setup, so the daemon mirror action cannot
+        # recover their initialization from a mirror.gcr.io quota failure.
+        services = 0
+        for path in (ROOT / '.github/workflows').glob('*.yml'):
+            source = path.read_text(encoding='utf-8')
+            with self.subTest(workflow=path.name):
+                self.assertNotIn('mirror.gcr.io/library/redis:', source,
+                                 'Explicit mirror references bypass daemon fallback, even inside steps')
+            workflow = yaml.load(source, Loader=yaml.BaseLoader)
+            for name, job in workflow.get('jobs', {}).items():
+                for service, config in job.get('services', {}).items():
+                    image = config.get('image', '')
+                    if service != 'redis' and not re.search(r'(?:^|/)redis[:@]', image):
+                        continue
+                    services += 1
+                    with self.subTest(workflow=path.name, job=name, service=service):
+                        # Also inspect the image literal inside the optional service expression
+                        # in benchmark-compare.yml (the disabled branch is an empty string).
+                        references = re.findall(r"[\w./-]+:[\w.-]+(?:@sha256:[a-f0-9]+)?", image)
+                        self.assertTrue(references, 'Redis service has no auditable image reference')
+                        for reference in references:
+                            self.assertRegex(reference, r'^public\.ecr\.aws/docker/library/redis:[\w.-]+@sha256:[a-f0-9]{64}$')
+        self.assertGreater(services, 0, 'No Redis services were audited')
+
     def test_benchmarks_load_one_hosted_action_from_workflow_revision(self):
         for path in (ROOT / '.github/workflows').glob('benchmark-*.yml'):
             workflow = yaml.load(path.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
