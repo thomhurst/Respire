@@ -17,7 +17,9 @@ public class SubscriptionCommandHookTests
         await using var server = Server();
         var rejected = new InvalidOperationException("Admission denied");
         var hook = new RecordingHook { Before = _ => throw rejected, ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This subscription hook scenario owns its client and setup/teardown confirmation state.
         await using var client = RespireClient.Create(Options(server, hook));
+#pragma warning restore RESP010
         var error = await Failure(async () => _ = await Subscribe(client, kind));
         await Assert.That(error).IsSameReferenceAs(rejected);
         await Assert.That(server.ConnectionAccepted.IsCompleted).IsFalse();
@@ -45,7 +47,9 @@ public class SubscriptionCommandHookTests
             else teardownReceived.TrySetResult();
             return true;
         };
+#pragma warning disable RESP010 // This subscription hook scenario owns its client and setup/teardown confirmation state.
         await using var client = RespireClient.Create(Options(server, hook));
+#pragma warning restore RESP010
         var setup = Subscribe(client, kind);
         await Assert.That(hook.Entered.Count).IsEqualTo(1);
         await setupReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -73,7 +77,9 @@ public class SubscriptionCommandHookTests
     {
         await using var server = Server();
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This subscription hook scenario owns its client and setup/teardown confirmation state.
         await using var client = RespireClient.Create(Options(server, hook));
+#pragma warning restore RESP010
         var subscription = await client.SubscribeAsync("ch");
         var rejected = new InvalidOperationException("Keep subscription");
         hook.Before = _ => throw rejected;
@@ -100,7 +106,9 @@ public class SubscriptionCommandHookTests
     {
         await using var server = Server();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This reentrancy/concurrency scenario owns its client and shared callback state until all calls finish.
         await using var client = RespireClient.Create(Options(server, hook));
+#pragma warning restore RESP010
         var subscription = await client.SubscribeAsync("ch");
         var received = Signal();
         server.SuppressReply = command =>
@@ -137,7 +145,9 @@ public class SubscriptionCommandHookTests
         var received = Signal();
         server.SuppressReply = _ => { received.TrySetResult(); return true; };
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = RespireClient.Create(Options(server, hook));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         if (!pending) cancellation.Cancel();
         var setup = client.SubscribeAsync("ch", cancellationToken: cancellation.Token);
@@ -161,7 +171,9 @@ public class SubscriptionCommandHookTests
         await using var server = Server();
         server.ReplyOverride = (_, _) => "-ERR subscription denied\r\n"u8.ToArray();
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This subscription hook scenario owns its client and setup/teardown confirmation state.
         await using var client = RespireClient.Create(Options(server, hook));
+#pragma warning restore RESP010
         var error = await Failure(async () => _ = await client.SubscribeAsync("ch"));
         var completion = hook.Completed.Single();
         await Assert.That(completion.Outcome).IsEqualTo(RespireCommandOutcome.Failed);
@@ -175,7 +187,9 @@ public class SubscriptionCommandHookTests
     {
         await using var server = Server();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This subscription hook scenario owns its client and setup/teardown confirmation state.
         await using var client = RespireClient.Create(Options(server, hook));
+#pragma warning restore RESP010
         var subscription = await client.SubscribeAsync("ch");
         hook.Before = _ => throw new InvalidOperationException("No application command expected");
         var recovered = Signal();
@@ -198,7 +212,9 @@ public class SubscriptionCommandHookTests
     {
         await using var server = Server();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This subscription hook scenario owns its client and setup/teardown confirmation state.
         await using var client = RespireClient.Create(Options(server, hook));
+#pragma warning restore RESP010
         Task<string?>? nested = null;
         hook.Before = context =>
         {
@@ -215,7 +231,9 @@ public class SubscriptionCommandHookTests
     {
         await using var server = Server();
         var hook = new RecordingHook { Before = _ => throw new InvalidOperationException("Rejected") };
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and hooks to verify rejection before I/O.
         await using var client = RespireClient.Create(Options(server, hook));
+#pragma warning restore RESP010
         var error = await Failure(async () => _ = await client.SubscribeAsync("ch", new(BufferSize: 0)));
         await Assert.That(error is ArgumentOutOfRangeException).IsTrue();
         await Assert.That(hook.Entered.Count).IsEqualTo(0);

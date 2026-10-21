@@ -19,7 +19,9 @@ public class ImportHealthCommandHookTests
     {
         await using var server = new RespireFakeServer();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This import/health hook scenario owns its client and fault-injected peer state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { CommandHook = hook });
+#pragma warning restore RESP010
         using var fault = server.InjectFault(command, RespireFakeFault.Loading());
         using var caller = new CancellationTokenSource();
         if (cancel) caller.Cancel();
@@ -50,6 +52,7 @@ public class ImportHealthCommandHookTests
         var options = server.CreateOptions();
         var factory = options.TestingStreamFactory!;
         var connections = 0;
+#pragma warning disable RESP010 // This import/health hook scenario owns its client and fault-injected peer state.
         await using var client = await RespireClient.ConnectAsync(options with
         {
             CommandHook = hook,
@@ -59,6 +62,7 @@ public class ImportHealthCommandHookTests
                 return factory(host, port, token);
             },
         });
+#pragma warning restore RESP010
         var before = connections;
         using var caller = new CancellationTokenSource();
         if (cancel) caller.Cancel();
@@ -84,7 +88,9 @@ public class ImportHealthCommandHookTests
     {
         await using var server = new RespireFakeServer();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { CommandHook = hook });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         hook.Completed.Clear();
@@ -108,7 +114,9 @@ public class ImportHealthCommandHookTests
     {
         await using var server = new RespireFakeServer();
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This import/health hook scenario owns its client and fault-injected peer state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { CommandHook = hook });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         Task<bool>? followup = null;
@@ -131,7 +139,9 @@ public class ImportHealthCommandHookTests
     {
         await using var server = new RespireFakeServer();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This import/health hook scenario owns its client and fault-injected peer state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { CommandHook = hook });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         hook.Completed.Clear();
         var error = await Assert.That(async () => await session.SetAsync("key", "missing", "value"))
@@ -148,7 +158,9 @@ public class ImportHealthCommandHookTests
     {
         await using var server = new RespireFakeServer();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { CommandHook = hook });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         hook.Completed.Clear();
@@ -174,11 +186,13 @@ public class ImportHealthCommandHookTests
     {
         await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This import/health hook scenario owns its client and fault-injected peer state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
             Connections = 1, ThreadPoolMonitoring = false, CommandHook = hook,
         });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         hook.Completed.Clear();
         var error = await Assert.That(async () => await session.DiscardAllAsync()).Throws<RespireProtocolException>();
@@ -192,7 +206,9 @@ public class ImportHealthCommandHookTests
     {
         await using var server = new RespireFakeServer();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This import/health hook scenario owns its client and fault-injected peer state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { CommandHook = hook });
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         hook.Completed.Clear();
@@ -218,7 +234,9 @@ public class ImportHealthCommandHookTests
     {
         await using var server = new RespireFakeServer();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This import/health hook scenario owns its client and fault-injected peer state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { CommandHook = hook });
+#pragma warning restore RESP010
         using var fault = server.InjectFault("PING", RespireFakeFault.Loading());
         using var caller = new CancellationTokenSource();
         if (cancel) caller.Cancel();
@@ -235,10 +253,12 @@ public class ImportHealthCommandHookTests
     {
         await using var server = new RespireFakeServer();
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This import/health hook scenario owns its client and fault-injected peer state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
         {
             CommandHook = hook, ReplicaEndpoints = [new("unused-replica")],
         });
+#pragma warning restore RESP010
         Task? nested = null;
         hook.Before = context =>
         {
@@ -261,7 +281,9 @@ public class ImportHealthCommandHookTests
     {
         await using var server = new RespireFakeServer();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { CommandHook = hook });
+#pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         var gate = new RespireFakeGate();
         using var fault = server.InjectFault("PING", cancel ? RespireFakeFault.Pause(gate) : RespireFakeFault.Loading());

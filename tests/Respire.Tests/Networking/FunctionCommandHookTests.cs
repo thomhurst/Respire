@@ -25,7 +25,9 @@ public sealed class FunctionCommandHookTests
         await using var server = new FakeRespServer(":42\r\n"u8.ToArray());
         var denied = new InvalidOperationException("Denied");
         var hook = new Hook { Before = _ => throw denied, ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port, hook));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         var baseline = server.CommandsSeen;
@@ -53,7 +55,9 @@ public sealed class FunctionCommandHookTests
     {
         await using var server = new FakeRespServer(":42\r\n"u8.ToArray());
         var hook = new Hook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port, hook));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         var baseline = server.CommandsSeen;
@@ -71,7 +75,9 @@ public sealed class FunctionCommandHookTests
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer { SuppressReply = _ => { arrived.TrySetResult(); return true; } };
         var hook = new Hook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port, hook));
+#pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var pending = Execute(client, mutation ? "flush" : "integer", cancellation.Token);
         await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -96,7 +102,9 @@ public sealed class FunctionCommandHookTests
         await using var server = new FakeRespServer(route is "typed" or "string"
             ? "$2\r\n42\r\n"u8.ToArray() : ":42\r\n"u8.ToArray());
         var hook = new Hook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This function hook scenario owns the client, scripted function replies and observer state.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port, hook));
+#pragma warning restore RESP010
         await Execute(client, route, readOnly: readOnly);
         await Check(hook, RespireCommandOutcome.Succeeded);
         await Assert.That(hook.Entered.Single().Command).IsEqualTo(readOnly ? "FCALL_RO" : "FCALL");
@@ -109,7 +117,9 @@ public sealed class FunctionCommandHookTests
     {
         await using var server = new FakeRespServer("*2\r\n$3\r\none\r\n*1\r\n$3\r\ntwo\r\n"u8.ToArray());
         var hook = new Hook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This function hook scenario owns the client, scripted function replies and observer state.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port, hook));
+#pragma warning restore RESP010
         var function = RespireFunction.Create("function", readOnly: true);
         using var result = leased ? await client.Functions.ExecuteLeaseAsync(function, "key")
             : await client.Functions.ExecuteAsync(function, "key");
@@ -123,10 +133,12 @@ public sealed class FunctionCommandHookTests
     {
         await using var server = new FakeRespServer("-TRYAGAIN busy\r\n"u8.ToArray(), ":42\r\n"u8.ToArray());
         var hook = new Hook();
+#pragma warning disable RESP010 // This retry/fallback scenario owns its client and scripted attempt counters across one logical call.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port, hook) with
         {
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
         });
+#pragma warning restore RESP010
         var function = RespireFunction.Create("reader", readOnly: true)
             .WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         await Assert.That(await client.Functions.ExecuteIntegerAsync(function, "key")).IsEqualTo(42);
@@ -139,7 +151,9 @@ public sealed class FunctionCommandHookTests
     {
         await using var server = new FakeRespServer("$8\r\nnot-json\r\n"u8.ToArray());
         var hook = new Hook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This function hook scenario owns the client, scripted function replies and observer state.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port, hook));
+#pragma warning restore RESP010
         var error = await Failure(() => Execute(client, "typed"));
         await Check(hook, RespireCommandOutcome.Failed, error);
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
@@ -161,7 +175,9 @@ public sealed class FunctionCommandHookTests
                 : command == "STRLEN nested" ? ":2\r\n"u8.ToArray() : null,
         };
         var hook = new Hook();
+#pragma warning disable RESP010 // This reentrancy/concurrency scenario owns its client and shared callback state until all calls finish.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port, hook));
+#pragma warning restore RESP010
         Task<long>? nested = null;
         hook.Before = context =>
         {
@@ -190,7 +206,9 @@ public sealed class FunctionCommandHookTests
         await using var seed = new FakeRespServer(Topology(first.Port, second.Port));
         var denied = new InvalidOperationException("Denied");
         var hook = new Hook { Before = _ => throw denied };
+#pragma warning disable RESP010 // This function hook scenario owns the client, scripted function replies and observer state.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port, hook) with { UseCluster = true });
+#pragma warning restore RESP010
         var error = await Failure(() => Execute(client, route));
         await Assert.That(error).IsSameReferenceAs(denied);
         await Assert.That(first.CommandsSeen + second.CommandsSeen).IsEqualTo(0);
@@ -214,7 +232,9 @@ public sealed class FunctionCommandHookTests
         await using var second = new FakeRespServer { SuppressReply = _ => { secondArrived.TrySetResult(); return true; } };
         await using var seed = new FakeRespServer(Topology(first.Port, second.Port));
         var hook = new Hook();
+#pragma warning disable RESP010 // This function hook scenario owns the client, scripted function replies and observer state.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port, hook) with { UseCluster = true });
+#pragma warning restore RESP010
         var pending = Execute(client, route);
         await Task.WhenAll(firstArrived.Task, secondArrived.Task).WaitAsync(TimeSpan.FromSeconds(5));
         await first.SendRawAsync(fail ? "-ERR rejected\r\n"u8.ToArray() : FakeRespServer.OkReply);
@@ -244,7 +264,9 @@ public sealed class FunctionCommandHookTests
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         var hook = new Hook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This function hook scenario owns the client, scripted function replies and observer state.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port, hook));
+#pragma warning restore RESP010
         await Execute(client, route);
         await Check(hook, RespireCommandOutcome.Succeeded);
         await Assert.That(hook.Entered.Single().Command).IsEqualTo(command);
@@ -256,7 +278,9 @@ public sealed class FunctionCommandHookTests
     {
         await using var server = new FakeRespServer();
         var hook = new Hook();
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and hooks to verify rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port, hook));
+#pragma warning restore RESP010
         await Failure(async () => await client.Functions.ExecuteIntegerAsync(null!));
         await Failure(async () => { using var result = await client.Functions.ExecuteSpanAsync(null!, [], []); });
         await Failure(async () => await client.Functions.LoadAsync(" "));

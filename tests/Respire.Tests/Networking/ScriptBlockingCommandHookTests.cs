@@ -23,7 +23,9 @@ public class ScriptBlockingCommandHookTests
         await using var server = new FakeRespServer(4, ":42\r\n"u8.ToArray());
         var rejection = new InvalidOperationException("Denied");
         var hook = new RecordingHook { Before = _ => throw rejection };
+#pragma warning disable RESP010 // This script/blocking hook scenario owns its client and scripted fallback/cursor state.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
 
         var error = await Failure(() => Execute(client, route));
@@ -52,7 +54,9 @@ public class ScriptBlockingCommandHookTests
     {
         await using var server = new FakeRespServer("-NOSCRIPT missing\r\n"u8.ToArray(), ":42\r\n"u8.ToArray());
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This retry/fallback scenario owns its client and scripted attempt counters across one logical call.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         hook.Before = _ =>
         {
             if (server.CommandsSeen != 0) throw new InvalidOperationException("Admission was late");
@@ -80,7 +84,9 @@ public class ScriptBlockingCommandHookTests
     {
         await using var server = new FakeRespServer(4, "+not-a-valid-result\r\n"u8.ToArray());
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This script/blocking hook scenario owns its client and scripted fallback/cursor state.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
 
         var error = await Failure(() => Execute(client, route));
 
@@ -101,7 +107,9 @@ public class ScriptBlockingCommandHookTests
         await using var server = new FakeRespServer(4, ":42\r\n"u8.ToArray());
         using var cancellation = new CancellationTokenSource();
         var hook = new RecordingHook { Before = _ => cancellation.Cancel() };
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
 
         var error = await Failure(() => Execute(client, route, cancellation.Token));
 
@@ -139,7 +147,9 @@ public class ScriptBlockingCommandHookTests
         cancellation.Cancel();
         var rejection = new InvalidOperationException("Denied");
         var hook = new RecordingHook { Before = _ => { if (reject) throw rejection; } };
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
 
         var error = await Failure(() => Execute(client, route, cancellation.Token));
@@ -170,7 +180,9 @@ public class ScriptBlockingCommandHookTests
     {
         await using var server = new FakeRespServer("*2\r\n$1\r\n1\r\n*1\r\n$3\r\none\r\n"u8.ToArray());
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This script/blocking hook scenario owns its client and scripted fallback/cursor state.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         await using var enumerator = client.Sets.ScanAsync("set").GetAsyncEnumerator();
         await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
         await Assert.That(enumerator.Current).IsEqualTo("one");
@@ -191,7 +203,9 @@ public class ScriptBlockingCommandHookTests
             "*1\r\n*2\r\n$6\r\nstream\r\n*2\r\n*2\r\n$3\r\n1-0\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n*2\r\n$3\r\n2-0\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n"u8.ToArray());
         using var cancellation = new CancellationTokenSource();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         await using var enumerator = client.Streams.ReadGroupAsync(new RespireStreamReadOptions(), "stream", "group", "consumer",
             cancellationToken: cancellation.Token).GetAsyncEnumerator();
         await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
@@ -219,7 +233,9 @@ public class ScriptBlockingCommandHookTests
         var hook = new RecordingHook();
         var options = Options(server, hook);
         if (!configured) options = options with { CommandHook = null };
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
         await using var enumerator = client.Streams.ReadGroupAsync("stream", "group", "consumer",
             startAt: pending ? RespireStreamId.Beginning : (RespireStreamId?)null,
             cancellationToken: cancellation.Token).GetAsyncEnumerator();
@@ -241,7 +257,9 @@ public class ScriptBlockingCommandHookTests
     {
         await using var server = new FakeRespServer(4, "*2\r\n$4\r\nlist\r\n$5\r\nvalue\r\n"u8.ToArray());
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This script/blocking hook scenario owns its client and scripted fallback/cursor state.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
 
         var result = await client.Lists.PopAsync(["list"], TimeSpan.FromSeconds(1));
 
@@ -257,7 +275,9 @@ public class ScriptBlockingCommandHookTests
     {
         await using var server = new FakeRespServer("*2\r\n:42\r\n$5\r\nvalue\r\n"u8.ToArray());
         var hook = new RecordingHook { ThrowOnCompleted = true };
+#pragma warning disable RESP010 // This script/blocking hook scenario owns its client and scripted fallback/cursor state.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var script = RespireScript.Create("return {42, 'value'}");
 
         using var result = leased
@@ -277,7 +297,9 @@ public class ScriptBlockingCommandHookTests
     {
         await using var server = new FakeRespServer(":42\r\n"u8.ToArray());
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This reentrancy/concurrency scenario owns its client and shared callback state until all calls finish.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         Task? nested = null;
         hook.Before = _ =>
         {
@@ -302,8 +324,10 @@ public class ScriptBlockingCommandHookTests
             "-TRYAGAIN busy\r\n"u8.ToArray(), "-NOSCRIPT missing\r\n"u8.ToArray(),
             fail ? "-ERR script failed\r\n"u8.ToArray() : ":42\r\n"u8.ToArray());
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This retry/fallback scenario owns its client and scripted attempt counters across one logical call.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero } });
+#pragma warning restore RESP010
         var script = RespireScript.Create("return 42").WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         Exception? error = null;
 
@@ -336,7 +360,9 @@ public class ScriptBlockingCommandHookTests
         };
         using var cancellation = new CancellationTokenSource();
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var pending = Execute(client, route, cancellation.Token);
         await sent.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(hook.Completed.Count).IsEqualTo(0);

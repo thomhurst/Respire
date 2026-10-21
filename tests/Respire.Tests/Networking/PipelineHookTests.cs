@@ -15,7 +15,9 @@ public class PipelineHookTests
     {
         await using var server = Server(transaction);
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This pipeline hook scenario owns its client, callback state and scripted aggregate replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         hook.Before = context =>
         {
@@ -56,7 +58,9 @@ public class PipelineHookTests
         await using var server = Server(transaction);
         var rejected = new InvalidOperationException("Policy rejected GET.");
         var hook = new RecordingHook { Before = _ => throw rejected };
+#pragma warning disable RESP010 // This pipeline hook scenario owns its client, callback state and scripted aggregate replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         if (transaction)
         {
@@ -94,7 +98,9 @@ public class PipelineHookTests
     {
         await using var server = Server(transaction, fail: true);
         var hook = new RecordingHook { After = () => throw new InvalidOperationException("Observer failed.") };
+#pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var cts = new CancellationTokenSource();
         if (cancel) cts.Cancel();
         if (transaction)
@@ -126,8 +132,10 @@ public class PipelineHookTests
     {
         var hook = new RecordingHook { After = () => throw new Exception("ignored") };
         using var endpoint = new ReservedUnavailablePort();
+#pragma warning disable RESP010 // This pipeline hook scenario owns its client, callback state and scripted aggregate replies.
         await using var client = RespireClient.Create(new RespireOptions
         { Endpoints = [new("127.0.0.1", endpoint.Port)], PipelineHook = hook, ThreadPoolMonitoring = false });
+#pragma warning restore RESP010
         if (transaction)
         {
             await using var tx = client.CreateTransaction();
@@ -150,7 +158,9 @@ public class PipelineHookTests
     {
         await using var server = Server(false);
         var hook = new RecordingHook { Before = _ => throw new InvalidOperationException("No WAIT") };
+#pragma warning disable RESP010 // This pipeline hook scenario owns its client, callback state and scripted aggregate replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         using var batch = client.CreateBatch();
         var pending = batch.Set("key", "value");
@@ -172,7 +182,9 @@ public class PipelineHookTests
     {
         await using var server = Server(false);
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This pipeline hook scenario owns its client, callback state and scripted aggregate replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         _ = batch.Set("key", "value");
         if (aof) await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
@@ -191,8 +203,10 @@ public class PipelineHookTests
             ? Interlocked.Increment(ref reads) == 1 ? "-TRYAGAIN busy\r\n"u8.ToArray() : "$5\r\nvalue\r\n"u8.ToArray()
             : command == "CLIENT ID" ? ":1\r\n"u8.ToArray() : null;
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This retry/fallback scenario owns its client and scripted attempt counters across one logical call.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero } });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var pending = batch.GetString("key");
         await batch.ExecuteAsync();
@@ -216,7 +230,9 @@ public class PipelineHookTests
             _ => null,
         };
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This pipeline hook scenario owns its client, callback state and scripted aggregate replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         await using var tx = await client.CreateTransactionAsync(["key"]);
         await Assert.That(hook.Entries).IsEqualTo(0); // WATCH setup is outside the commit.
         _ = tx.GetString("key");
@@ -250,8 +266,10 @@ public class PipelineHookTests
             return command == "CLIENT ID" ? ":1\r\n"u8.ToArray() : null;
         };
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This retry/fallback scenario owns its client and scripted attempt counters across one logical call.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero } });
+#pragma warning restore RESP010
         await using var tx = client.CreateTransaction();
         var pending = tx.GetString("key");
         await tx.CommitAsync();
@@ -269,7 +287,9 @@ public class PipelineHookTests
         await using var server = Server(false);
         server.ReplyOverride = (_, command) => command.StartsWith("WAIT") ? "-ERR acknowledgement failed\r\n"u8.ToArray() : null;
         var hook = new RecordingHook { After = () => throw new Exception("ignored") };
+#pragma warning disable RESP010 // This pipeline hook scenario owns its client, callback state and scripted aggregate replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var pending = batch.Set("key", "value");
         var error = await Failure(async () =>
@@ -287,7 +307,9 @@ public class PipelineHookTests
     {
         await using var server = Server(false);
         var hook = new RecordingHook();
+#pragma warning disable RESP010 // This pipeline hook scenario owns its client, callback state and scripted aggregate replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         await client.GetStringAsync("key");
         await Assert.That(hook.Entries).IsEqualTo(0);
         using var batch = client.WithKeyPrefix("prefix:").CreateBatch();
@@ -314,7 +336,9 @@ public class PipelineHookTests
         };
         var hook = new RecordingHook();
         if (reject) hook.Before = _ => throw new InvalidOperationException("Rejected import");
+#pragma warning disable RESP010 // This pipeline hook scenario owns its client, callback state and scripted aggregate replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         var outsideGate = false;
@@ -347,8 +371,10 @@ public class PipelineHookTests
     {
         var hook = new RecordingHook { Before = _ => throw new InvalidOperationException("No execution") };
         using var endpoint = new ReservedUnavailablePort();
+#pragma warning disable RESP010 // This preflight scenario owns isolated client options and hooks to verify rejection before I/O.
         await using var client = RespireClient.Create(new RespireOptions
         { Endpoints = [new("127.0.0.1", endpoint.Port)], PipelineHook = hook, ThreadPoolMonitoring = false });
+#pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await Assert.That(async () => await batch.TryExecuteAsync()).Throws<InvalidOperationException>();
         await Assert.That(async () => await batch.TryExecuteAsync()).Throws<InvalidOperationException>();
@@ -362,7 +388,9 @@ public class PipelineHookTests
     {
         await using var server = Server(false);
         var hook = new ConcurrentHook();
+#pragma warning disable RESP010 // This reentrancy/concurrency scenario owns its client and shared callback state until all calls finish.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+#pragma warning restore RESP010
         await Task.WhenAll(Enumerable.Range(0, 16).Select(async index =>
         {
             using var batch = client.CreateBatch();
