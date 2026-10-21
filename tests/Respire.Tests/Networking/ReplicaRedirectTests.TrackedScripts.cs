@@ -19,8 +19,10 @@ public partial class ReplicaRedirectTests
         intermediate.ReplyOverride = (id, command) => command.StartsWith("EVAL ")
             ? Bytes($"-REDIRECT 127.0.0.1:{final.Port}\r\n") : normal(id, command);
         await using var source = CorrectionReplica(intermediate.Port, lua: false);
+#pragma warning disable RESP010 // Each tracked-script wire case owns an isolated redirect topology and client correction state.
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
         { ClientSideCache = cache ? new() : null });
+#pragma warning restore RESP010
         await client.EnsureReliableCorrectionOrderingAsync();
         var pools = client.Core.OwnedPools.Count;
         var execution = await client.StartTrackedScriptExecutionAsync(RespireScript.Create("return 1"), ["key"], [], default,
@@ -53,11 +55,13 @@ public partial class ReplicaRedirectTests
             return true;
         };
         await using var source = CorrectionReplica(target.Port, lua: false);
+#pragma warning disable RESP010 // Each tracked-script wire case owns an isolated redirect topology and client correction state.
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
         {
             ClientSideCache = cache ? new RespireClientSideCacheOptions() : null,
             CommandTimeout = failure == "timeout" ? TimeSpan.FromSeconds(1) : TimeSpan.FromSeconds(10),
         });
+#pragma warning restore RESP010
         await client.EnsureReliableCorrectionOrderingAsync();
         var pools = client.Core.OwnedPools.Count;
         using var caller = new CancellationTokenSource();
@@ -109,7 +113,9 @@ public partial class ReplicaRedirectTests
         target.ReplyOverride = (id, command) => command == (denyKill ? "CLIENT KILL ID 99 SKIPME yes" : "CLIENT ID")
             ? Bytes("-NOPERM target identity denied\r\n") : normal(id, command);
         await using var source = CorrectionReplica(target.Port, lua: false);
+#pragma warning disable RESP010 // Each tracked-script wire case owns an isolated redirect topology and client correction state.
         await using var client = await RespireClient.ConnectAsync(Options(source.Port));
+#pragma warning restore RESP010
         await client.EnsureReliableCorrectionOrderingAsync();
         var pools = client.Core.OwnedPools.Count;
         var execution = await client.StartTrackedScriptExecutionAsync(RespireScript.Create("return 1"),
@@ -130,7 +136,9 @@ public partial class ReplicaRedirectTests
     {
         await using var target = TrackedTarget();
         await using var source = CorrectionReplica(target.Port, lua: false);
+#pragma warning disable RESP010 // Each tracked-script wire case owns an isolated redirect topology and client correction state.
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with { EnableReplicaRedirects = false });
+#pragma warning restore RESP010
         await client.EnsureReliableCorrectionOrderingAsync();
         var execution = await client.StartTrackedScriptExecutionAsync(RespireScript.Create("return 1"), ["key"], [], default);
         var error = await Assert.That(async () => { using var reply = await execution.ConsumeResponseAsync(); })
@@ -170,7 +178,9 @@ public partial class ReplicaRedirectTests
         target.ReplyOverride = (id, command) => fail && command.StartsWith("EVAL ")
             ? Bytes("-ERR final script failed\r\n") : normal(id, command);
         await using var source = CorrectionReplica(target.Port, lua: false);
+#pragma warning disable RESP010 // Each tracked-script wire case owns an isolated redirect topology and client correction state.
         await using var client = await RespireClient.ConnectAsync(Options(source.Port));
+#pragma warning restore RESP010
         await client.EnsureReliableCorrectionOrderingAsync();
         var script = RespireScript.Create("return 1");
         var execution = await client.StartTrackedScriptExecutionAsync(script, ["key"], [], default,

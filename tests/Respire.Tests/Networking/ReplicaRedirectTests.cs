@@ -50,12 +50,14 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "GET key" || command.StartsWith("EVALSHA ", StringComparison.Ordinal)
                 ? Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         {
             CircuitBreaker = new() { MinimumFailureCount = 1, OpenDuration = TimeSpan.FromMinutes(1) },
             RetryPolicy = retry ? new() { RetryableErrors = RespireRetryableErrors.Loading } : null,
             CommandTimeout = TimeSpan.FromSeconds(5),
         });
+#pragma warning restore RESP010
         var procedure = RespireScript.Create("return 7");
         var operation = script ? procedure.EvalShaOperation : "GET";
         async Task Send()
@@ -108,12 +110,14 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "GET key" ? Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n")
                 : command == "PING" ? FakeRespServer.PongReply : FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         {
             CircuitBreaker = new() { MinimumFailureCount = 1, OpenDuration = TimeSpan.FromMinutes(1) },
             RetryPolicy = retry ? new() { RetryableErrors = RespireRetryableErrors.Loading } : null,
             CommandTimeout = TimeSpan.FromSeconds(5),
         });
+#pragma warning restore RESP010
 
         await Assert.That(async () => await client.GetStringAsync("key")).Throws<RespireConnectionException>();
         var error = await Assert.That(async () => await client.GetStringAsync("key")).Throws<RespireCircuitOpenException>();
@@ -140,6 +144,7 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
                 : Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n"),
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         {
             ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.FromMilliseconds(1), JitterRatio = 0 },
@@ -147,6 +152,7 @@ public partial class ReplicaRedirectTests
             CircuitBreaker = circuit ? new() { MinimumFailureCount = 1 } : null,
             CommandTimeout = TimeSpan.FromSeconds(5),
         });
+#pragma warning restore RESP010
 
         using var reply = await client.ExecuteAsync(RespireCommands.String.INCR, ["counter"]);
         await Assert.That(reply.AsInteger()).IsEqualTo(1);
@@ -177,6 +183,7 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
                 : command == "GET key" ? Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
         {
             Protocol = RespireProtocol.Resp3,
@@ -186,6 +193,7 @@ public partial class ReplicaRedirectTests
             CircuitBreaker = circuit ? new() : null,
             RetryPolicy = retry ? new() : null,
         });
+#pragma warning restore RESP010
         var original = client.Core.Multiplexer.GetConnection();
         await source.SendRawAsync(Bytes(">3\r\n+MIGRATING\r\n:1\r\n:10\r\n"));
         using var maintenanceWait = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -217,6 +225,7 @@ public partial class ReplicaRedirectTests
         replacement.ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
             : command == "GET key" ? Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : FakeRespServer.OkReply;
         await using var source = Server();
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
         {
             Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
@@ -224,6 +233,7 @@ public partial class ReplicaRedirectTests
             CircuitBreaker = circuit ? new() : null,
             ReconnectPolicy = new(),
         });
+#pragma warning restore RESP010
         var original = client.Core.Multiplexer.GetConnection();
         await source.SendRawAsync(Bytes(">3\r\n+MIGRATING\r\n:1\r\n:10\r\n"));
         using var maintenanceWait = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -292,11 +302,13 @@ public partial class ReplicaRedirectTests
         meter.Start();
         await using var target = Server();
         await using var source = Server();
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
         {
             Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CircuitBreaker = circuit ? new() : null,
         });
+#pragma warning restore RESP010
         var original = client.Core.Multiplexer.GetConnection();
         var announcement = client.Core.Multiplexer.CaptureMovingAnnouncement(0, original,
             new MaintenanceNotification("MOVING", 1, 10, new("127.0.0.1", target.Port)));
@@ -311,7 +323,9 @@ public partial class ReplicaRedirectTests
         if (script)
         {
             // Script selection precedes activity creation; retire that selection before admission.
+#pragma warning disable RESP009 // The synchronous activity observer must publish retirement before script admission resumes.
             beforeScriptSend = () => PublishReplacement().GetAwaiter().GetResult();
+#pragma warning restore RESP009
             await Assert.That(await client.Scripts.ExecuteIntegerAsync(procedure, "key")).IsEqualTo(7);
         }
         else
@@ -406,8 +420,10 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command is "FLUSHDB" or "RANDOMKEY"
                 ? Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n") : FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { Database = 2, Password = "secret", AllowAdmin = true });
+#pragma warning restore RESP010
         await client.Server.FlushDatabaseAsync();
         using var key = await client.ExecuteAsync(RespireCommands.Key.RANDOMKEY);
         await Assert.That(key.AsString()).IsEqualTo("key");
@@ -428,8 +444,10 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
                 : Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n"),
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { BacklogPolicy = backlog ? RespireBacklogPolicy.Queue : RespireBacklogPolicy.FailFast });
+#pragma warning restore RESP010
         await client.ExecuteFireAndForgetAsync("SET", "key", "value");
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLIENT CAPA REDIRECT", "SET key value"]);
     }
@@ -455,8 +473,10 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
                 : Bytes(follow ? $"-REDIRECT 127.0.0.1:{targetPort}\r\n" : "-REDIRECT bad\r\n"),
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { BacklogPolicy = backlog ? RespireBacklogPolicy.Queue : RespireBacklogPolicy.FailFast });
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var error = await Assert.That(async () =>
             await client.ExecuteFireAndForgetAsync("SET", ["key", "value"], timeout.Token))
@@ -482,8 +502,10 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
                 : Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n"),
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { BacklogPolicy = backlog ? RespireBacklogPolicy.Queue : RespireBacklogPolicy.FailFast });
+#pragma warning restore RESP010
         await client.ExecuteFireAndForgetAsync("SET", "key", "value");
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLIENT CAPA REDIRECT", "SET key value"]);
     }
@@ -506,8 +528,10 @@ public partial class ReplicaRedirectTests
                 : command.StartsWith("EVAL", StringComparison.Ordinal)
                     ? Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n") : FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null });
+#pragma warning restore RESP010
         var script = RespireScript.Create("return 7");
         var result = await client.Scripts.ExecuteIntegerAsync(script, "key");
         await Assert.That(result).IsEqualTo(7);
@@ -528,8 +552,10 @@ public partial class ReplicaRedirectTests
     {
         await using var primary = new FakeRespServer(":1\r\n"u8.ToArray());
         await using var replica = CorrectionReplica(primary.Port, lua);
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null, RetryPolicy = new() });
+#pragma warning restore RESP010
         await client.EnsureReliableCorrectionOrderingAsync();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var execution = await client.StartLockExecutionAsync("key", "owner", extend ? 1000 : null,
@@ -556,8 +582,10 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
                 : Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n"),
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
+#pragma warning restore RESP010
         using var reply = await client.ExecuteAsync(RespireCommands.String.INCR, ["counter"]);
         await Assert.That(reply.AsInteger()).IsEqualTo(1);
         await Assert.That(replica.ReceivedCommands.Count(command => command == "INCR counter")).IsEqualTo(2);
@@ -573,8 +601,10 @@ public partial class ReplicaRedirectTests
     {
         await using var primary = TrackedTarget();
         await using var replica = CorrectionReplica(primary.Port, lua: false);
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null, RetryPolicy = new() });
+#pragma warning restore RESP010
         await client.EnsureReliableCorrectionOrderingAsync();
         var pools = client.Core.OwnedPools.Count;
         var timestamps = new List<long>();
@@ -645,8 +675,10 @@ public partial class ReplicaRedirectTests
                 : FakeRespServer.OkReply,
         };
         await using var replica = CorrectionReplica(primary.Port, lua: false);
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null });
+#pragma warning restore RESP010
         var script = RespireScript.Create("return 7");
         if (fail)
             await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(script, "key")).Throws<RespireServerException>();
@@ -684,7 +716,9 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
                 : redirect ? Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n") : Bytes(":7\r\n"),
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port));
+#pragma warning restore RESP010
         using var reply = await client.ExecuteAsync("FCALL", "my_function", 0);
         Activity[] matches;
         lock (activities) matches = activities.Where(activity => activity.GetTagItem("db.stored_procedure.name") as string == "my_function").ToArray();
@@ -706,8 +740,10 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
                 : Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n"),
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { RetryPolicy = retry ? new() : null });
+#pragma warning restore RESP010
         var error = await Assert.That(async () => { using var reply = await client.ExecuteAsync("SCAN", cursor); })
             .Throws<RespireServerException>();
         await Assert.That(error!.Code).IsEqualTo("REDIRECT");
@@ -723,7 +759,9 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
                 : Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n"),
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port));
+#pragma warning restore RESP010
         await using var scan = client.Keys.ScanAsync().GetAsyncEnumerator();
         await Assert.That(async () => _ = await scan.MoveNextAsync()).Throws<RespireServerException>();
         await Assert.That(primary.CommandsSeen).IsEqualTo(0);
@@ -737,7 +775,9 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT"
                 ? Bytes("-ERR unknown subcommand 'CAPA'\r\n") : Bytes("$5\r\nvalue\r\n"),
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port));
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["CLIENT CAPA REDIRECT", "GET key"]);
     }
@@ -755,8 +795,10 @@ public partial class ReplicaRedirectTests
                 _ => FakeRespServer.OkReply,
             },
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = RespireClient.Create(Options(primary.Port) with
         { ReplicaEndpoints = [new("127.0.0.1", replica.Port)], ReadFrom = RespireReadFrom.Replica });
+#pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("replica");
         await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["CLIENT CAPA REDIRECT", "READONLY", "ROLE", "GET key"]);
         await Assert.That(primary.CommandsSeen).IsEqualTo(0);
@@ -785,8 +827,10 @@ public partial class ReplicaRedirectTests
                 _ => Bytes("*0\r\n"),
             },
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         { SentinelPrimaryName = "mymaster", AllowAdmin = true });
+#pragma warning restore RESP010
         await client.Server.FlushDatabaseAsync();
         await Assert.That(promoted.ReceivedCommands).IsEquivalentTo(["CLIENT CAPA REDIRECT", "FLUSHDB"]);
         await Assert.That(previous.ReceivedCommands.Contains("CLIENT CAPA REDIRECT")).IsTrue();
@@ -805,8 +849,10 @@ public partial class ReplicaRedirectTests
                 : Bytes($"-REDIRECT 127.0.0.1:{port}\r\n"),
         };
         port = server.Port;
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(port) with
         { RetryPolicy = retry ? new() : null });
+#pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await Assert.That(async () => await client.GetStringAsync("key", timeout.Token)).Throws<RespireServerException>();
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET key"))
@@ -826,8 +872,10 @@ public partial class ReplicaRedirectTests
         await using (var warmTarget = new FakeRespServer(FakeRespServer.OkReply, Bytes("$1\r\nx\r\n")))
         await using (var warmReplica = new FakeRespServer(FakeRespServer.OkReply,
             Bytes($"-REDIRECT 127.0.0.1:{warmTarget.Port}\r\n")))
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using (var warmClient = await RespireClient.ConnectAsync(Options(warmReplica.Port) with
             { CommandTimeout = TimeSpan.FromSeconds(5), RetryPolicy = retry ? new() : null }))
+#pragma warning restore RESP010
             await Assert.That(await warmClient.GetStringAsync("key")).IsEqualTo("x");
 
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -841,11 +889,13 @@ public partial class ReplicaRedirectTests
                 : Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n"),
         };
         using var caller = new CancellationTokenSource();
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         {
             CommandTimeout = TimeSpan.FromMilliseconds(cancelCaller ? 5000 : 300),
             RetryPolicy = retry ? new() : null, ReconnectPolicy = new(),
         });
+#pragma warning restore RESP010
         var pending = client.GetStringAsync("key", caller.Token).AsTask();
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         if (cancelCaller)
@@ -879,7 +929,9 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
                 : Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n"),
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with { RetryPolicy = new() });
+#pragma warning restore RESP010
         switch (shape)
         {
             case "typed-read": await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value"); break;
@@ -932,8 +984,10 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "GET key" ? Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n")
                 : FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
+#pragma warning restore RESP010
         if (fail)
             await Assert.That(async () => await client.GetStringAsync("key")).Throws<RespireServerException>();
         else
@@ -962,6 +1016,7 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
                 : Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n"),
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         {
             RetryPolicy = new()
@@ -970,6 +1025,7 @@ public partial class ReplicaRedirectTests
                 MaxCommandRetryCategory = permitAccumulating ? RespireCommandRetryCategory.WriteAccumulating : RespireCommandRetryCategory.ReadOnly,
             },
         });
+#pragma warning restore RESP010
         if (permitAccumulating)
         {
             using var reply = await client.ExecuteAsync(RespireCommands.String.INCR, ["counter"]);
@@ -1002,8 +1058,10 @@ public partial class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
                 : command == operation ? Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : FakeRespServer.OkReply,
         };
+#pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { ClientSideCache = new(), RetryPolicy = retry ? new() : null });
+#pragma warning restore RESP010
         for (var expected = 1; expected <= 2; expected++)
         {
             var value = multi ? (await client.Strings.GetManyAsync("key"))[0] : await client.GetStringAsync("key");
