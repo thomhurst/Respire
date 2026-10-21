@@ -20,7 +20,7 @@
         ArgumentFormattingTests.cs;DispatchResponseObservationTests.cs;
         ConnectionMetricCleanupTests.cs;Networking/AsyncFlushSignalTests.cs;
         Networking/StandaloneBatchFlushTests.cs;Networking/StandaloneCircuitAllocationTests.cs;
-        Networking/StandaloneReplicaReadyTests.cs" />
+        Networking/StandaloneReplicaReadyTests.cs;Networking/SentinelIdentityTests*.cs" />
       <_FocusedUnselected Include="@(Compile)" Exclude="@(_FocusedSelection)" />
       <_FocusedSelectedCompile Include="@(Compile)" Exclude="@(_FocusedUnselected)" />
       <_FocusedRemoved Include="@(Compile)" Exclude="@(_FocusedSelection);@(_FocusedInfrastructure)" />

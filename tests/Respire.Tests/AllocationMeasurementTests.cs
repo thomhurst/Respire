@@ -9,6 +9,36 @@ namespace Respire.Tests;
 public class AllocationMeasurementTests
 {
     [Test]
+    public async Task CollectionBeforeInitialSnapshotIsStillRejected()
+    {
+        // Force interference after successful entry but before the diagnostic baseline.
+        // No later collection delta can explain this loss: it already happened.
+        var entered = false;
+        var failure = CaptureFailure(() => AllocationMeasurement.WithoutConcurrentGc(() => 0, () =>
+        {
+            entered = true;
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+        }));
+
+        await Assert.That(entered).IsTrue();
+        await Assert.That(failure.Message).Contains("no-GC region was not retained");
+        await Assert.That(failure.Message).Contains("GC counts=0/0/0");
+        await Assert.That(failure.Message).Contains("mode=Interactive->Interactive");
+        await Assert.That(failure.InnerException is InvalidOperationException).IsTrue();
+        Console.WriteLine(failure.Message);
+    }
+
+    [Test]
+    public async Task EntryCallbackFailurePreservesExceptionAndReleasesRegion()
+    {
+        var expected = new InvalidOperationException("Entry diagnostics failed.");
+        var failure = CaptureFailure(() => AllocationMeasurement.WithoutConcurrentGc(() => 0, () => throw expected));
+        await Assert.That(failure).IsSameReferenceAs(expected);
+        var next = AllocationMeasurement.WithoutConcurrentGc(() => 42);
+        await Assert.That(next).IsEqualTo(42);
+    }
+
+    [Test]
     public async Task LostRegionReportsCollectionsAndProcessAllocations()
     {
         var failure = CaptureFailure(() => AllocationMeasurement.WithoutConcurrentGc(() =>

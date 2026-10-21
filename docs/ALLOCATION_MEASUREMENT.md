@@ -31,6 +31,15 @@ finalizer wait and cast-cache primer. Snapshot counters are outside the measured
 diagnostic strings are built only after region cleanup fails. These diagnostics do not
 retry the sample or permit a nonzero allocation result.
 
+The first snapshot runs after `TryStartNoGCRegion` returns; entry and capture are not
+atomic. An interruption in that gap can therefore produce `Interactive->Interactive`
+with zero collection deltas in both intervals. `CollectionBeforeInitialSnapshotIsStillRejected`
+forces a collection in that gap using the helper's optional lifecycle callback and verifies
+that cleanup still rejects the sample. The initial snapshot is inside the cleanup boundary,
+so an exception during entry diagnostics also releases the region. This control explains
+how that diagnostic shape is possible; it does not identify what interrupted the historical
+Sentinel CI sample (#2098).
+
 Compare process bytes with thread bytes to identify allocation outside the measured
 thread. A collection or mode change during preparation points to finalizer/runtime or
 other process activity before the measured delegate. The cleanup exception alone does
@@ -64,6 +73,10 @@ warmup cannot fix:
   The original CI failure did not record a GC reason, so this isolation does not establish
   which activity interrupted that historical sample. These deterministic regressions
   verify the isolation fix independently of the unrecoverable historical GC reason (#2066).
+  Sentinel normalized-evidence matching also runs before runner startup in a bounded child.
+  Its handshake control forces a parent collection while the child region is open, and its
+  failure controls inject an ordinary-path allocation and an induced collection in the child.
+  Both remain failures; no region loss is ignored or retried (#2098).
 
 Child-process rules:
 

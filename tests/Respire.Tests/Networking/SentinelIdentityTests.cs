@@ -7,7 +7,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
-public class SentinelIdentityTests
+public partial class SentinelIdentityTests
 {
     [Test]
     public async Task DefaultAddressEvidenceCannotMatchAnObservation()
@@ -75,23 +75,40 @@ public class SentinelIdentityTests
     [Test]
     [NotInParallel]
     public async Task RepeatedNormalizedEvidenceMatchingDoesNotAllocate()
+        => await RunMatchingProbeAsync("normal");
+
+    private static void MeasureNormalizedEvidence(string mode, string? handshake)
     {
         var sourceAddresses = Enumerable.Range(1, 16).Select(index => $"::ffff:192.0.2.{index}").ToArray();
         var source = new SentinelAddressEvidence(new("former.test", 6379), sourceAddresses);
         var candidate = new SentinelAddressEvidence(new("primary.test", 6379),
             [.. Enumerable.Range(1, 15).Select(index => $"198.51.100.{index}"), "192.0.2.16"]);
-        await Assert.That(sourceAddresses[15]).IsEqualTo("::ffff:192.0.2.16");
-        await Assert.That(source.Addresses![15]).IsEqualTo("192.0.2.16");
+        if (sourceAddresses[15] != "::ffff:192.0.2.16" || source.Addresses![15] != "192.0.2.16")
+            throw new InvalidOperationException("Evidence must normalize its own snapshot.");
         sourceAddresses[15] = "203.0.113.99";
-        await Assert.That(source.Addresses[15]).IsEqualTo("192.0.2.16");
+        if (source.Addresses[15] != "192.0.2.16")
+            throw new InvalidOperationException("Evidence must retain its snapshot after source mutation.");
         var alreadyNormalized = SentinelAddressEvidence.FromSnapshot(source.Endpoint, source.Addresses);
-        await Assert.That(alreadyNormalized.Addresses == source.Addresses).IsTrue();
+        if (alreadyNormalized.Addresses != source.Addresses)
+            throw new InvalidOperationException("Normalized snapshots must reuse their address storage.");
         _ = MeasureMatching(source, candidate, false);
         _ = MeasureMatching(source, candidate, true);
         var (allocated, control) = AllocationMeasurement.WithoutConcurrentGc(() =>
-            (MeasureMatching(source, candidate, false), MeasureMatching(source, candidate, true)));
-        await Assert.That(allocated).IsEqualTo(0);
-        await Assert.That(control).IsGreaterThanOrEqualTo(37_000);
+        {
+            if (handshake is not null)
+            {
+                File.WriteAllText(handshake + ".ready", "");
+                if (!SpinWait.SpinUntil(() => File.Exists(handshake + ".continue"), TimeSpan.FromSeconds(10)))
+                    throw new TimeoutException("Parent did not release the Sentinel measurement.");
+                if (System.Runtime.GCSettings.LatencyMode != System.Runtime.GCLatencyMode.NoGCRegion)
+                    throw new InvalidOperationException("Parent activity interrupted the Sentinel child region.");
+            }
+            if (mode == "lost-region") GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+            return (MeasureMatching(source, candidate, mode == "allocating"), MeasureMatching(source, candidate, true));
+        });
+        Console.WriteLine($"Sentinel matching: {allocated} bytes; positive control: {control} bytes.");
+        if (allocated != 0 || control < 37_000)
+            throw new InvalidOperationException($"Expected zero Sentinel matching allocations and a positive control; observed {allocated} and {control} bytes.");
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
