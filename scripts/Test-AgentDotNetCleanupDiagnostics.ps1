@@ -19,6 +19,8 @@ foreach ($name in @('Write-AgentCleanupEvidence', 'Stop-ProcessTree')) {
 
 class CleanupProcessFixture {
     static [Collections.Generic.List[int]] $Killed = [Collections.Generic.List[int]]::new()
+    static [Collections.Generic.List[int]] $Disposed = [Collections.Generic.List[int]]::new()
+    static [int] $ThrowOnKillId
     [int] $Id
     [bool] $HasExited = $true
     [IntPtr] $SafeHandle = [IntPtr]::new(1)
@@ -26,9 +28,14 @@ class CleanupProcessFixture {
         if ($ProcessId -eq 73) { throw [ComponentModel.Win32Exception]::new('private-error-sentinel') }
         return [CleanupProcessFixture]@{ Id = $ProcessId }
     }
-    [void] Kill() { [CleanupProcessFixture]::Killed.Add($this.Id) }
-    [void] Kill([bool]$Tree) { [CleanupProcessFixture]::Killed.Add($this.Id) }
-    [void] Dispose() { }
+    [void] Kill() {
+        if ($this.Id -eq [CleanupProcessFixture]::ThrowOnKillId) {
+            throw [UnauthorizedAccessException]::new('private-kill-sentinel')
+        }
+        [CleanupProcessFixture]::Killed.Add($this.Id)
+    }
+    [void] Kill([bool]$Tree) { $this.Kill() }
+    [void] Dispose() { [CleanupProcessFixture]::Disposed.Add($this.Id) }
 }
 class CleanupJobFixture {
     static [int] $Closed
@@ -113,8 +120,54 @@ try {
     }
     finally { [Console]::SetError($originalError) }
     if ([CleanupJobFixture]::Closed -ne 3) { throw 'Failed console interrupted containment.' }
+
+    # Unexpected failures still propagate, but must not discard decisions already
+    # captured. Emission follows stack unwinding and pinned-handle disposal.
+    foreach ($failureAt in @('root', 'fallback')) {
+        foreach ($failConsole in @($false, $true)) {
+            [CleanupProcessFixture]::Killed.Clear()
+            [CleanupProcessFixture]::Disposed.Clear()
+            [CleanupJobFixture]::Closed = 0
+            [CleanupJobFixture]::FailQuery = $false
+            $tracked.Clear()
+            $tracked[12] = '100'
+            [CleanupProcessFixture]::ThrowOnKillId = if ($failureAt -eq 'root') { 10 } else { 12 }
+            $writer = [IO.StringWriter]::new()
+            if ($failConsole) { $writer.Dispose() }
+            $observedFailure = $null
+            try {
+                [Console]::SetError($writer)
+                Stop-ProcessTree -RootProcess ([CleanupProcessFixture]@{ Id = 10; HasExited = $false }) -TrackedProcesses $tracked -WindowsJobHandle 1 -UnixProcessGroupId 0
+            }
+            catch { $observedFailure = $_ }
+            finally { [Console]::SetError($originalError) }
+            $output = $writer.ToString()
+            $writer.Dispose()
+            if ($null -eq $observedFailure -or
+                $observedFailure.Exception.GetBaseException() -isnot [UnauthorizedAccessException] -or
+                $observedFailure.Exception.Message -notmatch 'private-kill-sentinel') {
+                throw 'Cleanup evidence replaced or suppressed the unexpected kill failure.'
+            }
+            if ([CleanupJobFixture]::Closed -ne 1 -or
+                [CleanupProcessFixture]::Killed -contains [CleanupProcessFixture]::ThrowOnKillId) {
+                throw 'Unexpected failure changed containment or recorded a successful failed kill.'
+            }
+            if ($failureAt -eq 'fallback' -and [CleanupProcessFixture]::Disposed -notcontains 12) {
+                throw 'Unexpected fallback failure leaked the pinned process handle.'
+            }
+            if (-not $failConsole -and ($output -notmatch 'job-members pids=10,12' -or
+                $output -notmatch 'containment action=close-job' -or
+                $output -notmatch 'root pid=10 action=kill-tree')) {
+                throw 'Unexpected cleanup failure discarded buffered evidence.'
+            }
+            if ($output -match 'private-.*sentinel' -or $output -match 'fallback pid=12 action=kill') {
+                throw 'Unexpected cleanup failure leaked raw data or claimed a successful kill.'
+            }
+        }
+    }
 }
 finally {
+    [CleanupProcessFixture]::ThrowOnKillId = 0
     [Console]::SetError($originalError)
     $env:RESPIRE_AGENT_CLEANUP_DIAGNOSTICS = $savedTrace
 }

@@ -445,8 +445,8 @@ function Get-TrackedWorkingSetBytes(
 }
 
 function Write-AgentCleanupEvidence([Collections.Generic.List[string]]$Records, [string]$Message) {
-    # Capture timestamps at the decision, but emit only after containment and
-    # fallback cleanup: even a blocked console must not prevent termination.
+    # Capture timestamps at the decision, but emit only when cleanup completes
+    # or unwinds: even a blocked console must not prevent termination attempts.
     # Callers supply fixed fields and numeric IDs, never exception/raw trace data.
     try { $Records.Add("guard-cleanup $([DateTimeOffset]::UtcNow.ToString('o')) guardPid=$PID $Message") } catch { }
 }
@@ -463,97 +463,103 @@ function Stop-ProcessTree(
         $cleanupRecords = [Collections.Generic.List[string]]::new()
         Write-AgentCleanupEvidence $cleanupRecords "rootPid=$($RootProcess.Id) tracked=$($TrackedProcesses.Count) recordLimit=64 truncated=$($TrackedProcesses.Count -gt 64)"
     }
-    if ($IsWindows -and $WindowsJobHandle -ne [IntPtr]::Zero) {
-        # Closing a kill-on-close Job Object catches descendants that exited the
-        # parent-PID tree before the final snapshot.
-        if ($traceCleanup) {
-            try {
-                $members = [AgentDotNetWindowsJob]::GetProcessIds($WindowsJobHandle)
-                Write-AgentCleanupEvidence $cleanupRecords "job-members pids=$($members -join ',') memberLimit=64"
-            }
-            catch { Write-AgentCleanupEvidence $cleanupRecords 'job-members unavailable=true' }
-            # Membership is a pre-close snapshot, not proof of actual termination:
-            # processes can start/exit before close or after the last sampled tree.
-            Write-AgentCleanupEvidence $cleanupRecords 'containment action=close-job'
-        }
-        [AgentDotNetWindowsJob]::Close($WindowsJobHandle)
-    }
-    elseif ((-not $IsWindows) -and $UnixProcessGroupId -gt 0) {
-        # Signal the process group from the guard so timeout and memory-limit paths
-        # have the same containment as normal exit.
-        $killResult = [AgentDotNetUnixNative]::kill(-$UnixProcessGroupId, 9)
-        if ($killResult -ne 0) {
-            $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            if ($errorCode -ne 3) {
-                Write-Verbose "Unix process group $UnixProcessGroupId could not be stopped (errno $errorCode)."
-            }
-        }
-    }
-
     try {
-        if (-not $RootProcess.HasExited) {
-            if ($traceCleanup) { Write-AgentCleanupEvidence $cleanupRecords "root pid=$($RootProcess.Id) action=kill-tree" }
-            $RootProcess.Kill($true)
+        if ($IsWindows -and $WindowsJobHandle -ne [IntPtr]::Zero) {
+            # Closing a kill-on-close Job Object catches descendants that exited the
+            # parent-PID tree before the final snapshot.
+            if ($traceCleanup) {
+                try {
+                    $members = [AgentDotNetWindowsJob]::GetProcessIds($WindowsJobHandle)
+                    Write-AgentCleanupEvidence $cleanupRecords "job-members pids=$($members -join ',') memberLimit=64"
+                }
+                catch { Write-AgentCleanupEvidence $cleanupRecords 'job-members unavailable=true' }
+                # Membership is a pre-close snapshot, not proof of actual termination:
+                # processes can start/exit before close or after the last sampled tree.
+                Write-AgentCleanupEvidence $cleanupRecords 'containment action=close-job'
+            }
+            [AgentDotNetWindowsJob]::Close($WindowsJobHandle)
         }
-    }
-    catch [System.InvalidOperationException] {
-        Write-Verbose 'Root process exited before process-tree cleanup completed.'
-    }
-    catch [System.ComponentModel.Win32Exception] {
-        Write-Verbose "Root process-tree cleanup was unavailable: $_"
-    }
-
-    # The Job Object/process group is the containment boundary. Identity-checked
-    # tracked cleanup is defense in depth for processes seen before reparenting.
-    foreach ($trackedProcess in $TrackedProcesses.GetEnumerator()) {
-        $processId = $trackedProcess.Key
-        $traceProcess = $traceCleanup -and $traceCount++ -lt 64
-        if ($processId -eq $PID) {
-            if ($traceProcess) { Write-AgentCleanupEvidence $cleanupRecords "fallback pid=$processId action=skip-self" }
-            continue
+        elseif ((-not $IsWindows) -and $UnixProcessGroupId -gt 0) {
+            # Signal the process group from the guard so timeout and memory-limit paths
+            # have the same containment as normal exit.
+            $killResult = [AgentDotNetUnixNative]::kill(-$UnixProcessGroupId, 9)
+            if ($killResult -ne 0) {
+                $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                if ($errorCode -ne 3) {
+                    Write-Verbose "Unix process group $UnixProcessGroupId could not be stopped (errno $errorCode)."
+                }
+            }
         }
 
         try {
-            $candidate = [System.Diagnostics.Process]::GetProcessById($processId)
-            try {
-                # Pin the native process handle before checking identity so Windows
-                # cleanup cannot reopen a recycled PID between verification and kill.
-                $null = $candidate.SafeHandle
-
-                # Re-read this PID immediately before acting. A bulk snapshot taken
-                # before the loop can become stale and target a recycled PID.
-                $liveIdentity = Get-LiveProcessIdentity -ProcessId $processId
-                if (($null -eq $liveIdentity) -or
-                    ($liveIdentity -ne $trackedProcess.Value)) {
-                    if ($traceProcess) { Write-AgentCleanupEvidence $cleanupRecords "fallback pid=$processId action=skip-identity" }
-                    continue
-                }
-
-                # Primary containment already handled descendants. Kill only this
-                # identity-verified fallback process through the pinned handle.
-                $candidate.Kill()
-                if ($traceProcess) { Write-AgentCleanupEvidence $cleanupRecords "fallback pid=$processId action=kill" }
+            if (-not $RootProcess.HasExited) {
+                if ($traceCleanup) { Write-AgentCleanupEvidence $cleanupRecords "root pid=$($RootProcess.Id) action=kill-tree" }
+                $RootProcess.Kill($true)
             }
-            finally {
-                $candidate.Dispose()
-            }
-        }
-        catch [System.ArgumentException] {
-            if ($traceProcess) { Write-AgentCleanupEvidence $cleanupRecords "fallback pid=$processId action=unavailable" }
-            Write-Verbose "Tracked process $processId already exited."
         }
         catch [System.InvalidOperationException] {
-            if ($traceProcess) { Write-AgentCleanupEvidence $cleanupRecords "fallback pid=$processId action=unavailable" }
-            Write-Verbose "Tracked process $processId became unavailable during cleanup."
+            Write-Verbose 'Root process exited before process-tree cleanup completed.'
         }
         catch [System.ComponentModel.Win32Exception] {
-            if ($traceProcess) { Write-AgentCleanupEvidence $cleanupRecords "fallback pid=$processId action=unavailable" }
-            Write-Verbose "Tracked process $processId could not be stopped: $_"
+            Write-Verbose "Root process-tree cleanup was unavailable: $_"
+        }
+
+        # The Job Object/process group is the containment boundary. Identity-checked
+        # tracked cleanup is defense in depth for processes seen before reparenting.
+        foreach ($trackedProcess in $TrackedProcesses.GetEnumerator()) {
+            $processId = $trackedProcess.Key
+            $traceProcess = $traceCleanup -and $traceCount++ -lt 64
+            if ($processId -eq $PID) {
+                if ($traceProcess) { Write-AgentCleanupEvidence $cleanupRecords "fallback pid=$processId action=skip-self" }
+                continue
+            }
+
+            try {
+                $candidate = [System.Diagnostics.Process]::GetProcessById($processId)
+                try {
+                    # Pin the native process handle before checking identity so Windows
+                    # cleanup cannot reopen a recycled PID between verification and kill.
+                    $null = $candidate.SafeHandle
+
+                    # Re-read this PID immediately before acting. A bulk snapshot taken
+                    # before the loop can become stale and target a recycled PID.
+                    $liveIdentity = Get-LiveProcessIdentity -ProcessId $processId
+                    if (($null -eq $liveIdentity) -or
+                        ($liveIdentity -ne $trackedProcess.Value)) {
+                        if ($traceProcess) { Write-AgentCleanupEvidence $cleanupRecords "fallback pid=$processId action=skip-identity" }
+                        continue
+                    }
+
+                    # Primary containment already handled descendants. Kill only this
+                    # identity-verified fallback process through the pinned handle.
+                    $candidate.Kill()
+                    if ($traceProcess) { Write-AgentCleanupEvidence $cleanupRecords "fallback pid=$processId action=kill" }
+                }
+                finally {
+                    $candidate.Dispose()
+                }
+            }
+            catch [System.ArgumentException] {
+                if ($traceProcess) { Write-AgentCleanupEvidence $cleanupRecords "fallback pid=$processId action=unavailable" }
+                Write-Verbose "Tracked process $processId already exited."
+            }
+            catch [System.InvalidOperationException] {
+                if ($traceProcess) { Write-AgentCleanupEvidence $cleanupRecords "fallback pid=$processId action=unavailable" }
+                Write-Verbose "Tracked process $processId became unavailable during cleanup."
+            }
+            catch [System.ComponentModel.Win32Exception] {
+                if ($traceProcess) { Write-AgentCleanupEvidence $cleanupRecords "fallback pid=$processId action=unavailable" }
+                Write-Verbose "Tracked process $processId could not be stopped: $_"
+            }
         }
     }
-    if ($traceCleanup) {
-        foreach ($record in $cleanupRecords) {
-            try { [Console]::Error.WriteLine($record) } catch { break }
+    finally {
+        # Emit after cleanup has completed or unwound, including disposal of any
+        # pinned candidate handle. Never replace an unexpected cleanup failure.
+        if ($traceCleanup) {
+            foreach ($record in $cleanupRecords) {
+                try { [Console]::Error.WriteLine($record) } catch { break }
+            }
         }
     }
 }
