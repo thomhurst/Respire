@@ -17,6 +17,29 @@ public class FakeRespServerTests
     private const int RetiredPortAttempts = 10;
 
     [Test]
+    [Arguments("127.0.0.1", true)]
+    [Arguments("127.0.0.2", true)]
+    [Arguments("::1", true)]
+    [Arguments("::ffff:127.0.0.1", true)]
+    [Arguments("192.0.2.1", false)]
+    [Arguments("2001:db8::1", false)]
+    [Arguments("::ffff:192.0.2.1", false)]
+    [Arguments("0.0.0.0", false)]
+    [Arguments("::", false)]
+    public async Task PeerFilterAcceptsOnlyLoopbackAddresses(string address, bool expected)
+    {
+        var endpoint = new IPEndPoint(IPAddress.Parse(address), 1234);
+        await Assert.That(FakeRespServer.IsLoopbackPeer(endpoint)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task PeerFilterRejectsMissingOrNonIpEndpoint()
+    {
+        await Assert.That(FakeRespServer.IsLoopbackPeer(null)).IsFalse();
+        await Assert.That(FakeRespServer.IsLoopbackPeer(new DnsEndPoint("localhost", 1234))).IsFalse();
+    }
+
+    [Test]
     public async Task SuppliedListenerServesBothLoopbackFamilies()
     {
         IPAddress[] addresses = Socket.OSSupportsIPv6

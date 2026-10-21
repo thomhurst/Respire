@@ -277,6 +277,11 @@ internal sealed class FakeRespServer : IAsyncDisposable
                     _peerClosed.TrySetResult();
                     continue;
                 }
+                if (!IsLoopbackPeer(socket.RemoteEndPoint))
+                {
+                    socket.Dispose();
+                    continue;
+                }
                 socket.NoDelay = true;
                 lock (_receivedCommands) _clientSockets.Add(socket);
                 _clientSocket.TrySetResult(socket);
@@ -293,6 +298,14 @@ internal sealed class FakeRespServer : IAsyncDisposable
             // cancellation. Every handler already started still belongs to this loop.
             await Task.WhenAll(connections);
         }
+    }
+
+    internal static bool IsLoopbackPeer(EndPoint? endpoint)
+    {
+        if (endpoint is not IPEndPoint peer) return false;
+        var address = peer.Address;
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        return IPAddress.IsLoopback(address);
     }
 
     private async Task HandleConnectionAsync(Socket socket, int connectionId)
