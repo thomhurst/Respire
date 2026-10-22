@@ -126,9 +126,12 @@ try {
         $sha = git -C $w.Path rev-parse HEAD 2>$null
         if ($LASTEXITCODE -ne 0 -or -not $sha) { continue }
         if ($openOids.ContainsKey($sha)) { continue }
+        # A named branch with no commits beyond main is proven merged only by tier 1.
+        $freshBranch = $w.Branch -and -not $w.Detached -and
+            (Test-HeadHasNoWorkBeyondMain -Repo $mainRepo -Head $sha -MainTip $mainTip)
 
         $why = $null
-        if ($mergedOids.ContainsKey($sha)) { $why = 'merged PR head tip SHA' }
+        if (-not $freshBranch -and $mergedOids.ContainsKey($sha)) { $why = 'merged PR head tip SHA' }
 
         $pathPr = Get-PrNumberFromWorktreePath -Path $w.Path
         $canonicalMerged = $pathPr -and $mergedPrByNumber.ContainsKey($pathPr) -and
@@ -141,7 +144,7 @@ try {
 
         # Association must identify this exact merged head. Merely naming an older
         # merged PR cannot establish that a new local follow-up commit is published.
-        if (-not $why -and $slug) {
+        if (-not $why -and -not $freshBranch -and $slug) {
             $assocRaw = gh api "repos/$slug/commits/$sha/pulls" 2>$null
             if ($LASTEXITCODE -eq 0) {
                 $assoc = if ($assocRaw) { @(($assocRaw -join "`n") | ConvertFrom-Json) } else { @() }
