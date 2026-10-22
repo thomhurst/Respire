@@ -136,6 +136,19 @@ try {
         throw 'Normal isolated-worktree cleanup did not run git.'
     }
 
+    # Merged-worktree removal refuses the primary checkout, and its aliases, before Git.
+    foreach ($target in @($primarySpelling, $aliasRoot)) {
+        $script:gitCalled = $false
+        $output = Remove-MergedWorktree -Repo $primaryRoot -Worktree $target -ExpectedHead 'completed-head' -Label '#merged' 6>&1
+        if ($script:gitCalled -or -not (Test-Path -LiteralPath $primaryRoot)) {
+            throw "Merged-worktree removal reached Git or removed the primary checkout through $target."
+        }
+        if (($output -join "`n") -notmatch 'primary checkout') {
+            throw 'Merged-worktree removal must explain why the primary checkout was preserved.'
+        }
+    }
+    $script:gitCalled = $false
+
     if (-not (Test-Path -LiteralPath $isolatedRoot)) {
         throw 'Unattended cleanup removed the isolated checkout.'
     }

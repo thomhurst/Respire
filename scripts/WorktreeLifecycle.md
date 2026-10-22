@@ -8,26 +8,19 @@ After a merge, [`Merge-Pr.ps1`](Merge-Pr.ps1) records the remote branch, merged 
 
 Local branches remain available for `git worktree add <path> <branch>`. Detached commits are retained as `retained-worktrees/<SHA>`. Uncommitted source, unknown ignored files, Git-locked worktrees, the main checkout and foreign repositories are preserved. Known generated output is disposable under `WorktreeCleanup.ps1`. Release prints why a checkout was retained. On Windows, Git follows directory junctions while removing a worktree and empties their targets, so release first deletes each junction or directory symlink itself and preserves the checkout if any link remains.
 
-Run release with the shared checkout as the working directory. On Windows a process whose current directory is inside the worktree blocks deletion. Git then deletes most of the tree, including its `.git` file, and fails. Release therefore records each vetted checkout under `<git-common-dir>/agent-pending-removals` before deleting it, removes the record on success, and reports a failed removal as pending. Each `Remove-MergedWorktrees.ps1` sweep finishes a pending removal once the item's Redis lock is free, and then applies any deferred remote branch deletion. It deletes only known generated files, one at a time, and empty directories without recursion. It drops a record when a new checkout reuses the path, and preserves the remnant for manual recovery when any other file remains.
+Run release with the shared checkout as the working directory. On Windows a process whose current directory is inside the worktree blocks deletion. Git then deletes most of the tree, including its `.git` file, and fails. Release and the merged-worktree sweep therefore record each vetted checkout under `<git-common-dir>/agent-pending-removals` before deleting it, with every lock identity that can own it, remove the record on success, and report a failed removal as pending. Each `Remove-MergedWorktrees.ps1` sweep finishes a pending removal while it holds those Redis locks, and then applies any deferred local and remote branch deletion. A held or unavailable lock defers the record to a later sweep. The sweep deletes only known generated files, one at a time, and empty directories without recursion. It drops a record when a new checkout reuses the path, and preserves the remnant for manual recovery when any other file remains.
 
-A crashed process or an expired Redis TTL cannot run release. `Remove-MergedWorktrees.ps1` remains the conservative fallback for merged work. No GitHub Actions job manages local disk.
+A crashed process or an expired Redis TTL cannot run release, so `Remove-MergedWorktrees.ps1` removes merged worktrees that release left behind. No GitHub Actions job manages local disk.
 
-Merged-worktree cleanup preserves active Redis ownership, including the current owner's lock, and fails closed when the ownership check fails. It uses the primary checkout's `AgentLocks.ps1`. A merged PR's branch or directory name is not sufficient evidence: the current tip must match a merged PR head or be an eligible snapshot already reachable from `origin/main`. Clean unpublished follow-up commits survive, including with `-StaleDays`. The shared helper rechecks the verified HEAD and ownership before clearing generated output. Explicit lock release remains responsible for removing the checkout.
+The sweep removes a worktree only with positive merge evidence: its current tip matches a merged PR head (from the bulk list or a commit association), or it is a detached or canonical `pr-<N>` snapshot of a merged PR already reachable from `origin/main`. A merged PR's branch or directory name alone is not sufficient. A named branch with no commits beyond `origin/main` is a fresh cut and is kept unless its canonical `pr-<N>` path and branch identify a merged PR. Clean unpublished follow-up commits survive, including with `-StaleDays`, which only adds old detached snapshots already on `origin/main`.
 
-Unattended sweep and merge cleanup clear only explicitly classified generated output,
-including unignored `Debug/` files. They preserve the checkout directory, source, ignored
-settings, Git registration, and local branch refs. A free or expired Redis lease does not
-prove that a background process released its working directory or directory handles;
-renaming the checkout does not stop that process from writing into it. Therefore unattended
-cleanup never calls `git worktree remove` or recursively deletes checkout contents.
-The owner must stop background processes before explicit release removes its checkout.
-If ownership was lost, preserve the checkout for manual recovery after checking its writers.
-Concurrent writes inside known generated paths can still race artifact cleanup; that output is rebuildable, while source and unknown ignored paths are never deletion targets.
-Orphaned
-directories are preserved for manual recovery: a missing registration can hide an explicit
-lock name that differs from the directory name, so a free inferred lock is insufficient.
-Merge and sweep cleanup retain local branch refs, since a concurrent checkout can reuse
-the same branch and commit. Remote branch deletion compares the verified PR head with a lease.
+Before removing a candidate, the sweep acquires every Redis identity that can own it, using the primary checkout's `AgentLocks.ps1`: the lock marker, `pr-<N>`/`issue-<N>` in its directory or branch name, and `pr-<N>` when its named branch is that merged PR's own head branch. Detached checkouts never borrow a PR identity. It holds those locks through deletion and branch cleanup, then releases them; it never checks for `FREE` and then deletes. A held, unavailable or raced lock preserves the checkout, including the current owner's lock. A checkout with no recoverable identity is preserved. `-WhatIf` only reads lock status, acquires nothing and deletes nothing.
+
+Within the reservation, `Remove-MergedWorktree` in `WorktreeCleanup.ps1` preserves the main checkout and anything inside it (harness-managed `.claude/worktrees`), other repositories, Git-locked worktrees, a changed HEAD, tracked changes, and untracked or ignored files outside known generated output. The sweep unlocks only a `PR checkout setup` or `Issue checkout setup` Git lock older than the two-hour Redis TTL. It detaches directory links, runs `git worktree remove --force`, and then deletes the local branch for merged-PR evidence only while that branch still points at the removed head and no other checkout uses it. It also applies a remote branch deletion that `Merge-Pr.ps1` deferred.
+
+A free or expired Redis lease does not prove that a background process released its working directory. A process that still holds the directory makes deletion fail, which leaves a pending record. A file that such a process writes during deletion survives in the remnant and blocks completion. The owner must still stop background processes before release.
+
+`Merge-Pr.ps1` runs while its caller owns the item lock, so it clears only explicitly classified generated output and leaves checkout removal to the caller's release, or to a later sweep if the caller crashes. Orphaned directories, whose Git registration is gone, are preserved for manual recovery: a missing registration can hide an explicit lock name that differs from the directory name, so a free inferred lock is insufficient. Remote branch deletion compares the verified PR head with a lease.
 
 Run regression tests locally with PowerShell 7, Git and Docker:
 
@@ -39,4 +32,6 @@ pwsh scripts/Test-MergedWorktreeSweep.ps1
 pwsh scripts/Test-WorktreeCleanup.ps1
 pwsh scripts/Test-WorkflowArtifactCleanup.ps1
 pwsh scripts/Test-MergePr.ps1
+pwsh scripts/Test-MergePrLifecycle.ps1
+pwsh scripts/Test-SweepFreshBranch.ps1
 ```

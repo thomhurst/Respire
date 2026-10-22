@@ -72,6 +72,37 @@ try {
     foreach ($path in @('src/source.log', 'src/pr-body.md', 'README.md', 'new-feature.md', '.env')) {
         Assert-True (-not (Test-DisposableWorktreePath -Path $path)) "Source or unknown file marked disposable: $path"
     }
+
+    # Merged-worktree removal applies the same rules, then removes the whole checkout.
+    foreach ($file in @('build.log', '.artifacts/run.txt', 'website/build/output.txt')) {
+        $path = Join-Path $worktree $file
+        New-Item -ItemType Directory -Path (Split-Path $path -Parent) -Force | Out-Null
+        Set-Content -LiteralPath $path -Value 'generated output'
+    }
+    $removeMerged = @{ Repo = $repo; Worktree = $worktree; ExpectedHead = $head }
+    foreach ($case in @(
+            @{ Name = 'untracked source'; Path = 'NewFeature.cs' },
+            @{ Name = 'unknown ignored file'; Path = '.env' },
+            @{ Name = 'ignored source directory'; Path = 'ignored-source/keep.cs' })) {
+        $path = Join-Path $worktree $case.Path
+        New-Item -ItemType Directory -Path (Split-Path $path -Parent) -Force | Out-Null
+        Set-Content -LiteralPath $path -Value 'keep'
+        $null = Remove-MergedWorktree @removeMerged
+        Assert-True (Test-Path -LiteralPath $path) "Merged-worktree removal deleted $($case.Name)."
+        Remove-Item -LiteralPath (Join-Path $worktree ($case.Path -split '/')[0]) -Recurse -Force
+    }
+    Set-Content -LiteralPath (Join-Path $worktree '.gitignore') -Value 'tracked edit'
+    $null = Remove-MergedWorktree @removeMerged
+    Assert-True ((Get-Content -LiteralPath (Join-Path $worktree '.gitignore')) -eq 'tracked edit') 'Merged-worktree removal discarded a tracked change.'
+    git -C $worktree checkout --quiet -- .gitignore
+    $null = Remove-MergedWorktree -Repo $repo -Worktree $worktree -ExpectedHead '0000000000000000000000000000000000000000'
+    Assert-True (Test-Path -LiteralPath $worktree) 'Merged-worktree removal ignored a changed HEAD.'
+    Assert-True ((Remove-MergedWorktree @removeMerged -WhatIf) -eq 'preview' -and (Test-Path -LiteralPath $worktree)) 'Dry run removed a merged worktree.'
+    Assert-True ((Remove-MergedWorktree @removeMerged) -eq $true) 'Clean merged worktree with generated output was not removed.'
+    Assert-True (-not (Test-Path -LiteralPath $worktree)) 'Merged worktree directory survived removal.'
+    Assert-True (@(git -C $repo worktree list --porcelain) -notcontains "worktree $($worktree -replace '\\', '/')") 'Merged worktree registration survived removal.'
+    git -C $repo show-ref --verify --quiet refs/heads/merged
+    Assert-True ($LASTEXITCODE -eq 0) 'Removal without -DeleteBranch deleted the local branch.'
     Write-Host 'OK workflow artifact cleanup tests passed.'
 }
 finally {

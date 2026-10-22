@@ -7,6 +7,8 @@
 #
 # Cleanup is part of the merge command. Active or retained checkouts remain for
 # explicit owner release, which runs after the owner stops its background processes.
+# The caller holds the item lock here, so this script cannot reserve it and does not
+# remove the checkout; if the caller crashes, Remove-MergedWorktrees.ps1 removes it.
 #
 # The gate stays a separate, pure predicate ON PURPOSE: Assert-PrGreen.ps1 must be
 # safe to run as a check without side effects. Merge-Pr COMPOSES it; it does not
