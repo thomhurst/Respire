@@ -1,3 +1,3 @@
-FROM redis:8.10-alpine@sha256:615b4cedaff0c1437a1548acae4222572df8c021eeb7382d64cb8b5e3a13ac7a
+FROM redis:8.10-alpine@sha256:0bf6577d7774e592b29d093e3ac9390eb91e13d72c21e506afce736de5e0eeb0
 COPY start.sh health.sh /sample/
 ENTRYPOINT ["sh", "/sample/start.sh"]
