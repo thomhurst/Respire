@@ -8,6 +8,8 @@
 #   - PRESERVE the checkout itself: a free lock cannot rule out background directory handles.
 #     Explicit owner release removes checkouts after the owner stops its processes.
 #   - DETACH directory junctions and symlinks before deleting, so no delete follows a link.
+#   - DELETE agent evidence (<main checkout>-evidence/<lock name>/) once its newest write
+#     is older than the retention window; it lives outside every checkout.
 
 function New-OrdinalStringMap {
     [CmdletBinding()]
@@ -196,6 +198,33 @@ function Select-MergeCleanupWorktree {
     return $null
 }
 
+function ConvertTo-LockMarkerPath([string]$Path) {
+    return [IO.Path]::GetFullPath($Path.Trim()).TrimEnd('\', '/')
+}
+
+# Returns the agent.lockName marker that AgentLocks.ps1 wrote for this worktree, or $null.
+# `git worktree add` copies the source checkout's config.worktree into the new worktree,
+# so a marker counts only when its agent.lockWorktree names this worktree's own path.
+# Throws when Git cannot be queried, so callers can fail closed.
+function Get-WorktreeLockMarker {
+    param([Parameter(Mandatory)][string]$Worktree)
+
+    # `git config --worktree` aliases shared local config until this extension is enabled.
+    $enabled = git -C $Worktree config --local --bool --get extensions.worktreeConfig 2>$null
+    if ($LASTEXITCODE -notin @(0, 1)) { throw 'could not inspect worktree configuration' }
+    if ($enabled -ne 'true') { return $null }
+    $marker = git -C $Worktree config --worktree --get agent.lockName 2>$null
+    if ($LASTEXITCODE -notin @(0, 1)) { throw 'could not inspect ownership marker' }
+    if (-not $marker) { return $null }
+    $markerOwner = git -C $Worktree config --worktree --get agent.lockWorktree 2>$null
+    if ($LASTEXITCODE -notin @(0, 1)) { throw 'could not inspect ownership marker' }
+    if (-not $markerOwner) { return $null }
+    $top = git -C $Worktree rev-parse --show-toplevel 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $top) { throw 'could not inspect worktree root' }
+    if ((ConvertTo-LockMarkerPath $markerOwner) -ne (ConvertTo-LockMarkerPath $top)) { return $null }
+    return $marker.Trim()
+}
+
 function Get-AgentLockBlocker {
     param(
         [Parameter(Mandatory)][string]$Repo,
@@ -223,13 +252,9 @@ function Get-WorktreeOwnershipBlocker {
     if (Test-Path -LiteralPath (Join-Path $gitDirectory 'locked')) { return 'Git worktree is locked' }
 
     $lockNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $enabled = git -C $Worktree config --local --bool --get extensions.worktreeConfig 2>$null
-    if ($LASTEXITCODE -notin @(0, 1)) { return 'could not inspect worktree configuration' }
-    if ($enabled -eq 'true') {
-        $marker = git -C $Worktree config --worktree --get agent.lockName 2>$null
-        if ($LASTEXITCODE -notin @(0, 1)) { return 'could not inspect ownership marker' }
-        if ($marker) { [void]$lockNames.Add($marker.Trim()) }
-    }
+    try { $marker = Get-WorktreeLockMarker -Worktree $Worktree }
+    catch { return "$_" }
+    if ($marker) { [void]$lockNames.Add($marker) }
     # Also cover the short interval between checkout creation and marker registration.
     $branch = git -C $Worktree symbolic-ref --quiet --short HEAD 2>$null
     if ($LASTEXITCODE -notin @(0, 1)) { return 'could not inspect worktree branch' }
@@ -369,6 +394,59 @@ function Remove-WorktreeDirectoryLinks {
         return $false
     }
     return $true
+}
+
+# AGENT EVIDENCE
+# Agents keep logs, reports and PR-body drafts for a work item under
+# <main checkout>-evidence/<lock name>/, beside the worktree root, so nothing lands
+# loose in the parent directory. Evidence matters only while its item is active.
+function Get-AgentEvidenceRoot {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$MainCheckout)
+
+    return "$(($MainCheckout -replace '\\', '/').TrimEnd('/'))-evidence"
+}
+
+# Removes each top-level entry of the evidence root whose newest write is older than
+# the retention window. Returns the number of entries removed (or that would be).
+function Remove-StaleAgentEvidence {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][int]$RetentionDays,
+        [switch]$WhatIf
+    )
+
+    if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return 0 }
+    $cutoff = [DateTime]::UtcNow.AddDays(-$RetentionDays)
+    $removed = 0
+    foreach ($entry in (Get-ChildItem -LiteralPath $Root -Force -ErrorAction SilentlyContinue)) {
+        if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            Write-Host "sweep: skipping evidence entry that is a link: $($entry.FullName)"
+            continue
+        }
+        $items = @($entry)
+        if ($entry.PSIsContainer) {
+            # Get-ChildItem does not recurse through links, so a link's target never counts.
+            $items += @(Get-ChildItem -LiteralPath $entry.FullName -Recurse -Force -ErrorAction SilentlyContinue)
+        }
+        $newest = ($items | Measure-Object -Property LastWriteTimeUtc -Maximum).Maximum
+        if ($newest -ge $cutoff) { continue }
+        if ($WhatIf) {
+            Write-Host "sweep: WOULD remove stale evidence $($entry.FullName)"
+            $removed++
+            continue
+        }
+        if ($entry.PSIsContainer -and -not (Remove-WorktreeDirectoryLinks -Worktree $entry.FullName -Label '(evidence)')) { continue }
+        Remove-Item -LiteralPath $entry.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $entry.FullName) {
+            Write-Host "sweep: WARNING could not remove stale evidence $($entry.FullName)"
+            continue
+        }
+        Write-Host "sweep: removed stale evidence $($entry.FullName)"
+        $removed++
+    }
+    return $removed
 }
 
 # PENDING RELEASE REMOVALS

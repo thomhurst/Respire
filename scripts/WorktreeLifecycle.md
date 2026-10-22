@@ -1,6 +1,8 @@
 # Local worktree lifecycle
 
-[`AgentLocks.ps1 release`](AgentLocks.ps1) calls [`Remove-ReleasedWorktree`](Remove-ReleasedWorktree.ps1) while the Redis lease is still held, removes its recorded checkout, then releases ownership. Register the path once after checkout with `renew -LockName <name> -Worktree <absolute-path>`. Use the shared checkout's current script, and release in `finally` after stopping owned processes and saving evidence outside the worktree.
+[`AgentLocks.ps1 release`](AgentLocks.ps1) calls [`Remove-ReleasedWorktree`](Remove-ReleasedWorktree.ps1) while the Redis lease is still held, removes its recorded checkout, then releases ownership. Register the path once after checkout with `renew -LockName <name> -Worktree <absolute-path>`. Use the shared checkout's current script, and release in `finally` after stopping owned processes and saving evidence in `<main checkout>-evidence/<lock-name>/` (where agent output goes: [issue-pr-loop § Isolation and ownership](../.claude/skills/issue-pr-loop/SKILL.md#isolation-and-ownership)). `Remove-MergedWorktrees.ps1` deletes evidence entries whose newest file is older than `-EvidenceRetentionDays` (default 7).
+
+The lock marker in a worktree's `config.worktree` records the worktree's own path in `agent.lockWorktree`, because `git worktree add` copies the source checkout's `config.worktree` into the new worktree. A copied marker names another path and is ignored, and the main checkout never receives one.
 
 After a merge, [`Merge-Pr.ps1`](Merge-Pr.ps1) records the remote branch, merged SHA, and a SHA-256 fingerprint of the origin URL in the checkout's Git registration. The marker never stores the URL or embedded credentials. Successful owner release then removes that remote branch through [`MergedBranchCleanup.ps1`](MergedBranchCleanup.ps1), using an expected-head lease and a current origin URL matching the recorded fingerprint. Dirty checkouts retain the marker and remote branch; changed remote tips or origin URLs are preserved. Fork PRs never schedule branch deletion through the base repository's origin. Network failures preserve the remote branch with a warning. Local branch refs remain recovery points.
 
@@ -31,6 +33,8 @@ Run regression tests locally with PowerShell 7, Git and Docker:
 
 ```powershell
 pwsh scripts/Test-ReleasedWorktreeCleanup.ps1
+pwsh scripts/Test-AgentLocks.ps1
+pwsh scripts/Test-AgentEvidenceCleanup.ps1
 pwsh scripts/Test-MergedWorktreeSweep.ps1
 pwsh scripts/Test-WorktreeCleanup.ps1
 pwsh scripts/Test-WorkflowArtifactCleanup.ps1

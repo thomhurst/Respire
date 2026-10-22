@@ -92,6 +92,10 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 
 `benchmark-comparison.yml`, `benchmark-redis-throughput.yml` and `benchmark-redis-container.yml` are not pull request comparisons. `benchmark-compare.yml` is a reusable workflow that the label-triggered workflows call; do not run it directly. Start them with `gh workflow run <file>`. `benchmark-comparison.yml` and `benchmark-redis-throughput.yml` also run weekly on a schedule; the weekly comparison run refreshes the published performance docs.
 
+## Agent output locations
+
+Do not write logs, reports, PR body drafts, clones or tool downloads loose in the repository's parent directory or in the main checkout. Each kind of output has one home, listed in `.claude/skills/issue-pr-loop/SKILL.md` § Isolation and ownership; evidence goes in `<repo-parent>/Respire-evidence/<lock-name>/`.
+
 ## Never wait on results
 
 Do not wait for CI, reviews, benchmark runs, reviewer replies, or any other asynchronous result. Do not sleep, poll, run `gh pr checks --watch` or `gh run watch`, or schedule a monitor to wait for one. Instead, push or record what you have, release the item, and pick up another issue or PR. The result is usually ready when you come back to the item on a later pass. When you start a benchmark by label, move on at once and report the result in the PR description on that later pass.

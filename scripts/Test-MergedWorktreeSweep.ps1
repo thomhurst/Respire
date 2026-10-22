@@ -77,6 +77,7 @@ switch ($LockName) {
     foreach ($state in @('held', 'mine', 'unavailable', 'unexpected')) {
         $path = New-Checkout "pr-123-$state"
         Invoke-TestGit -C $path config --worktree agent.lockName $state
+        Invoke-TestGit -C $path config --worktree agent.lockWorktree $path
         $preserved += $path
     }
     $unpublished = New-Checkout 'pr-123-follow-up'
@@ -102,6 +103,7 @@ switch ($LockName) {
     $preserved += $unregistered
     $released = New-Checkout 'pr-123-released'
     Invoke-TestGit -C $released config --worktree agent.lockName released
+    Invoke-TestGit -C $released config --worktree agent.lockWorktree $released
     New-Item -ItemType Directory -Path (Join-Path $released 'bin') | Out-Null
     Set-Content -LiteralPath (Join-Path $released 'bin/generated.dll') -Value generated
     $raceAfterStatus = New-Checkout 'pr-123-after-status'

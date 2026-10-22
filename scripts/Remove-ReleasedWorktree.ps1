@@ -25,8 +25,10 @@ function Remove-ReleasedWorktree {
         Write-Host "Preserving main or Git-locked worktree: $target"
         return
     }
-    $marker = git -C $target config --worktree --get agent.lockName 2>$null
-    if ($LASTEXITCODE -ne 0 -or $marker -cne $LockName) {
+    . (Join-Path $PSScriptRoot 'WorktreeCleanup.ps1')
+    # A marker copied in by `git worktree add` names another checkout and does not count.
+    $marker = Get-WorktreeLockMarker -Worktree $target
+    if ($marker -cne $LockName) {
         Write-Host "Preserving worktree without a matching lock marker: $target"
         return
     }
@@ -43,8 +45,7 @@ function Remove-ReleasedWorktree {
         return
     }
 
-    . (Join-Path $PSScriptRoot 'WorktreeCleanup.ps1')
-    $status = @(git -C $target status --porcelain=v1 --untracked-files=all --ignored=matching 2>$null)
+    $status =@(git -C $target status --porcelain=v1 --untracked-files=all --ignored=matching 2>$null)
     if ($LASTEXITCODE -ne 0) { throw "Cannot inspect worktree: $target" }
     foreach ($entry in $status) {
         if ($entry -notmatch '^(\?\?|!!) ' -or -not (Test-DisposableWorktreePath $entry.Substring(3))) {

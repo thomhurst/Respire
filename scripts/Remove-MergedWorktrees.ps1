@@ -18,6 +18,10 @@
 #   when a lock inferred from their name is free. Markerless legacy remnants are also
 #   retained; names and timestamps cannot prove that no agent owns their remaining files.
 #
+# AGENT EVIDENCE:
+#   Entries under <main checkout>-evidence/ (one folder per work item) are removed once
+#   their newest write is older than -EvidenceRetentionDays (default 7).
+#
 # Guards (never delete work):
 #   - skip the main checkout and anything inside it (.claude/worktrees is harness-managed)
 #   - skip Git-locked and Redis-owned worktrees, including same-owner locks
@@ -29,7 +33,7 @@
 # Run it once per loop iteration (cheap: ~3 gh calls in bulk, plus one association
 # call per unmatched leftover — a set that shrinks to near-zero after the first run).
 #
-# Usage:  pwsh scripts/Remove-MergedWorktrees.ps1 [-Repo owner/name] [-WhatIf] [-StaleDays n]
+# Usage:  pwsh scripts/Remove-MergedWorktrees.ps1 [-Repo owner/name] [-WhatIf] [-StaleDays n] [-EvidenceRetentionDays n]
 # Exit:   0 always (a sweep failure must not break the loop; problems are logged)
 
 [CmdletBinding()]
@@ -38,7 +42,9 @@ param(
     [switch]$WhatIf,
     # Opt-in: also clear generated output in snapshots reachable from origin/main whose HEAD
     # commit is older than this many days. Unpublished work is always preserved.
-    [int]$StaleDays = 0
+    [int]$StaleDays = 0,
+    [ValidateRange(1, 3650)]
+    [int]$EvidenceRetentionDays = 7
 )
 
 $ErrorActionPreference = 'Stop'
@@ -227,9 +233,11 @@ try {
     # Owner releases that a busy directory interrupted.
     $pendingRemoved = Complete-PendingWorktreeRemovals -Repo $mainRepo -WhatIf:$WhatIf
 
+    $evidenceRemoved = Remove-StaleAgentEvidence -Root (Get-AgentEvidenceRoot -MainCheckout $mainRepo) -RetentionDays $EvidenceRetentionDays -WhatIf:$WhatIf
+
     if (-not $WhatIf) { git -C $mainRepo worktree prune }
     if ($pendingRemoved -gt 0) { Write-Host "sweep: finished $pendingRemoved pending release removal(s)." }
-    Write-Host "sweep: cleared generated output in $cleaned completed checkout(s); preserved checkout contents and $orphansPreserved orphaned dir(s) for owner release or manual recovery."
+    Write-Host "sweep: cleared generated output in $cleaned completed checkout(s); preserved checkout contents and $orphansPreserved orphaned dir(s) for owner release or manual recovery; removed $evidenceRemoved stale evidence entr(ies) older than $EvidenceRetentionDays day(s)."
 }
 catch {
     Warn "unexpected sweep error (ignored, loop continues): $_"

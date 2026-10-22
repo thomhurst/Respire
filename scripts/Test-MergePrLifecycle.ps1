@@ -59,6 +59,7 @@ if ($Worktree) { $parameters.Worktree = $Worktree }
                 $worktree = Join-Path $testRoot $kind
                 Invoke-TestGit -C $repo worktree add $worktree $kind
                 Invoke-TestGit -C $worktree config --worktree agent.lockName fixture-owner
+                Invoke-TestGit -C $worktree config --worktree agent.lockWorktree $worktree
             }
             if ($kind -eq 'multiple-push-urls') {
                 Invoke-TestGit -C $repo config --add remote.origin.pushurl $remote
