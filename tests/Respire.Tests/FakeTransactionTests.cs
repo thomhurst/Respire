@@ -271,7 +271,7 @@ public class FakeTransactionTests
         using (var queued = await session.CommandAsync("SET", "applied", "value")) { }
         using var executed = await session.CommandAsync("EXEC");
         await Assert.That(executed.AsArray().Length).IsEqualTo(3);
-        await Assert.That(executed.AsArray()[0].GetErrorMessage()).Contains("supports only the built-in stream worker and lock scripts");
+        await Assert.That(executed.AsArray()[0].GetErrorMessage()).Contains("unsupported script");
         await Assert.That(executed.AsArray()[1].GetErrorMessage()).StartsWith("NOSCRIPT");
         await Assert.That(executed.AsArray()[2].AsString()).IsEqualTo("OK");
         using var stored = await session.CommandAsync("GET", "applied");

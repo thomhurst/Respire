@@ -40,14 +40,14 @@ public sealed partial class RespireFakeServer
             : Matches(LockCommands.ReleaseScript) ? LockCommands.ReleaseScript
             : Matches(LockCommands.ExtendScript) ? LockCommands.ExtendScript : null;
         if (script is null) return StreamWorkerScript(args, sha);
-        if (sha && !_workerScriptCache.Contains(source))
+        if (sha && !_scriptCache.Contains(source))
             return FakeReply.Error("NOSCRIPT No matching script. Please use EVAL.");
 
         var acquire = script == FencedLockAcquireLfScript || script == FencedLockAcquireCrLfScript;
         var extend = script == LockCommands.ExtendScript;
         if (Integer(args[2]) != (acquire ? 2 : 1) || args.Length != (acquire ? 7 : extend ? 6 : 5))
             return Syntax("EVAL");
-        if (!sha) _workerScriptCache.Add(script.Sha1);
+        if (!sha) _scriptCache.Add(script.Sha1);
         if (acquire) return AcquireFencedLock(args);
 
         var value = Find(args[3])?.Value;

@@ -382,6 +382,8 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             connections = _connections.ToArray();
             _connections.Clear();
             _entries.Clear();
+            _registeredScripts.Clear();
+            _scriptCache.Clear();
             completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             _disposeTask = completion.Task;
         }

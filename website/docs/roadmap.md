@@ -251,6 +251,7 @@ are described in the guides below; release preparation is summarized separately.
 - [Configuration binding and named options](integrations/dependency-injection.md#bind-appsettingsjson-and-validate-at-startup),
   with a generated builder covering every client option and validation at host startup.
 - An [in-memory test server](guides/in-memory-testing.md) with controlled server time, `KEYS`/`SCAN` enumeration,
+  [registered application script handlers](guides/in-memory-testing.md#testing-script-heavy-code),
   and [command expectations](guides/in-memory-testing.md#command-expectations) with argument matching, reply overrides,
   and invocation verification; [Redis/Valkey container fixtures](guides/testing-containers.md),
   and a [test sample](guides/testing-sample.md).
