@@ -91,7 +91,7 @@ alone is insufficient.
   `SELECT` during connection establishment.
 - Unimplemented adapter members (for example `StringSet`, `StringGetLease`, and `ListLeftPop`)
   throw `NotSupportedException`, even though the fake supports their underlying commands.
-- Commands the adapter can send but the fake cannot execute (for example arbitrary
+- Commands the adapter can send but the fake cannot execute (for example unregistered
   `ScriptEvaluateAsync("return 1")`) throw native `RespireServerException`. A failed command
   does not make later supported commands fail.
 - No authentication, TLS, Cluster, Sentinel, persistence, eviction, modules or realistic
@@ -125,6 +125,7 @@ uses one response slot, so later commands still work.
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
 | Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME`, `CLIENT KILL ID` (optional `SKIPME yes`) |
 | Locks | `EVAL`/`EVALSHA` for Respire's built-in fenced acquisition and owner-checked lock renewal/release scripts; supports [leader-election](coordination.md#hosted-leader-election) tests |
+| Application scripts | `EVAL`/`EVALSHA` with registered C# handlers; `SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH`; see [testing script-heavy code](#testing-script-heavy-code) |
 | Transactions | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with connection-owned queues and optimistic concurrency |
 
 ### Explicitly unsupported
@@ -132,7 +133,7 @@ uses one response slot, so later commands still work.
 | Area | Unsupported |
 | --- | --- |
 | Key enumeration | `SCAN TYPE` |
-| Scripting | General `EVAL`/`EVALSHA`, `SCRIPT LOAD`, `cjson`, and functions; see [testing script-heavy code](#testing-script-heavy-code) |
+| Scripting | Unregistered application scripts, `EVAL_RO`/`EVALSHA_RO`, `cjson`, and functions; see [testing script-heavy code](#testing-script-heavy-code) |
 | Hashes | Hash-field expiry, `HINCRBYFLOAT`, `HRANDFIELD` |
 | Sets | `SPOP`, `SRANDMEMBER` |
 | Lists | `BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`, `BLMOVE`, `RPOPLPUSH`, `BRPOPLPUSH`. Use the nonblocking typed overloads without `waitFor`. |
@@ -357,7 +358,7 @@ Behavior follows [Redis transactions](https://redis.io/docs/latest/develop/using
 ## Remaining limits
 
 - Only database 0 and standalone mode.
-- Not simulated: authentication, TLS, Cluster, Sentinel, general scripts and functions (only the built-in stream worker and lock scripts), client-side tracking, persistence, and admin diagnostics. Unsupported handshake features fail initialization.
+- Not simulated: authentication, TLS, Cluster, Sentinel, Lua execution and functions, client-side tracking, persistence, and admin diagnostics. Scripts need a built-in implementation or a registered handler. Unsupported handshake features fail initialization.
 - Requests are limited to 16 MiB; larger requests close the connection.
 - No eviction or memory limit: keep test data small.
 - Not a throughput benchmark.
@@ -367,10 +368,55 @@ The [shared testing sample](testing-sample.md) runs the same scenarios against t
 
 ## Testing script-heavy code
 
-The fake recognizes only Respire's built-in stream worker and lock scripts. It does not embed a Lua
-interpreter: arbitrary `RespireScript` execution, `SCRIPT LOAD`, `redis.call`/`redis.pcall`, and
-`cjson` require a real server. An embedded interpreter alone would not reproduce Redis's Lua
-environment, conversion rules, and command behavior.
+Register a synchronous C# handler to test application code that executes a specific Lua script.
+The fake matches the exact source or its SHA1; it does not embed a Lua interpreter. Changing the
+source, including whitespace, requires a new registration. Duplicate registrations throw.
+
+```csharp
+using Respire.Testing;
+
+var script = RespireScript.Create("""
+    if redis.call('HGET', KEYS[1], 'f') ~= ARGV[1] then return 0 end
+    redis.call('DEL', KEYS[1])
+    redis.call('HSET', KEYS[1], 'v', ARGV[2])
+    redis.call('PEXPIRE', KEYS[1], ARGV[3])
+    return 1
+    """);
+await using var server = new RespireFakeServer();
+server.RegisterScript(script, (data, keys, args) =>
+{
+    using var current = data.Call("HGET", keys[0], "f");
+    if (current.IsNull || current.AsString() != args[0].ToString()) return RespireFakeResponse.Integer(0);
+    using var deleted = data.Call("DEL", keys[0]);
+    using var stored = data.Call("HSET", keys[0], "v", args[1]);
+    using var expiry = data.Call("PEXPIRE", keys[0], args[2]);
+    return RespireFakeResponse.Integer(1);
+});
+await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+using var initial = await client.ExecuteAsync(RespireCommands.Hash.HSET, "item", "f", "old");
+var changed = await client.Scripts.ExecuteIntegerAsync(script, ["item"], ["old", "new", 1000]);
+```
+
+- Registration does not load the script cache. `EVALSHA` returns `NOSCRIPT` until `EVAL` or
+  `SCRIPT LOAD` caches the registered script, exercising the client's normal fallback.
+  `SCRIPT EXISTS` reports cache membership; `SCRIPT FLUSH [SYNC|ASYNC]` clears the cache while
+  preserving registrations. Unregistered source still fails explicitly.
+- Keys and arguments contain the binary wire values, including the client's key prefix.
+  `data.Call` copies arguments and executes supported data commands against the same keyspace,
+  expiry clock, and `WATCH` registrations as ordinary client commands.
+  Internal replies use RESP2 shapes regardless of the client's protocol, matching Lua `redis.call` defaults.
+- The complete handler runs under the command lock. Use the context only synchronously on the
+  handler's thread. Never wait for client operations inside a handler. Context use after return throws.
+- Internal calls bypass command expectations and fault injection. Connection, transaction, scripting,
+  blocking commands, `XREAD`, `XREADGROUP`, and `HIMPORT` are rejected inside handlers.
+  Command errors throw `RespireServerException`; an uncaught server error becomes the script's reply.
+  Earlier writes are retained on error, as with Redis scripts. Unexpected handler exceptions fail
+  the connection and are reported during server disposal.
+- Return `RespireFakeResponse` values, including arrays, nulls, and errors. Dispose `data.Call` results.
+  Read-only `EVAL_RO`/`EVALSHA_RO` execution is unsupported.
+
+Handlers emulate application behavior; they do not validate Lua syntax, conversions, `redis.call`/
+`redis.pcall`, or `cjson`. Keep real-server contract tests for the production Lua implementation.
 
 Use `Respire.Testing` for storage and fault-handling tests that stay within its supported
 commands. Run coordinator contract tests (claims, lease renewal/requeueing, and atomic result

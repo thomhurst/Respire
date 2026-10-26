@@ -128,7 +128,7 @@ public class FakeConnectionTests
         Assert.Throws<NotSupportedException>(() => { _ = fixture.Database.StringSetAsync("key", "value"); });
         var error = await Assert.ThrowsAsync<RespireServerException>(
             () => fixture.Database.ScriptEvaluateAsync("return 1"));
-        Assert.Contains("fake server supports only", error.Message);
+        Assert.Contains("unsupported script", error.Message);
         Assert.True(await fixture.Database.HashSetAsync("after-error", "field", "value"));
         Assert.Equal("value", (string?)await fixture.Database.HashGetAsync("after-error", "field"));
     }

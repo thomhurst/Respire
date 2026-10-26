@@ -362,14 +362,15 @@ public class FakeTransactionParityTests(Redis7ReferenceContainer fixture)
         string[] nonInvalidatingCommands =
         [
             "HELLO", "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH", "PING", "ECHO",
-            "TIME", "KEYS", "SCAN", "SSCAN", "HSCAN", "ZSCAN",
+            "TIME", "KEYS", "SCAN", "SSCAN", "HSCAN", "ZSCAN", "SCRIPT",
             "ARCOUNT", "ARGET", "ARGETRANGE", "ARGREP", "ARINFO", "ARLASTITEMS", "ARLEN",
             "ARMGET", "ARNEXT", "AROP", "ARSCAN",
             "HIMPORT PREPARE", "HIMPORT DISCARD", "HIMPORT DISCARDALL",
             "SUBSCRIBE", "UNSUBSCRIBE", "PUBLISH", "XREAD",
             // Group cursor/PEL changes do not invalidate WATCH, unlike XGROUP CREATE ... MKSTREAM.
             "XREADGROUP", "XACK", "XPENDING", "XINFO", "XAUTOCLAIM",
-            // Only built-in worker scripts are supported; none modifies stream contents.
+            // These vectors use built-in worker scripts, which do not modify stream contents.
+            // Registered handler mutations are covered by FakeScriptServerTests.
             "EVAL", "EVALSHA",
             "SELECT", "CLIENT", "GET", "MGET", "EXISTS", "TYPE", "STRLEN", "TTL",
             "PTTL", "EXPIRETIME", "PEXPIRETIME", "HGET", "HMGET", "HGETALL", "HEXISTS", "HLEN",

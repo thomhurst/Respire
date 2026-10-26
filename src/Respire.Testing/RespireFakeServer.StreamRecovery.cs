@@ -9,7 +9,6 @@ public sealed partial class RespireFakeServer
     private static readonly RespireScript[] WorkerScripts =
         [StreamWorkerScripts.Replay, StreamWorkerScripts.Claim, StreamWorkerScripts.Ack, StreamWorkerScripts.DeadLetter,
             StreamWorkerScripts.CapabilityClaim, StreamWorkerScripts.AckAndDelete, StreamWorkerScripts.Nack];
-    private readonly HashSet<string> _workerScriptCache = new(StringComparer.Ordinal);
 
     private FakeReply StreamDelete(byte[][] args)
     {
@@ -73,16 +72,16 @@ public sealed partial class RespireFakeServer
     {
         var source = Encoding.UTF8.GetString(args[1]);
         var script = WorkerScripts.SingleOrDefault(candidate => (sha ? candidate.Sha1 : candidate.Source) == source);
-        if (sha && !_workerScriptCache.Contains(source)) return FakeReply.Error("NOSCRIPT No matching script. Please use EVAL.");
-        if (script is null) return FakeReply.Error("ERR fake server supports only the built-in stream worker and lock scripts");
+        if (sha && !_scriptCache.Contains(source)) return FakeReply.Error("NOSCRIPT No matching script. Please use EVAL.");
+        if (script is null) return UnsupportedScript();
         if (script == StreamWorkerScripts.DeadLetter)
         {
             if (Integer(args[2]) != 2 || args.Length != 11) return Syntax("EVAL");
-            if (!sha) _workerScriptCache.Add(script.Sha1);
+            if (!sha) _scriptCache.Add(script.Sha1);
             return StreamDeadLetter(args);
         }
         if (Integer(args[2]) != 1) return Syntax("EVAL");
-        if (!sha) _workerScriptCache.Add(script.Sha1);
+        if (!sha) _scriptCache.Add(script.Sha1);
         var claim = script == StreamWorkerScripts.Claim || script == StreamWorkerScripts.CapabilityClaim;
         var expected = claim || script == StreamWorkerScripts.Nack ? 9 : 8;
         if (args.Length != expected) return WrongArity("EVAL");

@@ -1,6 +1,7 @@
 namespace Respire.Testing;
 
-/// <summary>A configured RESP reply. Overrides do not execute the fake command handler or mutate its data.</summary>
+/// <summary>A RESP reply for a command expectation or registered script handler.
+/// Expectation overrides do not execute the fake command handler or mutate its data.</summary>
 public sealed class RespireFakeResponse
 {
     internal FakeReply Reply { get; }
