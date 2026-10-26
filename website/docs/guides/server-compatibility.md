@@ -51,10 +51,12 @@ Cluster result to the topology described below.
 Valkey 9.2 RC1 passed all 14 focused scenarios and four command-specific scenarios on
 17 October 2026 under .NET 10. Its Cluster result is also limited to one primary.
 
-KiviDB 1.1.2 results are **pending repository CI**. Its job requires all 17 focused cases to
-execute, with no planned skips. Until its console output and TRX artifact have been reviewed,
-connection negotiation, core data types, `CLIENT SETINFO`, pub/sub, Lua, transactions, caching
-and Cluster remain unverified with Respire. Upstream support alone is not a passing result.
+KiviDB 1.1.2 (Lua) passed all 17 focused cases on 26 October 2026 under .NET 10 in the
+[repository CI run](https://github.com/thomhurst/Respire/actions/runs/40355265418/job/121685899577),
+with zero failures and zero skips. The console output and `kividb.trx` in the
+`server-compatibility-kividb` artifact confirm passing connection negotiation, core data types,
+`CLIENT SETINFO`, pub/sub, Lua, transactions, RESP3 caching and Cluster discovery/routing.
+The Cluster result is partial: one primary only. TLS and multi-node Cluster behavior remain unverified.
 
 The core data-type checks cover strings, hashes, lists, sets and sorted sets under RESP2 and RESP3,
 plus automatic protocol negotiation. Other feature checks run under both explicit protocols,
