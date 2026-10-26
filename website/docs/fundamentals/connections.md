@@ -267,6 +267,10 @@ Defaults are `MinimumSize = 0`, `MaximumSize = null`, `MaximumIdle = 4`, and
 `IdleTimeout = null`: unlimited demand-driven creation, four retained idle connections,
 and no timed retirement. Configure these through `RespireOptions` or its DI builder.
 
+For WATCH-heavy workloads, configure both `MaximumSize` and `MaximumIdle` to control
+connection churn and retain leases between bursts. See [WATCH cost and pool sizing](../guides/batches-and-transactions.md#watch-cost-and-pool-sizing)
+for an example and the round trips that pool reuse cannot remove.
+
 Limits apply per pool, not across the client or deployment. Endpoints, replica roles,
 corrective connections and replacement routing generations can own separate pools.
 An old generation drains its leases while a new generation admits its own rentals.

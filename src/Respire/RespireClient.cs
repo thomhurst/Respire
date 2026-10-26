@@ -1548,6 +1548,14 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     /// watched transaction and re-read the values before retrying. In Cluster mode, all watched and
     /// queued keys must share one effective hash slot. A cluster rejection throws
     /// <see cref="RespireTransactionRetryException"/>; restart WATCH and re-read inputs before retrying.
+    /// Healthy connections are pooled after EXEC, including WATCH conflicts. The first rental may
+    /// require a connection handshake; connecting the client does not prewarm dedicated connections.
+    /// WATCH, awaited reads, and commit still require separate round trips on a warm pool.
+    /// For WATCH-heavy workloads, tune both <see cref="RespireDedicatedPoolOptions.MaximumSize"/>
+    /// and <see cref="RespireDedicatedPoolOptions.MaximumIdle"/>. The defaults allow unlimited
+    /// concurrent dedicated connections but retain only four idle connections. A total cap queues
+    /// excess rentals; pass a cancellation deadline to bound that wait. Abandoned or failed
+    /// transactions discard their connection rather than return uncertain WATCH state to the pool.
     /// </remarks>
     /// <example>
     /// <code>
