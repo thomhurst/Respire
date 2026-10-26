@@ -203,6 +203,7 @@ public class ContinuationDispatchTests
     [Arguments(-1.0)]
     [Arguments(0.0)]
     [Arguments(0.5)]
+    [Arguments(4294967295.0)]
     public async Task InvalidStallThresholdIsRejected(double milliseconds)
     {
         await Assert.That(() => new RespireOptions
@@ -229,32 +230,33 @@ public class ContinuationDispatchTests
     public async Task AdaptiveDispatchTripsOnlyOnMostlySlowContinuations()
     {
         var slow = CompletionScheduler.AdaptiveDispatch.SlowTicks + 1;
+        var window = CompletionScheduler.AdaptiveDispatch.WindowTicks;
         var policy = new CompletionScheduler.AdaptiveDispatch();
         var now = 1_000L;
 
         // An isolated slow continuation between fast ones never trips the window.
         for (var i = 0; i < 100; i++)
         {
-            policy.Record(i % 2 == 0 ? slow : 0, now);
+            policy.Record(i % 2 == 0 ? slow : 0, now, window);
             await Assert.That(policy.ShouldDispatch(now)).IsFalse();
         }
 
         policy = new CompletionScheduler.AdaptiveDispatch();
         for (var i = 1; i < CompletionScheduler.AdaptiveDispatch.TripScore; i++)
         {
-            policy.Record(slow, now);
+            policy.Record(slow, now, window);
             await Assert.That(policy.ShouldDispatch(now)).IsFalse();
         }
-        policy.Record(slow, now);
+        policy.Record(slow, now, window);
         await Assert.That(policy.ShouldDispatch(now)).IsTrue();
-        await Assert.That(policy.ShouldDispatch(now + CompletionScheduler.AdaptiveDispatch.WindowTicks - 1)).IsTrue();
+        await Assert.That(policy.ShouldDispatch(now + window - 1)).IsTrue();
 
         // After the window, a still-slow workload re-trips after two inline probes.
-        now += CompletionScheduler.AdaptiveDispatch.WindowTicks;
+        now += window;
         await Assert.That(policy.ShouldDispatch(now)).IsFalse();
-        policy.Record(slow, now);
+        policy.Record(slow, now, window);
         await Assert.That(policy.ShouldDispatch(now)).IsFalse();
-        policy.Record(slow, now);
+        policy.Record(slow, now, window);
         await Assert.That(policy.ShouldDispatch(now)).IsTrue();
     }
 
@@ -264,7 +266,12 @@ public class ContinuationDispatchTests
     public async Task SlowContinuationsLeaveTheRunnerOnlyWithAdaptiveDispatch(bool adaptive)
     {
         const int count = 16;
-        var scheduler = new CompletionScheduler { AdaptiveDispatchEnabled = adaptive };
+        var scheduler = new CompletionScheduler
+        {
+            AdaptiveDispatchEnabled = adaptive,
+            // A runner paused past the production window would correctly probe inline again.
+            AdaptiveDispatchWindowTicks = System.Diagnostics.Stopwatch.Frequency * 3600,
+        };
         var pool = new PendingResponsePool(count);
         var runnerThread = -1;
         var lastDelivered = 0;

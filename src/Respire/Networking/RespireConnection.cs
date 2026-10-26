@@ -403,10 +403,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 nameof(options), "GatheredWriteStallTimeout must be at least one millisecond, Timeout.InfiniteTimeSpan, or null.");
         }
 
-        if (options.StalledDeliveryThreshold < MinWatchdogDelay)
+        if (options.StalledDeliveryThreshold < MinWatchdogDelay
+            || options.StalledDeliveryThreshold.TotalMilliseconds > uint.MaxValue - 1d)
         {
+            // The stall watcher waits up to the threshold with Task.Delay, which rejects longer delays.
             throw new ArgumentOutOfRangeException(
-                nameof(options), "StalledDeliveryThreshold must be at least one millisecond.");
+                nameof(options), "StalledDeliveryThreshold must be between one millisecond and uint.MaxValue - 1 milliseconds.");
         }
 
         var isUnixSocket = port == 0;

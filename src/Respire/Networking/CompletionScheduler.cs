@@ -90,7 +90,12 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// </summary>
     internal bool AdaptiveDispatchEnabled { get; set; }
 
-    // Runner-owned; a racing handoff runner may also update it, which only shifts the window.
+    /// <summary>How long a tripped dispatch window stays open. Tests lengthen it so runner pauses
+    /// cannot close the window mid-batch.</summary>
+    internal long AdaptiveDispatchWindowTicks { get; init; } = AdaptiveDispatch.WindowTicks;
+
+    // Deliberately unsynchronized: it is only a heuristic. A racing handoff runner may also update
+    // it, and on 32-bit runtimes a torn window end can occur; either way only the window shifts.
     private AdaptiveDispatch _adaptive;
 
     private bool _running;
@@ -323,7 +328,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                 if (started != 0)
                 {
                     var finished = Stopwatch.GetTimestamp();
-                    _adaptive.Record(finished - started, finished);
+                    _adaptive.Record(finished - started, finished, AdaptiveDispatchWindowTicks);
                 }
 
                 source.ReleaseRef();
@@ -679,12 +684,12 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
 
         internal readonly bool ShouldDispatch(long now) => now < _dispatchUntil;
 
-        internal void Record(long elapsedTicks, long now)
+        internal void Record(long elapsedTicks, long now, long windowTicks)
         {
             if (elapsedTicks > SlowTicks)
             {
                 if (++_score < TripScore) return;
-                _dispatchUntil = now + WindowTicks;
+                _dispatchUntil = now + windowTicks;
                 _score = TripScore - 2;
             }
             else if (_score > 0)

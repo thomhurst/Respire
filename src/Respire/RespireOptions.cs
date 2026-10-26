@@ -511,7 +511,8 @@ public sealed record RespireOptions
 
     /// <summary>
     /// How long replies may wait behind a slow or blocked inline continuation before delivery
-    /// moves to another thread. Defaults to 20 milliseconds; must be at least one millisecond.
+    /// moves to another thread. Defaults to 20 milliseconds; must be at least one millisecond and
+    /// no more than the timer limit (<see cref="uint.MaxValue"/> - 1 milliseconds).
     /// Timer resolution can lengthen short thresholds, to about 15 milliseconds on Windows.
     /// </summary>
     /// <remarks>This is a rescue threshold, not a latency guarantee under thread-pool starvation.</remarks>
@@ -522,7 +523,7 @@ public sealed record RespireOptions
     /// client removes its warning subscription; other clients may still provide process-wide timeout samples.</remarks>
     public bool ThreadPoolMonitoring { get; init; } = true;
 
-    /// <summary>Scheduling delay that triggers a diagnostic warning. Defaults to 20 milliseconds.</summary>
+    /// <summary>Scheduling delay that triggers a diagnostic warning. Defaults to 500 milliseconds.</summary>
     /// <remarks>Must be positive. Warnings are limited to one per client per 30 seconds.
     /// This is a diagnostic threshold; no thread-pool settings are changed.</remarks>
     public TimeSpan ThreadPoolWarningThreshold { get; init; } = TimeSpan.FromMilliseconds(500);
@@ -709,8 +710,9 @@ public sealed record RespireOptions
         Require(Database >= 0, nameof(Database), "cannot be negative");
         Require(ConnectTimeout > TimeSpan.Zero, nameof(ConnectTimeout), "must be positive");
         Require(Enum.IsDefined(ContinuationDispatch), nameof(ContinuationDispatch), "must be Adaptive, Inline, or ThreadPool");
-        Require(StalledDeliveryThreshold >= TimeSpan.FromMilliseconds(1),
-            nameof(StalledDeliveryThreshold), "must be at least one millisecond");
+        Require(StalledDeliveryThreshold >= TimeSpan.FromMilliseconds(1)
+            && StalledDeliveryThreshold.TotalMilliseconds <= uint.MaxValue - 1d,
+            nameof(StalledDeliveryThreshold), "must be between one millisecond and the timer limit (about 49.7 days)");
         Require(CredentialRefreshBeforeExpiry >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshBeforeExpiry), "must be at least one millisecond");
         Require(CredentialRefreshRetryDelay >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshRetryDelay), "must be at least one millisecond");
         Require(ThreadPoolWarningThreshold > TimeSpan.Zero, nameof(ThreadPoolWarningThreshold), "must be positive");
