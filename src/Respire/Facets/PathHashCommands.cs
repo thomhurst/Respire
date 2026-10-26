@@ -8,7 +8,7 @@ using Respire.Serialization;
 namespace Respire;
 
 /// <summary>Valkey 9.2 Path Hash commands. Tested against 9.2.0-rc1; GA compatibility is unverified. Paths and fields are binary, and only the containing key receives a key prefix.</summary>
-public interface IRespirePathHashCommands
+public partial interface IRespirePathHashCommands
 {
     /// <summary>Sets one field; false when FNX/FXX rejects the complete write. Valkey: PHSET.</summary>
     ValueTask<bool> SetAsync(RespireKey key, RespireKey path, RespireKey field, RespireValue value, RespireSetWhen when = RespireSetWhen.Always, CancellationToken cancellationToken = default);
@@ -81,7 +81,7 @@ public interface IRespirePathHashCommands
     IAsyncEnumerable<RespirePathHashEntry> ScanAsync(RespireKey key, RespireKey? prefix = null, int count = 100, CancellationToken cancellationToken = default);
 }
 
-internal sealed class PathHashCommands(RespireClient client) : IRespirePathHashCommands
+internal sealed partial class PathHashCommands(RespireClient client) : IRespirePathHashCommands
 {
     public ValueTask<byte[]?[]> GetFieldsAsync(RespireKey key, RespireKey path, RespireKey field, CancellationToken cancellationToken = default)
         => GetFieldsAsync(key, path, [field], cancellationToken);

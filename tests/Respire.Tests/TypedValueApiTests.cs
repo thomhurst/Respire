@@ -169,6 +169,24 @@ public class TypedValueApiTests
     }
 
     [Test]
+    public async Task RootSetAsync_ScalarTypesKeepTypedSerialization()
+    {
+        var methods = new[]
+        {
+            BoundMethod((IRespireClient client) => client.SetAsync("key", Guid.Empty,
+                RespireExpiry.None, RespireSetWhen.Always, CancellationToken.None)),
+            BoundMethod((IRespireClient client) => client.SetAsync("key", DateTimeOffset.UnixEpoch,
+                RespireExpiry.None, RespireSetWhen.Always, CancellationToken.None)),
+            BoundMethod((IRespireClient client) => client.SetAsync("key", TimeSpan.Zero,
+                RespireExpiry.None, RespireSetWhen.Always, CancellationToken.None)),
+            BoundMethod((IRespireClient client) => client.SetAsync("key", double.NaN,
+                RespireExpiry.None, RespireSetWhen.Always, CancellationToken.None)),
+        };
+        foreach (var method in methods)
+            await Assert.That(method.IsGenericMethod).IsTrue();
+    }
+
+    [Test]
     public async Task HashSetAsync_WithRespireValue_BindsToRawOverload()
     {
         var bound = BoundMethod(
@@ -179,16 +197,13 @@ public class TypedValueApiTests
     }
 
     [Test]
-    public async Task HashSetAsync_WithString_BindsToSerializingOverload()
+    public async Task HashSetAsync_WithString_BindsToRawOverload()
     {
-        // An exact match beats the implicit string -> RespireValue conversion, so the typed
-        // overload wins. Both write the same bytes: string serialization is pass-through.
         var bound = BoundMethod(
             (IRespireHashCommands hash) => hash.SetAsync(
                 "key", "field", "text", RespireSetWhen.Always, CancellationToken.None));
 
-        await Assert.That(bound.IsGenericMethod).IsTrue();
-        await Assert.That(bound.GetGenericArguments()[0]).IsEqualTo(typeof(string));
+        await Assert.That(bound.IsGenericMethod).IsFalse();
     }
 
     [Test]
@@ -224,12 +239,12 @@ public class TypedValueApiTests
     }
 
     [Test]
-    public async Task SetContainsAsync_WithString_BindsToSerializingOverload()
+    public async Task SetContainsAsync_WithString_BindsToRawOverload()
     {
         var bound = BoundMethod(
             (IRespireSetCommands set) => set.ContainsAsync("key", "member", CancellationToken.None));
 
-        await Assert.That(bound.IsGenericMethod).IsTrue();
+        await Assert.That(bound.IsGenericMethod).IsFalse();
     }
 
     [Test]
@@ -242,22 +257,22 @@ public class TypedValueApiTests
     }
 
     [Test]
-    public async Task SortedSetAddAsync_WithString_BindsToSerializingOverload()
+    public async Task SortedSetAddAsync_WithString_BindsToRawOverload()
     {
         var bound = BoundMethod(
             (IRespireSortedSetCommands sorted) => sorted.AddAsync("key", "member", 1.5, CancellationToken.None));
 
-        await Assert.That(bound.IsGenericMethod).IsTrue();
+        await Assert.That(bound.IsGenericMethod).IsFalse();
     }
 
     [Test]
-    public async Task StringSetAsync_KeepsTheSameSplitTheTypedFacetsCopy()
+    public async Task StringSetAsync_ExplicitTypeArgumentSelectsSerialization()
     {
         var raw = BoundMethod(
             (IRespireStringCommands strings) => strings.SetAsync(
                 "key", (RespireValue)"text", RespireExpiry.None, RespireSetWhen.Always, CancellationToken.None));
         var typed = BoundMethod(
-            (IRespireStringCommands strings) => strings.SetAsync(
+            (IRespireStringCommands strings) => strings.SetAsync<string>(
                 "key", "text", RespireExpiry.None, RespireSetWhen.Always, CancellationToken.None));
 
         await Assert.That(raw.IsGenericMethod).IsFalse();

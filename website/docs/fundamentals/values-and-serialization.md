@@ -121,7 +121,11 @@ What bypasses the serializer:
 This changes the stored format for `ReadOnlyMemory<byte>`, `Memory<byte>`, and `ArraySegment<byte>` values previously written through a serializer. Existing JSON/base64 data is not migrated: typed reads now return those stored bytes, not the original decoded payload. Rewrite existing keys from the original values, use new keys, or explicitly decode the old format with the serializer that wrote it before rewriting. This also applies to typed script/function results (`RespireResult.As<T>()`) and pub/sub messages (`RespireMessage.As<T>()`), which now read byte-memory values as raw bytes.
 :::
 
-Facets that take a single payload have a generic overload beside the `RespireValue` one: `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument typed as `RespireValue` selects the raw overload; anything else selects the generic one. Generic byte-memory and `char` writes keep their `RespireValue` encoding. Collection-member overloads also preserve raw non-finite floating-point values; generic string writes reject them.
+Input-only generic overloads sit beside raw `RespireValue` overloads on root writes, string writes (including conditional writes), hash and path-hash writes, array writes, sorted-set additions, and set membership checks. Exact overloads for `string`, `byte[]`, `ReadOnlyMemory<byte>`, `Memory<byte>`, and `ArraySegment<byte>` send the original payload without serializer-related trimming or NativeAOT warnings. The same rule applies to batches and transactions. Other objects still select the generic serializer overload, with its trimming and dynamic-code warnings.
+
+Specify the type argument explicitly, such as `SetAsync<string>(key, text)`, to select the generic overload. Generic byte-memory and `char` writes keep their `RespireValue` encoding. Collection-member overloads also preserve raw non-finite floating-point values; generic string writes reject them. The payload overloads do not change numeric, `Guid`, date, or duration serialization.
+
+Typed reads, including `GetAndSetAsync<T>` and `GetAndSetConditionalAsync<T>`, retain their generic return types and serializer warnings. Use their `RespireValue` overloads for raw writes that return the previous string.
 
 ## Binary serializer packages
 

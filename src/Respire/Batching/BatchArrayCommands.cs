@@ -8,7 +8,7 @@ using Respire.Serialization;
 namespace Respire;
 
 /// <summary>Array commands queued on batches and transactions. Argument spans are copied; referenced byte buffers must remain unchanged until execution.</summary>
-public interface IRespireBatchArrayCommands
+public partial interface IRespireBatchArrayCommands
 {
     /// <summary>Matching indexes with default OR options. Redis: ARGREP.</summary>
     RespirePending<ulong[]> Grep(RespireKey key, RespireArrayBound start, RespireArrayBound end, params ReadOnlySpan<RespireArrayPredicate> predicates);
@@ -125,7 +125,7 @@ public interface IRespireBatchArrayCommands
 
 }
 
-internal sealed class BatchArrayCommands(IPendingSink sink) : IRespireBatchArrayCommands
+internal sealed partial class BatchArrayCommands(IPendingSink sink) : IRespireBatchArrayCommands
 {
     public RespirePending<ulong[]> Grep(RespireKey key, RespireArrayBound start, RespireArrayBound end, params ReadOnlySpan<RespireArrayPredicate> predicates)
         => Grep(key, start, end, predicates, default);

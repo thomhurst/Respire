@@ -9,7 +9,28 @@ namespace Respire.Tests.Networking;
 public class PrimitiveSerializationWireTests
 {
     [Test]
-    public async Task GenericPrimitives_RoundTripWithoutObjectSerializerEncoding()
+    public async Task InferredRawWrites_PreservePayloadsAndSetOptions()
+    {
+        await using var server = new FakeRespServer(Enumerable.Repeat(FakeRespServer.OkReply, 5).ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        IRespireClient root = client;
+        const string text = "{\"a\":1}";
+        byte[] bytes = [0, 255, 13, 10];
+        byte[] buffer = [99, .. bytes, 98];
+
+        await client.SetAsync("text", text, TimeSpan.FromMinutes(1), RespireSetWhen.NotExists);
+        await root.SetAsync("bytes", bytes);
+        await client.Strings.SetAsync("read-only", new ReadOnlyMemory<byte>(buffer, 1, bytes.Length));
+        await root.SetAsync("memory", buffer.AsMemory(1, bytes.Length));
+        await client.Strings.SetAsync("segment", new ArraySegment<byte>(buffer, 1, bytes.Length));
+
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo("SET text {\"a\":1} PX 60000 NX");
+        foreach (var arguments in server.ReceivedArguments.Skip(1))
+            await Assert.That(arguments[2].AsSpan().SequenceEqual(bytes)).IsTrue();
+    }
+
+    [Test]
+    public async Task PrimitiveWritesAndTypedReads_RoundTripWithoutObjectSerializerEncoding()
     {
         await using var server = new FakeRespServer(
             FakeRespServer.OkReply,
@@ -120,7 +141,7 @@ public class PrimitiveSerializationWireTests
     }
 
     [Test]
-    public async Task NullGenericValues_AreRejectedBeforeSending()
+    public async Task NullInferredValues_AreRejectedBeforeSending()
     {
         await using var server = new FakeRespServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);

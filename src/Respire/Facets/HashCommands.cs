@@ -67,9 +67,9 @@ public partial interface IRespireHashCommands
     /// when a conditional write is applied. Redis: HSET/HSETNX/HSETEX.
     /// <para>
     /// Overload resolution mirrors <see cref="IRespireStringCommands.SetAsync{T}"/>:
-    /// an argument already typed as <see cref="RespireValue"/> picks the non-generic overload,
-    /// while any other type (including <c>string</c>, whose implicit conversion loses to an exact
-    /// match) picks this one. The two write identical bytes for strings, byte payloads, numbers,
+    /// text and binary payloads have exact non-generic overloads; other inferred types pick
+    /// this one. Specify the type argument explicitly to select the generic payload overload.
+    /// The two write identical bytes for strings, byte payloads, numbers,
     /// and booleans. Boolean writes use Redis-native <c>1</c>/<c>0</c>; <see cref="GetAsync{T}"/>
     /// also reads <c>true</c>/<c>false</c> for compatibility with existing data.
     /// </para>

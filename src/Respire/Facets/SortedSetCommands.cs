@@ -222,7 +222,7 @@ public partial interface IRespireSortedSetCommands
     /// Adds or updates one serialized <typeparamref name="T"/> member. Returns true when the
     /// member was new. Redis: ZADD.
     /// <para>
-    /// An argument already typed as <see cref="RespireValue"/> picks the non-generic overload;
+    /// Text, binary payloads and <see cref="RespireValue"/> pick non-generic overloads;
     /// any other type picks this one. Boolean members retain the Redis-native <c>1</c>/<c>0</c>
     /// encoding used by the other member APIs; other types use normal typed serialization.
     /// <paramref name="score"/> has no default, so a lone member/score tuple still binds

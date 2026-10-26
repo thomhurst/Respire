@@ -8,7 +8,7 @@ namespace Respire;
 /// The Respire client surface — implemented by <see cref="RespireClient"/> and its key-prefixed
 /// views, and the type to inject and mock.
 /// </summary>
-public interface IRespireClient : IAsyncDisposable
+public partial interface IRespireClient : IAsyncDisposable
 {
     /// <summary>Client-side cache diagnostics, or null when caching is disabled.</summary>
     IRespireClientSideCache? ClientSideCache => null;
