@@ -71,6 +71,9 @@ are described in the guides below; release preparation is summarized separately.
 
 ### Connections, routing, and recovery
 
+- Opt-in [asynchronous command continuations](fundamentals/connections.md#command-continuations)
+  isolate reply delivery from caller CPU work and blocking waits, with a configurable inline stall threshold.
+
 - Opt-in [Linux Multipath TCP](fundamentals/connections.md#multipath-tcp-on-linux), with logged local TCP fallback.
 
 - A [timeouts and thread-pool starvation guide](guides/timeouts.md) explains timeout

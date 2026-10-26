@@ -30,9 +30,11 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
     internal override string? CommandName => _commandName;
 
     public static BytesPendingResponseSource Rent(string? commandName, int errorAttempts = 0, bool observeErrors = true,
-        RespireTelemetry.DurationObservation duration = default, ErrorObservation.FinalOwner observation = default)
+        RespireTelemetry.DurationObservation duration = default, ErrorObservation.FinalOwner observation = default,
+        bool runContinuationsAsynchronously = false)
     {
         var source = Pool.Rent();
+        source._core.RunContinuationsAsynchronously = runContinuationsAsynchronously;
 
         source._commandName = commandName;
         source._observeErrors = observeErrors;

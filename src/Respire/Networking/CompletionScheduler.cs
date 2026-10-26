@@ -10,7 +10,8 @@ namespace Respire.Networking;
 /// carries many replies; waking a pool thread for each burns far more CPU in thread-pool
 /// semaphore churn than the completions themselves cost. Batches also execute serially in
 /// wire order, which multi-reply sources (transactions) require now that
-/// <see cref="PendingResponse"/> cores no longer force asynchronous continuations.
+/// <see cref="PendingResponse"/> cores use inline continuations by default. Opting into
+/// asynchronous continuations keeps source completion serial while isolating caller code.
 /// </summary>
 /// <remarks>
 /// <para>

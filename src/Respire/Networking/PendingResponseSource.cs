@@ -161,7 +161,7 @@ internal abstract partial class PendingResponse
     }
 
     /// <summary>
-    /// Cores run continuations inline (see <see cref="CompletionScheduler"/>), so failure
+    /// Cores can run continuations inline (see <see cref="CompletionScheduler"/>), so failure
     /// paths — cancellation callbacks on arbitrary user threads, connection teardown — must
     /// hop to the pool themselves rather than run caller continuations where they stand.
     /// </summary>
@@ -355,9 +355,10 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
     internal static MultiReplyPendingResponseSource Rent(
         int replyCount,
         int firstQueueReply,
-        string commandName)
+        string commandName, bool runContinuationsAsynchronously = false)
     {
         var source = Pool.Rent();
+        source._core.RunContinuationsAsynchronously = runContinuationsAsynchronously;
 
         source._replyCount = replyCount;
         source._firstQueueReply = firstQueueReply;
@@ -501,7 +502,11 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
     {
     }
 
-    private PendingResponseSource(PendingResponsePool pool) => _pool = pool;
+    private PendingResponseSource(PendingResponsePool pool)
+    {
+        _pool = pool;
+        _core.RunContinuationsAsynchronously = pool.RunContinuationsAsynchronously;
+    }
 
     public ValueTask<RespValue> Task => new(this, _core.Version);
 
@@ -621,9 +626,10 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         bool transferOwnership,
         string? commandName, int errorAttempts = 0, bool observeErrors = true,
         RespireTelemetry.DurationObservation duration = default,
-        ErrorObservation.FinalOwner observation = default)
+        ErrorObservation.FinalOwner observation = default, bool runContinuationsAsynchronously = false)
     {
         var source = Pool.Rent();
+        source._core.RunContinuationsAsynchronously = runContinuationsAsynchronously;
 
         source._state = state;
         source._converter = converter;
@@ -769,9 +775,11 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
     internal override string? CommandName => _commandName;
 
     public static StringPendingResponseSource Rent(string? commandName, int errorAttempts = 0, bool observeErrors = true,
-        RespireTelemetry.DurationObservation duration = default, ErrorObservation.FinalOwner observation = default)
+        RespireTelemetry.DurationObservation duration = default, ErrorObservation.FinalOwner observation = default,
+        bool runContinuationsAsynchronously = false)
     {
         var source = Pool.Rent();
+        source._core.RunContinuationsAsynchronously = runContinuationsAsynchronously;
 
         source._commandName = commandName;
         source._observeErrors = observeErrors;
@@ -900,8 +908,13 @@ internal sealed class PendingResponsePool
 {
     private readonly ObjectPool<PendingResponseSource, PendingResponseSource.PoolPolicy> _pool;
 
-    public PendingResponsePool(int maxPoolSize)
-        => _pool = new(new PendingResponseSource.PoolPolicy(this), maxPoolSize);
+    internal bool RunContinuationsAsynchronously { get; }
+
+    public PendingResponsePool(int maxPoolSize, bool runContinuationsAsynchronously = false)
+    {
+        RunContinuationsAsynchronously = runContinuationsAsynchronously;
+        _pool = new(new PendingResponseSource.PoolPolicy(this), maxPoolSize);
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public PendingResponseSource Rent(bool throwOnError = false, string? commandName = null,

@@ -77,7 +77,8 @@ internal sealed partial class RespireConnection
     {
         var started = RespireTelemetry.CaptureOperationStart(operation);
         var source = StringPendingResponseSource.Rent(operation,
-            duration: new RespireTelemetry.DurationObservation(this, started));
+            duration: new RespireTelemetry.DurationObservation(this, started),
+            runContinuationsAsynchronously: _runContinuationsAsynchronously);
         var response = source.Task;
         if (TryAdmitNative(in command, source, cancellationToken, started.Timestamp != 0, out var destination, out var deadline, out var retirement)) return response;
         return DispatchResponseSource<string?>.Run(
@@ -96,7 +97,8 @@ internal sealed partial class RespireConnection
     {
         var started = RespireTelemetry.CaptureOperationStart(operation);
         var source = BytesPendingResponseSource.Rent(operation,
-            duration: new RespireTelemetry.DurationObservation(this, started));
+            duration: new RespireTelemetry.DurationObservation(this, started),
+            runContinuationsAsynchronously: _runContinuationsAsynchronously);
         var response = source.Task;
         if (TryAdmitNative(in command, source, cancellationToken, started.Timestamp != 0, out var destination, out var deadline, out var retirement)) return response;
         return DispatchResponseSource<byte[]?>.Run(
@@ -116,7 +118,8 @@ internal sealed partial class RespireConnection
     {
         var started = RespireTelemetry.CaptureOperationStart(operation);
         var source = ConvertedPendingResponseSource<TState, TResult>.Rent(state, converter, transferOwnership, operation,
-            duration: new RespireTelemetry.DurationObservation(this, started));
+            duration: new RespireTelemetry.DurationObservation(this, started),
+            runContinuationsAsynchronously: _runContinuationsAsynchronously);
         var response = source.Task;
         if (TryAdmitNative(in command, source, cancellationToken, started.Timestamp != 0, out var destination, out var deadline, out var retirement)) return response;
         return DispatchResponseSource<TResult>.Run(

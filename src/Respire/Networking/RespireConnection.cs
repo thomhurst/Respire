@@ -76,6 +76,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private int _resumedScalarCountForTests;
 #endif
     private readonly PendingResponsePool _sourcePool;
+    private readonly bool _runContinuationsAsynchronously;
     private readonly ArrayPool<byte> _streamPayloadPool;
     private readonly int _receiveBufferSize;
     private readonly string? _networkPeerAddress;
@@ -333,7 +334,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _inflight = new InflightRing(options.MaxInflightCommands);
         if (port != 0)
             _connectionMetrics = ConnectionTelemetry.Attach(this, options);
-        _sourcePool = new PendingResponsePool(options.CompletionSourcePoolSize);
+        _runContinuationsAsynchronously = options.RunContinuationsAsynchronously;
+        _sourcePool = new PendingResponsePool(options.CompletionSourcePoolSize, _runContinuationsAsynchronously);
         _streamPayloadPool = options.StreamPayloadPool ?? ArrayPool<byte>.Shared;
         _activeBuffer = new WriteBuffer(options.WriteBufferSize);
         _spareBuffer = new WriteBuffer(options.WriteBufferSize);
@@ -398,6 +400,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             throw new ArgumentOutOfRangeException(
                 nameof(options), "GatheredWriteStallTimeout must be at least one millisecond, Timeout.InfiniteTimeSpan, or null.");
+        }
+
+        if (options.StalledDeliveryThreshold < MinWatchdogDelay)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options), "StalledDeliveryThreshold must be at least one millisecond.");
         }
 
         var isUnixSocket = port == 0;
@@ -1369,7 +1377,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
         var source = ConvertedPendingResponseSource<TState, TResult>.Rent(
             state, converter, transferOwnership, commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
-            observeErrors: observation.IsEmpty, duration: duration);
+            observeErrors: observation.IsEmpty, duration: duration, runContinuationsAsynchronously: _runContinuationsAsynchronously);
         bool enqueued;
         bool startedBatch;
         try
@@ -1452,7 +1460,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
         var source = StringPendingResponseSource.Rent(commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
-            observeErrors: observation.IsEmpty, duration: duration);
+            observeErrors: observation.IsEmpty, duration: duration, runContinuationsAsynchronously: _runContinuationsAsynchronously);
         bool enqueued;
         bool startedBatch;
         try
@@ -1860,7 +1868,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var replyCount = repliesBeforeFinal + 1;
-        var source = MultiReplyPendingResponseSource.Rent(replyCount, firstQueueReply, commandName);
+        var source = MultiReplyPendingResponseSource.Rent(replyCount, firstQueueReply, commandName, _runContinuationsAsynchronously);
         source.ErrorAttempts = (observation.IsEmpty ? errorAttempts : observation.Attempts);
         source.ConfigureTimeout(this, cancellationTimeout, callerCancellationToken, cancellationToken);
 
@@ -4640,10 +4648,12 @@ internal sealed record RespireConnectionOptions
     public TimeSpan? CommandTimeout { get; init; }
 
     /// <summary>
-    /// How long parsed replies may wait behind a continuation that has stopped making progress
-    /// before they are delivered on another thread. Internal: tests isolate rescue paths.
+    /// How long parsed replies may wait behind a slow or blocked continuation
+    /// before they are delivered on another thread.
     /// </summary>
     internal TimeSpan StalledDeliveryThreshold { get; init; } = TimeSpan.FromMilliseconds(500);
+
+    internal bool RunContinuationsAsynchronously { get; init; }
 
     /// <summary>
     /// During teardown, how long replies may sit behind a delivery runner that never starts,
