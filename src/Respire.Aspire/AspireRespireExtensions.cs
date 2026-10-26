@@ -73,7 +73,8 @@ public static class AspireRespireExtensions
         else builder.Services.AddKeyedRespire(serviceKey, ResolveOptions);
         var clientBuilder = new AspireRespireClientBuilder(builder, settings, serviceKey);
         if (!settings.DisableHealthChecks)
-            builder.Services.AddHealthChecks().AddRespire(name: $"respire_{(serviceKey is null ? "default" : "keyed")}_{connectionName}", tags: ["ready"],
+            builder.Services.AddHealthChecks().AddRespire(new() { ConnectIfDisconnected = true },
+                name: $"respire_{(serviceKey is null ? "default" : "keyed")}_{connectionName}", tags: ["ready"],
                 clientFactory: clientBuilder.GetClient);
         if (!settings.DisableTracing || !settings.DisableMetrics)
             AddTelemetry(builder.Services, settings);

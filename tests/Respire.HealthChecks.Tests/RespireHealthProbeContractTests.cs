@@ -111,16 +111,20 @@ public class RespireHealthProbeContractTests
     }
 
     [Test]
-    [Arguments(false, false)]
-    [Arguments(false, true)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task AsyncCustomWorkCannotExtendHealthCheckDeadline(bool contract, bool callerCancellation)
+    [Arguments(false, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, false, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, true)]
+    public async Task AsyncCustomWorkCannotExtendHealthCheckDeadline(bool contract, bool callerCancellation, bool connect)
     {
         IRespireClient client = contract ? DispatchProxy.Create<IProbeClient, ProbeClientProxy>()
             : DispatchProxy.Create<IRespireClient, ProbeClientProxy>();
         var proxy = (ProbeClientProxy)client;
-        proxy.Connected = true;
+        proxy.Connected = !connect;
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var blocked = new TaskCompletionSource<RespireHealthProbeResult[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         var blockedPing = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -129,6 +133,7 @@ public class RespireHealthProbeContractTests
         using var cancel = new CancellationTokenSource();
         var check = new RespireHealthCheck(client, new()
         {
+            ConnectIfDisconnected = connect,
             ProbeTimeout = callerCancellation ? TimeSpan.FromSeconds(30) : TimeSpan.FromMilliseconds(30),
         });
         var pending = check.CheckHealthAsync(Context(), cancel.Token);
@@ -153,6 +158,59 @@ public class RespireHealthProbeContractTests
             blocked.TrySetResult([]);
             blockedPing.TrySetResult(TimeSpan.Zero);
         }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConnectOptionUsesPingOnlyWhenDisconnectedAndSharesTimeout(bool connected)
+    {
+        var client = DispatchProxy.Create<IProbeClient, ProbeClientProxy>();
+        var proxy = (ProbeClientProxy)client;
+        proxy.Connected = connected;
+        var pings = 0;
+        proxy.Ping = _ =>
+        {
+            pings++;
+            proxy.Connected = true;
+            return ValueTask.FromResult(TimeSpan.Zero);
+        };
+        RespireHealthProbeOptions? seen = null;
+        proxy.Probe = (options, _) =>
+        {
+            seen = options;
+            return ValueTask.FromResult<RespireHealthProbeResult[]>([new(proxy.Endpoint, true, TimeSpan.Zero)]);
+        };
+        var timeout = TimeSpan.FromSeconds(5);
+        var result = await new RespireHealthCheck(client, new()
+        {
+            ConnectIfDisconnected = true, ProbeTimeout = timeout,
+        }).CheckHealthAsync(Context());
+        await Assert.That(result.Status).IsEqualTo(HealthStatus.Healthy);
+        await Assert.That(pings).IsEqualTo(connected ? 0 : 1);
+        await Assert.That(seen!.Timeout).IsGreaterThan(TimeSpan.Zero);
+        if (connected) await Assert.That(seen.Timeout).IsEqualTo(timeout);
+        else await Assert.That(seen.Timeout).IsLessThan(timeout);
+        await Assert.That((bool)result.Data["connected"]).IsTrue();
+    }
+
+    [Test]
+    public async Task CustomFallbackCanConnectWithOnePing()
+    {
+        var client = DispatchProxy.Create<IRespireClient, ProbeClientProxy>();
+        var proxy = (ProbeClientProxy)client;
+        var pings = 0;
+        proxy.Ping = _ =>
+        {
+            pings++;
+            proxy.Connected = true;
+            return ValueTask.FromResult(TimeSpan.Zero);
+        };
+        var result = await new RespireHealthCheck(client, new() { ConnectIfDisconnected = true })
+            .CheckHealthAsync(Context());
+        await Assert.That(result.Status).IsEqualTo(HealthStatus.Healthy);
+        await Assert.That(pings).IsEqualTo(1);
+        await Assert.That((bool)result.Data["connected"]).IsTrue();
     }
 
     [Test]

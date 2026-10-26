@@ -134,9 +134,10 @@ builder.AddRespireClient("cache", settings => settings.DisableTracing = true);
 ### Health checks
 
 Checks are named `respire_default_<connectionName>` or `respire_keyed_<connectionName>`, with
-the `ready` tag. A check reuses existing connections and opens none, so a client that has never
-connected reports unhealthy. To be ready right after startup, send a bounded `PING` at startup, as
-the sample does. See [health checks](health-checks.md).
+the `ready` tag. These checks enable `ConnectIfDisconnected`, so the first readiness probe can
+connect a lazy client without waiting for application traffic. Connection setup and node probes
+share the two-second probe timeout, with up to 250 milliseconds of provider completion grace.
+Later probes reuse existing connections. See [health checks](health-checks.md).
 
 ### Tracing and metrics
 
