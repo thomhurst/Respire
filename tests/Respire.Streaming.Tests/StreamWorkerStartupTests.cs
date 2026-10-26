@@ -106,6 +106,10 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
     [Arguments(true, "authentication")]
     [Arguments(false, "server")]
     [Arguments(true, "server")]
+    [Arguments(false, "reconnect-limit")]
+    [Arguments(true, "reconnect-limit")]
+    [Arguments(false, "wrapped-reconnect-limit")]
+    [Arguments(true, "wrapped-reconnect-limit")]
     public async Task NonTransientStartupErrorsFailFast(bool jobQueue, string failure)
     {
         await using var fixture = await Fixture.CreateAsync(jobQueue, redis.ConnectionString);
@@ -113,6 +117,9 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
         {
             "argument" => new ArgumentException("invalid configuration"),
             "authentication" => new RespireAuthenticationException("invalid credentials"),
+            "reconnect-limit" => new RespireReconnectLimitException("reconnect attempts exhausted"),
+            "wrapped-reconnect-limit" => new RespireConnectionException("connection unavailable",
+                new RespireReconnectLimitException("reconnect attempts exhausted")),
             _ => new RespireServerException("WRONGTYPE invalid key"),
         };
         fixture.Fault.FailuresRemaining = int.MaxValue;

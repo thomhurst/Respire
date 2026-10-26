@@ -74,7 +74,8 @@ and timeouts until Redis answers or the host stops. Delays start at one second a
 cancels both the pending operation and its retry delay; no consumers start before initialization
 succeeds. Successfully initialized rate limits are not reapplied while group creation retries.
 
-Invalid options, key validation, authentication errors and Redis command errors fail fast. These
+Invalid options, key validation, authentication errors, Redis command errors and exhausted reconnect
+limits fail fast. A client that exhausts `ReconnectPolicy.MaxAttempts` must be recreated. These
 startup retries do not change failure handling after consumers start. With `CreateGroup = false`,
 group creation is skipped, so the first read follows the normal reader failure behavior.
 

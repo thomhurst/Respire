@@ -50,7 +50,8 @@ using an existing server instead of Docker. The host can start while Redis is
 unavailable. Worker initialization retries connection failures and timeouts with
 delays starting at one second and doubling up to 30 seconds, until Redis answers
 or the host stops. Each failure logs a warning; invalid configuration and
-authentication errors still fail startup. `/health/ready` reports unhealthy until
+authentication errors still fail startup. Exhausted reconnect limits also fail
+startup because the client must be recreated. `/health/ready` reports unhealthy until
 Redis is connected; it does not assert that every job has finished. The queue name
 and Redis result key prefix follow the generated project name; instances with the
 same name share work.
