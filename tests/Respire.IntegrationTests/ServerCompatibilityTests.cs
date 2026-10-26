@@ -12,7 +12,7 @@ namespace Respire.IntegrationTests;
 // Opt in before fixture initialization, so ordinary CI never pulls these images.
 [AttributeUsage(AttributeTargets.Class)]
 public sealed class ServerCompatibilityOnlyAttribute() : SkipAttribute(
-    "Set RESPIRE_COMPATIBILITY_SERVER to garnet, dragonfly, keydb, or valkey92 to run the compatibility suite.")
+    "Set RESPIRE_COMPATIBILITY_SERVER to garnet, dragonfly, keydb, valkey92, or kividb to run the compatibility suite.")
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context)
         => Task.FromResult(string.IsNullOrEmpty(Environment.GetEnvironmentVariable("RESPIRE_COMPATIBILITY_SERVER")));
@@ -21,6 +21,10 @@ public sealed class ServerCompatibilityOnlyAttribute() : SkipAttribute(
 public sealed class CompatibleServer : IAsyncInitializer, IAsyncDisposable
 {
     private const string GarnetImage = "ghcr.io/microsoft/garnet:2.1.8";
+    private const string KiviDbImage = "kividb/kividb:v1.1.2-lua";
+    // Overriding the image command also replaces its protected-mode opt-out.
+    private static readonly string[] KiviDbCommand =
+        ["--port", "6379", "--protected-mode", "no", "--threads", "1", "--io-model", "tokio"];
     public static string Name => Environment.GetEnvironmentVariable("RESPIRE_COMPATIBILITY_SERVER") ?? "";
     private IContainer? _container;
     public RespireOptions Options(RespireProtocol protocol) => new()
@@ -59,6 +63,9 @@ public sealed class CompatibleServer : IAsyncInitializer, IAsyncDisposable
                 builder = new ContainerBuilder(Valkey92IntegrationTests.Image)
                 .WithCommand("valkey-server", "--save", "", "--appendonly", "no",
                     "--cluster-enabled", "yes", "--cluster-announce-ip", "127.0.0.1", "--cluster-announce-port", portText);
+            else if (Name == "kividb")
+                builder = new ContainerBuilder(KiviDbImage)
+                .WithCommand([.. KiviDbCommand, "--cluster-enabled", "yes", "--cluster-announce-ip", "127.0.0.1", "--cluster-announce-port", portText]);
             else
                 builder = new ContainerBuilder("eqalpha/keydb:x86_64_v6.3.4")
                 .WithCommand("keydb-server", "--server-threads", "1", "--save", "", "--appendonly", "no",
@@ -70,7 +77,10 @@ public sealed class CompatibleServer : IAsyncInitializer, IAsyncDisposable
                     foreach (var bindings in parameters.HostConfig!.PortBindings.Values)
                         foreach (var binding in bindings) binding.HostIP = "127.0.0.1";
                 })
-                .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(containerPort))
+                .WithWaitStrategy(Name == "kividb"
+                    ? Wait.ForUnixContainer().UntilMessageIsLogged("Ready to accept connections on")
+                        .UntilExternalTcpPortIsAvailable(containerPort)
+                    : Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(containerPort))
                 .Build();
             try
             {
@@ -99,12 +109,17 @@ public sealed class CompatibleServer : IAsyncInitializer, IAsyncDisposable
                 { "keydb-server", "--server-threads", "1", "--save", "", "--appendonly", "no" }
                 .Concat(cluster ? ["--cluster-enabled", "yes", "--cluster-announce-ip", "127.0.0.1"] : Array.Empty<string>()).ToArray()),
             "valkey92" => (Valkey92IntegrationTests.Image, new[] { "valkey-server", "--save", "", "--appendonly", "no" }),
+            "kividb" => (KiviDbImage, KiviDbCommand),
             _ => throw new InvalidOperationException($"Unknown RESPIRE_COMPATIBILITY_SERVER '{Name}'."),
         };
         return ContainerStartRetry.StartAsync(() => new ContainerBuilder(image)
             .WithCommand(command)
             .WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379))
+            // The distroless image has no shell. Docker can expose its port before KiviDB listens.
+            .WithWaitStrategy(Name == "kividb"
+                ? Wait.ForUnixContainer().UntilMessageIsLogged("Ready to accept connections on")
+                    .UntilExternalTcpPortIsAvailable(6379)
+                : Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379))
             .Build(), [6379]);
     }
 
