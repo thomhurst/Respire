@@ -112,12 +112,12 @@ internal sealed partial class RespireStartupConnector(
         }
     }
 
-    [LoggerMessage(4201, LogLevel.Debug, "Respire client '{Client}' connected at startup after {Attempts} attempt(s)", EventName = "StartupConnected")]
+    [LoggerMessage(1, LogLevel.Debug, "Respire client '{Client}' connected at startup after {Attempts} attempt(s)", EventName = "StartupConnected")]
     private static partial void LogConnected(ILogger logger, string client, int attempts);
 
-    [LoggerMessage(4202, LogLevel.Warning, "Respire client '{Client}' failed to connect at startup (attempt {Attempt}); retrying in {Delay}", EventName = "StartupConnectFailed")]
+    [LoggerMessage(2, LogLevel.Warning, "Respire client '{Client}' failed to connect at startup (attempt {Attempt}); retrying in {Delay}", EventName = "StartupConnectFailed")]
     private static partial void LogConnectFailed(ILogger logger, string client, int attempt, TimeSpan delay, Exception exception);
 
-    [LoggerMessage(4203, LogLevel.Error, "Respire client '{Client}' could not be created for startup connection", EventName = "StartupResolveFailed")]
+    [LoggerMessage(3, LogLevel.Error, "Respire client '{Client}' could not be created for startup connection", EventName = "StartupResolveFailed")]
     private static partial void LogResolveFailed(ILogger logger, string client, Exception exception);
 }
