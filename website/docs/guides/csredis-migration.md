@@ -77,7 +77,7 @@ await transaction.CommitAsync();
 Console.WriteLine($"Stored: {stored.Result}; updates: {count.Result}");
 ```
 
-The hash tag keeps these keys in one Cluster slot. Do not await pendings before committing.
+The hash tag keeps these keys in one Cluster slot. Read pendings only after committing.
 Redis transactions do not roll back commands that succeeded when another queued command has a
 runtime error. For read/check/write logic, use a watched transaction and handle a `false` commit
 result; see [optimistic concurrency](batches-and-transactions.md).

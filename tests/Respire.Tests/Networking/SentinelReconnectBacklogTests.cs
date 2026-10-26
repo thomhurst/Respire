@@ -398,8 +398,8 @@ public partial class SentinelRoutingTests
         fixture.Resume.TrySetResult();
         await execution.WaitAsync(Limit);
 #pragma warning disable RESP002 // The owning execution completed before the queued results are consumed.
-        await Assert.That(await first).IsEqualTo("value");
-        await Assert.That(await second).IsTrue();
+        await Assert.That(first.Result).IsEqualTo("value");
+        await Assert.That(second.Result).IsTrue();
 #pragma warning restore RESP002
         await Assert.That(fixture.Original.ReceivedCommands.Any(IsSentinelBacklogApplicationCommand)).IsFalse();
         await Assert.That(fixture.Replacement.ReceivedCommands.Where(IsSentinelBacklogApplicationCommand).ToArray())

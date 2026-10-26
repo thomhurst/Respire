@@ -29,8 +29,8 @@ public partial class TopologyCommandRetryTests
         else
         {
             await transaction.CommitAsync();
-            await Assert.That(await read).IsEqualTo("value");
-            await Assert.That(await increment).IsEqualTo(2L);
+            await Assert.That(read.Result).IsEqualTo("value");
+            await Assert.That(increment.Result).IsEqualTo(2L);
         }
         await Assert.That(execs).IsEqualTo(expected);
         await Assert.That(server.ReceivedCommands.Count(c => c == "GET {key}:read")).IsEqualTo(expected);
@@ -66,7 +66,7 @@ public partial class TopologyCommandRetryTests
         else
         {
             await transaction.CommitAsync();
-            await Assert.That(await read).IsEqualTo("value");
+            await Assert.That(read.Result).IsEqualTo("value");
         }
         await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(1L);
         await Assert.That(events.GetValueOrDefault(redirect == "ASK" ? "exhausted" : "succeeded")).IsEqualTo(1L);
@@ -213,7 +213,7 @@ public partial class TopologyCommandRetryTests
             await using var unit = client.CreateTransaction();
             var read = unit.GetString("key");
             await unit.CommitAsync(token);
-            return await read;
+            return read.Result;
         }
         using var batch = client.CreateBatch();
         var value = batch.GetString("key");

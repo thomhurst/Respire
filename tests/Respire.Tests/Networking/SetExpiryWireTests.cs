@@ -178,8 +178,8 @@ public class SetExpiryWireTests
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("SET key value PX 5000");
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("SET other value KEEPTTL");
-        await Assert.That(await relative).IsTrue();
-        await Assert.That(await keep).IsTrue();
+        await Assert.That(relative.Result).IsTrue();
+        await Assert.That(keep.Result).IsTrue();
     }
 
     [Test]

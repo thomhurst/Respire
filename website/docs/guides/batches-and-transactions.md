@@ -107,9 +107,9 @@ Console.WriteLine($"{name.Result}: {visits.Result}");
 
 Always declare batches with `await using var`. Disposing a batch that never executed faults its pendings, for example after an early return or exception. After execution, disposal keeps all results and errors. Repeated disposal is safe.
 
-`RespirePending<T>` is awaitable and has `.Result`. For exception-free handling, inspect `Status`, `HasResult`, or `Error`, or call `TryGetResult`.
+A `RespirePending<T>` is not awaitable. Awaiting `ExecuteAsync` or `CommitAsync` runs the commands; then read the pending's `.Result`. For exception-free handling, inspect `Status`, `HasResult`, or `Error`, or call `TryGetResult`.
 
-- Reading a pending before `ExecuteAsync` throws `RespirePendingNotReadyException`.
+- Reading `.Result` before `ExecuteAsync` throws `RespirePendingNotReadyException`.
 - A failed command sets `Status` to `Faulted` and puts its exception in `Error`.
 
 ### Ignoring queued results
@@ -122,9 +122,9 @@ batch.Expire("session:42", TimeSpan.FromMinutes(30));
 await batch.ExecuteAsync(cancellationToken);
 ```
 
-The analyzer assembly included in the `Respire` NuGet package suppresses CS4014 for calls returning `RespirePending<T>` (suppression ID `RESPSPR001`). This covers batch and transaction shortcuts, command facets, and helpers returning a pending, including when warnings are treated as errors. It does not suppress warnings for `Task`, `ValueTask`, `ExecuteAsync`, or `CommitAsync` calls. If analyzers are disabled or excluded from the package assets, use an explicit discard (`_ = batch.Expire(...)`) for ignored results.
+Because a pending is not awaitable, ignoring one raises no CS4014 warning and needs no discard.
 
-Keep the pending in a variable when its value matters, then read `.Result`, use `TryGetResult`, or await it after execution. Do not await it while queuing: the existing RESP002 analyzer warns about reads and awaits before execution when it can track the queue and pending within the same method. Awaiting a pending before execution throws `RespirePendingNotReadyException`; it does not execute the queue.
+Keep the pending in a variable when its value matters, then read `.Result` or use `TryGetResult` after execution. The RESP002 analyzer warns about `.Result` reads before execution when it can track the queue and pending within the same method.
 
 ### Failures
 

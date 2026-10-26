@@ -403,8 +403,8 @@ public class ClusterCircuitDispatchTests
         var first = batch.GetString("{full}first");
         var second = batch.GetString("{full}second");
         await batch.ExecuteAsync();
-        await Assert.That(await first).IsEqualTo("value");
-        await Assert.That(await second).IsEqualTo("value");
+        await Assert.That(first.Result).IsEqualTo("value");
+        await Assert.That(second.Result).IsEqualTo("value");
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET probe")).IsEqualTo(1);
     }
@@ -726,7 +726,7 @@ public class ClusterCircuitDispatchTests
                 {
                     var pending = batch.GetString(key);
                     await batch.ExecuteAsync(cancellationToken);
-                    await Assert.That(await pending).IsEqualTo("value");
+                    await Assert.That(pending.Result).IsEqualTo("value");
                 }
                 break;
             case "transaction":
@@ -734,7 +734,7 @@ public class ClusterCircuitDispatchTests
                 {
                     var pending = transaction.GetString(key);
                     await transaction.CommitAsync(cancellationToken);
-                    await Assert.That(await pending).IsEqualTo("value");
+                    await Assert.That(pending.Result).IsEqualTo("value");
                 }
                 break;
             default: throw new ArgumentOutOfRangeException(nameof(shape));

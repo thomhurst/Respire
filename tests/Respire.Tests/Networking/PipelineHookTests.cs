@@ -68,7 +68,7 @@ public class PipelineHookTests
             var pending = tx.GetString("key");
             var error = await Failure(async () => await tx.CommitAsync());
             await Assert.That(ReferenceEquals(error, rejected)).IsTrue();
-            await Assert.That(ReferenceEquals(await Failure(async () => _ = await pending), rejected)).IsTrue();
+            await Assert.That(ReferenceEquals(await Failure(() => Task.FromResult(pending.Result)), rejected)).IsTrue();
         }
         else
         {
@@ -78,8 +78,8 @@ public class PipelineHookTests
             var result = await batch.TryExecuteAsync();
             await Assert.That(result.FailureCount).IsEqualTo(2);
             await Assert.That(ReferenceEquals(result.FirstError, rejected)).IsTrue();
-            await Assert.That(ReferenceEquals(await Failure(async () => _ = await first), rejected)).IsTrue();
-            await Assert.That(ReferenceEquals(await Failure(async () => _ = await second), rejected)).IsTrue();
+            await Assert.That(ReferenceEquals(await Failure(() => Task.FromResult(first.Result)), rejected)).IsTrue();
+            await Assert.That(ReferenceEquals(await Failure(() => Task.FromResult(second.Result)), rejected)).IsTrue();
             await Assert.That(async () => await batch.TryExecuteAsync()).Throws<InvalidOperationException>();
         }
         await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
@@ -109,7 +109,7 @@ public class PipelineHookTests
             var pending = tx.GetString("key");
             if (cancel) await Failure(async () => await tx.CommitAsync(cts.Token));
             else await tx.CommitAsync(cts.Token); // EXEC member errors belong to their pending results.
-            await Failure(async () => _ = await pending);
+            await Failure(() => Task.FromResult(pending.Result));
         }
         else
         {
@@ -172,7 +172,7 @@ public class PipelineHookTests
         await Assert.That(hook.Context!.Commands.SequenceEqual(new[] { "SET", aof ? "WAITAOF" : "WAIT" })).IsTrue();
         await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
         await Assert.That(hook.Outcome).IsEqualTo(RespirePipelineOutcome.Rejected);
-        await Assert.That(ReferenceEquals(await Failure(async () => _ = await pending), hook.Error)).IsTrue();
+        await Assert.That(ReferenceEquals(await Failure(() => Task.FromResult(pending.Result)), hook.Error)).IsTrue();
     }
 
     [Test]

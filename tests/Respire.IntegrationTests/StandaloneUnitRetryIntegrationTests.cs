@@ -82,11 +82,11 @@ public class StandaloneUnitRetryIntegrationTests(RedisTestContainer fixture)
             catch (Exception error)
             {
                 // Every member observes the same final failure as the commit.
-                (await Capture(async () => await increment)).Should().BeOfType(error.GetType());
-                (await Capture(async () => await read)).Should().BeOfType(error.GetType());
+                (await Capture(() => Task.FromResult(increment.Result))).Should().BeOfType(error.GetType());
+                (await Capture(() => Task.FromResult(read.Result))).Should().BeOfType(error.GetType());
                 return new(null, null, error);
             }
-            return new(await increment, await read, null);
+            return new(increment.Result, read.Result, null);
         }
         using var batch = client.CreateBatch();
         var incrementing = batch.Increment(key);

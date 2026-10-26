@@ -178,8 +178,8 @@ public partial class ErrorMetricsTests
             var first = transaction.Set("first", "1");
             var second = transaction.Set("second", "2");
             await Assert.That(async () => await transaction.CommitAsync()).Throws<Exception>();
-            await Assert.That(async () => await first).Throws<Exception>();
-            await Assert.That(async () => await second).Throws<Exception>();
+            await Assert.That(() => first.Result).Throws<Exception>();
+            await Assert.That(() => second.Result).Throws<Exception>();
         }
         else
         {
@@ -188,8 +188,8 @@ public partial class ErrorMetricsTests
             var second = batch.Set("second", "2");
             await Assert.That(async () => await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1)))
                 .Throws<Exception>();
-            await Assert.That(async () => await first).Throws<Exception>();
-            await Assert.That(async () => await second).Throws<Exception>();
+            await Assert.That(() => first.Result).Throws<Exception>();
+            await Assert.That(() => second.Result).Throws<Exception>();
         }
         var finals = capture.Items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
         await Assert.That(finals.Length).IsGreaterThanOrEqualTo(2);
@@ -713,7 +713,7 @@ public partial class ErrorMetricsTests
         using var capture = new Capture();
         // Acquisition connects and records the node, then MULTI/SET/EXEC cannot fit one slot.
         await Assert.That(async () => await transaction.CommitAsync()).Throws<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await queued).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => queued.Result).Throws<ArgumentOutOfRangeException>();
         var finals = capture.Items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
         await Assert.That(finals).IsNotEmpty();
         await Assert.That(finals.Any(item => item.Tags.ContainsKey("server.address"))).IsFalse();

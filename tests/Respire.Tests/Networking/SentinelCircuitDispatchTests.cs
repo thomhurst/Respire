@@ -334,7 +334,7 @@ public sealed class SentinelCircuitDispatchTests
         finally { clock.Release(); }
 
         await pending.WaitAsync(TimeSpan.FromSeconds(5));
-        if (batched is not null) await Assert.That(await batched).IsTrue();
+        if (batched is not null) await Assert.That(batched.Result).IsTrue();
         await Assert.That(first.ReceivedCommands.Contains("ARSCAN array 1 10")).IsFalse();
         await Assert.That(second.ReceivedCommands.Count(value => value == "ARSCAN array 1 10")).IsEqualTo(1);
         await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
@@ -563,7 +563,7 @@ public sealed class SentinelCircuitDispatchTests
         var value = transaction.GetString("healthy");
 
         await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireCircuitOpenException>();
-        await Assert.That(async () => await value).Throws<RespireCircuitOpenException>();
+        await Assert.That(() => value.Result).Throws<RespireCircuitOpenException>();
         await Assert.That(primary.ReceivedCommands.Contains("MULTI")).IsFalse();
     }
 
@@ -598,7 +598,7 @@ public sealed class SentinelCircuitDispatchTests
         var set = transaction.Strings.Set("key", "value");
         await transaction.CommitAsync();
 
-        await Assert.That(await set).IsTrue();
+        await Assert.That(set.Result).IsTrue();
         await Assert.That(first.ReceivedCommands.Count(command => command == "EXEC")).IsEqualTo(1);
         await Assert.That(second.ReceivedCommands.Count(command => command == "EXEC")).IsEqualTo(1);
         await Assert.That(second.ReceivedCommands.Contains("SET key value")).IsTrue();
@@ -652,7 +652,7 @@ public sealed class SentinelCircuitDispatchTests
 
         // The retired frame was rejected before acceptance: it is neither an attempt nor a resend.
         await execution.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(await value).IsEqualTo("healthy");
+        await Assert.That(value.Result).IsEqualTo("healthy");
         await Assert.That(first.ReceivedCommands.Contains("MULTI")).IsFalse();
         await Assert.That(execs).IsEqualTo(2);
         await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(1L);
@@ -949,8 +949,8 @@ public sealed class SentinelCircuitDispatchTests
         }
         finally { clock.Release(); }
         await execution.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(await one).IsEqualTo("first");
-        await Assert.That(await two).IsEqualTo("second");
+        await Assert.That(one.Result).IsEqualTo("first");
+        await Assert.That(two.Result).IsEqualTo("second");
         await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("GET "))).IsFalse();
         await Assert.That(second.ReceivedCommands.Where(command => command.StartsWith("GET ")).ToArray())
             .IsEquivalentTo(new[] { "GET first", "GET second" }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
@@ -970,7 +970,7 @@ public sealed class SentinelCircuitDispatchTests
         else if (cursorArgument == "0")
         {
             // A fresh scan has no issuing server, so it follows the batch to the replacement in order.
-            await Assert.That(await cursor!).IsTrue();
+            await Assert.That(cursor!.Result).IsTrue();
             await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("SCAN "))).IsFalse();
             await Assert.That(second.ReceivedCommands.Where(command => command.StartsWith("GET ") || command.StartsWith("SCAN ")).ToArray())
                 .IsEquivalentTo(new[] { "GET first", "GET second", "SCAN 0" }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
@@ -1028,8 +1028,8 @@ public sealed class SentinelCircuitDispatchTests
         var one = recovery.Strings.GetString("first");
         var two = recovery.Strings.GetString("second");
         await recovery.ExecuteAsync();
-        await Assert.That(await one).IsEqualTo("first");
-        await Assert.That(await two).IsEqualTo("second");
+        await Assert.That(one.Result).IsEqualTo("first");
+        await Assert.That(two.Result).IsEqualTo("second");
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
         await Assert.That(primary.ReceivedCommands.Count(command => command == "GET canceled")).IsEqualTo(1);
     }
@@ -1052,8 +1052,8 @@ public sealed class SentinelCircuitDispatchTests
         var one = recovery.Strings.GetString("first");
         var two = recovery.Strings.GetString("second");
         await recovery.ExecuteAsync();
-        await Assert.That(await one).IsEqualTo("first");
-        await Assert.That(await two).IsEqualTo("second");
+        await Assert.That(one.Result).IsEqualTo("first");
+        await Assert.That(two.Result).IsEqualTo("second");
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
     }
 
@@ -1079,8 +1079,8 @@ public sealed class SentinelCircuitDispatchTests
         var first = recovery.Strings.GetString("first");
         var second = recovery.Strings.GetString("second");
         await recovery.ExecuteAsync();
-        await Assert.That(await first).IsEqualTo("first");
-        await Assert.That(await second).IsEqualTo("second");
+        await Assert.That(first.Result).IsEqualTo("first");
+        await Assert.That(second.Result).IsEqualTo("second");
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
         await Assert.That(primary.ReceivedCommands.Contains("GET never")).IsFalse();
         await Assert.That(primary.ReceivedCommands.Count(command => command == "GET timeout")).IsEqualTo(2);
@@ -1134,7 +1134,7 @@ public sealed class SentinelCircuitDispatchTests
                 {
                     var pending = batch.Strings.GetString(key);
                     await batch.ExecuteAsync();
-                    await Assert.That(await pending).IsEqualTo(key);
+                    await Assert.That(pending.Result).IsEqualTo(key);
                 }
                 break;
             case "transaction":
@@ -1142,7 +1142,7 @@ public sealed class SentinelCircuitDispatchTests
                 {
                     var pending = transaction.Strings.GetString(key);
                     await transaction.CommitAsync();
-                    await Assert.That(await pending).IsEqualTo("healthy");
+                    await Assert.That(pending.Result).IsEqualTo("healthy");
                 }
                 break;
         }

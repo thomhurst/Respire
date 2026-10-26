@@ -71,8 +71,8 @@ public class IncrementWireTests
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("INCR counter");
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("INCRBY counter 5");
-        await Assert.That(await one).IsEqualTo(1L);
-        await Assert.That(await five).IsEqualTo(6L);
+        await Assert.That(one.Result).IsEqualTo(1L);
+        await Assert.That(five.Result).IsEqualTo(6L);
     }
 
     [Test]

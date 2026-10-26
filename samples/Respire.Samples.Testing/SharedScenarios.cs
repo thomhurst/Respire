@@ -34,8 +34,8 @@ internal static class SharedScenarios
         var stored = batch.Strings.Set("greeting", "hello");
         var read = batch.Strings.GetString("greeting");
         await batch.ExecuteAsync();
-        await Assert.That(await stored).IsTrue();
-        await Assert.That(await read).IsEqualTo("hello");
+        await Assert.That(stored.Result).IsTrue();
+        await Assert.That(read.Result).IsEqualTo("hello");
     }
 
     private static async Task WatchedTransactionAsync(RespireClient client, RespireClient other)

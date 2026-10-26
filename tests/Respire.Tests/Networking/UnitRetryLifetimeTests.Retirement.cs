@@ -307,11 +307,11 @@ public partial class UnitRetryLifetimeTests
             try { await execution; } catch (Exception error) { executionError = error; }
             if (executionError is not null)
             {
-                var memberError = await Failure(async () => await member);
+                var memberError = await Failure(() => Task.FromResult(member.Result));
                 await Assert.That(memberError.GetType()).IsEqualTo(executionError.GetType());
                 throw executionError;
             }
-            return await member;
+            return member.Result;
         }
 
         internal async Task AssertSingleCompletionAsync()

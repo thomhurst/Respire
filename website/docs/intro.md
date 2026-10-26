@@ -43,7 +43,7 @@ release candidate selection, the [roadmap](./roadmap) for supported features, an
 | Explicit lease API for zero-copy | Disposable results everywhere | A disposal obligation should be visible at the call site |
 | Blocking commands on dedicated pooled connections | Forbidding them | The capability is why people use lists and streams as queues |
 | Throwing server errors | Error-as-value inspection | One error model; `.Code` carries the Redis error class |
-| Batch results throw if read before the batch is sent | Awaitable results that deadlock before flush | The await-before-flush deadlock is impossible by construction |
+| Batch results are plain values, read after the batch is sent | Awaitable results that deadlock before flush | Only the batch is awaited, so the await-before-flush deadlock cannot be written |
 | Cancellation abandons the wait | Cancelling partially written frames | The wire layer never corrupts the shared connection |
 
 ## A small, typed surface

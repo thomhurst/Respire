@@ -54,7 +54,7 @@ public class TransactionTests
 
         await Assert.That(set.Result).IsTrue();
         await Assert.That(incremented.Result).IsEqualTo(5);
-        await Assert.That(await incremented).IsEqualTo(5);
+        await Assert.That(incremented.Result).IsEqualTo(5);
     }
 
     [Test]

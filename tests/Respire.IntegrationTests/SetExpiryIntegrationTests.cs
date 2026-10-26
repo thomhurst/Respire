@@ -128,9 +128,9 @@ public class SetExpiryIntegrationTests(RedisTestContainer fixture)
         var keep = batch.Set("ttl:batch:keep", "second", RespireExpiry.Keep);
         await batch.ExecuteAsync();
 
-        (await relative).Should().BeTrue();
-        (await absolute).Should().BeTrue();
-        (await keep).Should().BeTrue();
+        (relative.Result).Should().BeTrue();
+        (absolute.Result).Should().BeTrue();
+        (keep.Result).Should().BeTrue();
 
         (await client.Keys.ExpiryAsync("ttl:batch:relative")).TimeToLive!.Value
             .Should().BeGreaterThan(TimeSpan.FromSeconds(25));

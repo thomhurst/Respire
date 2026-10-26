@@ -88,7 +88,6 @@ public class PendingObservationBookkeepingTests
         for (var index = 0; index < 2; index++)
         {
             await Assert.That(ReadError(() => first.Result)).IsSameReferenceAs(error);
-            await Assert.That(ReadError(() => first.GetAwaiter().GetResult())).IsSameReferenceAs(error);
             await Assert.That(ReadError(() => second.Result)).IsSameReferenceAs(error);
         }
         await Assert.That(outer.Attempts).IsEqualTo(6);

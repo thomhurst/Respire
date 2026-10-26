@@ -1,5 +1,4 @@
 using System.Diagnostics.CodeAnalysis;
-using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Respire.Internal;
 
@@ -20,9 +19,9 @@ public enum RespirePendingStatus
 
 /// <summary>
 /// The future result of a command queued on a <see cref="RespireBatch"/> or
-/// <see cref="RespireTransaction"/>. Readable (or awaitable) only after the batch is executed /
-/// the transaction committed — touching it earlier throws immediately instead of deadlocking,
-/// while the synchronous queueing method names make an accidental early await conspicuous.
+/// <see cref="RespireTransaction"/>. It does not run anything itself: await the batch's
+/// execution or the transaction's commit, then read <see cref="Result"/>. Reading it earlier
+/// throws <see cref="RespirePendingNotReadyException"/>.
 /// </summary>
 public sealed class RespirePending<T> : IDispatchObservation
 {
@@ -273,23 +272,4 @@ public sealed class RespirePending<T> : IDispatchObservation
         do { state = Volatile.Read(ref _state); }
         while (Interlocked.CompareExchange(ref _state, (state & ~StatusMask) | (int)status, state) != state);
     }
-
-    /// <summary>Returns the synchronous awaiter for this deferred result.</summary>
-    public RespirePendingAwaiter<T> GetAwaiter() => new(this);
-}
-
-/// <summary>Awaiter for <see cref="RespirePending{T}"/>; completes synchronously.</summary>
-public readonly struct RespirePendingAwaiter<T>(RespirePending<T> pending) : ICriticalNotifyCompletion
-{
-    /// <summary>Always true; reading before execution throws instead of suspending.</summary>
-    public bool IsCompleted => true;
-
-    /// <summary>Returns the deferred result or throws its terminal error.</summary>
-    public T GetResult() => pending.Result;
-
-    /// <summary>Runs a continuation synchronously.</summary>
-    public void OnCompleted(Action continuation) => continuation();
-
-    /// <summary>Runs a continuation synchronously without execution-context flow.</summary>
-    public void UnsafeOnCompleted(Action continuation) => continuation();
 }

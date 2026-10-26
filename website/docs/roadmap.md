@@ -126,7 +126,7 @@ are described in the guides below; release preparation is summarized separately.
   [pooled result leases](guides/raw-commands.md#result-lifetime) and a shared
   `await using` pattern for batches and transactions.
 - [Queued result diagnostics](guides/batches-and-transactions.md#ignoring-queued-results):
-  CS4014 suppression for ignored pending results, with RESP002 checks for premature reads and awaits.
+  non-awaitable pending results, with RESP002 checks for premature reads.
 
 - Typed facets for strings, keys, collections, streams, [bitmaps](commands/bitmaps.md),
   [HyperLogLog](commands/hyperloglog.md), [geo](commands/geo.md), [scripts](guides/scripting.md),

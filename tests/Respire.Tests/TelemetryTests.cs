@@ -355,7 +355,7 @@ public class TelemetryTests
 
         await transaction.CommitAsync();
 
-        await Assert.That(async () => await pending).ThrowsExactly<InvalidOperationException>();
+        await Assert.That(() => pending.Result).ThrowsExactly<InvalidOperationException>();
         var activity = capture.SingleActivity("GET", server.Port);
         await Assert.That(activity.Status).IsEqualTo(ActivityStatusCode.Error);
         await Assert.That(Tag(activity, "error.type")).IsEqualTo(typeof(InvalidOperationException).FullName);

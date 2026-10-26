@@ -193,7 +193,7 @@ public class AvailabilityZoneRoutingTests
             using var batch = client.CreateBatch();
             var pending = batch.Strings.GetString("key");
             await batch.ExecuteAsync();
-            result = await pending;
+            result = pending.Result;
         }
         else if (mode == 2)
         {
@@ -1281,7 +1281,7 @@ public class AvailabilityZoneRoutingTests
             using var batch = client.CreateBatch();
             var result = batch.Strings.GetString(key);
             await batch.ExecuteAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-            await Assert.That(await result).IsEqualTo("local-socket");
+            await Assert.That(result.Result).IsEqualTo("local-socket");
         }
         else if (mode == 2)
         {
@@ -1433,7 +1433,7 @@ public class AvailabilityZoneRoutingTests
                 using var batch = client.CreateBatch();
                 var pending = batch.Strings.GetString(key);
                 await batch.ExecuteAsync(timeout.Token);
-                result = await pending;
+                result = pending.Result;
             }
             else if (mode == 2)
             {
@@ -1585,7 +1585,7 @@ public class AvailabilityZoneRoutingTests
             using var batch = client.CreateBatch();
             var result = batch.Strings.GetString(key);
             await batch.ExecuteAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-            await Assert.That(await result).IsEqualTo("local-socket");
+            await Assert.That(result.Result).IsEqualTo("local-socket");
         }
         else if (mode == 2)
         {

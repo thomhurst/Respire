@@ -127,14 +127,13 @@ public partial class ErrorMetricsTests
 
     [Test]
     [MatrixDataSource]
-    public async Task DeferredInspectionCountsEachLifecycleFailureOnce(
-        [Matrix(false, true)] bool enabled, [Matrix(false, true)] bool awaiter)
+    public async Task DeferredInspectionCountsEachLifecycleFailureOnce([Matrix(false, true)] bool enabled)
     {
         using var configuration = new MetricConfigurationScope(new()
             { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         using var capture = new Capture(throwOnMeasurement: true);
         var pending = new RespirePending<long>();
-        long Read() => awaiter ? pending.GetAwaiter().GetResult() : pending.Result;
+        long Read() => pending.Result;
         await Assert.That(Read).Throws<RespirePendingNotReadyException>();
         await Assert.That(Read).Throws<RespirePendingNotReadyException>();
         pending.Succeed(42);
@@ -168,7 +167,7 @@ public partial class ErrorMetricsTests
         }
         await Assert.That(capture.Items.Count).IsEqualTo(0);
         await Assert.That(() => pending.Result).Throws<RespireException>();
-        await Assert.That(() => pending.GetAwaiter().GetResult()).Throws<RespireException>();
+        await Assert.That(() => pending.Result).Throws<RespireException>();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         await Assert.That(capture.Items.Single().Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
     }
@@ -331,7 +330,7 @@ public partial class ErrorMetricsTests
             else await batch!.ExecuteAsync();
 #pragma warning disable RESP002 // Both branches above await their queue's flush; the analyzer cannot correlate the conditional transaction and batch aliases.
             await Assert.That(increment.Result).IsEqualTo(42L);
-            await Assert.That(get.GetAwaiter().GetResult()).IsEqualTo("value");
+            await Assert.That(get.Result).IsEqualTo("value");
 #pragma warning restore RESP002
         }
     }

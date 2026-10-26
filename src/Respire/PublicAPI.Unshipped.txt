@@ -1211,3 +1211,11 @@ static Respire.RespirePathHashRead.operator !=(Respire.RespirePathHashRead left,
 static Respire.RespirePathHashRead.operator ==(Respire.RespirePathHashRead left, Respire.RespirePathHashRead right) -> bool
 static Respire.RespirePathHashWrite.operator !=(Respire.RespirePathHashWrite left, Respire.RespirePathHashWrite right) -> bool
 static Respire.RespirePathHashWrite.operator ==(Respire.RespirePathHashWrite left, Respire.RespirePathHashWrite right) -> bool
+*REMOVED*Respire.RespirePending<T>.GetAwaiter() -> Respire.RespirePendingAwaiter<T>
+*REMOVED*Respire.RespirePendingAwaiter<T>
+*REMOVED*Respire.RespirePendingAwaiter<T>.GetResult() -> T
+*REMOVED*Respire.RespirePendingAwaiter<T>.IsCompleted.get -> bool
+*REMOVED*Respire.RespirePendingAwaiter<T>.OnCompleted(System.Action! continuation) -> void
+*REMOVED*Respire.RespirePendingAwaiter<T>.RespirePendingAwaiter() -> void
+*REMOVED*Respire.RespirePendingAwaiter<T>.RespirePendingAwaiter(Respire.RespirePending<T>! pending) -> void
+*REMOVED*Respire.RespirePendingAwaiter<T>.UnsafeOnCompleted(System.Action! continuation) -> void

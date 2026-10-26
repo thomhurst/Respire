@@ -157,7 +157,7 @@ public class ClusterTests
         var read = batch.Strings.GetString("key");
         if (includeWrite) _ = batch.Strings.Set("key", "value");
         await batch.ExecuteAsync();
-        await Assert.That(await read).IsEqualTo("value");
+        await Assert.That(read.Result).IsEqualTo("value");
         await Assert.That(client.ClientSideCache.Count).IsEqualTo(includeWrite ? 0 : 1);
         await Assert.That(replica.ReceivedCommands.Contains("GET key")).IsEqualTo(!includeWrite);
     }
@@ -458,7 +458,7 @@ public class ClusterTests
         {
             var touched = batch.Keys.Touch("key");
             await batch.ExecuteAsync();
-            await Assert.That(await touched).IsEqualTo(1);
+            await Assert.That(touched.Result).IsEqualTo(1);
         }
         await Assert.That(primary.ReceivedCommands.Count(command => command == "TOUCH key")).IsEqualTo(4);
         await Assert.That(replica.ReceivedCommands).IsEmpty();
@@ -1265,7 +1265,7 @@ public class ClusterTests
             using var batch = reads.CreateBatch();
             var value = batch.Strings.GetString(key);
             await batch.ExecuteAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-            await Assert.That(await value).IsEqualTo("value");
+            await Assert.That(value.Result).IsEqualTo("value");
         }
         else if (mode == 2)
         {
@@ -1379,8 +1379,8 @@ public class ClusterTests
         var first = batch.Strings.GetString("{batch}:first");
         var second = batch.Strings.GetString("{batch}:second");
         await batch.ExecuteAsync();
-        await Assert.That(await first).IsEqualTo("value");
-        await Assert.That(await second).IsEqualTo("value");
+        await Assert.That(first.Result).IsEqualTo("value");
+        await Assert.That(second.Result).IsEqualTo("value");
         foreach (var server in new[] { primary, replica })
             await Assert.That(server.ReceivedCommands.Where(command => command.StartsWith("GET ")).ToArray())
                 .IsEquivalentTo(["GET {batch}:first", "GET {batch}:second"]);
@@ -1512,7 +1512,7 @@ public class ClusterTests
         {
             var batchedRead = batch.Strings.GetString("batch");
             await batch.ExecuteAsync();
-            await Assert.That(await batchedRead).IsEqualTo("replica");
+            await Assert.That(batchedRead.Result).IsEqualTo("replica");
         }
 
         await replicaView.Strings.SetAsync("write", "value");

@@ -409,8 +409,8 @@ public class StandaloneReconnectBacklogTests
         await fixture.ReleaseAsync();
         await execution.WaitAsync(Limit);
 #pragma warning disable RESP002 // The batch/transaction execution task above completed before either result is read.
-        await Assert.That(await first).IsEqualTo("value");
-        await Assert.That(await second).IsTrue();
+        await Assert.That(first.Result).IsEqualTo("value");
+        await Assert.That(second.Result).IsTrue();
 #pragma warning restore RESP002
         await Assert.That(fixture.Server.ReceivedCommands.Where(IsApplicationCommand).ToArray())
             .IsEquivalentTo(transaction ? new[] { "MULTI", "GET first", "SET second value", "EXEC" }

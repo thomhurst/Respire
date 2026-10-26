@@ -177,11 +177,11 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
             using var batch = client.CreateBatch();
             var pending = enqueue(batch.Hashes);
             await batch.TryExecuteAsync();
-            return await pending;
+            return pending.Result;
         }
         await using var transaction = client.CreateTransaction();
         var transactionPending = enqueue(transaction.Hashes);
         await transaction.CommitAsync();
-        return await transactionPending;
+        return transactionPending.Result;
     }
 }

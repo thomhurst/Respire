@@ -42,7 +42,7 @@ public class ClusterReadFromIntegrationTests
         {
             var pending = batch.Strings.GetString(key);
             await batch.ExecuteAsync();
-            (await pending).Should().Be("first");
+            (pending.Result).Should().Be("first");
         }
         await client.Strings.SetAsync(key, "updated", RespireExpiry.In(TimeSpan.FromSeconds(1)));
         await WaitForReplicaValue("updated");

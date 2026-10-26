@@ -307,8 +307,8 @@ public partial class StandaloneCircuitDispatchTests
         await server.SendRawAsync("$5\r\nfirst\r\n$6\r\nsecond\r\n"u8.ToArray());
         var result = await executing;
         await Assert.That(result.Failures.Count).IsEqualTo(1);
-        await Assert.That(await first).IsEqualTo("first");
-        await Assert.That(await second).IsEqualTo("second");
+        await Assert.That(first.Result).IsEqualTo("first");
+        await Assert.That(second.Result).IsEqualTo("second");
         await Assert.That(rejected.Error).IsTypeOf<RespireCircuitOpenException>();
         await Assert.That(server.ReceivedCommands.Any(command => command.Contains("never", StringComparison.Ordinal))).IsFalse();
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
@@ -466,8 +466,8 @@ public partial class StandaloneCircuitDispatchTests
         // QueueServer suppresses all transaction replies; inject each complete sequence here.
         await server.SendRawAsync("+OK\r\n+QUEUED\r\n*1\r\n$5\r\nfirst\r\n+OK\r\n+QUEUED\r\n*1\r\n$6\r\nsecond\r\n"u8.ToArray());
         await Task.WhenAll(firstCommit, secondCommit);
-        await Assert.That(await firstResult).IsEqualTo("first");
-        await Assert.That(await secondResult).IsEqualTo("second");
+        await Assert.That(firstResult.Result).IsEqualTo("first");
+        await Assert.That(secondResult.Result).IsEqualTo("second");
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
         await Assert.That(server.ReceivedCommands.Contains("GET never")).IsFalse();
     }
@@ -637,7 +637,7 @@ public partial class StandaloneCircuitDispatchTests
         else
         {
             await transaction.CommitAsync();
-            await Assert.That(await pending).IsEqualTo("transaction");
+            await Assert.That(pending.Result).IsEqualTo("transaction");
             await Assert.That(transaction.ExecutingConnection!.Port).IsEqualTo(target.Port);
         }
         await Assert.That(handoffs).IsEqualTo(1);

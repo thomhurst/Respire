@@ -66,8 +66,8 @@ Console.WriteLine($"{storedName.Result}: {visits.Result}");
 ```
 
 Concurrent individual commands are automatically pipelined. Explicit batches return typed
-`RespirePending<T>` values rather than an `object[]`; awaiting a pending before executing the
-batch throws. For `Multi` / `Exec` callers, use the same queue methods on a transaction and
+`RespirePending<T>` values rather than an `object[]`; read their `.Result` after executing the
+batch. For `Multi` / `Exec` callers, use the same queue methods on a transaction and
 commit it, as shown in the [CSRedisCore transaction example](csredis-migration.md#transactions).
 
 ## Replace subscription callbacks

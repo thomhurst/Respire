@@ -612,7 +612,7 @@ public class StandaloneCommandRetryTests
         if (transactional) await transaction.CommitAsync();
         else await batch.TryExecuteAsync();
         await Assert.That(pending.Error).IsTypeOf<RespireServerException>();
-        await Assert.That(await successful).IsEqualTo("ok");
+        await Assert.That(successful.Result).IsEqualTo("ok");
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(3);
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET other")).IsEqualTo(3);
         if (transactional)
