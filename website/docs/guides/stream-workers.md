@@ -65,6 +65,12 @@ By default each registration picks a random consumer name at every start. Set `C
 stable name per host slot so the next process resumes its own pending deliveries. Each reader
 appends `-` and its zero-based index (`orders-host-1-0`, `orders-host-1-1`, ...).
 
+Group names and non-null `ConsumerName` values must be nonblank, well-formed Unicode strings.
+Registration rejects unpaired UTF-16 surrogates with `EncoderFallbackException` before adding
+services, preventing distinct names from becoming the same Redis identity through UTF-8 replacement
+fallback. Valid names are preserved exactly, including supplementary characters and a literal U+FFFD;
+no Unicode normalization is applied. A null `ConsumerName` keeps the generated-name behavior.
+
 - Active hosts and registrations sharing a group must use different names.
 - Keep `ConsumerCount` the same across restarts. Entries owned by removed reader indexes are
   recovered after the visibility timeout.

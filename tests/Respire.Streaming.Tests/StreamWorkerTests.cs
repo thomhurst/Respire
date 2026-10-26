@@ -756,7 +756,8 @@ public partial class StreamWorkerTests
 
         public static async Task<Fixture> CreateAsync(int protocol = 3, bool prefix = false, State? state = null,
             RespireStreamWorkerOptions? options = null, int registrations = 1, bool typed = false,
-            bool deserializeFailure = false, TimeProvider? clock = null, string? keyPrefix = null, Version? workerVersion = null)
+            bool deserializeFailure = false, TimeProvider? clock = null, string? keyPrefix = null, Version? workerVersion = null,
+            string group = "workers")
         {
             var server = workerVersion is null ? new RespireFakeServer(clock)
                 : new RespireFakeServer(clock, false, true, workerVersion);
@@ -774,12 +775,12 @@ public partial class StreamWorkerTests
                     TelemetryName = $"{options?.TelemetryName ?? "default"}-{i}",
                 };
                 if (typed)
-                    collection.AddRespireStreamWorker<TypedHandler, int>("events", "workers",
+                    collection.AddRespireStreamWorker<TypedHandler, int>("events", group,
                         entry => int.Parse(entry.GetString("payload")!), registrationOptions);
                 else if (deserializeFailure)
-                    collection.AddRespireStreamWorker<EntryHandler, RespireStreamEntry>("events", "workers",
+                    collection.AddRespireStreamWorker<EntryHandler, RespireStreamEntry>("events", group,
                         entry => entry.GetString("payload") == "0" ? throw new FormatException("private payload") : entry, registrationOptions);
-                else collection.AddRespireStreamWorker<EntryHandler>("events", "workers", registrationOptions);
+                else collection.AddRespireStreamWorker<EntryHandler>("events", group, registrationOptions);
             }
             var provider = collection.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
             return new Fixture
