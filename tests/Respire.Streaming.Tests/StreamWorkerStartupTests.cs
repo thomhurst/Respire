@@ -110,6 +110,10 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
     [Arguments(true, "reconnect-limit")]
     [Arguments(false, "wrapped-reconnect-limit")]
     [Arguments(true, "wrapped-reconnect-limit")]
+    [Arguments(false, "protocol")]
+    [Arguments(true, "protocol")]
+    [Arguments(false, "wrapped-protocol")]
+    [Arguments(true, "wrapped-protocol")]
     public async Task NonTransientStartupErrorsFailFast(bool jobQueue, string failure)
     {
         await using var fixture = await Fixture.CreateAsync(jobQueue, redis.ConnectionString);
@@ -117,6 +121,9 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
         {
             "argument" => new ArgumentException("invalid configuration"),
             "authentication" => new RespireAuthenticationException("invalid credentials"),
+            "protocol" => new RespireProtocolException("invalid HELLO protocol"),
+            "wrapped-protocol" => new RespireConnectionException("handshake failed",
+                new RespireProtocolException("invalid HELLO protocol")),
             "reconnect-limit" => new RespireReconnectLimitException("reconnect attempts exhausted"),
             "wrapped-reconnect-limit" => new RespireConnectionException("connection unavailable",
                 new RespireReconnectLimitException("reconnect attempts exhausted")),
@@ -131,6 +138,40 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
         await Assert.That(fixture.Fault.Attempts).IsEqualTo(1);
         await Assert.That(fixture.State.Warnings.Count).IsEqualTo(0);
         await Assert.That(fixture.State.Delivered.Task.IsCompleted).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false, false, "LOADING")]
+    [Arguments(true, false, "LOADING")]
+    [Arguments(false, true, "LOADING")]
+    [Arguments(true, true, "LOADING")]
+    [Arguments(false, false, "MASTERDOWN")]
+    [Arguments(true, false, "MASTERDOWN")]
+    [Arguments(false, true, "MASTERDOWN")]
+    [Arguments(true, true, "MASTERDOWN")]
+    [Arguments(false, false, "CLUSTERDOWN")]
+    [Arguments(true, false, "CLUSTERDOWN")]
+    [Arguments(false, true, "CLUSTERDOWN")]
+    [Arguments(true, true, "CLUSTERDOWN")]
+    [Arguments(false, false, "TRYAGAIN")]
+    [Arguments(true, false, "TRYAGAIN")]
+    [Arguments(false, true, "TRYAGAIN")]
+    [Arguments(true, true, "TRYAGAIN")]
+    [Arguments(false, false, "BUSY")]
+    [Arguments(true, false, "BUSY")]
+    [Arguments(false, true, "BUSY")]
+    [Arguments(true, true, "BUSY")]
+    public async Task TransientServerErrorsRetryUntilRedisAnswers(bool jobQueue, bool wrapped, string code)
+    {
+        await using var fixture = await Fixture.CreateAsync(jobQueue, redis.ConnectionString);
+        var serverError = new RespireServerException(code + " temporarily unavailable");
+        fixture.Fault.Error = wrapped ? new RespireConnectionException("handshake failed", serverError) : serverError;
+        fixture.Fault.FailuresRemaining = 1;
+        await fixture.Worker.StartAsync(CancellationToken.None);
+        await fixture.State.Delivered.Task.WaitAsync(Deadline);
+        await Assert.That(fixture.Fault.Attempts).IsEqualTo(2);
+        await Assert.That(fixture.State.Warnings.Count).IsEqualTo(1);
+        await Assert.That(fixture.Worker.ExecuteTask!.IsCompleted).IsFalse();
     }
 
     [Test]

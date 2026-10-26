@@ -108,13 +108,15 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     private static bool IsRetryableStartupError(Exception error)
     {
-        if (error is not (RespireConnectionException or RespireTimeoutException or TimeoutException or SocketException or IOException))
+        if (error is not (RespireConnectionException or RespireTimeoutException or TimeoutException or SocketException or IOException
+            or RespireServerException { IsTransient: true }))
             return false;
         // Lazy connection setup wraps rejected AUTH, HELLO and SELECT replies in connection exceptions.
         // Exhausted reconnect limits require a new client, so retrying initialization cannot recover.
         for (Exception? cause = error; cause is not null; cause = cause.InnerException)
             if (cause is RespireAuthenticationException or RespireReconnectLimitException
-                or RespireServerException or RespireConfigurationException or ArgumentException)
+                or RespireServerException { IsTransient: false } or RespireProtocolException
+                or RespireConfigurationException or ArgumentException)
                 return false;
         return true;
     }
