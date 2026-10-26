@@ -95,9 +95,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                         cancellationToken: token).ConfigureAwait(false);
                 return;
             }
-            catch (Exception error) when (error is
-                RespireConnectionException and not RespireAuthenticationException
-                or RespireTimeoutException or TimeoutException or SocketException or IOException)
+            catch (Exception error) when (IsRetryableStartupError(error))
             {
                 token.ThrowIfCancellationRequested();
                 // Exception messages may contain credentials or endpoints. Log only the type.
@@ -106,6 +104,17 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 retryDelay = TimeSpan.FromSeconds(Math.Min(retryDelay.TotalSeconds * 2, 30));
             }
         }
+    }
+
+    private static bool IsRetryableStartupError(Exception error)
+    {
+        if (error is not (RespireConnectionException or RespireTimeoutException or TimeoutException or SocketException or IOException))
+            return false;
+        // Lazy connection setup wraps rejected AUTH, HELLO and SELECT replies in connection exceptions.
+        for (Exception? cause = error; cause is not null; cause = cause.InnerException)
+            if (cause is RespireAuthenticationException or RespireServerException or RespireConfigurationException or ArgumentException)
+                return false;
+        return true;
     }
 
     private async Task DrainConsumersAsync(Task[] consumers, CancellationTokenSource readers)
@@ -652,6 +661,6 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "Stream handler or serializer failed ({ExceptionType}).")]
     private static partial void HandlerFailed(ILogger logger, string exceptionType);
 
-    [LoggerMessage(EventId = 2, Level = LogLevel.Warning, Message = "Stream worker initialization failed ({ExceptionType}); retrying in {RetryDelaySeconds} seconds.")]
+    [LoggerMessage(EventId = 3, Level = LogLevel.Warning, Message = "Stream worker initialization failed ({ExceptionType}); retrying in {RetryDelaySeconds} seconds.")]
     private static partial void StartupFailed(ILogger logger, string exceptionType, double retryDelaySeconds);
 }

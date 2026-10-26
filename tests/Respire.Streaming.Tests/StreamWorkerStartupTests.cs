@@ -127,6 +127,45 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
     }
 
     [Test]
+    [Arguments(false, RespireProtocol.Resp2, true)]
+    [Arguments(false, RespireProtocol.Resp3, true)]
+    [Arguments(true, RespireProtocol.Resp2, true)]
+    [Arguments(true, RespireProtocol.Resp3, true)]
+    [Arguments(false, RespireProtocol.Resp2, false)]
+    [Arguments(false, RespireProtocol.Resp3, false)]
+    [Arguments(true, RespireProtocol.Resp2, false)]
+    [Arguments(true, RespireProtocol.Resp3, false)]
+    public async Task PermanentLazyHandshakeErrorsFailFast(bool jobQueue, RespireProtocol protocol, bool invalidPassword)
+    {
+        var options = RespireOptions.Parse(redis.ConnectionString) with { Protocol = protocol };
+        options = invalidPassword
+            ? options with { Username = "missing-" + Guid.NewGuid().ToString("N"), Password = "wrong-password" }
+            : options with { Database = RedisTestContainer.DatabaseCount };
+        await using var client = RespireClient.Create(options);
+        var state = new HandlerState();
+        var services = new ServiceCollection().AddSingleton(state).AddSingleton<IRespireClient>(client);
+        services.AddLogging(logging => logging.AddProvider(new RecordingLogger(state)));
+        if (jobQueue)
+            services.AddRespireJobQueue<Handler, string>("startup", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
+                options: null, queueOptions: new() { RateLimit = new() { PermitLimit = 10, Window = TimeSpan.FromMinutes(1) } });
+        else
+            services.AddRespireStreamWorker<Handler>("events", "workers");
+        await using var provider = services.BuildServiceProvider();
+        var worker = (BackgroundService)provider.GetRequiredService<IHostedService>();
+        try
+        {
+            await worker.StartAsync(CancellationToken.None);
+            var error = await Assert.That(async () => await worker.ExecuteTask!.WaitAsync(Deadline))
+                .Throws<RespireConnectionException>();
+            await Assert.That(error!.InnerException is RespireServerException).IsTrue();
+            await Assert.That(error.InnerException!.Message).Contains(invalidPassword ? "WRONGPASS" : "DB index");
+            await Assert.That(state.Warnings.Count).IsEqualTo(0);
+            await Assert.That(state.Delivered.Task.IsCompleted).IsFalse();
+        }
+        finally { await worker.StopAsync(CancellationToken.None).WaitAsync(Deadline); }
+    }
+
+    [Test]
     public async Task GroupRetryDoesNotRepeatSuccessfulRateLimitInitialization()
     {
         await using var fixture = await Fixture.CreateAsync(true, redis.ConnectionString);
