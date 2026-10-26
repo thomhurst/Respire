@@ -101,10 +101,13 @@ Set `RunContinuationsAsynchronously` on the DI builder or in configuration to op
 
 With inline continuations, `StalledDeliveryThreshold` controls how long waiting replies
 can remain behind a slow or blocked continuation before another thread takes over
-delivery. It defaults to 500 ms and accepts values of at least 1 ms. This rescue is not
+delivery. It defaults to 500 ms and accepts values from 1 to 4,294,967,294 ms (about
+49.7 days), inclusive, matching the timer's supported range. This rescue is not
 a latency guarantee, particularly under thread-pool starvation. Warning
 `ConnectionContinuationDeliveryBlocked` covers both blocking waits and CPU-bound work.
 The threshold is also available through the DI builder and configuration.
+With `RunContinuationsAsynchronously` enabled, caller continuations run independently
+of reply delivery, so their CPU work or blocking waits do not trigger this rescue.
 
 ## Custom connection streams
 

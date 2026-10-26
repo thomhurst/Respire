@@ -174,7 +174,7 @@ Respire.Networking.BulkStreamPendingResponseSource | property Task [internal; ge
 Respire.Networking.BytesPendingResponseSource | method IValueTaskSource<byte[]?>.GetResult(short) : byte[]?
 Respire.Networking.BytesPendingResponseSource | method IValueTaskSource<byte[]?>.GetStatus(short) : ValueTaskSourceStatus
 Respire.Networking.BytesPendingResponseSource | method IValueTaskSource<byte[]?>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
-Respire.Networking.BytesPendingResponseSource | method Rent(string?, int, bool, RespireTelemetry.DurationObservation, ErrorObservation.FinalOwner) : BytesPendingResponseSource
+Respire.Networking.BytesPendingResponseSource | method Rent(string?, int, bool, RespireTelemetry.DurationObservation, ErrorObservation.FinalOwner, bool) : BytesPendingResponseSource
 Respire.Networking.BytesPendingResponseSource | method ResetAndReturn() : void
 Respire.Networking.BytesPendingResponseSource | method SetDirectResult(byte[]?) : void
 Respire.Networking.BytesPendingResponseSource | method SetExceptionCore(Exception) : void
@@ -185,7 +185,7 @@ Respire.Networking.BytesPendingResponseSource | property Task [public; get] : Va
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method IValueTaskSource<TResult>.GetResult(short) : TResult
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method IValueTaskSource<TResult>.GetStatus(short) : ValueTaskSourceStatus
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method IValueTaskSource<TResult>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
-Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method Rent(TState, ResponseConverter<TState, TResult>, bool, string?, int, bool, RespireTelemetry.DurationObservation, ErrorObservation.FinalOwner) : ConvertedPendingResponseSource<TState, TResult>
+Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method Rent(TState, ResponseConverter<TState, TResult>, bool, string?, int, bool, RespireTelemetry.DurationObservation, ErrorObservation.FinalOwner, bool) : ConvertedPendingResponseSource<TState, TResult>
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method ResetAndReturn() : void
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method SetExceptionCore(Exception) : void
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method SetResultCore(in RespValue) : void
@@ -199,7 +199,7 @@ Respire.Networking.MultiReplyPendingResponseSource | method IValueTaskSource<Res
 Respire.Networking.MultiReplyPendingResponseSource | method IValueTaskSource<RespValue>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
 Respire.Networking.MultiReplyPendingResponseSource | method PrepareException(Exception) : Exception
 Respire.Networking.MultiReplyPendingResponseSource | method ReleaseRef() : void
-Respire.Networking.MultiReplyPendingResponseSource | method Rent(int, int, string) : MultiReplyPendingResponseSource
+Respire.Networking.MultiReplyPendingResponseSource | method Rent(int, int, string, bool) : MultiReplyPendingResponseSource
 Respire.Networking.MultiReplyPendingResponseSource | method ResetAndReturn() : void
 Respire.Networking.MultiReplyPendingResponseSource | method SetExceptionCore(Exception) : void
 Respire.Networking.MultiReplyPendingResponseSource | method SetResultCore(in RespValue) : void
@@ -392,7 +392,7 @@ Respire.Networking.RespireConnection.StreamPayloadReader | property UnknownPosit
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetResult(short) : string?
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetStatus(short) : ValueTaskSourceStatus
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
-Respire.Networking.StringPendingResponseSource | method Rent(string?, int, bool, RespireTelemetry.DurationObservation, ErrorObservation.FinalOwner) : StringPendingResponseSource
+Respire.Networking.StringPendingResponseSource | method Rent(string?, int, bool, RespireTelemetry.DurationObservation, ErrorObservation.FinalOwner, bool) : StringPendingResponseSource
 Respire.Networking.StringPendingResponseSource | method ResetAndReturn() : void
 Respire.Networking.StringPendingResponseSource | method SetDirectResult(string?) : void
 Respire.Networking.StringPendingResponseSource | method SetExceptionCore(Exception) : void

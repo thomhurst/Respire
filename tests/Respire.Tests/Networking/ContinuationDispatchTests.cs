@@ -121,17 +121,23 @@ public class ContinuationDispatchTests
     [Arguments("transaction")]
     public async Task PooledSourcesHonorDispatchSettingAcrossRents(string responseKind)
     {
+        var rawPools = new[] { new PendingResponsePool(1, false), new PendingResponsePool(1, true) };
+        var rawSources = new PendingResponseSource?[2];
         // Global pools must restore inline delivery when another client used asynchronous delivery.
         foreach (var asynchronous in new[] { true, false, true, false })
         {
-            var completingThread = Environment.CurrentManagedThreadId;
+            var completingThread = 0;
             var returned = 0;
             Task<bool> callback;
             PendingResponse source;
             switch (responseKind)
             {
                 case "raw":
-                    var raw = new PendingResponsePool(1, asynchronous).Rent();
+                    var poolIndex = asynchronous ? 1 : 0;
+                    var raw = rawPools[poolIndex].Rent();
+                    if (rawSources[poolIndex] is { } previous)
+                        await Assert.That(ReferenceEquals(raw, previous)).IsTrue();
+                    rawSources[poolIndex] = raw;
                     source = raw;
                     callback = Observe(raw.Task, static value => value.Dispose());
                     break;
@@ -158,6 +164,7 @@ public class ContinuationDispatchTests
                     callback = Observe(converted.Task, static _ => { });
                     break;
             }
+            completingThread = Environment.CurrentManagedThreadId;
             source.TrySetResult(RespValue.SimpleString("PONG"u8.ToArray()));
             Volatile.Write(ref returned, 1);
             source.ReleaseRef();
@@ -203,6 +210,7 @@ public class ContinuationDispatchTests
     [Arguments(-1.0)]
     [Arguments(0.0)]
     [Arguments(0.5)]
+    [Arguments(4294967295.0)]
     public async Task InvalidStallThresholdIsRejected(double milliseconds)
     {
         await Assert.That(() => new RespireOptions
@@ -213,5 +221,39 @@ public class ContinuationDispatchTests
         await Assert.That(async () => await RespireConnection.ConnectAsync("localhost", 0,
             new RespireConnectionOptions { StalledDeliveryThreshold = TimeSpan.FromMilliseconds(milliseconds) }))
             .ThrowsExactly<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OversizedStallThresholdIsRejected(bool maximumTimeSpan)
+    {
+        var threshold = maximumTimeSpan ? TimeSpan.MaxValue : TimeSpan.FromDays(300);
+        await Assert.That(() => new RespireOptions
+        {
+            Endpoints = [new("localhost")],
+            StalledDeliveryThreshold = threshold,
+        }.ValidateAndSnapshot()).ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(async () => await RespireConnection.ConnectAsync("localhost", 0,
+            new RespireConnectionOptions { StalledDeliveryThreshold = threshold }))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task MaximumSupportedStallThresholdIsAccepted()
+    {
+        var threshold = TimeSpan.FromMilliseconds(4294967294);
+        var options = new RespireOptions
+        {
+            Endpoints = [new("localhost")],
+            Protocol = RespireProtocol.Resp2,
+            StalledDeliveryThreshold = threshold,
+        }.ValidateAndSnapshot();
+        await Assert.That(options.StalledDeliveryThreshold).IsEqualTo(threshold);
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            options.ToConnectionOptions());
+        using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+        await Assert.That(reply.AsString()).IsEqualTo("PONG");
     }
 }

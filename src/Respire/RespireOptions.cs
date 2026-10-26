@@ -162,6 +162,10 @@ public sealed record RespireOptions
 
     private static readonly TimeSpan DefaultCommandTimeout = TimeSpan.FromSeconds(10);
 
+    internal static readonly TimeSpan MinStalledDeliveryThreshold = TimeSpan.FromMilliseconds(1);
+    // Task.Delay supports at most UInt32.MaxValue - 1 milliseconds on both target frameworks.
+    internal static readonly TimeSpan MaxStalledDeliveryThreshold = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
+
     /// <summary>Optionally opens a connected duplex stream for each physical connection, before TLS and Redis setup.</summary>
     /// <remarks>
     /// Receives the destination endpoint and the combined caller/connect-timeout token. Calls may run concurrently
@@ -509,7 +513,8 @@ public sealed record RespireOptions
 
     /// <summary>
     /// How long replies may wait behind a slow or blocked inline continuation before delivery
-    /// moves to another thread. Defaults to 500 milliseconds; must be at least one millisecond.
+    /// moves to another thread. Defaults to 500 milliseconds; must be between 1 and
+    /// 4,294,967,294 milliseconds, inclusive (the maximum supported timer delay).
     /// </summary>
     /// <remarks>This is a rescue threshold, not a latency guarantee under thread-pool starvation.</remarks>
     public TimeSpan StalledDeliveryThreshold { get; init; } = TimeSpan.FromMilliseconds(500);
@@ -705,8 +710,8 @@ public sealed record RespireOptions
         Require(Connections >= 1, nameof(Connections), "must be at least one");
         Require(Database >= 0, nameof(Database), "cannot be negative");
         Require(ConnectTimeout > TimeSpan.Zero, nameof(ConnectTimeout), "must be positive");
-        Require(StalledDeliveryThreshold >= TimeSpan.FromMilliseconds(1),
-            nameof(StalledDeliveryThreshold), "must be at least one millisecond");
+        Require(StalledDeliveryThreshold >= MinStalledDeliveryThreshold && StalledDeliveryThreshold <= MaxStalledDeliveryThreshold,
+            nameof(StalledDeliveryThreshold), "must be between 1 and 4,294,967,294 milliseconds");
         Require(CredentialRefreshBeforeExpiry >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshBeforeExpiry), "must be at least one millisecond");
         Require(CredentialRefreshRetryDelay >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshRetryDelay), "must be at least one millisecond");
         Require(ThreadPoolWarningThreshold > TimeSpan.Zero, nameof(ThreadPoolWarningThreshold), "must be positive");
