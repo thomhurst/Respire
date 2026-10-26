@@ -373,6 +373,8 @@ The fake matches the exact source or its SHA1; it does not embed a Lua interpret
 source, including whitespace, requires a new registration. Duplicate registrations throw.
 
 ```csharp
+using Respire.Testing;
+
 var script = RespireScript.Create("""
     if redis.call('HGET', KEYS[1], 'f') ~= ARGV[1] then return 0 end
     redis.call('DEL', KEYS[1])
@@ -402,6 +404,7 @@ var changed = await client.Scripts.ExecuteIntegerAsync(script, ["item"], ["old",
 - Keys and arguments contain the binary wire values, including the client's key prefix.
   `data.Call` copies arguments and executes supported data commands against the same keyspace,
   expiry clock, and `WATCH` registrations as ordinary client commands.
+  Internal replies use RESP2 shapes regardless of the client's protocol, matching Lua `redis.call` defaults.
 - The complete handler runs under the command lock. Use the context only synchronously on the
   handler's thread. Never wait for client operations inside a handler. Context use after return throws.
 - Internal calls bypass command expectations and fault injection. Connection, transaction, scripting,

@@ -53,12 +53,15 @@ public sealed partial class RespireFakeServer
         _scriptCache.Add(registered.Script.Sha1);
         var values = args.Skip(3).Select(value => new RespireValue(value.AsMemory())).ToArray();
         var count = (int)keyCount;
+        // Lua redis.call uses RESP2 shapes independently of the calling client's protocol
+        // and connection state. This execution context never owns transport I/O.
+        var scriptConnection = new Connection(connection.Id, Stream.Null, connection.Lifetime);
         var context = new RespireFakeScriptContext(command =>
         {
             var name = Token(command[0]);
             if (ScriptForbiddenCommands.Contains(name))
                 return FakeReply.Error($"ERR Respire.Testing does not support {name} inside a script handler");
-            return Execute(connection, command);
+            return Execute(scriptConnection, command);
         });
         try
         {

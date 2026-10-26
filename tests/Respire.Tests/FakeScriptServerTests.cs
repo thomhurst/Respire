@@ -9,6 +9,37 @@ namespace Respire.Tests;
 public class FakeScriptServerTests
 {
     [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task HandlerCommandsUseResp2ShapesAndPreserveClientProtocol(int protocol, bool subscribed)
+    {
+        await using var server = new RespireFakeServer();
+        var script = RespireScript.Create("return redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')[1]");
+        server.RegisterScript(script, (data, keys, _) =>
+        {
+            using var range = data.Call("ZRANGE", keys[0], "0", "-1", "WITHSCORES");
+            return RespireFakeResponse.Bulk(range[0].AsString());
+        });
+        await using var session = await TestRespSession.ConnectAsync(server.CreateOptions());
+        using (var hello = await session.CommandAsync("HELLO", protocol.ToString())) { }
+        using (var stored = await session.CommandAsync("ZADD", "scores", "1", "member")) { }
+        if (subscribed)
+        {
+            using var subscription = await session.CommandAsync("SUBSCRIBE", "channel");
+        }
+        using (var result = await session.CommandAsync("EVAL", script.Source, "1", "scores"))
+            await Assert.That(result.AsString()).IsEqualTo("member");
+        using (var range = await session.CommandAsync("ZRANGE", "scores", "0", "-1", "WITHSCORES"))
+        {
+            if (protocol == 3)
+                await Assert.That(range.AsArray()[0].AsArray()[0].AsString()).IsEqualTo("member");
+            else
+                await Assert.That(range.AsArray()[0].AsString()).IsEqualTo("member");
+        }
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task RegistrationDoesNotLoadAndClientFallbackCachesExactSource(int protocol)
