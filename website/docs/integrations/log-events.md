@@ -201,3 +201,4 @@ See [observability](observability.md#logging) for logger configuration.
 | `Respire.SignalR` | 18 | `RemoteResultExpired` | Debug |
 | `Respire.Streaming` | 1 | `HandlerFailed` | Warning |
 | `Respire.Streaming` | 2 | `LogPassFailure` | Error |
+| `Respire.Streaming` | 3 | `StartupFailed` | Warning |
