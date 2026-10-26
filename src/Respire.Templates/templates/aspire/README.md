@@ -15,6 +15,14 @@ the shared client, Redis readiness check, and Respire OpenTelemetry traces and m
 
 ## Build and start
 
+This starter requires `Respire.Aspire` at the same version as the installed
+`Respire.Templates` package. As of October 26, 2026, the integration is not yet
+published on NuGet, so a generated application cannot restore from NuGet alone.
+Use a release containing both packages when available. To try the integration
+before publication, build the
+[repository sample](https://respire.tomlonghurst.dev/docs/integrations/aspire-sample),
+which uses project references.
+
 From this generated directory:
 
 ```powershell

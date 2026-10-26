@@ -41,6 +41,16 @@ The generated README covers configuration and custom HTTP ports.
 
 ### Aspire starter
 
+:::warning Requires unpublished packages
+
+As of October 26, 2026, the starter's `Respire.Aspire` dependency is not yet
+published on NuGet. A generated application cannot restore from NuGet alone until
+a release includes both `Respire.Templates` and its matching `Respire.Aspire`
+version. To try Aspire now, use the [repository sample](integrations/aspire-sample.md),
+which builds the integration from source. See [package availability](integrations/aspire.md#install).
+
+:::
+
 After installing the same template package, use `respire-aspire` for an AppHost
 and minimal API with an Aspire-managed Redis container:
 

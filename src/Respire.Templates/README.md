@@ -22,6 +22,13 @@ for endpoints, configuration, and cleanup. Requires the .NET 10 SDK and Docker
 
 For an Aspire AppHost and minimal API with Redis, health checks and dashboard telemetry:
 
+> **Package availability:** As of October 26, 2026, `Respire.Aspire` is not yet
+> published on NuGet. The Aspire starter cannot restore from NuGet alone until a
+> release contains both this template and the matching `Respire.Aspire` version.
+> To try the integration now, use the
+> [repository sample](https://respire.tomlonghurst.dev/docs/integrations/aspire-sample),
+> which uses project references.
+
 ```sh
 dotnet new respire-aspire -n MyRedisApp
 cd MyRedisApp
