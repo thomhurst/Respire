@@ -1,14 +1,19 @@
+using System.Text;
+
 namespace Respire.Streaming;
 
 /// <summary>Immutable settings captured when registering a hosted stream consumer.</summary>
 public sealed record RespireStreamWorkerOptions
 {
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+
     internal string? JobEventsStream { get; init; }
     internal RespireJobQueueOptions? JobQueue { get; init; }
 
     /// <summary>Stable consumer-name base, suffixed with each reader's index. Null creates unique names.</summary>
     /// <remarks>Reuse the same name and consumer count to replay owned pending entries once at startup.
-    /// Active registrations and hosts sharing a group must use different names.</remarks>
+    /// Active registrations and hosts sharing a group must use different names.
+    /// Non-null names must be nonblank and contain well-formed UTF-16.</remarks>
     public string? ConsumerName { get; init; }
 
     /// <summary>Maximum simultaneous handlers and blocking readers. Defaults to one.</summary>
@@ -80,7 +85,11 @@ public sealed record RespireStreamWorkerOptions
             throw new ArgumentException("Trace context fields must have distinct names.");
         ValidatePollTime(MetricsPollInterval, nameof(MetricsPollInterval));
         ValidatePollTime(MetricsPollTimeout, nameof(MetricsPollTimeout));
-        if (ConsumerName is not null) ArgumentException.ThrowIfNullOrWhiteSpace(ConsumerName);
+        if (ConsumerName is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(ConsumerName);
+            _ = StrictUtf8.GetByteCount(ConsumerName);
+        }
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ConsumerCount);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(BatchSize);
         if (DeadLetterStream is not null) ArgumentException.ThrowIfNullOrWhiteSpace(DeadLetterStream);

@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -10,6 +11,8 @@ namespace Respire.Streaming;
 /// <summary>Registers hosted consumers using a DI-owned IRespireClient.</summary>
 public static class RespireStreamWorkerServiceCollectionExtensions
 {
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+
     /// <summary>Registers a scoped handler that receives owned stream entry fields.</summary>
     public static IServiceCollection AddRespireStreamWorker<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler>(
@@ -20,7 +23,8 @@ public static class RespireStreamWorkerServiceCollectionExtensions
     /// <summary>Registers a typed handler with an explicit serializer, suitable for source-generated JSON or custom codecs.</summary>
     /// <remarks>The serializer can run concurrently on different consumers. Register IRespireClient separately;
     /// the worker does not dispose it. Each registration creates its own hosted service and consumer identities.
-    /// TelemetryName must be unique within the service collection, even when no telemetry listener is attached.</remarks>
+    /// TelemetryName must be unique within the service collection, even when no telemetry listener is attached.
+    /// Group and stable consumer names must contain well-formed UTF-16; invalid names fail before services are added.</remarks>
     public static IServiceCollection AddRespireStreamWorker<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler, TMessage>(
         this IServiceCollection services, string stream, string group,
@@ -30,6 +34,7 @@ public static class RespireStreamWorkerServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(stream);
         ArgumentException.ThrowIfNullOrWhiteSpace(group);
+        _ = StrictUtf8.GetByteCount(group);
         ArgumentNullException.ThrowIfNull(deserialize);
         options ??= new RespireStreamWorkerOptions();
         options.Validate();
