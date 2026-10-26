@@ -24,7 +24,7 @@ public static class RespireStreamWorkerServiceCollectionExtensions
     /// <remarks>The serializer can run concurrently on different consumers. Register IRespireClient separately;
     /// the worker does not dispose it. Each registration creates its own hosted service and consumer identities.
     /// TelemetryName must be unique within the service collection, even when no telemetry listener is attached.
-    /// Group and stable consumer names must contain well-formed UTF-16; invalid names fail before services are added.</remarks>
+    /// Stream, group and stable consumer names must contain well-formed UTF-16; invalid names fail before services are added.</remarks>
     public static IServiceCollection AddRespireStreamWorker<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler, TMessage>(
         this IServiceCollection services, string stream, string group,
@@ -33,6 +33,7 @@ public static class RespireStreamWorkerServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(stream);
+        _ = StrictUtf8.GetByteCount(stream);
         ArgumentException.ThrowIfNullOrWhiteSpace(group);
         _ = StrictUtf8.GetByteCount(group);
         ArgumentNullException.ThrowIfNull(deserialize);

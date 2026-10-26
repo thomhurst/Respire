@@ -1,5 +1,7 @@
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Respire.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -8,6 +10,86 @@ namespace Respire.Streaming.Tests;
 
 public partial class StreamWorkerTests
 {
+    [Test]
+    [Arguments(0xD800)]
+    [Arguments(0xD801)]
+    [Arguments(0xDC00)]
+    [Arguments(0xDFFF)]
+    public async Task MalformedStreamsFailBeforeRegistrationChanges(int surrogate)
+    {
+        // Keep malformed UTF-16 out of discovery metadata, which uses replacement fallback.
+        foreach (var stream in new[] { $"events{(char)surrogate}", $"{(char)surrogate}events" })
+        foreach (var typed in new[] { false, true })
+        {
+            var services = new ServiceCollection().AddSingleton(new State());
+            var original = services.ToArray();
+            await Assert.That(() =>
+            {
+                if (typed)
+                    services.AddRespireStreamWorker<TypedHandler, int>(stream, "workers", _ => 0);
+                else
+                    services.AddRespireStreamWorker<EntryHandler>(stream, "workers");
+            }).Throws<EncoderFallbackException>();
+            await Assert.That(services.SequenceEqual(original)).IsTrue();
+            // Reuse the telemetry name to prove rejection did not reserve it.
+            services.AddRespireStreamWorker<EntryHandler>("events", "workers");
+        }
+    }
+
+    [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task UnicodeStreamsRemainDistinctOnTheWire(int protocol, bool typed)
+    {
+        foreach (var (first, second) in new[]
+        {
+            ("\U0001F600", "\U0001F601"), ("\uFFFD", "\U0001F600"), ("\u00E9", "e\u0301"),
+        })
+        {
+            await using var server = new RespireFakeServer();
+            await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
+            {
+                Protocol = (RespireProtocol)protocol,
+            });
+            var state = new State();
+            var services = new ServiceCollection().AddSingleton(state).AddScoped<ScopeProbe>()
+                .AddSingleton<IRespireClient>(client);
+            var streams = new[] { "events-" + first, "events-" + second };
+            for (var i = 0; i < streams.Length; i++)
+            {
+                await client.Streams.AddAsync(streams[i], ("payload", i.ToString()));
+                var options = new RespireStreamWorkerOptions { TelemetryName = $"stream-{i}" };
+                if (typed)
+                    services.AddRespireStreamWorker<EntryHandler, RespireStreamEntry>(streams[i], "workers", entry => entry, options);
+                else
+                    services.AddRespireStreamWorker<EntryHandler>(streams[i], "workers", options);
+            }
+            await using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+            var workers = provider.GetServices<IHostedService>().ToArray();
+            try
+            {
+                foreach (var worker in workers) await worker.StartAsync(CancellationToken.None);
+                var delivery = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+                var otherDelivery = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+                var payloads = new[] { delivery.GetString("payload"), otherDelivery.GetString("payload") };
+                await Assert.That(payloads.Order().SequenceEqual(new[] { "0", "1" })).IsTrue();
+                foreach (var stream in streams)
+                {
+                    await UntilAsync(async () => (await client.Streams.PendingSummaryAsync(stream, "workers")).Count == 0);
+                    var groups = await client.Streams.GroupInfoAsync(stream);
+                    await Assert.That(groups.Single().Name).IsEqualTo("workers");
+                }
+            }
+            finally
+            {
+                using var deadline = new CancellationTokenSource(Deadline);
+                foreach (var worker in workers) await worker.StopAsync(deadline.Token);
+            }
+        }
+    }
+
     [Test]
     [Arguments(0xD800)]
     [Arguments(0xD801)]
