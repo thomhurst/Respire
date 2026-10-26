@@ -27,6 +27,10 @@ Dispose clients before their fixture. Disposal removes only the fixture's own co
 Each fixture has its own data directory and never reuses containers or volumes. Failed or
 cancelled startup cleans up before returning the error.
 
+The [RESP010 lifetime warning](../diagnostics/RESP010.md) is disabled in projects
+referencing `Respire.Testing.Containers`. Each test can own its clients, including
+multiple connections to one fixture, without a local suppression.
+
 ## Topologies and versions
 
 ```csharp

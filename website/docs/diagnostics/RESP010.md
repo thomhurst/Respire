@@ -40,6 +40,25 @@ follow chains of aliases or disposal inside a nested function or another block.
 It does not infer DI service scopes, trace custom factories,
 or prove how frequently a method runs.
 
+## Test projects
+
+Tests often need one or more isolated clients with a lifetime limited to a test.
+RESP010 does not run in compilations referencing `Respire.Testing`,
+`Respire.Testing.Containers`, TUnit (`TUnit.Core`), xUnit (`xunit.core` or
+`xunit.v3.core`), NUnit (`nunit.framework`), or MSTest
+(`Microsoft.VisualStudio.TestPlatform.TestFramework`). This exemption applies to
+the whole compilation, including fixture helpers and clients created in loops.
+Other Respire diagnostics remain enabled.
+
+For another test framework, put an `.editorconfig` in the test project directory:
+
+```ini
+[*.cs]
+dotnet_diagnostic.RESP010.severity = none
+```
+
+## Suppression and configuration
+
 For a deliberate isolated client (for example, a connectivity probe), suppress
 the warning locally with `#pragma warning disable RESP010` and restore it after
 the creation. An application-lifetime owner method other than `Main` may also
