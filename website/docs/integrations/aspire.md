@@ -185,8 +185,9 @@ and never dispose it.
 
 ## Azure Managed Redis with Microsoft Entra
 
-Add `Respire.Azure` and an Azure credential package. Grant the identity Redis access and use its
-object ID as the Redis username:
+Add `Respire.Azure` and an Azure credential package. Grant the identity Redis access. The provider
+derives the Redis username from the access token's `oid` claim, so deployment configuration does not
+need to supply the identity's object ID:
 
 ```csharp
 using global::Azure.Core;
@@ -197,8 +198,7 @@ builder.Services.AddSingleton<TokenCredential>(new DefaultAzureCredential());
 builder.AddRespireClient("cache", configureOptions: (services, options) => options with
 {
     CredentialProvider = new RespireAzureManagedRedisCredentialProvider(
-        services.GetRequiredService<TokenCredential>(),
-        builder.Configuration["RedisIdentityObjectId"]!),
+        services.GetRequiredService<TokenCredential>()),
 });
 ```
 

@@ -1,1 +1,2 @@
 #nullable enable
+Respire.Azure.RespireAzureManagedRedisCredentialProvider.RespireAzureManagedRedisCredentialProvider(Azure.Core.TokenCredential! credential) -> void
