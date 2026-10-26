@@ -34,6 +34,9 @@ jobs:
             minimum-tests: 12
           - server: valkey92
             minimum-tests: 14
+          - server: kividb
+            # The Lua image runs all scenarios; no documented skips.
+            minimum-tests: 17
     env:
       RESPIRE_COMPATIBILITY_SERVER: ${{ matrix.server }}
       DOCKER_HOST: unix:///var/run/docker.sock

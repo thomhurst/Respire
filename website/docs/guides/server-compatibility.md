@@ -1,13 +1,13 @@
 ---
 title: Redis-compatible servers
-description: Focused Garnet, Dragonfly, KeyDB and Valkey compatibility checks, known differences, and how to reproduce them.
+description: Focused Garnet, Dragonfly, KeyDB, Valkey and KiviDB compatibility checks, known differences, and how to reproduce them.
 ---
 
 # Redis-compatible servers
 
 Respire uses RESP to connect to Redis-compatible servers. Compatibility depends on the server
 version and the features your application uses. The focused compatibility suite exercises Garnet,
-Dragonfly, KeyDB and Valkey 9.2 RC independently; it does not certify every Redis command or production topology.
+Dragonfly, KeyDB, Valkey 9.2 RC and KiviDB independently; it does not certify every Redis command or production topology.
 
 ## Tested scope
 
@@ -21,6 +21,7 @@ have explicit skip reasons in the test report. A feature skipped by a test is no
 | Dragonfly 2.0.0 | `docker.dragonflydb.io/dragonflydb/dragonfly:v2.0.0` | One proactor thread; Cluster uses emulated mode. |
 | KeyDB 6.3.4 | `eqalpha/keydb:x86_64_v6.3.4` | One server thread, persistence disabled; Linux x64. |
 | Valkey 9.2 RC1 | `valkey/valkey:9.2.0-rc1-alpine` | Persistence disabled; includes [missing-key replies, ACL roles and typed Path Hashes](valkey-92.md). GA compatibility is unverified. |
+| KiviDB 1.1.2 (Lua) | `kividb/kividb:v1.1.2-lua` | Lua enabled, TLS unavailable. One worker, Tokio I/O, port 6379, protected mode disabled for the disposable container. AOF is disabled by default. |
 
 Other versions need their own compatibility run. ARM hosts need x64 emulation for the KeyDB image.
 
@@ -50,6 +51,13 @@ Cluster result to the topology described below.
 Valkey 9.2 RC1 passed all 14 focused scenarios and four command-specific scenarios on
 17 October 2026 under .NET 10. Its Cluster result is also limited to one primary.
 
+KiviDB 1.1.2 (Lua) passed all 17 focused cases on 26 October 2026 under .NET 10 in the
+[repository CI run](https://github.com/thomhurst/Respire/actions/runs/40355265418/job/121685899577),
+with zero failures and zero skips. The console output and `kividb.trx` in the
+`server-compatibility-kividb` artifact confirm passing connection negotiation, core data types,
+`CLIENT SETINFO`, pub/sub, Lua, transactions, RESP3 caching and Cluster discovery/routing.
+The Cluster result is partial: one primary only. TLS and multi-node Cluster behavior remain unverified.
+
 The core data-type checks cover strings, hashes, lists, sets and sorted sets under RESP2 and RESP3,
 plus automatic protocol negotiation. Other feature checks run under both explicit protocols,
 except client-side caching, which uses RESP3. The caching scenario checks a local cache hit and
@@ -74,10 +82,20 @@ failover, slot migration, replication, Sentinel, authentication, TLS, or module 
   the listening port. Dragonfly's emulated Cluster fixture sets `cluster_announce_ip` and
   `announce_port` to the mapped endpoint. These are fixture configuration differences, not
   evidence of full multi-node compatibility.
+- **KiviDB image variants:** The selected `v1.1.2-lua` image includes Lua but not TLS. The
+  default image includes neither; upstream also publishes `-tls` and `-full` variants.
+  The fixture overrides the default port 6380 with `--port 6379` and explicitly retains
+  `--protected-mode no` when replacing the image command. Tokio I/O avoids requiring
+  io_uring access in Docker. Its distroless image has no shell, so readiness probes check
+  the server-ready log and mapped TCP port. Cluster uses one primary with its mapped port advertised on loopback;
+  multi-node behavior is unverified. TLS is outside this suite's scope.
 
 The configuration choices follow the pinned
 [Garnet endpoint validation](https://github.com/microsoft/garnet/blob/v2.1.8/libs/host/Configuration/Options.cs#L665-L679)
 and [Dragonfly emulated endpoint settings](https://github.com/dragonflydb/dragonfly/blob/v2.0.0/src/server/cluster/cluster_family.cc#L116-L133).
+KiviDB's [release variants](https://github.com/kividbio/kividb/blob/v1.1.2/.github/workflows/release.yml),
+[container defaults](https://github.com/kividbio/kividb/blob/v1.1.2/Dockerfile) and
+[startup options](https://github.com/kividbio/kividb/blob/v1.1.2/src/config.rs) describe the selected configuration.
 
 ## Run the compatibility suite
 
@@ -96,7 +114,7 @@ To reproduce one server locally, run a Linux Docker engine and the .NET 10 SDK f
 root. The suite owns and removes its containers; it does not use a running application server.
 
 ```powershell
-$env:RESPIRE_COMPATIBILITY_SERVER = 'garnet' # or dragonfly / keydb / valkey92
+$env:RESPIRE_COMPATIBILITY_SERVER = 'garnet' # or dragonfly / keydb / valkey92 / kividb
 & scripts/Invoke-AgentDotNet.ps1 -DotNetArguments @(
     'run', '--project', 'tests/Respire.IntegrationTests', '-c', 'Release', '-f', 'net10.0',
     '--', '--treenode-filter', '/*/*/ServerCompatibilityTests/*', '--report-trx'
