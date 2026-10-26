@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Respire.HealthChecks;
@@ -8,7 +7,6 @@ namespace Respire.HealthChecks;
 /// This check does not own or dispose clients. IRespireHealthProbe implementations reuse existing command connections.
 /// Other IRespireClient implementations are probed through PingAsync when IsConnected is true;
 /// their implementation controls connection creation. Probe waits are bounded even if asynchronous work ignores cancellation.
-/// ConnectIfDisconnected opts into normal PingAsync connection setup before probing a disconnected client.
 /// </remarks>
 public sealed class RespireHealthCheck : IHealthCheck
 {
@@ -58,23 +56,11 @@ public sealed class RespireHealthCheck : IHealthCheck
                 data["clientSideCache"] = cache.GetStatistics();
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var probeTimeout = _options.ProbeTimeout;
-            if (_options.ConnectIfDisconnected && !client.IsConnected && client is IRespireHealthProbe)
-            {
-                deadline.CancelAfter(probeTimeout);
-                var started = Stopwatch.GetTimestamp();
-                await WaitForProbeAsync(client.PingAsync(deadline.Token).AsTask(), deadline.Token).ConfigureAwait(false);
-                data["connected"] = client.IsConnected;
-                deadline.Token.ThrowIfCancellationRequested();
-                probeTimeout -= Stopwatch.GetElapsedTime(started);
-                if (probeTimeout <= TimeSpan.Zero)
-                    throw new TimeoutException("Respire connection setup exhausted the health probe timeout.");
-            }
             // Let cooperative providers finish assembling per-node timeout observations before
             // the backstop interrupts a provider that ignores its own timeout contract.
             var waitTimeout = client is IRespireHealthProbe
-                ? TimeSpan.FromMilliseconds(Math.Min(probeTimeout.TotalMilliseconds + ProviderCompletionGraceMilliseconds, uint.MaxValue - 1d))
-                : probeTimeout;
+                ? TimeSpan.FromMilliseconds(Math.Min(_options.ProbeTimeout.TotalMilliseconds + ProviderCompletionGraceMilliseconds, uint.MaxValue - 1d))
+                : _options.ProbeTimeout;
             deadline.CancelAfter(waitTimeout);
             var errors = new List<Exception>();
             RespireNodeHealth[] nodes;
@@ -84,7 +70,7 @@ public sealed class RespireHealthCheck : IHealthCheck
                 {
                     ProbeAllNodes = _options.ProbeAllNodes,
                     MaxConcurrentProbes = _options.MaxConcurrentProbes,
-                    Timeout = probeTimeout,
+                    Timeout = _options.ProbeTimeout,
                 }, deadline.Token).AsTask(), deadline.Token).ConfigureAwait(false);
                 if (results is null || results.Any(result => result is null))
                     throw new InvalidOperationException("The health probe provider returned null results or a null node result.");
@@ -96,10 +82,9 @@ public sealed class RespireHealthCheck : IHealthCheck
             {
                 if (_options.ProbeAllNodes)
                     throw new NotSupportedException(AllNodesUnsupported);
-                if (!_options.ConnectIfDisconnected && !client.IsConnected)
+                if (!client.IsConnected)
                     throw new RespireConnectionException("The existing Respire client is not connected.");
                 var latency = await WaitForProbeAsync(client.PingAsync(deadline.Token).AsTask(), deadline.Token).ConfigureAwait(false);
-                data["connected"] = client.IsConnected;
                 nodes = [new(client.Endpoint, true, latency, null)];
             }
             data["nodes"] = nodes;

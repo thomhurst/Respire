@@ -1,3 +1,1 @@
 #nullable enable
-Respire.HealthChecks.RespireHealthCheckOptions.ConnectIfDisconnected.get -> bool
-Respire.HealthChecks.RespireHealthCheckOptions.ConnectIfDisconnected.init -> void

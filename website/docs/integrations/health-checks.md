@@ -23,7 +23,6 @@ var builder = WebApplication.CreateBuilder();
 builder.Services.AddRespire(builder.Configuration.GetConnectionString("redis")!);
 builder.Services.AddHealthChecks().AddRespire(new RespireHealthCheckOptions
 {
-    ConnectIfDisconnected = true,
     DegradedLatency = TimeSpan.FromMilliseconds(100),
     ProbeTimeout = TimeSpan.FromSeconds(2),
 }, tags: ["ready"]);
@@ -37,19 +36,13 @@ app.MapHealthChecks("/health/ready");
 
 ## What the check does
 
-By default, for `RespireClient`, the check sends `PING` on an existing usable command connection.
-It does not open connections, discover topology, or rent a dedicated connection in this mode.
-It never creates or owns a client.
+For `RespireClient`, the check sends `PING` on an existing usable command connection. It never
+creates a client, opens a connection, discovers topology, or rents a dedicated connection.
 
-- `AddRespire(...)` from `Respire.DependencyInjection` registers a lazy client. Set
-  `ConnectIfDisconnected = true`, as in the readiness sample, so an idle host can become ready
-  without application traffic. Otherwise readiness can stay unhealthy indefinitely when
-  the host receives traffic only after readiness succeeds.
-- With this option, a disconnected client first receives a normal `PingAsync`. This may open
-  connections and discover topology under normal client rules. Connection setup shares
-  `ProbeTimeout` with the subsequent node probes; capability providers retain up to 250
-  milliseconds of completion grace. A failed connection attempt uses `failureStatus`, and
-  the next health check can retry. An already connected client skips this initial PING.
+- A client registered with `AddRespire` connects in the background when the host starts, so
+  the check turns healthy without application traffic. See
+  [connect at startup](./dependency-injection.md#connect-at-startup). A lazy client created
+  another way reports unhealthy until application work opens a connection.
 - By default it probes one primary. For Cluster, that is one primary with a usable connection;
   it does not prove every slot owner is available.
 - `ProbeAllNodes = true` probes every known primary and replica (for Standalone and Sentinel:
@@ -62,10 +55,9 @@ It never creates or owns a client.
 
 | `RespireHealthCheckOptions` | Default | Meaning |
 | --- | --- | --- |
-| `ConnectIfDisconnected` | `false` | Allow normal PING connection setup for a disconnected client before probing; useful for lazy DI clients and readiness. |
 | `ProbeAllNodes` | `false` | Probe every known primary and replica instead of one primary. |
 | `MaxConcurrentProbes` | `8` | Maximum simultaneous node PINGs. Must be positive. |
-| `ProbeTimeout` | 2 seconds | Bound for connection setup and the probe round, including waits for a concurrency slot. Must be greater than zero. Providers receive up to 250 milliseconds of completion grace. |
+| `ProbeTimeout` | 2 seconds | Bound for the whole round, including waits for a concurrency slot. Must be greater than zero. |
 | `DegradedLatency` | `null` | Report `Degraded` when any successful PING takes at least this long. `null` disables it. |
 | `IncludeClientSideCache` | `true` | Add client-side cache statistics to the health data when caching is enabled. |
 | `DegradeOnFailover` | `true` | For failover groups, report `Degraded` when a candidate is unhealthy. |
@@ -126,9 +118,8 @@ The check supports any `IRespireClient`:
 
 - Clients that implement `IRespireHealthProbe` support primary-only and all-node probes.
   `RespireClient` and its prefixed and read views implement it.
-- Other clients get a single-node fallback: the check requires `IsConnected` unless
-  `ConnectIfDisconnected = true`, then calls `PingAsync` with the probe token. The check bounds
-  its own wait, but cannot stop work that
+- Other clients get a single-node fallback: the check requires `IsConnected`, then calls
+  `PingAsync` with the probe token. The check bounds its own wait, but cannot stop work that
   ignores cancellation or blocks synchronously before returning its task.
 - `ProbeAllNodes = true` requires `IRespireHealthProbe`. Otherwise the `RespireHealthCheck`
   constructor throws `NotSupportedException` (with DI, when the check is resolved).

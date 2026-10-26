@@ -349,19 +349,16 @@ public class RegistrationTests
         var client = host.Services.GetRequiredService<IRespireClient>();
         var keyed = host.Services.GetRequiredKeyedService<IRespireClient>("cache");
         await Assert.That(ReferenceEquals(client, keyed)).IsFalse();
-        await Assert.That(client.IsConnected || keyed.IsConnected).IsFalse();
-        var partial = await checks.CheckHealthAsync(registration => registration.Name == "respire_default_cache");
-        await Assert.That(partial.Entries.Count).IsEqualTo(1);
+        await client.PingAsync();
+        var partial = await checks.CheckHealthAsync();
+        await Assert.That(partial.Entries.Count).IsEqualTo(2);
         await Assert.That(partial.Entries["respire_default_cache"].Status).IsEqualTo(HealthStatus.Healthy);
-        await Assert.That(client.IsConnected).IsTrue();
-        await Assert.That(keyed.IsConnected).IsFalse();
-        var all = await checks.CheckHealthAsync();
-        await Assert.That(all.Entries.Count).IsEqualTo(2);
-        await Assert.That(all.Status).IsEqualTo(HealthStatus.Healthy);
-        await Assert.That(keyed.IsConnected).IsTrue();
+        await Assert.That(partial.Entries["respire_keyed_cache"].Status).IsEqualTo(HealthStatus.Unhealthy);
+        await keyed.PingAsync();
+        await Assert.That((await checks.CheckHealthAsync()).Status).IsEqualTo(HealthStatus.Healthy);
     }
 
-    /// <summary>Ensures readiness connects only the selected keyed client and reuses its connection.</summary>
+    /// <summary>Ensures health checks never create connections and reuse the selected keyed client.</summary>
     [Test]
     public async Task HealthCheckReusesSelectedKeyedConnection()
     {
@@ -377,11 +374,10 @@ public class RegistrationTests
         builder.AddKeyedRespireClient("other");
         using var host = builder.Build();
         var checks = host.Services.GetRequiredService<HealthCheckService>();
-        await Assert.That(server.CommandsSeen).IsEqualTo(0);
         var before = await checks.CheckHealthAsync();
-        await Assert.That(before.Status).IsEqualTo(HealthStatus.Healthy);
-        await Assert.That(host.Services.GetRequiredKeyedService<IRespireClient>("other").IsConnected).IsTrue();
-        await Assert.That(host.Services.GetRequiredService<IRespireClient>().IsConnected).IsFalse();
+        await Assert.That(before.Status).IsEqualTo(HealthStatus.Unhealthy);
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+        await host.Services.GetRequiredKeyedService<IRespireClient>("other").PingAsync();
         var after = await checks.CheckHealthAsync();
         await Assert.That(after.Status).IsEqualTo(HealthStatus.Healthy);
         await Assert.That(after.Entries.Keys.Single()).IsEqualTo("respire_keyed_other");

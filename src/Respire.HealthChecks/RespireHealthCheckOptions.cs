@@ -1,20 +1,16 @@
 namespace Respire.HealthChecks;
 
-/// <summary>Settings for probes through a shared Respire client.</summary>
+/// <summary>Settings for probes that reuse existing Respire command connections.</summary>
 public sealed record RespireHealthCheckOptions
 {
-    /// <summary>Allow PING to connect a disconnected client before probing. Defaults to false.</summary>
-    /// <remarks>Connection setup shares ProbeTimeout with node probes. Normal command connection and discovery rules apply.</remarks>
-    public bool ConnectIfDisconnected { get; init; }
-
     /// <summary>Probe every known data node, including replicas. The default probes one primary.</summary>
-    /// <remarks>Known nodes without an open usable connection fail the check. ConnectIfDisconnected allows normal PING connection setup before capturing nodes.</remarks>
+    /// <remarks>Known nodes without an open usable connection fail the check. No connection is opened.</remarks>
     public bool ProbeAllNodes { get; init; }
 
     /// <summary>Maximum concurrent node probes. Defaults to eight.</summary>
     public int MaxConcurrentProbes { get; init; } = 8;
 
-    /// <summary>Maximum time for connection setup and a probe round. Defaults to two seconds.</summary>
+    /// <summary>Maximum time for a probe round. Defaults to two seconds.</summary>
     /// <remarks>Capability providers receive up to 250 milliseconds of additional completion grace, capped at the timer limit. Caller cancellation remains immediate.</remarks>
     public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(2);
 

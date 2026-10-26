@@ -4,7 +4,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Respire.DependencyInjection;
 using Respire.HealthChecks;
 using Respire.Testing;
 using Respire.Tests.Networking;
@@ -57,56 +56,6 @@ public class RespireHealthCheckTests
         var result = await new RespireHealthCheck(client).CheckHealthAsync(Context());
         await Assert.That(result.Status).IsEqualTo(HealthStatus.Unhealthy);
         await Assert.That(client.IsConnected).IsFalse();
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task LazyDiClientBecomesReadyWithoutApplicationTraffic(bool allNodes)
-    {
-        await using var server = new RespireFakeServer();
-        var services = CreateServices();
-        services.AddRespire(_ => server.CreateOptions() with { Connections = 1 });
-        services.AddHealthChecks().AddRespire(new()
-        {
-            ConnectIfDisconnected = true,
-            ProbeAllNodes = allNodes,
-        }, tags: ["ready"]);
-        await using var provider = services.BuildServiceProvider();
-        var client = provider.GetRequiredService<IRespireClient>();
-        await Assert.That(client.IsConnected).IsFalse();
-
-        var report = await provider.GetRequiredService<HealthCheckService>().CheckHealthAsync();
-
-        var entry = report.Entries["respire"];
-        await Assert.That(entry.Status).IsEqualTo(HealthStatus.Healthy);
-        await Assert.That((bool)entry.Data["connected"]).IsTrue();
-        await Assert.That(client.IsConnected).IsTrue();
-        await Assert.That(await client.PingAsync()).IsGreaterThanOrEqualTo(TimeSpan.Zero);
-    }
-
-    [Test]
-    public async Task ConnectionFailureHonorsFailureStatusAndNextProbeRetries()
-    {
-        await using var server = new RespireFakeServer();
-        var options = server.CreateOptions();
-        var factory = options.TestingStreamFactory!;
-        var available = false;
-        await using var client = RespireClient.Create(options with
-        {
-            Connections = 1,
-            TestingStreamFactory = (host, port, token) => available
-                ? factory(host, port, token)
-                : ValueTask.FromException<Stream>(new IOException("Redis unavailable")),
-        });
-        var check = new RespireHealthCheck(client, new() { ConnectIfDisconnected = true });
-        var failed = await check.CheckHealthAsync(Context(HealthStatus.Degraded));
-        await Assert.That(failed.Status).IsEqualTo(HealthStatus.Degraded);
-        await Assert.That(failed.Exception).IsNotNull();
-        available = true;
-        var recovered = await check.CheckHealthAsync(Context());
-        await Assert.That(recovered.Status).IsEqualTo(HealthStatus.Healthy);
-        await Assert.That((bool)recovered.Data["connected"]).IsTrue();
     }
 
     [Test]

@@ -32,7 +32,9 @@ builder.AddKeyedRespireClient("valkey");
 - A keyed client uses the connection name as its key: inject
   `[FromKeyedServices("valkey")] IRespireClient`.
 - A second default registration or a duplicate key throws.
-- The host owns and disposes the clients. They connect on the first command, not at startup.
+- The host owns and disposes the clients. They connect in the background when the host starts;
+  host startup does not wait for Redis. See
+  [connect at startup](dependency-injection.md#connect-at-startup).
 
 ## Hosting resources
 
@@ -134,10 +136,9 @@ builder.AddRespireClient("cache", settings => settings.DisableTracing = true);
 ### Health checks
 
 Checks are named `respire_default_<connectionName>` or `respire_keyed_<connectionName>`, with
-the `ready` tag. These checks enable `ConnectIfDisconnected`, so the first readiness probe can
-connect a lazy client without waiting for application traffic. Connection setup and node probes
-share the two-second probe timeout, with up to 250 milliseconds of provider completion grace.
-Later probes reuse existing connections. See [health checks](health-checks.md).
+the `ready` tag. A check reuses existing connections and opens none. The client connects in the
+background when the host starts, so the check turns healthy without application traffic. See
+[health checks](health-checks.md).
 
 ### Tracing and metrics
 
