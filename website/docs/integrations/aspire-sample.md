@@ -6,7 +6,7 @@ description: Run Redis and Valkey with an Aspire AppHost, HTTP caches, health ch
 # .NET Aspire sample
 
 The [AppHost](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Aspire.AppHost)
-runs Redis (`cache`), Valkey (`valkey`), and an HTTP service (`api`) that uses `Aspire.Respire`
+runs Redis (`cache`), Valkey (`valkey`), and an HTTP service (`api`) that uses `Respire.Aspire`
 and its HybridCache and output-cache companions. `WithReference` injects the connection strings
 and credentials, and `WaitFor` starts the service once both servers are healthy, so the app has no
 ports or passwords in its configuration. For configuration details, see

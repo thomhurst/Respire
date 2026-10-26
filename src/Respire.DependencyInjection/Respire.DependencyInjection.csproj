@@ -13,7 +13,7 @@
     <ProjectReference Include="..\Respire.Analyzers\Respire.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
     <PackageReference Include="Microsoft.Extensions.Options" />
-    <InternalsVisibleTo Include="Aspire.Respire" />
+    <InternalsVisibleTo Include="Respire.Aspire" />
     <InternalsVisibleTo Include="Respire.Caching.Tests" />
   </ItemGroup>
 

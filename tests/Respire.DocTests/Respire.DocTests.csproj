@@ -13,10 +13,10 @@
     <PackageReference Include="Microsoft.Orleans.Clustering.Redis" Version="10.2.2" />
     <PackageReference Include="Microsoft.Orleans.Persistence.Redis" Version="10.2.2" />
     <PackageReference Include="Microsoft.Orleans.Reminders.Redis" Version="10.2.2" />
-    <PackageReference Include="Aspire.Respire" Version="$(RespirePackageVersion)" />
-    <PackageReference Include="Aspire.Respire.DistributedCaching" Version="$(RespirePackageVersion)" />
-    <PackageReference Include="Aspire.Respire.HybridCaching" Version="$(RespirePackageVersion)" />
-    <PackageReference Include="Aspire.Respire.OutputCaching" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Aspire" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Aspire.DistributedCaching" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Aspire.HybridCaching" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Aspire.OutputCaching" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Compression.Lz4" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Compression.Zstd" Version="$(RespirePackageVersion)" />
@@ -66,7 +66,7 @@
          set from references so adding a package cannot silently omit its audit. -->
     <ItemGroup>
       <AssemblyMetadata Include="ExpectedRuntimeAssembly" Value="%(PackageReference.Identity)"
-                        Condition="'%(PackageReference.Identity)' == 'Respire' Or $([System.String]::Copy('%(PackageReference.Identity)').StartsWith('Respire.')) Or '%(PackageReference.Identity)' == 'Aspire.Respire' Or $([System.String]::Copy('%(PackageReference.Identity)').StartsWith('Aspire.Respire.'))" />
+                        Condition="'%(PackageReference.Identity)' == 'Respire' Or $([System.String]::Copy('%(PackageReference.Identity)').StartsWith('Respire.'))" />
     </ItemGroup>
   </Target>
 

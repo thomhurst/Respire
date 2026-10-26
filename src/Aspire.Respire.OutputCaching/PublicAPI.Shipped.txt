@@ -1,3 +1,0 @@
-#nullable enable
-Microsoft.Extensions.Hosting.AspireRespireOutputCachingExtensions
-static Microsoft.Extensions.Hosting.AspireRespireOutputCachingExtensions.AddOutputCache(this Aspire.Respire.AspireRespireClientBuilder! builder, System.Action<Respire.OutputCaching.RespireOutputCacheOptions!>? configure = null) -> Aspire.Respire.AspireRespireClientBuilder!

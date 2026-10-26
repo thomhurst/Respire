@@ -61,15 +61,15 @@ function Test-AspireTemplate {
     $respireReferences = @()
     foreach ($project in $projects) {
         [xml]$xml = Get-Content -LiteralPath $project.FullName -Raw
-        $respireReferences += @($xml.SelectNodes('/Project/ItemGroup/PackageReference[starts-with(@Include, "Respire") or starts-with(@Include, "Aspire.Respire")]'))
+        $respireReferences += @($xml.SelectNodes('/Project/ItemGroup/PackageReference[starts-with(@Include, "Respire")]'))
         foreach ($reference in $xml.SelectNodes('/Project/ItemGroup/ProjectReference')) {
             if (-not (Test-Path -LiteralPath (Join-Path $project.DirectoryName $reference.Include))) {
                 throw "Broken generated project reference: $($reference.Include)"
             }
         }
     }
-    if ($respireReferences.Count -ne 1 -or $respireReferences[0].Include -ne 'Aspire.Respire' -or $respireReferences[0].Version -cne $Version) {
-        throw 'Expected Aspire.Respire stamped with the packed version.'
+    if ($respireReferences.Count -ne 1 -or $respireReferences[0].Include -ne 'Respire.Aspire' -or $respireReferences[0].Version -cne $Version) {
+        throw 'Expected Respire.Aspire stamped with the packed version.'
     }
     foreach ($file in Get-ChildItem -LiteralPath $aspireApp -Recurse -File -Force) {
         if ($file.FullName -match '[\\/]\.template\.config[\\/]' -or

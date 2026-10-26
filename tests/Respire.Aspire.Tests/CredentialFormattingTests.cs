@@ -1,4 +1,4 @@
-using Aspire.Respire;
+using Respire.Aspire;
 using Azure.Core;
 using Respire.Azure;
 using Respire.Caching;
@@ -7,7 +7,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
-namespace Aspire.Respire.Tests;
+namespace Respire.Aspire.Tests;
 
 public class CredentialFormattingTests
 {

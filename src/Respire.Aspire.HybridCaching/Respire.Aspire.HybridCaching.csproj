@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <PackageId>Aspire.Respire.HybridCaching</PackageId>
+    <PackageId>Respire.Aspire.HybridCaching</PackageId>
     <Description>HybridCache on an existing default or keyed Aspire Respire client.</Description>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../Aspire.Respire.DistributedCaching/Aspire.Respire.DistributedCaching.csproj" />
+    <ProjectReference Include="../Respire.Aspire.DistributedCaching/Respire.Aspire.DistributedCaching.csproj" />
     <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" />
   </ItemGroup>
 </Project>

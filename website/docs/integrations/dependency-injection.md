@@ -159,7 +159,7 @@ For readiness endpoints, see [health checks](./health-checks).
 
 ## Default key namespaces with Aspire
 
-`Aspire.Respire` reads a key prefix from `Aspire:Respire:Options:KeyPrefix`, overridden per
+`Respire.Aspire` reads a key prefix from `Aspire:Respire:Options:KeyPrefix`, overridden per
 client by `Aspire:Respire:<connectionName>:Options:KeyPrefix`. `AddRespireClient` and
 `AddKeyedRespireClient` both apply it.
 

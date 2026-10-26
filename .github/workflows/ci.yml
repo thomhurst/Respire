@@ -339,10 +339,10 @@ jobs:
       - name: Build .NET 10 Aspire sample and test host
         run: |
           dotnet build samples/Respire.Samples.Aspire.AppHost -c Release -f net10.0 -warnaserror:ASPIRE010
-          dotnet build tests/Aspire.Respire.IntegrationTests -c Release -f net10.0 -warnaserror:ASPIRE010
+          dotnet build tests/Respire.Aspire.IntegrationTests -c Release -f net10.0 -warnaserror:ASPIRE010
       - name: Verify injected clients and HTTP caches
         run: >-
-          dotnet run --project tests/Aspire.Respire.IntegrationTests -c Release --no-build --
+          dotnet run --project tests/Respire.Aspire.IntegrationTests -c Release --no-build --
           --minimum-expected-tests 1 --report-trx --results-directory "$GITHUB_WORKSPACE/TestResults/aspire"
       - uses: actions/upload-artifact@v7
         if: always()
@@ -626,7 +626,7 @@ jobs:
           suite signalr TUNIT_DISABLE_HTML_REPORTER=true \
             tests Respire.SignalR.Tests Respire.SignalR.Tests --minimum-expected-tests "$(cat .github/signalr-minimum-tests.txt)"
           suite aspire-client TUNIT_DISABLE_HTML_REPORTER=true \
-            tests Aspire.Respire.Tests Aspire.Respire.Tests --minimum-expected-tests 25
+            tests Respire.Aspire.Tests Respire.Aspire.Tests --minimum-expected-tests 25
           suite health-checks tests Respire.HealthChecks.Tests Respire.HealthChecks.Tests
           suite resilience tests Respire.Resilience.Tests Respire.Resilience.Tests
           suite azure tests Respire.Azure.Tests Respire.Azure.Tests
@@ -869,7 +869,7 @@ jobs:
             tests Respire.FusionCache.Tests \
             --treenode-filter '/*/*/(DistributedLockerTests)|(DistributedLockerWireTests)|(DistributedLockerRegistrationTests)|(IndependentLeaseLifetimeTests)|(IndependentLeaseLifetimeWireTests)/*' \
             --minimum-expected-tests 28
-          suite aspire-client TUNIT_DISABLE_HTML_REPORTER=true tests Aspire.Respire.Tests --minimum-expected-tests 25
+          suite aspire-client TUNIT_DISABLE_HTML_REPORTER=true tests Respire.Aspire.Tests --minimum-expected-tests 25
           finish_suites
 
       - name: Upload net8.0 regression reports

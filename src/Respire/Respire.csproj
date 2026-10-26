@@ -48,7 +48,7 @@
     <!-- Tests inspect transport reuse. -->
     <InternalsVisibleTo Include="Respire.HealthChecks.Tests" />
     <!-- Reuses the existing TCP wire fixture for Aspire registration and health-check tests. -->
-    <InternalsVisibleTo Include="Aspire.Respire.Tests" />
+    <InternalsVisibleTo Include="Respire.Aspire.Tests" />
   </ItemGroup>
 
   <ItemGroup>

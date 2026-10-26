@@ -1,11 +1,11 @@
-# Aspire.Respire.HybridCaching
+# Respire.Aspire
 
-Use HybridCache with an Aspire-registered Respire client as its Redis L2 backend.
+Register Respire clients from Aspire connection strings, with health checks, logging, and OpenTelemetry.
 
 ## Install
 
 ```sh
-dotnet add package Aspire.Respire.HybridCaching
+dotnet add package Respire.Aspire
 dotnet add package Microsoft.Extensions.Hosting
 ```
 
@@ -16,7 +16,7 @@ using Microsoft.Extensions.Hosting;
 
 var builder = Host.CreateApplicationBuilder();
 builder.Configuration["ConnectionStrings:cache"] = "redis://localhost:6379";
-builder.AddRespireClientBuilder("cache").AddHybridCache();
+builder.AddRespireClient("cache");
 await builder.Build().RunAsync();
 ```
 

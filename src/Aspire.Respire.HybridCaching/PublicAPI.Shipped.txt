@@ -1,3 +1,0 @@
-#nullable enable
-Microsoft.Extensions.Hosting.AspireRespireHybridCachingExtensions
-static Microsoft.Extensions.Hosting.AspireRespireHybridCachingExtensions.AddHybridCache(this Aspire.Respire.AspireRespireClientBuilder! builder, System.Action<Respire.Caching.RespireCacheOptions!>? configureCache = null, System.Action<Microsoft.Extensions.Caching.Hybrid.HybridCacheOptions!>? configureHybrid = null) -> Aspire.Respire.AspireRespireClientBuilder!

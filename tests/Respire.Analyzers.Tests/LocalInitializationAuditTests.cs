@@ -175,12 +175,12 @@ public class LocalInitializationAuditTests
     }
 
     /// <summary>
-    /// Repository and generated package code lives under the <c>Respire</c> and <c>Aspire.Respire</c>
-    /// namespaces. Anything else in a package assembly was compiled from a NuGet content source,
+    /// Repository and generated package code lives under the <c>Respire</c>
+    /// namespace. Anything else in a package assembly was compiled from a NuGet content source,
     /// for example Polyfill's <c>Polyfills</c> and <c>System.*</c> types.
     /// </summary>
     private static bool IsImported(string method)
-        => !method.StartsWith("Respire.", StringComparison.Ordinal) && !method.StartsWith("Aspire.Respire.", StringComparison.Ordinal);
+        => !method.StartsWith("Respire.", StringComparison.Ordinal);
 
     [Test]
     public async Task GeneratorsEmitNoStackAllocations()

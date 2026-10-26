@@ -1,11 +1,11 @@
-# Aspire.Respire.DistributedCaching
+# Respire.Aspire.HybridCaching
 
-Use IDistributedCache with an Aspire-registered Respire client.
+Use HybridCache with an Aspire-registered Respire client as its Redis L2 backend.
 
 ## Install
 
 ```sh
-dotnet add package Aspire.Respire.DistributedCaching
+dotnet add package Respire.Aspire.HybridCaching
 dotnet add package Microsoft.Extensions.Hosting
 ```
 
@@ -16,7 +16,7 @@ using Microsoft.Extensions.Hosting;
 
 var builder = Host.CreateApplicationBuilder();
 builder.Configuration["ConnectionStrings:cache"] = "redis://localhost:6379";
-builder.AddRespireClientBuilder("cache").AddDistributedCache();
+builder.AddRespireClientBuilder("cache").AddHybridCache();
 await builder.Build().RunAsync();
 ```
 

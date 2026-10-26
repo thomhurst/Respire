@@ -1,3 +1,0 @@
-#nullable enable
-Microsoft.Extensions.Hosting.AspireRespireDistributedCachingExtensions
-static Microsoft.Extensions.Hosting.AspireRespireDistributedCachingExtensions.AddDistributedCache(this Aspire.Respire.AspireRespireClientBuilder! builder, System.Action<Respire.Caching.RespireCacheOptions!>? configure = null) -> Aspire.Respire.AspireRespireClientBuilder!

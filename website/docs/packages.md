@@ -77,8 +77,8 @@ pipeline tracks it in `RespireContentPackageProjects`.
 | [`Respire.DependencyInjection`](integrations/dependency-injection.md) | .NET dependency injection registration |
 | [`Respire.HealthChecks`](integrations/health-checks.md) | ASP.NET Core health checks using existing client connections |
 | [`Respire.Resilience`](guides/external-resilience.md) | [Polly v8 and Microsoft.Extensions.Resilience](guides/external-resilience.md) with one command retry owner |
-| [`Aspire.Respire`](integrations/aspire.md) | .NET Aspire client registration, configuration, health checks, and telemetry |
-| [`Aspire.Respire.DistributedCaching`](integrations/aspire.md), [`Aspire.Respire.HybridCaching`](integrations/aspire.md), [`Aspire.Respire.OutputCaching`](integrations/aspire.md) | `IDistributedCache`, `HybridCache`, and output caching on an Aspire-registered client |
+| [`Respire.Aspire`](integrations/aspire.md) | .NET Aspire client registration, configuration, health checks, and telemetry |
+| [`Respire.Aspire.DistributedCaching`](integrations/aspire.md), [`Respire.Aspire.HybridCaching`](integrations/aspire.md), [`Respire.Aspire.OutputCaching`](integrations/aspire.md) | `IDistributedCache`, `HybridCache`, and output caching on an Aspire-registered client |
 | [`Respire.Compression.Lz4`](guides/value-codecs.md) | Optional LZ4 value codec |
 | [`Respire.Serialization.MessagePack`](fundamentals/values-and-serialization.md#binary-serializer-packages) | MessagePack serializer and DI registration |
 | [`Respire.Serialization.Protobuf`](fundamentals/values-and-serialization.md#binary-serializer-packages) | protobuf-net serializer and DI registration |

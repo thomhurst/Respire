@@ -75,7 +75,7 @@ expiry by default. If Google returns the same cached token, Respire retries unti
 then sends `AUTH` on each live connection. No extra token cache or background worker is needed.
 The application owns the credential and provider. Use RESP3 for subscriptions that need live renewal.
 
-Existing `Respire.DependencyInjection` and `Aspire.Respire` configuration callbacks accept this provider
+Existing `Respire.DependencyInjection` and `Respire.Aspire` configuration callbacks accept this provider
 through `options.CredentialProvider`; neither AWS nor Azure has a separate cloud-specific Aspire integration.
 Reuse the same TLS options and provider when configuring those callbacks.
 
