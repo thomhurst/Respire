@@ -45,10 +45,6 @@ if (!string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOIN
 }
 
 await using var app = builder.Build();
-using (var startup = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
-{
-    await app.Services.GetRequiredService<IRespireClient>().PingAsync(startup.Token);
-}
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapHealthChecks("/health/ready");

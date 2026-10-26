@@ -46,8 +46,9 @@ sent to the dead-letter stream. Source and event streams retain entries; choose
 an application-specific trimming/retention policy before sustained use.
 
 Use `ConnectionStrings__Redis` to override `appsettings.json`, including when
-using an existing server instead of Docker. Redis must answer the startup PING
-within 30 seconds. `/health/ready` checks the established Redis connection; it
+using an existing server instead of Docker. The Redis client connects in the
+background at startup and retries until Redis answers; `/health/ready` reports
+unhealthy until then. It checks the established Redis connection; it
 does not assert that every job has finished. The queue name and Redis result key
 prefix follow the generated project name; instances with the same name share work.
 
