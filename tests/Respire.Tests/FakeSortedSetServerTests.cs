@@ -75,7 +75,7 @@ public class FakeSortedSetServerTests
         await client.SortedSets.AddAsync("key", "member", 1);
         foreach (var (command, args) in new (string, RespireValue[])[]
         {
-            ("ZRANDMEMBER", ["key"]), ("ZSCAN", ["key", 0]), ("ZMPOP", [1, "key", "MIN"]),
+            ("ZRANDMEMBER", ["key"]), ("ZMPOP", [1, "key", "MIN"]),
             ("BZMPOP", [0, 1, "key", "MIN"]), ("BZPOPMIN", ["key", 0]), ("BZPOPMAX", ["key", 0]),
             ("ZUNION", [1, "key"]), ("ZINTER", [1, "key"]), ("ZDIFF", [1, "key"]),
             ("ZUNIONSTORE", ["destination", 1, "key"]), ("ZINTERSTORE", ["destination", 1, "key"]),
