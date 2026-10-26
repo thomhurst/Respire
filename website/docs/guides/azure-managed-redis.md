@@ -49,6 +49,11 @@ without including the token in the error. A later request can retry resolution.
 To pin a Redis ACL user explicitly, use the existing overload:
 
 ```csharp
+using global::Azure.Identity;
+using Respire.Azure;
+
+var credential = new DefaultAzureCredential();
+var redisUserObjectId = "<managed-identity-or-service-principal-object-id>";
 var provider = new RespireAzureManagedRedisCredentialProvider(credential, redisUserObjectId);
 ```
 
