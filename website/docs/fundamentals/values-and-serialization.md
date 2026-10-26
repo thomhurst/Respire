@@ -123,6 +123,17 @@ This changes the stored format for `ReadOnlyMemory<byte>`, `Memory<byte>`, and `
 
 Input-only generic overloads sit beside raw `RespireValue` overloads on root writes, string writes (including conditional writes), hash and path-hash writes, array writes, sorted-set additions, and set membership checks. Exact overloads for `string`, `byte[]`, `ReadOnlyMemory<byte>`, `Memory<byte>`, and `ArraySegment<byte>` send the original payload without serializer-related trimming or NativeAOT warnings. The same rule applies to batches and transactions. Other objects still select the generic serializer overload, with its trimming and dynamic-code warnings.
 
+Array writes omit the exact `byte[]` overload so numeric collection expressions such as
+`redis.Arrays.SetAsync(key, 0UL, [1, 2])` continue to write two consecutive slots.
+To write one binary slot without serializer warnings, pass `(ReadOnlyMemory<byte>)bytes`.
+This also applies to queued `Arrays.Set` calls. An uncast `byte[]` keeps its existing
+generic binding and serializer warnings.
+
+A bare `null` payload is ambiguous between the text and binary overloads. Use an explicit
+type, such as `(string?)null` or `(byte[]?)null`, to select the intended overload; raw
+writes still reject null payloads. Existing compiled callers keep their original methods
+and payload encoding.
+
 Specify the type argument explicitly, such as `SetAsync<string>(key, text)`, to select the generic overload. Generic byte-memory and `char` writes keep their `RespireValue` encoding. Collection-member overloads also preserve raw non-finite floating-point values; generic string writes reject them. The payload overloads do not change numeric, `Guid`, date, or duration serialization.
 
 Typed reads, including `GetAndSetAsync<T>` and `GetAndSetConditionalAsync<T>`, retain their generic return types and serializer warnings. Use their `RespireValue` overloads for raw writes that return the previous string.

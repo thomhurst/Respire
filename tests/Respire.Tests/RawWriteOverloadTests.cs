@@ -17,7 +17,9 @@ public class RawWriteOverloadTests
     [Arguments("new ArraySegment<byte>(new byte[] { 0, 255 })")]
     public async Task InferredRawInputs_SelectUnannotatedProtocolOverloads(string value)
     {
-        var (compilation, calls) = CompileCalls(value);
+        // Arrays reserve collection expressions for consecutive slots. Wrap byte[] as memory for one binary slot.
+        var (compilation, calls) = CompileCalls(value,
+            arrayValue: value.StartsWith("new byte[]", StringComparison.Ordinal) ? "(ReadOnlyMemory<byte>)" + value : value);
         await Assert.That(compilation.GetDiagnostics().Where(item => item.Severity == DiagnosticSeverity.Error).ToArray()).IsEmpty();
         var semantic = compilation.GetSemanticModel(compilation.SyntaxTrees.Single());
         foreach (var call in calls)
@@ -48,9 +50,85 @@ public class RawWriteOverloadTests
         }
     }
 
-    private static (CSharpCompilation Compilation, InvocationExpressionSyntax[] Calls) CompileCalls(
-        string value, string typeArgument = "")
+    [Test]
+    [Arguments(LanguageVersion.CSharp12)]
+    [Arguments(LanguageVersion.Preview)]
+    public async Task NumericArrayCollectionExpressions_KeepMultipleSlots(LanguageVersion languageVersion)
     {
+        const string source = """
+            using System.Threading;
+            using Respire;
+            public class Writes
+            {
+                public void Run(IRespireClient client, IRespireCommandQueue queue, CancellationToken cancellationToken)
+                {
+                    client.Arrays.SetAsync("k", 0UL, [1, 2]);
+                    client.Arrays.SetAsync("k", 0UL, [1, 2], cancellationToken);
+                    queue.Arrays.Set("k", 0UL, [1, 2]);
+                }
+            }
+            """;
+        var (compilation, calls) = CompileSource(source, languageVersion);
+        await Assert.That(compilation.GetDiagnostics().Where(item => item.Severity == DiagnosticSeverity.Error).ToArray()).IsEmpty();
+        var semantic = compilation.GetSemanticModel(compilation.SyntaxTrees.Single());
+        foreach (var call in calls)
+        {
+            var method = (IMethodSymbol?)semantic.GetSymbolInfo(call).Symbol;
+            await Assert.That(method).IsNotNull();
+            var collectionType = method!.Parameters[2].Type;
+            var elementType = collectionType is IArrayTypeSymbol array
+                ? array.ElementType
+                : ((INamedTypeSymbol)collectionType).TypeArguments.Single();
+            await Assert.That(elementType.ToDisplayString()).IsEqualTo("Respire.RespireValue").Because(call.ToString());
+        }
+    }
+
+    [Test]
+    public async Task ArrayByteBuffers_KeepGenericBindingUnlessExplicitlyRaw()
+    {
+        const string source = """
+            using System;
+            using Respire;
+            public class Writes
+            {
+                public void Run(IRespireClient client, IRespireCommandQueue queue, byte[] bytes)
+                {
+                    client.Arrays.SetAsync("k", 0UL, bytes);
+                    queue.Arrays.Set("k", 0UL, bytes);
+                    client.Arrays.SetAsync("k", 0UL, (ReadOnlyMemory<byte>)bytes);
+                    queue.Arrays.Set("k", 0UL, (ReadOnlyMemory<byte>)bytes);
+                    client.Arrays.SetAsync("k", 0UL, (RespireValue)bytes, default);
+                    queue.Arrays.Set("k", 0UL, new RespireValue[] { bytes });
+                }
+            }
+            """;
+        var (compilation, calls) = CompileSource(source);
+        await Assert.That(compilation.GetDiagnostics().Where(item => item.Severity == DiagnosticSeverity.Error).ToArray()).IsEmpty();
+        var semantic = compilation.GetSemanticModel(compilation.SyntaxTrees.Single());
+        for (var index = 0; index < calls.Length; index++)
+        {
+            var method = (IMethodSymbol?)semantic.GetSymbolInfo(calls[index]).Symbol;
+            await Assert.That(method).IsNotNull();
+            await Assert.That(method!.IsGenericMethod).IsEqualTo(index < 2).Because(calls[index].ToString());
+            await Assert.That(method.GetAttributes().Count(attribute => attribute.AttributeClass?.Name
+                is "RequiresUnreferencedCodeAttribute" or "RequiresDynamicCodeAttribute")).IsEqualTo(index < 2 ? 2 : 0);
+        }
+    }
+
+    [Test]
+    public async Task NullLiteral_RequiresExplicitPayloadType()
+    {
+        var (compilation, calls) = CompileCalls("null");
+        var errors = compilation.GetDiagnostics().Where(item => item.Severity == DiagnosticSeverity.Error).ToArray();
+        await Assert.That(errors.Length).IsEqualTo(calls.Length);
+        foreach (var error in errors)
+            await Assert.That(error.Id).IsEqualTo("CS0121");
+    }
+
+    private static (CSharpCompilation Compilation, InvocationExpressionSyntax[] Calls) CompileCalls(
+        string value, string typeArgument = "", string? arrayValue = null)
+    {
+        arrayValue ??= value;
         var source = $$"""
             using System;
             using Respire;
@@ -65,7 +143,7 @@ public class RawWriteOverloadTests
                     client.Strings.SetConditionalAsync{{typeArgument}}("k", {{value}}, RespireValueCondition.EqualTo("old"));
                     client.Hashes.SetAsync{{typeArgument}}("k", "f", {{value}});
                     client.Hashes.SetAsync{{typeArgument}}("k", "f", {{value}}, RespireSetWhen.NotExists);
-                    client.Arrays.SetAsync{{typeArgument}}("k", 0UL, {{value}});
+                    client.Arrays.SetAsync{{typeArgument}}("k", 0UL, {{arrayValue}});
                     client.PathHashes.SetAsync{{typeArgument}}("k", "p", "f", {{value}});
                     client.SortedSets.AddAsync{{typeArgument}}("k", {{value}}, 1D);
                     client.SortedSets.AddAsync{{typeArgument}}("k", default(RespireSortedSetAddOptions), {{value}}, 1D);
@@ -77,7 +155,7 @@ public class RawWriteOverloadTests
                     queue.Strings.SetConditional{{typeArgument}}("k", {{value}}, RespireValueCondition.EqualTo("old"));
                     queue.Hashes.Set{{typeArgument}}("k", "f", {{value}});
                     queue.Hashes.Set{{typeArgument}}("k", "f", {{value}}, RespireSetWhen.NotExists);
-                    queue.Arrays.Set{{typeArgument}}("k", 0UL, {{value}});
+                    queue.Arrays.Set{{typeArgument}}("k", 0UL, {{arrayValue}});
                     queue.PathHashes.Set{{typeArgument}}("k", "p", "f", {{value}});
                     queue.SortedSets.Add{{typeArgument}}("k", {{value}}, 1D);
                     queue.SortedSets.Add{{typeArgument}}("k", default(RespireSortedSetAddOptions), {{value}}, 1D);
@@ -85,7 +163,13 @@ public class RawWriteOverloadTests
                 }
             }
             """;
-        var tree = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.CSharp12));
+        return CompileSource(source);
+    }
+
+    private static (CSharpCompilation Compilation, InvocationExpressionSyntax[] Calls) CompileSource(
+        string source, LanguageVersion languageVersion = LanguageVersion.CSharp12)
+    {
+        var tree = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(languageVersion));
         var compilation = CSharpCompilation.Create("RawWrites", [tree], References,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         // Inspect only command calls, not constructors or calls used to create arguments.

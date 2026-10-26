@@ -138,7 +138,8 @@ public partial interface IRespireStringCommands
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
     ValueTask<bool> SetConditionalAsync(
         RespireKey key, ArraySegment<byte> value, RespireValueCondition condition, RespireExpiry expiry = default,
-        CancellationToken cancellationToken = default);}
+        CancellationToken cancellationToken = default);
+}
 
 public partial interface IRespireHashCommands
 {
@@ -192,17 +193,14 @@ public partial interface IRespireHashCommands
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
     ValueTask<bool> SetAsync(
         RespireKey key, string field, ArraySegment<byte> value, RespireSetWhen when,
-        CancellationToken cancellationToken = default);}
+        CancellationToken cancellationToken = default);
+}
 
 public partial interface IRespireArrayCommands
 {
     /// <summary>Sets a raw payload. Redis: ARSET.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
     ValueTask<ulong> SetAsync(RespireKey key, ulong index, string? value, CancellationToken cancellationToken = default);
-
-    /// <summary>Sets a raw payload. Redis: ARSET.</summary>
-    /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
-    ValueTask<ulong> SetAsync(RespireKey key, ulong index, byte[]? value, CancellationToken cancellationToken = default);
 
     /// <summary>Sets a raw payload. Redis: ARSET.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
@@ -216,7 +214,8 @@ public partial interface IRespireArrayCommands
     /// <summary>Sets a raw payload. Redis: ARSET.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
     ValueTask<ulong> SetAsync(
-        RespireKey key, ulong index, ArraySegment<byte> value, CancellationToken cancellationToken = default);}
+        RespireKey key, ulong index, ArraySegment<byte> value, CancellationToken cancellationToken = default);
+}
 
 public partial interface IRespireSetCommands
 {
@@ -238,7 +237,8 @@ public partial interface IRespireSetCommands
 
     /// <summary>Tests a raw payload for membership. Redis: SISMEMBER.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
-    ValueTask<bool> ContainsAsync(RespireKey key, ArraySegment<byte> member, CancellationToken cancellationToken = default);}
+    ValueTask<bool> ContainsAsync(RespireKey key, ArraySegment<byte> member, CancellationToken cancellationToken = default);
+}
 
 public partial interface IRespireSortedSetCommands
 {
@@ -262,7 +262,8 @@ public partial interface IRespireSortedSetCommands
     /// <summary>Adds a raw payload with a score. Redis: ZADD.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
     ValueTask<bool> AddAsync(
-        RespireKey key, ArraySegment<byte> member, double score, CancellationToken cancellationToken = default);}
+        RespireKey key, ArraySegment<byte> member, double score, CancellationToken cancellationToken = default);
+}
 
 public partial interface IRespireCommandQueue
 {
@@ -292,7 +293,8 @@ public partial interface IRespireCommandQueue
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
     RespirePending<bool> Set(
         RespireKey key, ArraySegment<byte> value, RespireExpiry expiry = default,
-        RespireSetWhen when = RespireSetWhen.Always);}
+        RespireSetWhen when = RespireSetWhen.Always);
+}
 
 public sealed partial class RespireBatch
 {
@@ -419,17 +421,14 @@ public partial interface IRespireBatchStringCommands
     /// <summary>Sets a raw payload only when the comparison succeeds. Redis: SET.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
     RespirePending<bool> SetConditional(
-        RespireKey key, ArraySegment<byte> value, RespireValueCondition condition, RespireExpiry expiry = default);}
+        RespireKey key, ArraySegment<byte> value, RespireValueCondition condition, RespireExpiry expiry = default);
+}
 
 public partial interface IRespireBatchArrayCommands
 {
     /// <summary>Sets a raw payload. Redis: ARSET.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
     RespirePending<ulong> Set(RespireKey key, ulong index, string? value);
-
-    /// <summary>Sets a raw payload. Redis: ARSET.</summary>
-    /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
-    RespirePending<ulong> Set(RespireKey key, ulong index, byte[]? value);
 
     /// <summary>Sets a raw payload. Redis: ARSET.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
@@ -441,7 +440,8 @@ public partial interface IRespireBatchArrayCommands
 
     /// <summary>Sets a raw payload. Redis: ARSET.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
-    RespirePending<ulong> Set(RespireKey key, ulong index, ArraySegment<byte> value);}
+    RespirePending<ulong> Set(RespireKey key, ulong index, ArraySegment<byte> value);
+}
 
 public partial interface IRespirePathHashCommands
 {
@@ -473,7 +473,8 @@ public partial interface IRespirePathHashCommands
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
     ValueTask<bool> SetAsync(
         RespireKey key, RespireKey path, RespireKey field, ArraySegment<byte> value,
-        RespireSetWhen when = RespireSetWhen.Always, CancellationToken cancellationToken = default);}
+        RespireSetWhen when = RespireSetWhen.Always, CancellationToken cancellationToken = default);
+}
 
 public partial interface IRespireSortedSetCommands
 {
@@ -505,7 +506,8 @@ public partial interface IRespireSortedSetCommands
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
     ValueTask<bool> AddAsync(
         RespireKey key, RespireSortedSetAddOptions options, ArraySegment<byte> member, double score,
-        CancellationToken cancellationToken = default);}
+        CancellationToken cancellationToken = default);
+}
 
 public partial interface IRespireBatchHashCommands
 {
@@ -527,7 +529,8 @@ public partial interface IRespireBatchHashCommands
 
     /// <summary>Uses a raw text or binary payload. Redis: HSET.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
-    RespirePending<bool> Set(RespireKey key, string field, ArraySegment<byte> value);}
+    RespirePending<bool> Set(RespireKey key, string field, ArraySegment<byte> value);
+}
 
 public partial interface IRespireBatchHashCommands
 {
@@ -549,7 +552,8 @@ public partial interface IRespireBatchHashCommands
 
     /// <summary>Uses a raw text or binary payload. Redis: HSET/HSETNX/HSETEX.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
-    RespirePending<bool> Set(RespireKey key, string field, ArraySegment<byte> value, RespireSetWhen when);}
+    RespirePending<bool> Set(RespireKey key, string field, ArraySegment<byte> value, RespireSetWhen when);
+}
 
 public partial interface IRespireBatchPathHashCommands
 {
@@ -579,7 +583,8 @@ public partial interface IRespireBatchPathHashCommands
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
     RespirePending<bool> Set(
         RespireKey key, RespireKey path, RespireKey field, ArraySegment<byte> value,
-        RespireSetWhen when = RespireSetWhen.Always);}
+        RespireSetWhen when = RespireSetWhen.Always);
+}
 
 public partial interface IRespireBatchSetCommands
 {
@@ -601,7 +606,8 @@ public partial interface IRespireBatchSetCommands
 
     /// <summary>Uses a raw text or binary payload. Redis: SISMEMBER.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
-    RespirePending<bool> Contains(RespireKey key, ArraySegment<byte> member);}
+    RespirePending<bool> Contains(RespireKey key, ArraySegment<byte> member);
+}
 
 public partial interface IRespireBatchSortedSetCommands
 {
@@ -623,7 +629,8 @@ public partial interface IRespireBatchSortedSetCommands
 
     /// <summary>Uses a raw text or binary payload. Redis: ZADD.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
-    RespirePending<bool> Add(RespireKey key, ArraySegment<byte> member, double score);}
+    RespirePending<bool> Add(RespireKey key, ArraySegment<byte> member, double score);
+}
 
 public partial interface IRespireBatchSortedSetCommands
 {
@@ -645,4 +652,5 @@ public partial interface IRespireBatchSortedSetCommands
 
     /// <summary>Uses a raw text or binary payload. Redis: ZADD.</summary>
     /// <remarks>Binary buffers must remain unchanged until completion; for queued writes, until execution completes.</remarks>
-    RespirePending<bool> Add(RespireKey key, RespireSortedSetAddOptions options, ArraySegment<byte> member, double score);}
+    RespirePending<bool> Add(RespireKey key, RespireSortedSetAddOptions options, ArraySegment<byte> member, double score);
+}

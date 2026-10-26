@@ -13,6 +13,43 @@ public class ArrayFacetTests
     [Arguments(3, false)]
     [Arguments(2, true)]
     [Arguments(3, true)]
+    public async Task NumericCollectionExpressionsPreserveConsecutiveSlots(int protocol, bool transactional)
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
+        await Assert.That(await client.Arrays.SetAsync("numbers", 0UL, [9, 9, 9])).IsEqualTo(3UL);
+        await Assert.That(await client.Arrays.SetAsync("numbers", 0UL, [1, 2])).IsEqualTo(0UL);
+        await Assert.That(await client.Arrays.GetStringAsync("numbers", 1)).IsEqualTo("2");
+        await Assert.That(await client.Arrays.SetAsync("numbers", 0UL, [3, 4], CancellationToken.None)).IsEqualTo(0UL);
+        await Assert.That(await client.Arrays.GetStringAsync("numbers", 1)).IsEqualTo("4");
+
+        using var batch = transactional ? null : client.CreateBatch();
+        await using var transaction = transactional ? client.CreateTransaction() : null;
+        var queue = (IRespireCommandQueue?)transaction ?? batch!;
+        var set = queue.Arrays.Set("numbers", 0UL, [5, 6]);
+        var second = queue.Arrays.GetString("numbers", 1UL);
+        var third = queue.Arrays.GetString("numbers", 2UL);
+        byte[] bytes = [65, 66];
+        var binary = queue.Arrays.Set("binary", 0UL, (ReadOnlyMemory<byte>)bytes);
+        var binaryRead = queue.Arrays.GetString("binary", 0UL);
+        var binaryCount = queue.Arrays.Count("binary");
+        if (transaction is not null) await transaction.CommitAsync();
+        else await batch!.ExecuteAsync();
+        await Assert.That(set.Result).IsEqualTo(0UL);
+        await Assert.That(second.Result).IsEqualTo("6");
+        await Assert.That(third.Result).IsEqualTo("9");
+        await Assert.That(binary.Result).IsEqualTo(1UL);
+        await Assert.That(binaryRead.Result).IsEqualTo("AB");
+        await Assert.That(binaryCount.Result).IsEqualTo(1UL);
+    }
+
+    [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
     public async Task EscapedGlobClassCharactersStayLiteral(int protocol, bool ignoreCase)
     {
         await using var server = new RespireFakeServer();

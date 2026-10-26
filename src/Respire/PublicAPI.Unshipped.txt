@@ -1222,12 +1222,10 @@ static Respire.RespirePathHashWrite.operator ==(Respire.RespirePathHashWrite lef
 Respire.IRespireArrayCommands.SetAsync(Respire.RespireKey key, ulong index, System.ArraySegment<byte> value, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<ulong>
 Respire.IRespireArrayCommands.SetAsync(Respire.RespireKey key, ulong index, System.Memory<byte> value, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<ulong>
 Respire.IRespireArrayCommands.SetAsync(Respire.RespireKey key, ulong index, System.ReadOnlyMemory<byte> value, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<ulong>
-Respire.IRespireArrayCommands.SetAsync(Respire.RespireKey key, ulong index, byte[]? value, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<ulong>
 Respire.IRespireArrayCommands.SetAsync(Respire.RespireKey key, ulong index, string? value, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<ulong>
 Respire.IRespireBatchArrayCommands.Set(Respire.RespireKey key, ulong index, System.ArraySegment<byte> value) -> Respire.RespirePending<ulong>!
 Respire.IRespireBatchArrayCommands.Set(Respire.RespireKey key, ulong index, System.Memory<byte> value) -> Respire.RespirePending<ulong>!
 Respire.IRespireBatchArrayCommands.Set(Respire.RespireKey key, ulong index, System.ReadOnlyMemory<byte> value) -> Respire.RespirePending<ulong>!
-Respire.IRespireBatchArrayCommands.Set(Respire.RespireKey key, ulong index, byte[]? value) -> Respire.RespirePending<ulong>!
 Respire.IRespireBatchArrayCommands.Set(Respire.RespireKey key, ulong index, string? value) -> Respire.RespirePending<ulong>!
 Respire.IRespireBatchHashCommands.Set(Respire.RespireKey key, string! field, System.ArraySegment<byte> value) -> Respire.RespirePending<bool>!
 Respire.IRespireBatchHashCommands.Set(Respire.RespireKey key, string! field, System.ArraySegment<byte> value, Respire.RespireSetWhen when) -> Respire.RespirePending<bool>!

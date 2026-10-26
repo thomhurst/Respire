@@ -50,7 +50,8 @@ internal sealed partial class StringCommands
     public ValueTask<bool> SetConditionalAsync(
         RespireKey key, ArraySegment<byte> value, RespireValueCondition condition, RespireExpiry expiry = default,
         CancellationToken cancellationToken = default)
-        => SetConditionalAsync(key, (RespireValue)value, condition, expiry, cancellationToken);}
+        => SetConditionalAsync(key, (RespireValue)value, condition, expiry, cancellationToken);
+}
 
 internal sealed partial class HashCommands
 {
@@ -94,14 +95,12 @@ internal sealed partial class HashCommands
     public ValueTask<bool> SetAsync(
         RespireKey key, string field, ArraySegment<byte> value, RespireSetWhen when,
         CancellationToken cancellationToken = default)
-        => SetAsync(key, field, (RespireValue)value, when, cancellationToken);}
+        => SetAsync(key, field, (RespireValue)value, when, cancellationToken);
+}
 
 internal sealed partial class ArrayCommands
 {
     public ValueTask<ulong> SetAsync(RespireKey key, ulong index, string? value, CancellationToken cancellationToken = default)
-        => SetAsync(key, index, (RespireValue)value, cancellationToken);
-
-    public ValueTask<ulong> SetAsync(RespireKey key, ulong index, byte[]? value, CancellationToken cancellationToken = default)
         => SetAsync(key, index, (RespireValue)value, cancellationToken);
 
     public ValueTask<ulong> SetAsync(
@@ -113,7 +112,8 @@ internal sealed partial class ArrayCommands
 
     public ValueTask<ulong> SetAsync(
         RespireKey key, ulong index, ArraySegment<byte> value, CancellationToken cancellationToken = default)
-        => SetAsync(key, index, (RespireValue)value, cancellationToken);}
+        => SetAsync(key, index, (RespireValue)value, cancellationToken);
+}
 
 internal sealed partial class SetCommands
 {
@@ -130,7 +130,8 @@ internal sealed partial class SetCommands
         => ContainsAsync(key, (RespireValue)member, cancellationToken);
 
     public ValueTask<bool> ContainsAsync(RespireKey key, ArraySegment<byte> member, CancellationToken cancellationToken = default)
-        => ContainsAsync(key, (RespireValue)member, cancellationToken);}
+        => ContainsAsync(key, (RespireValue)member, cancellationToken);
+}
 
 internal sealed partial class SortedSetCommands
 {
@@ -149,7 +150,8 @@ internal sealed partial class SortedSetCommands
 
     public ValueTask<bool> AddAsync(
         RespireKey key, ArraySegment<byte> member, double score, CancellationToken cancellationToken = default)
-        => AddAsync(key, (RespireValue)member, score, cancellationToken);}
+        => AddAsync(key, (RespireValue)member, score, cancellationToken);
+}
 
 internal sealed partial class BatchStringCommands
 {
@@ -194,14 +196,12 @@ internal sealed partial class BatchStringCommands
 
     public RespirePending<bool> SetConditional(
         RespireKey key, ArraySegment<byte> value, RespireValueCondition condition, RespireExpiry expiry = default)
-        => SetConditional(key, (RespireValue)value, condition, expiry);}
+        => SetConditional(key, (RespireValue)value, condition, expiry);
+}
 
 internal sealed partial class BatchArrayCommands
 {
     public RespirePending<ulong> Set(RespireKey key, ulong index, string? value)
-        => Set(key, index, (ReadOnlySpan<RespireValue>)[(RespireValue)value]);
-
-    public RespirePending<ulong> Set(RespireKey key, ulong index, byte[]? value)
         => Set(key, index, (ReadOnlySpan<RespireValue>)[(RespireValue)value]);
 
     public RespirePending<ulong> Set(RespireKey key, ulong index, ReadOnlyMemory<byte> value)
@@ -211,7 +211,8 @@ internal sealed partial class BatchArrayCommands
         => Set(key, index, (ReadOnlySpan<RespireValue>)[(RespireValue)value]);
 
     public RespirePending<ulong> Set(RespireKey key, ulong index, ArraySegment<byte> value)
-        => Set(key, index, (ReadOnlySpan<RespireValue>)[(RespireValue)value]);}
+        => Set(key, index, (ReadOnlySpan<RespireValue>)[(RespireValue)value]);
+}
 
 internal sealed partial class PathHashCommands
 {
@@ -238,7 +239,8 @@ internal sealed partial class PathHashCommands
     public ValueTask<bool> SetAsync(
         RespireKey key, RespireKey path, RespireKey field, ArraySegment<byte> value,
         RespireSetWhen when = RespireSetWhen.Always, CancellationToken cancellationToken = default)
-        => SetAsync(key, path, field, (RespireValue)value, when, cancellationToken);}
+        => SetAsync(key, path, field, (RespireValue)value, when, cancellationToken);
+}
 
 internal sealed partial class SortedSetCommands
 {
@@ -265,7 +267,8 @@ internal sealed partial class SortedSetCommands
     public ValueTask<bool> AddAsync(
         RespireKey key, RespireSortedSetAddOptions options, ArraySegment<byte> member, double score,
         CancellationToken cancellationToken = default)
-        => AddAsync(key, options, (RespireValue)member, score, cancellationToken);}
+        => AddAsync(key, options, (RespireValue)member, score, cancellationToken);
+}
 
 internal sealed partial class BatchHashCommands
 {
@@ -282,7 +285,8 @@ internal sealed partial class BatchHashCommands
         => Set(key, field, (RespireValue)value);
 
     public RespirePending<bool> Set(RespireKey key, string field, ArraySegment<byte> value)
-        => Set(key, field, (RespireValue)value);}
+        => Set(key, field, (RespireValue)value);
+}
 
 internal sealed partial class BatchHashCommands
 {
@@ -299,7 +303,8 @@ internal sealed partial class BatchHashCommands
         => Set(key, field, (RespireValue)value, when);
 
     public RespirePending<bool> Set(RespireKey key, string field, ArraySegment<byte> value, RespireSetWhen when)
-        => Set(key, field, (RespireValue)value, when);}
+        => Set(key, field, (RespireValue)value, when);
+}
 
 internal sealed partial class BatchPathHashCommands
 {
@@ -324,7 +329,8 @@ internal sealed partial class BatchPathHashCommands
     public RespirePending<bool> Set(
         RespireKey key, RespireKey path, RespireKey field, ArraySegment<byte> value,
         RespireSetWhen when = RespireSetWhen.Always)
-        => Set(key, path, field, (RespireValue)value, when);}
+        => Set(key, path, field, (RespireValue)value, when);
+}
 
 internal sealed partial class BatchSetCommands
 {
@@ -341,7 +347,8 @@ internal sealed partial class BatchSetCommands
         => Contains(key, (RespireValue)member);
 
     public RespirePending<bool> Contains(RespireKey key, ArraySegment<byte> member)
-        => Contains(key, (RespireValue)member);}
+        => Contains(key, (RespireValue)member);
+}
 
 internal sealed partial class BatchSortedSetCommands
 {
@@ -358,7 +365,8 @@ internal sealed partial class BatchSortedSetCommands
         => Add(key, (RespireValue)member, score);
 
     public RespirePending<bool> Add(RespireKey key, ArraySegment<byte> member, double score)
-        => Add(key, (RespireValue)member, score);}
+        => Add(key, (RespireValue)member, score);
+}
 
 internal sealed partial class BatchSortedSetCommands
 {
@@ -375,4 +383,5 @@ internal sealed partial class BatchSortedSetCommands
         => Add(key, options, (RespireValue)member, score);
 
     public RespirePending<bool> Add(RespireKey key, RespireSortedSetAddOptions options, ArraySegment<byte> member, double score)
-        => Add(key, options, (RespireValue)member, score);}
+        => Add(key, options, (RespireValue)member, score);
+}
