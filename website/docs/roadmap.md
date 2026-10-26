@@ -71,6 +71,10 @@ are described in the guides below; release preparation is summarized separately.
 
 ### Connections, routing, and recovery
 
+- [Adaptive command continuations](fundamentals/connections.md#command-continuations) keep
+  fast continuations inline and move CPU-heavy ones to the thread pool, with a configurable
+  stall threshold for blocking waits.
+
 - Opt-in [Linux Multipath TCP](fundamentals/connections.md#multipath-tcp-on-linux), with logged local TCP fallback.
 
 - A [timeouts and thread-pool starvation guide](guides/timeouts.md) explains timeout

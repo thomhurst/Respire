@@ -107,6 +107,12 @@ The mutable builder is generated from `RespireOptions`: every public option is a
 with the same defaults, including replica routing, retry policies, circuit breakers, maintenance
 notifications, and stream producer identity.
 
+Command continuations use adaptive dispatch by default, as with direct clients: fast
+continuations run inline and slow ones move to the thread pool. Set
+`options.ContinuationDispatch` to `ThreadPool` or `Inline` to fix the behavior. See
+[command continuations](../fundamentals/connections.md#command-continuations) for dispatch
+costs, ordering, and `StalledDeliveryThreshold`.
+
 ## Bind appsettings.json and validate at startup
 
 Pass a configuration section to register both a client and `IOptions<RespireOptions>`:

@@ -104,6 +104,15 @@ internal abstract partial class PendingResponse
         mutationReference.Release();
     }
 
+    /// <summary>
+    /// Queues this completion's caller continuation to the thread pool instead of running it
+    /// inline. The scheduler calls this before completing a reserved reply when inline
+    /// continuations have recently been slow enough to hold up replies queued behind them.
+    /// </summary>
+    internal virtual void DispatchContinuationAsynchronously()
+    {
+    }
+
     internal virtual bool CompleteReservedResult(in RespValue result)
     {
         SetResultCore(in result);
@@ -161,7 +170,7 @@ internal abstract partial class PendingResponse
     }
 
     /// <summary>
-    /// Cores run continuations inline (see <see cref="CompletionScheduler"/>), so failure
+    /// Cores can run continuations inline (see <see cref="CompletionScheduler"/>), so failure
     /// paths — cancellation callbacks on arbitrary user threads, connection teardown — must
     /// hop to the pool themselves rather than run caller continuations where they stand.
     /// </summary>
@@ -355,9 +364,10 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
     internal static MultiReplyPendingResponseSource Rent(
         int replyCount,
         int firstQueueReply,
-        string commandName)
+        string commandName, bool runContinuationsAsynchronously = false)
     {
         var source = Pool.Rent();
+        source._core.RunContinuationsAsynchronously = runContinuationsAsynchronously;
 
         source._replyCount = replyCount;
         source._firstQueueReply = firstQueueReply;
@@ -417,6 +427,8 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
         // This source owns intermediate disposal and final cancellation races.
         return true;
     }
+
+    internal override void DispatchContinuationAsynchronously() => _core.RunContinuationsAsynchronously = true;
 
     protected override void SetResultCore(in RespValue result) => _core.SetResult(result);
 
@@ -501,7 +513,11 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
     {
     }
 
-    private PendingResponseSource(PendingResponsePool pool) => _pool = pool;
+    private PendingResponseSource(PendingResponsePool pool)
+    {
+        _pool = pool;
+        _core.RunContinuationsAsynchronously = pool.RunContinuationsAsynchronously;
+    }
 
     public ValueTask<RespValue> Task => new(this, _core.Version);
 
@@ -515,6 +531,8 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
         _observeErrors = observeErrors;
         _observation = observation;
     }
+
+    internal override void DispatchContinuationAsynchronously() => _core.RunContinuationsAsynchronously = true;
 
     protected override void SetResultCore(in RespValue result) => _core.SetResult(result);
 
@@ -573,6 +591,7 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
         _observation = default;
         _commandName = null;
         _core.Reset();
+        _core.RunContinuationsAsynchronously = _pool?.RunContinuationsAsynchronously ?? false;
     }
 
     internal readonly struct PoolPolicy(PendingResponsePool pool) : IPooledObjectPolicy<PendingResponseSource>
@@ -621,9 +640,10 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         bool transferOwnership,
         string? commandName, int errorAttempts = 0, bool observeErrors = true,
         RespireTelemetry.DurationObservation duration = default,
-        ErrorObservation.FinalOwner observation = default)
+        ErrorObservation.FinalOwner observation = default, bool runContinuationsAsynchronously = false)
     {
         var source = Pool.Rent();
+        source._core.RunContinuationsAsynchronously = runContinuationsAsynchronously;
 
         source._state = state;
         source._converter = converter;
@@ -636,6 +656,8 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         source.ErrorAttempts = errorAttempts;
         return source;
     }
+
+    internal override void DispatchContinuationAsynchronously() => _core.RunContinuationsAsynchronously = true;
 
     protected override void SetResultCore(in RespValue result)
     {
@@ -769,9 +791,11 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
     internal override string? CommandName => _commandName;
 
     public static StringPendingResponseSource Rent(string? commandName, int errorAttempts = 0, bool observeErrors = true,
-        RespireTelemetry.DurationObservation duration = default, ErrorObservation.FinalOwner observation = default)
+        RespireTelemetry.DurationObservation duration = default, ErrorObservation.FinalOwner observation = default,
+        bool runContinuationsAsynchronously = false)
     {
         var source = Pool.Rent();
+        source._core.RunContinuationsAsynchronously = runContinuationsAsynchronously;
 
         source._commandName = commandName;
         source._observeErrors = observeErrors;
@@ -792,6 +816,8 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         _directResult = result;
         _hasDirectResult = true;
     }
+
+    internal override void DispatchContinuationAsynchronously() => _core.RunContinuationsAsynchronously = true;
 
     protected override void SetResultCore(in RespValue result)
     {
@@ -900,8 +926,13 @@ internal sealed class PendingResponsePool
 {
     private readonly ObjectPool<PendingResponseSource, PendingResponseSource.PoolPolicy> _pool;
 
-    public PendingResponsePool(int maxPoolSize)
-        => _pool = new(new PendingResponseSource.PoolPolicy(this), maxPoolSize);
+    internal bool RunContinuationsAsynchronously { get; }
+
+    public PendingResponsePool(int maxPoolSize, bool runContinuationsAsynchronously = false)
+    {
+        RunContinuationsAsynchronously = runContinuationsAsynchronously;
+        _pool = new(new PendingResponseSource.PoolPolicy(this), maxPoolSize);
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public PendingResponseSource Rent(bool throwOnError = false, string? commandName = null,

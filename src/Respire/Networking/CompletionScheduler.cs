@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Respire.Internal;
 using Respire.Protocol;
@@ -10,7 +11,9 @@ namespace Respire.Networking;
 /// carries many replies; waking a pool thread for each burns far more CPU in thread-pool
 /// semaphore churn than the completions themselves cost. Batches also execute serially in
 /// wire order, which multi-reply sources (transactions) require now that
-/// <see cref="PendingResponse"/> cores no longer force asynchronous continuations.
+/// <see cref="PendingResponse"/> cores use inline continuations by default. Pool-dispatched
+/// continuations (<see cref="AdaptiveDispatch"/> or thread-pool mode) keep source completion
+/// serial while isolating caller code.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -79,6 +82,21 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
 
     internal readonly record struct SpareStorageSnapshot(
         int[] BufferLengths, int EntrySize, bool EntriesCleared, int TrackedBufferCount, int TrackedEntryCount);
+
+    /// <summary>
+    /// When set, continuations that keep running long enough to hold up the replies queued
+    /// behind them move to the thread pool for a while (see <see cref="AdaptiveDispatch"/>).
+    /// Set once by the owning connection before any reply is delivered.
+    /// </summary>
+    internal bool AdaptiveDispatchEnabled { get; set; }
+
+    /// <summary>How long a tripped dispatch window stays open. Tests lengthen it so runner pauses
+    /// cannot close the window mid-batch.</summary>
+    internal long AdaptiveDispatchWindowTicks { get; init; } = AdaptiveDispatch.WindowTicks;
+
+    // Deliberately unsynchronized: it is only a heuristic. A racing handoff runner may also update
+    // it, and on 32-bit runtimes a torn window end can occur; either way only the window shifts.
+    private AdaptiveDispatch _adaptive;
 
     private bool _running;
     private bool _executing;
@@ -287,11 +305,30 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                 ref var entry = ref items[i];
                 var source = entry.Source;
                 var value = entry.Value;
+                long started = 0;
+                if (AdaptiveDispatchEnabled && (i + 1 < batch.Count || Volatile.Read(ref _pendingCount) > 0))
+                {
+                    // Other replies wait behind this one: dispatch it while the window is open,
+                    // otherwise time its inline continuation.
+                    started = Stopwatch.GetTimestamp();
+                    if (_adaptive.ShouldDispatch(started))
+                    {
+                        source.DispatchContinuationAsynchronously();
+                        started = 0;
+                    }
+                }
+
                 if (!source.CompleteReservedResult(in value))
                 {
                     // Lost to cancellation or connection failure; the reply still had to be
                     // consumed from the wire.
                     value.Dispose();
+                }
+
+                if (started != 0)
+                {
+                    var finished = Stopwatch.GetTimestamp();
+                    _adaptive.Record(finished - started, finished, AdaptiveDispatchWindowTicks);
                 }
 
                 source.ReleaseRef();
@@ -616,6 +653,49 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         {
             _awaiter.UnsafeOnCompleted(continuation);
             scheduler.Execute();
+        }
+    }
+
+    /// <summary>
+    /// Decides when inline continuations cost other callers more than a thread-pool hop.
+    /// Inline delivery runs every caller's continuation on one runner, so callers that do CPU
+    /// work after an await serialize on it. Each continuation that had replies waiting behind
+    /// it is timed: a slow one raises a score and a fast one lowers it. Reaching the trip score
+    /// opens a window in which waiting replies dispatch their continuations to the pool.
+    /// </summary>
+    /// <remarks>
+    /// A score rather than a single sample keeps an isolated preemption or GC pause from
+    /// moving a fast workload to the pool, which costs it about a third of its throughput.
+    /// After a window the score stays near the trip point, so a still-slow workload re-trips
+    /// after a couple of inline probes. A reply with nothing behind it always runs inline.
+    /// </remarks>
+    internal struct AdaptiveDispatch
+    {
+        /// <summary>Continuations slower than this delay the replies behind them measurably.</summary>
+        internal static readonly long SlowTicks = Stopwatch.Frequency * 4 / 1_000_000;
+
+        /// <summary>How long dispatch stays on the pool once tripped, before probing inline again.</summary>
+        internal static readonly long WindowTicks = Stopwatch.Frequency / 10;
+
+        internal const int TripScore = 4;
+
+        private int _score;
+        private long _dispatchUntil;
+
+        internal readonly bool ShouldDispatch(long now) => now < _dispatchUntil;
+
+        internal void Record(long elapsedTicks, long now, long windowTicks)
+        {
+            if (elapsedTicks > SlowTicks)
+            {
+                if (++_score < TripScore) return;
+                _dispatchUntil = now + windowTicks;
+                _score = TripScore - 2;
+            }
+            else if (_score > 0)
+            {
+                _score--;
+            }
         }
     }
 

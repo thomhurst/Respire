@@ -496,6 +496,28 @@ public sealed record RespireOptions
     /// </summary>
     public TimeSpan? CommandTimeout { get; init; } = DefaultCommandTimeout;
 
+    /// <summary>
+    /// Where command await continuations run when their replies arrive. Defaults to
+    /// <see cref="RespireContinuationDispatch.Adaptive"/>.
+    /// </summary>
+    /// <remarks>
+    /// Inline continuations avoid a thread-pool hop per reply, but they run one at a time on the
+    /// connection's delivery runner, so CPU work after an await delays other callers. Adaptive
+    /// dispatch keeps fast continuations inline and moves slow ones to the thread pool. Replies
+    /// still complete in wire order, but pool-dispatched continuations may run concurrently and in
+    /// any order. Already-completed awaits can still run synchronously.
+    /// </remarks>
+    public RespireContinuationDispatch ContinuationDispatch { get; init; }
+
+    /// <summary>
+    /// How long replies may wait behind a slow or blocked inline continuation before delivery
+    /// moves to another thread. Defaults to 20 milliseconds; must be at least one millisecond and
+    /// no more than the timer limit (<see cref="uint.MaxValue"/> - 1 milliseconds).
+    /// Timer resolution can lengthen short thresholds, to about 15 milliseconds on Windows.
+    /// </summary>
+    /// <remarks>This is a rescue threshold, not a latency guarantee under thread-pool starvation.</remarks>
+    public TimeSpan StalledDeliveryThreshold { get; init; } = TimeSpan.FromMilliseconds(20);
+
     /// <summary>Enables the shared process-wide thread-pool scheduling probe. Defaults to true.</summary>
     /// <remarks>One background thread samples once per second while enabled clients exist. Disabling this
     /// client removes its warning subscription; other clients may still provide process-wide timeout samples.</remarks>
@@ -687,6 +709,10 @@ public sealed record RespireOptions
         Require(Connections >= 1, nameof(Connections), "must be at least one");
         Require(Database >= 0, nameof(Database), "cannot be negative");
         Require(ConnectTimeout > TimeSpan.Zero, nameof(ConnectTimeout), "must be positive");
+        Require(Enum.IsDefined(ContinuationDispatch), nameof(ContinuationDispatch), "must be Adaptive, Inline, or ThreadPool");
+        Require(StalledDeliveryThreshold >= TimeSpan.FromMilliseconds(1)
+            && StalledDeliveryThreshold.TotalMilliseconds <= uint.MaxValue - 1d,
+            nameof(StalledDeliveryThreshold), "must be between one millisecond and the timer limit (about 49.7 days)");
         Require(CredentialRefreshBeforeExpiry >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshBeforeExpiry), "must be at least one millisecond");
         Require(CredentialRefreshRetryDelay >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshRetryDelay), "must be at least one millisecond");
         Require(ThreadPoolWarningThreshold > TimeSpan.Zero, nameof(ThreadPoolWarningThreshold), "must be positive");
@@ -860,6 +886,8 @@ public sealed record RespireOptions
             ResponseTimeout = ConnectionIdleReadTimeout,
             GatheredWriteStallTimeout = GatheredWriteStallTimeout,
             CommandTimeout = CommandTimeout,
+            ContinuationDispatch = ContinuationDispatch,
+            StalledDeliveryThreshold = StalledDeliveryThreshold,
             UseTls = UseTls,
             TlsOptions = TlsOptions,
             Username = Username,

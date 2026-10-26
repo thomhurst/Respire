@@ -1,4 +1,8 @@
 #nullable enable
+Respire.DependencyInjection.RespireOptionsBuilder.ContinuationDispatch.get -> Respire.RespireContinuationDispatch
+Respire.DependencyInjection.RespireOptionsBuilder.ContinuationDispatch.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.StalledDeliveryThreshold.get -> System.TimeSpan
+Respire.DependencyInjection.RespireOptionsBuilder.StalledDeliveryThreshold.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.ReplicaRedirectValidator.get -> System.Func<Respire.RespireEndpoint, bool>?
 Respire.DependencyInjection.RespireOptionsBuilder.ReplicaRedirectValidator.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.EnableMultipathTcp.get -> bool

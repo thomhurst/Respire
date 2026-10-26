@@ -74,6 +74,48 @@ await using var redis = RespireClient.Create(options);
 
 `Create` performs no network I/O. The first command connects; a later command retries a failed attempt. Dependency-injection registration uses `Create`, so Redis availability does not block host startup. A hosted client then connects in the background; see [connect at startup](../integrations/dependency-injection.md#connect-at-startup).
 
+## Command continuations
+
+`ContinuationDispatch` controls where the code after a command `await` runs when its reply
+arrives. Replies complete in wire order. Each connection delivers them from one runner.
+
+- `Adaptive` (default): continuations run inline on the delivery runner while they are fast,
+  so tight loops avoid a thread-pool hop per reply. When continuations keep doing enough CPU
+  work to delay the replies queued behind them, Respire queues them to the thread pool for a
+  short window, then checks again. A reply with nothing queued behind it always runs inline.
+- `Inline`: continuations always run on the delivery runner. Callers that do CPU work after an
+  `await` then take turns on that one thread, and a slow continuation delays every other caller
+  on the connection.
+- `ThreadPool`: every pending command's continuation is queued to the thread pool. This gives
+  the strongest isolation, but each reply pays for a work item even when continuations are
+  trivial.
+
+```csharp
+var options = new RespireOptions
+{
+    Endpoints = [new("localhost", 6379)],
+    ContinuationDispatch = RespireContinuationDispatch.ThreadPool,
+};
+```
+
+Continuations dispatched to the thread pool can run concurrently and in any order. An await
+whose result is already available still completes synchronously. Thread-pool starvation can
+delay queued continuations.
+
+Measured on Linux with one connection and 64 concurrent callers, adaptive dispatch kept the
+inline throughput of a plain GET loop (`ThreadPool` was about 30% slower). It matched
+`ThreadPool` once callers did 5 µs or more of CPU work per reply, where `Inline` was two to
+four times slower.
+
+Inline continuations can still block, for example with a synchronous wait. `StalledDeliveryThreshold`
+controls how long waiting replies can sit behind a continuation that is not making progress
+before another thread takes over delivery. It defaults to 20 ms and accepts values of at
+least 1 ms. Timer resolution can lengthen short thresholds, to about 15 ms on Windows. This
+rescue is not a latency guarantee, particularly under thread-pool starvation. Warning
+`ConnectionContinuationDeliveryBlocked` reports each rescue.
+
+Both options are available on the DI builder and through configuration.
+
 ## Custom connection streams
 
 Set `RespireOptions.ConnectionFactory` to supply a connected duplex `Stream`. Use this for custom sockets, tunnels, or an in-memory test transport:
