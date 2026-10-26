@@ -19,8 +19,7 @@ using Respire;
 using Respire.Azure;
 
 var credential = new DefaultAzureCredential();
-var redisUserObjectId = "<managed-identity-or-service-principal-object-id>";
-var provider = new RespireAzureManagedRedisCredentialProvider(credential, redisUserObjectId);
+var provider = new RespireAzureManagedRedisCredentialProvider(credential);
 
 await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 {
@@ -34,12 +33,32 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 Setup:
 
 1. Add the managed identity or service principal as a Redis user on the resource's Authentication page.
-2. Use that identity's **object ID** as the Redis username.
+2. Let the provider read that identity's **object ID** from the first access token's `oid` claim.
 3. Connect to `<cache-name>.<region>.redis.azure.net` on TLS port 10000.
 
 `RespireAzureManagedRedisCredentialProvider` requests the `https://redis.azure.com/.default` scope and
 passes the token's `ExpiresOn` to Respire's [credential renewal](renewable-credentials.md). The
 provider and `TokenCredential` stay caller-owned.
+
+The constructor without a username caches the first resolved `oid` for the provider's lifetime,
+including concurrent connection requests and token renewals. It does not validate the token's
+signature; token acquisition remains the credential's responsibility. If the first token is not a
+JWT with a non-empty string `oid` claim, credential retrieval throws `InvalidOperationException`
+without including the token in the error. A later request can retry resolution.
+
+To pin a Redis ACL user explicitly, use the existing overload:
+
+```csharp
+using global::Azure.Identity;
+using Respire.Azure;
+
+var credential = new DefaultAzureCredential();
+var redisUserObjectId = "<managed-identity-or-service-principal-object-id>";
+var provider = new RespireAzureManagedRedisCredentialProvider(credential, redisUserObjectId);
+```
+
+The explicit username must be the managed identity's or service principal's object ID, not its client
+ID. This overload does not inspect token claims.
 
 The provider calls `TokenCredential.GetTokenAsync` on every request and relies on the credential's
 own caching. The production credentials behind `DefaultAzureCredential` cache tokens until shortly
@@ -59,8 +78,7 @@ using Respire.Azure;
 using Respire.DependencyInjection;
 
 var credential = new DefaultAzureCredential();
-var redisUserObjectId = "<managed-identity-or-service-principal-object-id>";
-var provider = new RespireAzureManagedRedisCredentialProvider(credential, redisUserObjectId);
+var provider = new RespireAzureManagedRedisCredentialProvider(credential);
 var services = new ServiceCollection();
 
 services.AddRespire(options =>

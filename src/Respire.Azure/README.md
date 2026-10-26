@@ -22,10 +22,13 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
     UseTls = true,
     Protocol = RespireProtocol.Resp3,
     CredentialProvider = new RespireAzureManagedRedisCredentialProvider(
-        new DefaultAzureCredential(), "<identity-object-id>"),
+        new DefaultAzureCredential()),
 });
 ```
 
-Grant the identity Redis access and replace the endpoint and identity object ID. RESP3 allows subscriptions to renew credentials on the same socket.
+Grant the identity Redis access and replace the endpoint. The provider reads the Redis username from
+the first access token's `oid` claim and caches it for its lifetime. Tokens without a usable `oid`
+claim require the overload that takes an explicit identity object ID. RESP3 allows subscriptions to
+renew credentials on the same socket.
 
 [Read the guide](https://respire.tomlonghurst.dev/docs/guides/azure-managed-redis) for configuration, requirements, and further examples.
