@@ -13,6 +13,12 @@ public static class RespireTransactionRetryExtensions
     /// queue writes on the supplied transaction. Do not commit or dispose the transaction yourself.
     /// Custom clients must support WithReadFrom and WithoutClientCache. Captured external clients
     /// retain their own routing and caching settings. Retry and cancellation semantics match RunTransactionAsync.
+    /// Each attempt rents a dedicated connection until EXEC or disposal. Healthy connections are reused
+    /// after EXEC, but WATCH, callback reads, and commit still require separate round trips. Prefer a Lua
+    /// script for hot read-modify-write paths that can run entirely on the server. For WATCH-heavy loads,
+    /// tune RespireOptions.DedicatedPool.MaximumSize and MaximumIdle together to bound connection creation
+    /// and retain idle connections between bursts. Connecting the client does not prewarm that pool.
+    /// Excess rentals wait at MaximumSize; pass a cancellation deadline to bound acquisition.
     /// </remarks>
     public static ValueTask RunTransactionWithReadsAsync(
         this IRespireClient client, RespireKey[] watchKeys,

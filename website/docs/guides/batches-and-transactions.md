@@ -382,6 +382,59 @@ if (!committed)
 
 With client-side caching, a successful WATCH invalidates the watched keys locally. Reads started after the transaction is created fetch fresh state.
 
+### WATCH cost and pool sizing
+
+`CreateTransactionAsync` and `RunTransactionWithReadsAsync` hold a dedicated connection
+from WATCH until commit or disposal. A completed EXEC, including a WATCH conflict,
+returns a healthy connection to the pool for reuse. An abandoned transaction, canceled
+operation, or failed send discards its connection because WATCH state or unread replies
+may remain. Always commit or dispose each attempt promptly.
+
+Even with a warm pool, WATCH needs a round trip before callback reads, each awaited read
+needs its own round trip, and the pipelined MULTI/EXEC commit needs another. A new dedicated
+connection also pays connection and protocol setup costs. Connecting the client opens its
+multiplexed connections; it does not prewarm the dedicated pool. Prefer a Lua script for
+hot read-modify-write paths when the whole operation can run on the server. Pool reuse
+cannot remove WATCH's extra round trips.
+
+The default `DedicatedPool` retains four idle connections and has no total connection cap.
+A burst of 64 watched transactions can therefore create 64 dedicated connections and close
+60 when they return. Another burst can repeat that setup work. Raising `MaximumIdle`
+retains more connections between bursts; it neither prewarms them nor limits concurrency.
+
+For a WATCH-heavy workload, start with a bounded pool and retain the same number of idle
+connections. For example, this allows up to eight dedicated connections per pool and
+reuses them after a burst:
+
+```csharp
+var options = new RespireOptions
+{
+    DedicatedPool = new RespireDedicatedPoolOptions
+    {
+        MaximumSize = 8,
+        MaximumIdle = 8,
+    },
+};
+```
+
+Eight is a starting point, not a throughput guarantee. Measure transaction throughput and
+ordinary command latency with your concurrency, network latency, and server. Increase
+both bounds if acquisition queueing dominates and the server has capacity. Set
+`MaximumIdle` to your measured concurrent demand if retaining a larger warm pool is more
+useful than limiting concurrency. `MinimumSize` only protects existing connections from
+timed idle retirement; it does not prewarm them.
+
+At `MaximumSize`, another WATCH waits for a lease. Pass a cancellation deadline to
+`CreateTransactionAsync` or `RunTransactionWithReadsAsync` to bound that wait. Blocking
+commands and other dedicated operations share pool capacity, so avoid holding every lease
+while awaiting another dedicated operation. See [dedicated connection pools](../fundamentals/connections.md#dedicated-connection-pools)
+for limits and lifetime settings.
+
+Ordinary multiplexed reads use separate connections and do not wait for a dedicated lease.
+They still share server and client resources with connection setup and transaction traffic,
+so connection churn can affect their latency. A larger idle pool alone cannot guarantee
+ordinary read latency under load; measure both paths when tuning the total cap.
+
 ## Automatic watched transaction retries
 
 `RunTransactionWithReadsAsync` creates a fresh watched transaction for each attempt and retries when `EXEC` reports a WATCH conflict. Your callback reads inputs and queues writes; the helper commits and disposes the transaction.

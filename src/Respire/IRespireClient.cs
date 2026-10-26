@@ -237,13 +237,20 @@ public interface IRespireClient : IAsyncDisposable
     RespireTransaction CreateTransaction();
 
     /// <summary>Creates a transaction watching keys for optimistic concurrency. Redis: WATCH.</summary>
+    /// <remarks>Holds a pooled dedicated connection until commit or disposal. WATCH, reads, and commit
+    /// require separate round trips; prefer a Lua script for hot read-modify-write paths. On the built-in
+    /// client, tune RespireOptions.DedicatedPool.MaximumSize and MaximumIdle for concurrent WATCH loads.
+    /// Connecting the client does not prewarm dedicated connections. Pass a cancellation deadline to
+    /// bound acquisition when the pool has a total cap.</remarks>
     ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
         RespireKey[] watchKeys, CancellationToken cancellationToken = default);
 
     /// <summary>Creates a transaction watching keys for optimistic concurrency. Redis: WATCH.</summary>
+    /// <inheritdoc cref="CreateTransactionAsync(RespireKey[], CancellationToken)" path="/remarks"/>
     ValueTask<RespireWatchedTransaction> CreateTransactionAsync(params ReadOnlySpan<RespireKey> watchKeys);
 
     /// <summary>Creates a transaction watching keys with cancellation. Redis: WATCH.</summary>
+    /// <inheritdoc cref="CreateTransactionAsync(RespireKey[], CancellationToken)" path="/remarks"/>
     ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
         ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken);
 
