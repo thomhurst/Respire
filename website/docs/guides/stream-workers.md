@@ -59,6 +59,13 @@ slow handler (there is no lease extension), or a restart.
   disposed after handling and acknowledgement. Avoid singleton handlers that depend on scoped
   services.
 
+Both registration overloads require a nonblank `stream` containing well-formed UTF-16. Null values
+throw `ArgumentNullException`, empty or whitespace-only values throw `ArgumentException`, and
+unpaired surrogates throw `EncoderFallbackException`. Validation happens before adding services or
+reserving the telemetry name, so rejected registrations leave the service collection unchanged.
+Valid stream names are preserved exactly, including supplementary characters and a literal U+FFFD;
+Unicode normalization is not applied, so composed and decomposed names remain distinct Redis keys.
+
 ### Consumer names
 
 By default each registration picks a random consumer name at every start. Set `ConsumerName` to a
