@@ -1,0 +1,385 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IRespireClient",
+      "OwnerType": "Respire.IRespireClient",
+      "Members": [
+        "SetAsync(RespireKey,string?,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,byte[]?,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>"
+      ],
+      "Overrides": {
+        "SetAsync(RespireKey,string?,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.RespireClient.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,byte[]?,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.RespireClient.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.RespireClient.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.RespireClient.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.RespireClient.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.RespireClient",
+      "OwnerType": "Respire.RespireClient",
+      "Members": [
+        "SetAsync(RespireKey,string?,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,byte[]?,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>"
+      ],
+      "Overrides": {
+        "SetAsync(RespireKey,string?,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.RespireClient.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,byte[]?,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.RespireClient.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.RespireClient.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.RespireClient.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.RespireClient.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.IRespireStringCommands",
+      "OwnerType": "Respire.IRespireStringCommands",
+      "Members": [
+        "SetAsync(RespireKey,string?,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,byte[]?,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetConditionalAsync(RespireKey,string?,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>",
+        "SetConditionalAsync(RespireKey,byte[]?,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>",
+        "SetConditionalAsync(RespireKey,ReadOnlyMemory<byte>,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>",
+        "SetConditionalAsync(RespireKey,Memory<byte>,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>",
+        "SetConditionalAsync(RespireKey,ArraySegment<byte>,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>"
+      ],
+      "Overrides": {
+        "SetAsync(RespireKey,string?,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.StringCommands.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,byte[]?,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.StringCommands.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.StringCommands.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.StringCommands.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.StringCommands.SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetConditionalAsync(RespireKey,string?,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>": "Respire.StringCommands.SetConditionalAsync(RespireKey,RespireValue,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>",
+        "SetConditionalAsync(RespireKey,byte[]?,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>": "Respire.StringCommands.SetConditionalAsync(RespireKey,RespireValue,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>",
+        "SetConditionalAsync(RespireKey,ReadOnlyMemory<byte>,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>": "Respire.StringCommands.SetConditionalAsync(RespireKey,RespireValue,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>",
+        "SetConditionalAsync(RespireKey,Memory<byte>,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>": "Respire.StringCommands.SetConditionalAsync(RespireKey,RespireValue,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>",
+        "SetConditionalAsync(RespireKey,ArraySegment<byte>,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>": "Respire.StringCommands.SetConditionalAsync(RespireKey,RespireValue,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.IRespireHashCommands",
+      "OwnerType": "Respire.IRespireHashCommands",
+      "Members": [
+        "SetAsync(RespireKey,string,string?,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,byte[]?,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,ReadOnlyMemory<byte>,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,Memory<byte>,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,ArraySegment<byte>,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,string?,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,byte[]?,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,ReadOnlyMemory<byte>,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,Memory<byte>,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,ArraySegment<byte>,RespireSetWhen,CancellationToken):ValueTask<bool>"
+      ],
+      "Overrides": {
+        "SetAsync(RespireKey,string,string?,CancellationToken):ValueTask<bool>": "Respire.HashCommands.SetAsync(RespireKey,string,RespireValue,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,byte[]?,CancellationToken):ValueTask<bool>": "Respire.HashCommands.SetAsync(RespireKey,string,RespireValue,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,ReadOnlyMemory<byte>,CancellationToken):ValueTask<bool>": "Respire.HashCommands.SetAsync(RespireKey,string,RespireValue,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,Memory<byte>,CancellationToken):ValueTask<bool>": "Respire.HashCommands.SetAsync(RespireKey,string,RespireValue,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,ArraySegment<byte>,CancellationToken):ValueTask<bool>": "Respire.HashCommands.SetAsync(RespireKey,string,RespireValue,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,string?,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.HashCommands.SetAsync(RespireKey,string,RespireValue,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,byte[]?,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.HashCommands.SetAsync(RespireKey,string,RespireValue,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,ReadOnlyMemory<byte>,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.HashCommands.SetAsync(RespireKey,string,RespireValue,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,Memory<byte>,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.HashCommands.SetAsync(RespireKey,string,RespireValue,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,string,ArraySegment<byte>,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.HashCommands.SetAsync(RespireKey,string,RespireValue,RespireSetWhen,CancellationToken):ValueTask<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.IRespireArrayCommands",
+      "OwnerType": "Respire.IRespireArrayCommands",
+      "Members": [
+        "SetAsync(RespireKey,ulong,string?,CancellationToken):ValueTask<ulong>",
+        "SetAsync(RespireKey,ulong,ReadOnlyMemory<byte>,CancellationToken):ValueTask<ulong>",
+        "SetAsync(RespireKey,ulong,Memory<byte>,CancellationToken):ValueTask<ulong>",
+        "SetAsync(RespireKey,ulong,ArraySegment<byte>,CancellationToken):ValueTask<ulong>"
+      ],
+      "Overrides": {
+        "SetAsync(RespireKey,ulong,string?,CancellationToken):ValueTask<ulong>": "Respire.ArrayCommands.SetAsync(RespireKey,ulong,RespireValue,CancellationToken):ValueTask<ulong>",
+        "SetAsync(RespireKey,ulong,ReadOnlyMemory<byte>,CancellationToken):ValueTask<ulong>": "Respire.ArrayCommands.SetAsync(RespireKey,ulong,RespireValue,CancellationToken):ValueTask<ulong>",
+        "SetAsync(RespireKey,ulong,Memory<byte>,CancellationToken):ValueTask<ulong>": "Respire.ArrayCommands.SetAsync(RespireKey,ulong,RespireValue,CancellationToken):ValueTask<ulong>",
+        "SetAsync(RespireKey,ulong,ArraySegment<byte>,CancellationToken):ValueTask<ulong>": "Respire.ArrayCommands.SetAsync(RespireKey,ulong,RespireValue,CancellationToken):ValueTask<ulong>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.IRespireSetCommands",
+      "OwnerType": "Respire.IRespireSetCommands",
+      "Members": [
+        "ContainsAsync(RespireKey,string?,CancellationToken):ValueTask<bool>",
+        "ContainsAsync(RespireKey,byte[]?,CancellationToken):ValueTask<bool>",
+        "ContainsAsync(RespireKey,ReadOnlyMemory<byte>,CancellationToken):ValueTask<bool>",
+        "ContainsAsync(RespireKey,Memory<byte>,CancellationToken):ValueTask<bool>",
+        "ContainsAsync(RespireKey,ArraySegment<byte>,CancellationToken):ValueTask<bool>"
+      ],
+      "Overrides": {
+        "ContainsAsync(RespireKey,string?,CancellationToken):ValueTask<bool>": "Respire.SetCommands.ContainsAsync(RespireKey,RespireValue,CancellationToken):ValueTask<bool>",
+        "ContainsAsync(RespireKey,byte[]?,CancellationToken):ValueTask<bool>": "Respire.SetCommands.ContainsAsync(RespireKey,RespireValue,CancellationToken):ValueTask<bool>",
+        "ContainsAsync(RespireKey,ReadOnlyMemory<byte>,CancellationToken):ValueTask<bool>": "Respire.SetCommands.ContainsAsync(RespireKey,RespireValue,CancellationToken):ValueTask<bool>",
+        "ContainsAsync(RespireKey,Memory<byte>,CancellationToken):ValueTask<bool>": "Respire.SetCommands.ContainsAsync(RespireKey,RespireValue,CancellationToken):ValueTask<bool>",
+        "ContainsAsync(RespireKey,ArraySegment<byte>,CancellationToken):ValueTask<bool>": "Respire.SetCommands.ContainsAsync(RespireKey,RespireValue,CancellationToken):ValueTask<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.IRespireSortedSetCommands",
+      "OwnerType": "Respire.IRespireSortedSetCommands",
+      "Members": [
+        "AddAsync(RespireKey,string?,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,byte[]?,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,ReadOnlyMemory<byte>,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,Memory<byte>,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,ArraySegment<byte>,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,string?,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,byte[]?,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,ReadOnlyMemory<byte>,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,Memory<byte>,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,ArraySegment<byte>,double,CancellationToken):ValueTask<bool>"
+      ],
+      "Overrides": {
+        "AddAsync(RespireKey,string?,double,CancellationToken):ValueTask<bool>": "Respire.SortedSetCommands.AddAsync(RespireKey,RespireValue,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,byte[]?,double,CancellationToken):ValueTask<bool>": "Respire.SortedSetCommands.AddAsync(RespireKey,RespireValue,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,ReadOnlyMemory<byte>,double,CancellationToken):ValueTask<bool>": "Respire.SortedSetCommands.AddAsync(RespireKey,RespireValue,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,Memory<byte>,double,CancellationToken):ValueTask<bool>": "Respire.SortedSetCommands.AddAsync(RespireKey,RespireValue,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,ArraySegment<byte>,double,CancellationToken):ValueTask<bool>": "Respire.SortedSetCommands.AddAsync(RespireKey,RespireValue,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,string?,double,CancellationToken):ValueTask<bool>": "Respire.SortedSetCommands.AddAsync(RespireKey,RespireSortedSetAddOptions,RespireValue,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,byte[]?,double,CancellationToken):ValueTask<bool>": "Respire.SortedSetCommands.AddAsync(RespireKey,RespireSortedSetAddOptions,RespireValue,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,ReadOnlyMemory<byte>,double,CancellationToken):ValueTask<bool>": "Respire.SortedSetCommands.AddAsync(RespireKey,RespireSortedSetAddOptions,RespireValue,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,Memory<byte>,double,CancellationToken):ValueTask<bool>": "Respire.SortedSetCommands.AddAsync(RespireKey,RespireSortedSetAddOptions,RespireValue,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,ArraySegment<byte>,double,CancellationToken):ValueTask<bool>": "Respire.SortedSetCommands.AddAsync(RespireKey,RespireSortedSetAddOptions,RespireValue,double,CancellationToken):ValueTask<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.IRespireCommandQueue",
+      "OwnerType": "Respire.IRespireCommandQueue",
+      "Members": [
+        "Set(RespireKey,string?,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,byte[]?,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>"
+      ],
+      "Overrides": {
+        "Set(RespireKey,string?,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireBatch.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,byte[]?,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireBatch.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireBatch.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireBatch.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireBatch.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.RespireBatch",
+      "OwnerType": "Respire.RespireBatch",
+      "Members": [
+        "Set(RespireKey,string?,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,byte[]?,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>"
+      ],
+      "Overrides": {
+        "Set(RespireKey,string?,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireBatch.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,byte[]?,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireBatch.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireBatch.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireBatch.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireBatch.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.RespireTransactionBase",
+      "OwnerType": "Respire.RespireTransactionBase",
+      "Members": [
+        "Set(RespireKey,string?,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,byte[]?,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>"
+      ],
+      "Overrides": {
+        "Set(RespireKey,string?,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireTransactionBase.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,byte[]?,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireTransactionBase.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireTransactionBase.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireTransactionBase.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.RespireTransactionBase.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.IRespireBatchStringCommands",
+      "OwnerType": "Respire.IRespireBatchStringCommands",
+      "Members": [
+        "Set(RespireKey,string?,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,byte[]?,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "SetConditional(RespireKey,string?,RespireValueCondition,RespireExpiry):RespirePending<bool>",
+        "SetConditional(RespireKey,byte[]?,RespireValueCondition,RespireExpiry):RespirePending<bool>",
+        "SetConditional(RespireKey,ReadOnlyMemory<byte>,RespireValueCondition,RespireExpiry):RespirePending<bool>",
+        "SetConditional(RespireKey,Memory<byte>,RespireValueCondition,RespireExpiry):RespirePending<bool>",
+        "SetConditional(RespireKey,ArraySegment<byte>,RespireValueCondition,RespireExpiry):RespirePending<bool>"
+      ],
+      "Overrides": {
+        "Set(RespireKey,string?,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.BatchStringCommands.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,byte[]?,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.BatchStringCommands.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ReadOnlyMemory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.BatchStringCommands.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,Memory<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.BatchStringCommands.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,ArraySegment<byte>,RespireExpiry,RespireSetWhen):RespirePending<bool>": "Respire.BatchStringCommands.Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "SetConditional(RespireKey,string?,RespireValueCondition,RespireExpiry):RespirePending<bool>": "Respire.BatchStringCommands.SetConditional(RespireKey,RespireValue,RespireValueCondition,RespireExpiry):RespirePending<bool>",
+        "SetConditional(RespireKey,byte[]?,RespireValueCondition,RespireExpiry):RespirePending<bool>": "Respire.BatchStringCommands.SetConditional(RespireKey,RespireValue,RespireValueCondition,RespireExpiry):RespirePending<bool>",
+        "SetConditional(RespireKey,ReadOnlyMemory<byte>,RespireValueCondition,RespireExpiry):RespirePending<bool>": "Respire.BatchStringCommands.SetConditional(RespireKey,RespireValue,RespireValueCondition,RespireExpiry):RespirePending<bool>",
+        "SetConditional(RespireKey,Memory<byte>,RespireValueCondition,RespireExpiry):RespirePending<bool>": "Respire.BatchStringCommands.SetConditional(RespireKey,RespireValue,RespireValueCondition,RespireExpiry):RespirePending<bool>",
+        "SetConditional(RespireKey,ArraySegment<byte>,RespireValueCondition,RespireExpiry):RespirePending<bool>": "Respire.BatchStringCommands.SetConditional(RespireKey,RespireValue,RespireValueCondition,RespireExpiry):RespirePending<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.IRespireBatchArrayCommands",
+      "OwnerType": "Respire.IRespireBatchArrayCommands",
+      "Members": [
+        "Set(RespireKey,ulong,string?):RespirePending<ulong>",
+        "Set(RespireKey,ulong,ReadOnlyMemory<byte>):RespirePending<ulong>",
+        "Set(RespireKey,ulong,Memory<byte>):RespirePending<ulong>",
+        "Set(RespireKey,ulong,ArraySegment<byte>):RespirePending<ulong>"
+      ],
+      "Overrides": {
+        "Set(RespireKey,ulong,string?):RespirePending<ulong>": "Respire.BatchArrayCommands.Set(RespireKey,ulong,params ReadOnlySpan<RespireValue>):RespirePending<ulong>",
+        "Set(RespireKey,ulong,ReadOnlyMemory<byte>):RespirePending<ulong>": "Respire.BatchArrayCommands.Set(RespireKey,ulong,params ReadOnlySpan<RespireValue>):RespirePending<ulong>",
+        "Set(RespireKey,ulong,Memory<byte>):RespirePending<ulong>": "Respire.BatchArrayCommands.Set(RespireKey,ulong,params ReadOnlySpan<RespireValue>):RespirePending<ulong>",
+        "Set(RespireKey,ulong,ArraySegment<byte>):RespirePending<ulong>": "Respire.BatchArrayCommands.Set(RespireKey,ulong,params ReadOnlySpan<RespireValue>):RespirePending<ulong>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.IRespirePathHashCommands",
+      "OwnerType": "Respire.PathHashCommands",
+      "Members": [
+        "SetAsync(RespireKey,RespireKey,RespireKey,string?,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,RespireKey,RespireKey,byte[]?,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,RespireKey,RespireKey,ReadOnlyMemory<byte>,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,RespireKey,RespireKey,Memory<byte>,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,RespireKey,RespireKey,ArraySegment<byte>,RespireSetWhen,CancellationToken):ValueTask<bool>"
+      ],
+      "Overrides": {
+        "SetAsync(RespireKey,RespireKey,RespireKey,string?,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.PathHashCommands.SetAsync(RespireKey,RespireKey,RespireKey,RespireValue,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,RespireKey,RespireKey,byte[]?,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.PathHashCommands.SetAsync(RespireKey,RespireKey,RespireKey,RespireValue,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,RespireKey,RespireKey,ReadOnlyMemory<byte>,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.PathHashCommands.SetAsync(RespireKey,RespireKey,RespireKey,RespireValue,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,RespireKey,RespireKey,Memory<byte>,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.PathHashCommands.SetAsync(RespireKey,RespireKey,RespireKey,RespireValue,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,RespireKey,RespireKey,ArraySegment<byte>,RespireSetWhen,CancellationToken):ValueTask<bool>": "Respire.PathHashCommands.SetAsync(RespireKey,RespireKey,RespireKey,RespireValue,RespireSetWhen,CancellationToken):ValueTask<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.IRespireBatchHashCommands",
+      "OwnerType": "Respire.BatchHashCommands",
+      "Members": [
+        "Set(RespireKey,string,string?):RespirePending<bool>",
+        "Set(RespireKey,string,byte[]?):RespirePending<bool>",
+        "Set(RespireKey,string,ReadOnlyMemory<byte>):RespirePending<bool>",
+        "Set(RespireKey,string,Memory<byte>):RespirePending<bool>",
+        "Set(RespireKey,string,ArraySegment<byte>):RespirePending<bool>",
+        "Set(RespireKey,string,string?,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,string,byte[]?,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,string,ReadOnlyMemory<byte>,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,string,Memory<byte>,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,string,ArraySegment<byte>,RespireSetWhen):RespirePending<bool>"
+      ],
+      "Overrides": {
+        "Set(RespireKey,string,string?):RespirePending<bool>": "Respire.BatchHashCommands.Set(RespireKey,string,RespireValue):RespirePending<bool>",
+        "Set(RespireKey,string,byte[]?):RespirePending<bool>": "Respire.BatchHashCommands.Set(RespireKey,string,RespireValue):RespirePending<bool>",
+        "Set(RespireKey,string,ReadOnlyMemory<byte>):RespirePending<bool>": "Respire.BatchHashCommands.Set(RespireKey,string,RespireValue):RespirePending<bool>",
+        "Set(RespireKey,string,Memory<byte>):RespirePending<bool>": "Respire.BatchHashCommands.Set(RespireKey,string,RespireValue):RespirePending<bool>",
+        "Set(RespireKey,string,ArraySegment<byte>):RespirePending<bool>": "Respire.BatchHashCommands.Set(RespireKey,string,RespireValue):RespirePending<bool>",
+        "Set(RespireKey,string,string?,RespireSetWhen):RespirePending<bool>": "Respire.BatchHashCommands.Set(RespireKey,string,RespireValue,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,string,byte[]?,RespireSetWhen):RespirePending<bool>": "Respire.BatchHashCommands.Set(RespireKey,string,RespireValue,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,string,ReadOnlyMemory<byte>,RespireSetWhen):RespirePending<bool>": "Respire.BatchHashCommands.Set(RespireKey,string,RespireValue,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,string,Memory<byte>,RespireSetWhen):RespirePending<bool>": "Respire.BatchHashCommands.Set(RespireKey,string,RespireValue,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,string,ArraySegment<byte>,RespireSetWhen):RespirePending<bool>": "Respire.BatchHashCommands.Set(RespireKey,string,RespireValue,RespireSetWhen):RespirePending<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.IRespireBatchPathHashCommands",
+      "OwnerType": "Respire.BatchPathHashCommands",
+      "Members": [
+        "Set(RespireKey,RespireKey,RespireKey,string?,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,RespireKey,RespireKey,byte[]?,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,RespireKey,RespireKey,ReadOnlyMemory<byte>,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,RespireKey,RespireKey,Memory<byte>,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,RespireKey,RespireKey,ArraySegment<byte>,RespireSetWhen):RespirePending<bool>"
+      ],
+      "Overrides": {
+        "Set(RespireKey,RespireKey,RespireKey,string?,RespireSetWhen):RespirePending<bool>": "Respire.BatchPathHashCommands.Set(RespireKey,RespireKey,RespireKey,RespireValue,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,RespireKey,RespireKey,byte[]?,RespireSetWhen):RespirePending<bool>": "Respire.BatchPathHashCommands.Set(RespireKey,RespireKey,RespireKey,RespireValue,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,RespireKey,RespireKey,ReadOnlyMemory<byte>,RespireSetWhen):RespirePending<bool>": "Respire.BatchPathHashCommands.Set(RespireKey,RespireKey,RespireKey,RespireValue,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,RespireKey,RespireKey,Memory<byte>,RespireSetWhen):RespirePending<bool>": "Respire.BatchPathHashCommands.Set(RespireKey,RespireKey,RespireKey,RespireValue,RespireSetWhen):RespirePending<bool>",
+        "Set(RespireKey,RespireKey,RespireKey,ArraySegment<byte>,RespireSetWhen):RespirePending<bool>": "Respire.BatchPathHashCommands.Set(RespireKey,RespireKey,RespireKey,RespireValue,RespireSetWhen):RespirePending<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.IRespireBatchSetCommands",
+      "OwnerType": "Respire.BatchSetCommands",
+      "Members": [
+        "Contains(RespireKey,string?):RespirePending<bool>",
+        "Contains(RespireKey,byte[]?):RespirePending<bool>",
+        "Contains(RespireKey,ReadOnlyMemory<byte>):RespirePending<bool>",
+        "Contains(RespireKey,Memory<byte>):RespirePending<bool>",
+        "Contains(RespireKey,ArraySegment<byte>):RespirePending<bool>"
+      ],
+      "Overrides": {
+        "Contains(RespireKey,string?):RespirePending<bool>": "Respire.BatchSetCommands.Contains(RespireKey,RespireValue):RespirePending<bool>",
+        "Contains(RespireKey,byte[]?):RespirePending<bool>": "Respire.BatchSetCommands.Contains(RespireKey,RespireValue):RespirePending<bool>",
+        "Contains(RespireKey,ReadOnlyMemory<byte>):RespirePending<bool>": "Respire.BatchSetCommands.Contains(RespireKey,RespireValue):RespirePending<bool>",
+        "Contains(RespireKey,Memory<byte>):RespirePending<bool>": "Respire.BatchSetCommands.Contains(RespireKey,RespireValue):RespirePending<bool>",
+        "Contains(RespireKey,ArraySegment<byte>):RespirePending<bool>": "Respire.BatchSetCommands.Contains(RespireKey,RespireValue):RespirePending<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    },
+    {
+      "Type": "Respire.IRespireBatchSortedSetCommands",
+      "OwnerType": "Respire.BatchSortedSetCommands",
+      "Members": [
+        "Add(RespireKey,string?,double):RespirePending<bool>",
+        "Add(RespireKey,byte[]?,double):RespirePending<bool>",
+        "Add(RespireKey,ReadOnlyMemory<byte>,double):RespirePending<bool>",
+        "Add(RespireKey,Memory<byte>,double):RespirePending<bool>",
+        "Add(RespireKey,ArraySegment<byte>,double):RespirePending<bool>",
+        "Add(RespireKey,RespireSortedSetAddOptions,string?,double):RespirePending<bool>",
+        "Add(RespireKey,RespireSortedSetAddOptions,byte[]?,double):RespirePending<bool>",
+        "Add(RespireKey,RespireSortedSetAddOptions,ReadOnlyMemory<byte>,double):RespirePending<bool>",
+        "Add(RespireKey,RespireSortedSetAddOptions,Memory<byte>,double):RespirePending<bool>",
+        "Add(RespireKey,RespireSortedSetAddOptions,ArraySegment<byte>,double):RespirePending<bool>"
+      ],
+      "Overrides": {
+        "Add(RespireKey,string?,double):RespirePending<bool>": "Respire.BatchSortedSetCommands.Add(RespireKey,RespireValue,double):RespirePending<bool>",
+        "Add(RespireKey,byte[]?,double):RespirePending<bool>": "Respire.BatchSortedSetCommands.Add(RespireKey,RespireValue,double):RespirePending<bool>",
+        "Add(RespireKey,ReadOnlyMemory<byte>,double):RespirePending<bool>": "Respire.BatchSortedSetCommands.Add(RespireKey,RespireValue,double):RespirePending<bool>",
+        "Add(RespireKey,Memory<byte>,double):RespirePending<bool>": "Respire.BatchSortedSetCommands.Add(RespireKey,RespireValue,double):RespirePending<bool>",
+        "Add(RespireKey,ArraySegment<byte>,double):RespirePending<bool>": "Respire.BatchSortedSetCommands.Add(RespireKey,RespireValue,double):RespirePending<bool>",
+        "Add(RespireKey,RespireSortedSetAddOptions,string?,double):RespirePending<bool>": "Respire.BatchSortedSetCommands.Add(RespireKey,RespireSortedSetAddOptions,RespireValue,double):RespirePending<bool>",
+        "Add(RespireKey,RespireSortedSetAddOptions,byte[]?,double):RespirePending<bool>": "Respire.BatchSortedSetCommands.Add(RespireKey,RespireSortedSetAddOptions,RespireValue,double):RespirePending<bool>",
+        "Add(RespireKey,RespireSortedSetAddOptions,ReadOnlyMemory<byte>,double):RespirePending<bool>": "Respire.BatchSortedSetCommands.Add(RespireKey,RespireSortedSetAddOptions,RespireValue,double):RespirePending<bool>",
+        "Add(RespireKey,RespireSortedSetAddOptions,Memory<byte>,double):RespirePending<bool>": "Respire.BatchSortedSetCommands.Add(RespireKey,RespireSortedSetAddOptions,RespireValue,double):RespirePending<bool>",
+        "Add(RespireKey,RespireSortedSetAddOptions,ArraySegment<byte>,double):RespirePending<bool>": "Respire.BatchSortedSetCommands.Add(RespireKey,RespireSortedSetAddOptions,RespireValue,double):RespirePending<bool>"
+      },
+      "Contract": "Convert the exact text or binary input to RespireValue and delegate to the existing raw route. The raw route owns validation, dispatch, result observation and cleanup; binary inputs remain borrowed until completion (execution completion for queued writes)."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

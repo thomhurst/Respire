@@ -8,7 +8,7 @@ using Respire.Serialization;
 namespace Respire;
 
 /// <summary>Redis 8.8+ sparse arrays with unsigned indexes. Reads preserve holes; generic value types require nullable T or TryGet to distinguish absent slots.</summary>
-public interface IRespireArrayCommands
+public partial interface IRespireArrayCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<ulong[]> GrepAsync(RespireKey key, RespireArrayBound start, RespireArrayBound end, RespireArrayPredicate predicate, CancellationToken cancellationToken);
@@ -207,7 +207,7 @@ public interface IRespireArrayCommands
 
 }
 
-internal sealed class ArrayCommands(RespireClient client) : IRespireArrayCommands
+internal sealed partial class ArrayCommands(RespireClient client) : IRespireArrayCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<ulong[]> GrepAsync(RespireKey key, RespireArrayBound start, RespireArrayBound end, RespireArrayPredicate predicate, CancellationToken cancellationToken)

@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 444 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 449 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 68
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -405,7 +405,7 @@ Respire.RespireTransaction | constructor RespireTransaction(RespireClient, Respi
 Respire.RespireTransaction | method CommitAsync(CancellationToken) : ValueTask
 Respire.RespireTransaction | method CommitAsync(ReadOnlySpan<RespireCondition>, CancellationToken) : ValueTask<bool>
 Respire.RespireTransaction | method CommitAsync(RespireCondition, CancellationToken) : ValueTask<bool>
-# Count: Respire.RespireTransactionBase | 51
+# Count: Respire.RespireTransactionBase | 56
 Respire.RespireTransactionBase | constructor RespireTransactionBase(RespireClient, RespireConnection?, int?, RespireHashImportSession?)
 Respire.RespireTransactionBase | method CommitConditionalAsync(ReadOnlySpan<RespireCondition>, CancellationToken) : ValueTask<bool>
 Respire.RespireTransactionBase | method CommitCoreAsync(CancellationToken, bool) : ValueTask<bool>
@@ -427,6 +427,11 @@ Respire.RespireTransactionBase | method Increment(RespireKey, long) : RespirePen
 # Designated test-inspection factory. New inspection access belongs in its nested view.
 Respire.RespireTransactionBase | method InspectForTests() : TestInspection
 Respire.RespireTransactionBase | method Set(RespireKey, RespireValue, RespireExpiry, RespireSetWhen) : RespirePending<bool>
+Respire.RespireTransactionBase | method Set(RespireKey, ArraySegment<byte>, RespireExpiry, RespireSetWhen) : RespirePending<bool>
+Respire.RespireTransactionBase | method Set(RespireKey, Memory<byte>, RespireExpiry, RespireSetWhen) : RespirePending<bool>
+Respire.RespireTransactionBase | method Set(RespireKey, ReadOnlyMemory<byte>, RespireExpiry, RespireSetWhen) : RespirePending<bool>
+Respire.RespireTransactionBase | method Set(RespireKey, byte[]?, RespireExpiry, RespireSetWhen) : RespirePending<bool>
+Respire.RespireTransactionBase | method Set(RespireKey, string?, RespireExpiry, RespireSetWhen) : RespirePending<bool>
 Respire.RespireTransactionBase | method Set`1(RespireKey, T, RespireExpiry, RespireSetWhen) : RespirePending<bool>
 Respire.RespireTransactionBase | method TryGet`1(RespireKey) : RespirePending<RespireGetResult<T>>
 Respire.RespireTransactionBase | method ValidateClusterSlot(int, ref int?) : void

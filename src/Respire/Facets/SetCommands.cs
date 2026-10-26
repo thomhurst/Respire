@@ -72,7 +72,7 @@ public partial interface IRespireSetCommands
     /// <summary>
     /// Whether a serialized <typeparamref name="T"/> is in the set. Redis: SISMEMBER.
     /// <para>
-    /// An argument already typed as <see cref="RespireValue"/> picks the non-generic overload;
+    /// Text, binary payloads and <see cref="RespireValue"/> pick non-generic overloads;
     /// any other type picks this one. Boolean members retain the Redis-native <c>1</c>/<c>0</c>
     /// encoding used by <see cref="AddAsync(RespireKey, ReadOnlySpan{RespireValue})"/>; other types
     /// use normal typed serialization.

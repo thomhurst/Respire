@@ -8,7 +8,7 @@ using Respire.Serialization;
 namespace Respire;
 
 /// <summary>Path Hash commands queued in batches and transactions. Requires Valkey 9.2; tested against RC1.</summary>
-public interface IRespireBatchPathHashCommands
+public partial interface IRespireBatchPathHashCommands
 {
     /// <summary>Sets one field; false when FNX/FXX rejects the complete write. Valkey: PHSET.</summary>
     RespirePending<bool> Set(RespireKey key, RespireKey path, RespireKey field, RespireValue value, RespireSetWhen when = RespireSetWhen.Always);
@@ -78,7 +78,7 @@ public interface IRespireBatchPathHashCommands
     RespirePending<RespireGetResult<T>> TryGet<T>(RespireKey key, RespireKey path, RespireKey field);
 }
 
-internal sealed class BatchPathHashCommands(IPendingSink sink) : IRespireBatchPathHashCommands
+internal sealed partial class BatchPathHashCommands(IPendingSink sink) : IRespireBatchPathHashCommands
 {
     public RespirePending<bool> Set(RespireKey key, RespireKey path, RespireKey field, RespireValue value, RespireSetWhen when = RespireSetWhen.Always)
         => sink.Add<Cmd1N, bool>("PHSET",

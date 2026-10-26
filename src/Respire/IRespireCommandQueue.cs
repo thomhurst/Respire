@@ -12,7 +12,7 @@ namespace Respire;
 /// model. Execution remains model-specific: call <see cref="RespireBatch.ExecuteAsync"/> for a
 /// pipeline or <see cref="RespireTransaction.CommitAsync(CancellationToken)"/> for a transaction.
 /// </remarks>
-public interface IRespireCommandQueue
+public partial interface IRespireCommandQueue
 {
     /// <summary>Queues a raw command with a supported key layout, prefixing and snapshotting its arguments.</summary>
     /// <remarks>

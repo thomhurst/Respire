@@ -18,6 +18,22 @@ foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
     var seriesKey = key + ":series";
     try
     {
+        // Ordinary payload writes must select the raw overload in trimmed NativeAOT consumers.
+        IRespireClient root = client;
+        const string text = "{\"a\":1}";
+        await client.SetAsync(key, text);
+        await root.SetAsync(key, text, TimeSpan.FromMinutes(1), RespireSetWhen.Exists);
+        await root.Strings.SetAsync(key, text);
+        if (await root.GetStringAsync(key) != text) throw new InvalidOperationException("Raw string SET failed.");
+        byte[] bytes = [0, 255, 13, 10];
+        await root.SetAsync(key, bytes);
+        await root.Strings.SetAsync(key, new ReadOnlyMemory<byte>(bytes));
+        await root.Strings.SetAsync(key, bytes.AsMemory());
+        await root.SetAsync(key, new ArraySegment<byte>(bytes));
+        var actualBytes = await root.GetBytesAsync(key);
+        if (actualBytes is null || !actualBytes.AsSpan().SequenceEqual(bytes))
+            throw new InvalidOperationException("Raw binary SET failed.");
+
         await commands.Set(key, "generated");
         if (await commands.Get(key) != "generated") throw new InvalidOperationException("Generated GET failed.");
         var values = await commands.MultiGet(key, key + ":missing");
