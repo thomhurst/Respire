@@ -73,7 +73,7 @@ public class FakeHashServerTests
         foreach (var (command, arguments) in new (string, RespireValue[])[]
         {
             ("HINCRBYFLOAT", ["hash", "field", 1]), ("HRANDFIELD", ["hash"]),
-            ("HSCAN", ["hash", 0]), ("HEXPIRE", ["hash", 1, "FIELDS", 1, "field"]),
+            ("HEXPIRE", ["hash", 1, "FIELDS", 1, "field"]),
         })
         {
             var error = await Assert.That(async () => { using var ignored = await client.ExecuteAsync(command, arguments); })

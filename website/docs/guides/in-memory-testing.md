@@ -114,10 +114,10 @@ uses one response slot, so later commands still work.
 | Integer strings | `INCR`, `DECR`, `INCRBY`, `DECRBY`, with checked signed 64-bit arithmetic |
 | Extended counters | `INCREX` with integer/floating increments, bounds, `SATURATE`, expiry, and `ENX`; integer arithmetic preserves the full signed 64-bit range |
 | Sparse arrays | `ARCOUNT`, `ARLEN`, `ARGET`, `ARMGET`, `ARSET`, `ARMSET`, `ARDEL`, `ARDELRANGE`, `ARGETRANGE`, `ARSCAN`, `ARSEEK`, `ARNEXT`, `ARINSERT`, `ARRING`, `ARLASTITEMS`, `ARINFO`, `AROP`, `ARGREP`; see [sparse-array testing limits](../commands/arrays.md#batches-transactions-and-the-fake-server) |
-| Hashes | `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY`; `HIMPORT PREPARE`, `SET`, `DISCARD`, `DISCARDALL` (see [hash import](hash-import.md)) |
+| Hashes | `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY`; `HSCAN` with `MATCH`, `COUNT`, `NOVALUES`; `HIMPORT PREPARE`, `SET`, `DISCARD`, `DISCARDALL` (see [hash import](hash-import.md)) |
 | Lists | `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`/`RPOP` with optional count, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`, `LREM`, `LINSERT BEFORE/AFTER`, `LPOS RANK/COUNT/MAXLEN`, `LMOVEM`, `BLMOVEM` |
-| Sets | `SADD`, `SREM`, `SMEMBERS`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms; `SINTERCARD`, `SDIFFCARD`, and `SUNIONCARD` with `LIMIT` (`SUNIONCARD APPROX` returns the exact count) |
-| Sorted sets | `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, `INCR`; `ZINCRBY`, `ZREM`, `ZCARD`, `ZSCORE`, `ZMSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZLEXCOUNT`; `ZRANGE` with `BYSCORE`/`BYLEX`, `REV`, `LIMIT`, `WITHSCORES`; legacy `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`; `ZPOPMIN`, `ZPOPMAX`; `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`; `ZINTERCARD` with `LIMIT` |
+| Sets | `SADD`, `SREM`, `SMEMBERS`, `SSCAN` with `MATCH` and `COUNT`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms; `SINTERCARD`, `SDIFFCARD`, and `SUNIONCARD` with `LIMIT` (`SUNIONCARD APPROX` returns the exact count) |
+| Sorted sets | `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, `INCR`; `ZINCRBY`, `ZREM`, `ZSCAN` with `MATCH` and `COUNT`, `ZCARD`, `ZSCORE`, `ZMSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZLEXCOUNT`; `ZRANGE` with `BYSCORE`/`BYLEX`, `REV`, `LIMIT`, `WITHSCORES`; legacy `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`; `ZPOPMIN`, `ZPOPMAX`; `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`; `ZINTERCARD` with `LIMIT` |
 | Pub/sub | `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`, with binary channel names and payloads |
 | Streams | `XADD` with numeric IDs or `*`, optional `NOMKSTREAM`, and manual `IDMP` with `*`; `XLEN`; `XCFGSET IDMP-DURATION/IDMP-MAXSIZE`; `XGROUP CREATE` with optional `MKSTREAM`; `XREAD`/`XREADGROUP` with `COUNT`, `MAXCOUNT`, `MAXSIZE`, `BLOCK`; `XACK`; `XPENDING` summary and ranges with `IDLE` and consumer filters; `XAUTOCLAIM` with `COUNT` and `JUSTID`; `XDEL`; `XINFO GROUPS`; `EVAL`/`EVALSHA` for the built-in [stream worker](stream-workers.md) scripts only |
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST`, `KEYS`, `SCAN` with `MATCH` and `COUNT` |
@@ -133,10 +133,10 @@ uses one response slot, so later commands still work.
 | --- | --- |
 | Key enumeration | `SCAN TYPE` |
 | Scripting | General `EVAL`/`EVALSHA`, `SCRIPT LOAD`, `cjson`, and functions; see [testing script-heavy code](#testing-script-heavy-code) |
-| Hashes | Hash-field expiry, `HINCRBYFLOAT`, `HRANDFIELD`, `HSCAN` |
-| Sets | `SPOP`, `SRANDMEMBER`, `SSCAN` |
+| Hashes | Hash-field expiry, `HINCRBYFLOAT`, `HRANDFIELD` |
+| Sets | `SPOP`, `SRANDMEMBER` |
 | Lists | `BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`, `BLMOVE`, `RPOPLPUSH`, `BRPOPLPUSH`. Use the nonblocking typed overloads without `waitFor`. |
-| Sorted sets | `ZRANDMEMBER`, `ZSCAN`, `BZPOPMIN`, `BZPOPMAX`, `ZMPOP`, `BZMPOP`, `ZUNION`, `ZINTER`, `ZDIFF` and their `STORE` forms, `ZRANGESTORE`, `ZRANK`/`ZREVRANK WITHSCORE` |
+| Sorted sets | `ZRANDMEMBER`, `BZPOPMIN`, `BZPOPMAX`, `ZMPOP`, `BZMPOP`, `ZUNION`, `ZINTER`, `ZDIFF` and their `STORE` forms, `ZRANGESTORE`, `ZRANK`/`ZREVRANK WITHSCORE` |
 | Streams | Trimming, `XCLAIM`, `XREADGROUP` `NOACK` and `CLAIM`, `IDMPAUTO`, range commands, stream metadata, other group-administration commands |
 | Pub/sub | `PSUBSCRIBE`, `PUNSUBSCRIBE`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, `PUBSUB`, `QUIT`, `RESET` |
 
@@ -175,6 +175,13 @@ deleting returned keys does not skip surviving keys. Order, cursor values, and p
 are unspecified and differ from Redis. Each call examines an in-memory key snapshot; this
 does not model Redis performance. Glob matching has a shared one-million-step limit per command;
 patterns that exceed it return an explicit error.
+
+Collection scans (`SSCAN`, `HSCAN`, and `ZSCAN`) use the same cursor, `MATCH`,
+`COUNT`, fixed-bucket, and glob-limit behavior for members or field names.
+`HSCAN NOVALUES` supports `Hashes.ScanFieldsAsync` and field-page APIs. Scan
+replies use arrays on both RESP2 and RESP3, including alternating field/value or
+member/score pairs. Scans preserve the key TTL and do not provide a snapshot or
+sorted-set rank ordering. Exact page boundaries do not model Redis encodings.
 
 ### Hashes
 

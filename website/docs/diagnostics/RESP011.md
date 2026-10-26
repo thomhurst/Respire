@@ -7,13 +7,13 @@ description: Scan or page Redis collections instead of materializing unbounded r
 
 The bundled analyzer warns about typed calls that can return an entire keyspace
 or collection. Large replies consume memory and keep Redis busy while it builds
-them. Batching these commands does not bound their replies.
+them.
 
 | Flagged operation | Alternative for large collections |
 | --- | --- |
 | `RespireServerNode.KeysAsync` (`KEYS`) | `client.Keys.ScanAsync` (`SCAN`) |
-| `Sets.MembersAsync` / queued `Members` (`SMEMBERS`) | `client.Sets.ScanAsync` (`SSCAN`) |
-| `Hashes.GetAllAsync` / queued `GetAll` (`HGETALL`) | `client.Hashes.ScanAsync` (`HSCAN`) |
+| `Sets.MembersAsync` (`SMEMBERS`) | `client.Sets.ScanAsync` (`SSCAN`) |
+| `Hashes.GetAllAsync` (`HGETALL`) | `client.Hashes.ScanAsync` (`HSCAN`) |
 | `Lists.RangeAsync` / queued `Range` with `start: 0, stop: -1` | Bounded `LRANGE` pages |
 | `SortedSets.RangeAsync` / `RangeWithScoresAsync` (or queued equivalents) with `start: 0, stop: -1` | `client.SortedSets.ScanAsync` (`ZSCAN`) or bounded rank ranges |
 
@@ -21,6 +21,13 @@ Generic overloads and the interface facets are covered. List and sorted-set rank
 bounds include omitted defaults, named arguments and compile-time constants.
 Sorted-set ranges are checked in either ordering. Nonconstant bounds, score and
 lexicographic ranges, raw commands, scripts and custom wrappers are not analyzed.
+
+Queued `Sets.Members` and `Hashes.GetAll` calls in batches and transactions are
+not flagged. A complete cursor loop cannot replace a single queued command,
+and moving the read outside a transaction changes its atomicity. Queued list
+and sorted-set ranges still warn because explicit bounds are available on those
+commands. Batching does not bound replies: keep queued sets and hashes small by
+construction, or redesign the operation when they can grow without a limit.
 
 ```csharp
 async Task ReadAsync(IRespireClient client, Func<string, Task> processAsync)

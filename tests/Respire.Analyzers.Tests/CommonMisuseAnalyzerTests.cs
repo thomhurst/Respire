@@ -272,10 +272,36 @@ public class CommonMisuseAnalyzerTests
             }
             void Queued(RespireBatch batch, RespireTransaction transaction)
             {
-                _ = {|RESP011:batch.Sets.Members("set")|};
-                _ = {|RESP011:transaction.Hashes.GetAll<int>("hash")|};
+                _ = batch.Sets.Members("set");
+                _ = transaction.Hashes.GetAll<int>("hash");
                 _ = {|RESP011:batch.Lists.Range("list")|};
                 _ = batch.Lists.Range("list", 0, 9);
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("net8.0")]
+    [Arguments("net10.0")]
+    public Task QueuedSetAndHashReadsHaveNoScanAlternative(string framework) => Verify(framework, new UnboundedReadAnalyzer(), """
+        class Consumer
+        {
+            async Task Read(IRespireClient client, IRespireBatchSetCommands sets, IRespireBatchHashCommands hashes)
+            {
+                using var batch = client.CreateBatch();
+                await using var transaction = client.CreateTransaction();
+                _ = batch.Sets.Members("set");
+                _ = batch.Sets.Members<int>("set");
+                _ = transaction.Sets.Members("set");
+                _ = transaction.Sets.Members<int>("set");
+                _ = batch.Hashes.GetAll("hash");
+                _ = batch.Hashes.GetAll<int>("hash");
+                _ = transaction.Hashes.GetAll("hash");
+                _ = transaction.Hashes.GetAll<int>("hash");
+                _ = sets.Members("set");
+                _ = sets.Members<int>("set");
+                _ = hashes.GetAll("hash");
+                _ = hashes.GetAll<int>("hash");
             }
         }
         """);

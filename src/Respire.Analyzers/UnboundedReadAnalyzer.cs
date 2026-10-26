@@ -29,7 +29,7 @@ public sealed class UnboundedReadAnalyzer : DiagnosticAnalyzer
     {
         var call = (IInvocationOperation)context.Operation;
         var name = call.TargetMethod.Name;
-        if (name is not ("KeysAsync" or "MembersAsync" or "Members" or "GetAllAsync" or "GetAll"
+        if (name is not ("KeysAsync" or "MembersAsync" or "GetAllAsync"
             or "RangeAsync" or "Range" or "RangeWithScoresAsync" or "RangeWithScores")) return;
         var type = call.TargetMethod.ContainingType;
         if (type.ContainingNamespace.ToDisplayString() != "Respire") return;
@@ -42,13 +42,12 @@ public sealed class UnboundedReadAnalyzer : DiagnosticAnalyzer
                 command = "KEYS";
                 alternative = "SCAN (Keys.ScanAsync)";
                 break;
-            case "IRespireSetCommands" or "SetCommands" or "IRespireBatchSetCommands" or "BatchSetCommands"
-                when name is "MembersAsync" or "Members":
+            // Cursor loops cannot replace single queued reads without changing batch/transaction semantics.
+            case "IRespireSetCommands" or "SetCommands" when name == "MembersAsync":
                 command = "SMEMBERS";
                 alternative = "SSCAN (Sets.ScanAsync)";
                 break;
-            case "IRespireHashCommands" or "HashCommands" or "IRespireBatchHashCommands" or "BatchHashCommands"
-                when name is "GetAllAsync" or "GetAll":
+            case "IRespireHashCommands" or "HashCommands" when name == "GetAllAsync":
                 command = "HGETALL";
                 alternative = "HSCAN (Hashes.ScanAsync)";
                 break;
@@ -62,7 +61,8 @@ public sealed class UnboundedReadAnalyzer : DiagnosticAnalyzer
                 when name is "RangeAsync" or "Range" or "RangeWithScoresAsync" or "RangeWithScores":
                 if (!HasConstantArgument(call, "start", 0) || !HasConstantArgument(call, "stop", -1)) return;
                 command = "ZRANGE 0 -1";
-                alternative = "ZSCAN (SortedSets.ScanAsync) or bounded rank ranges";
+                alternative = name is "Range" or "RangeWithScores"
+                    ? "bounded rank ranges" : "ZSCAN (SortedSets.ScanAsync) or bounded rank ranges";
                 break;
         }
 

@@ -120,6 +120,9 @@ public class FakeTransactionParityTests(Redis7ReferenceContainer fixture)
             new([ ["SET", "key", "value"] ], ["TIME"], false),
             new([ ["SET", "key", "value"] ], ["KEYS", "*"], false),
             new([ ["SET", "key", "value"] ], ["SCAN", "0", "MATCH", "*", "COUNT", "1000"], false),
+            new([ ["SADD", "key", "member"] ], ["SSCAN", "key", "0", "COUNT", "1"], false),
+            new([ ["HSET", "key", "field", "value"] ], ["HSCAN", "key", "0", "COUNT", "1"], false),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZSCAN", "key", "0", "COUNT", "1"], false),
             new([], ["ARSET", "key", "0", "value"], true),
             new([ ["ARSET", "key", "0", "value"] ], ["ARSET", "key", "0", "value"], true),
             new([], ["ARMSET", "key", "0", "value", "2", "other"], true),
@@ -359,7 +362,7 @@ public class FakeTransactionParityTests(Redis7ReferenceContainer fixture)
         string[] nonInvalidatingCommands =
         [
             "HELLO", "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH", "PING", "ECHO",
-            "TIME", "KEYS", "SCAN",
+            "TIME", "KEYS", "SCAN", "SSCAN", "HSCAN", "ZSCAN",
             "ARCOUNT", "ARGET", "ARGETRANGE", "ARGREP", "ARINFO", "ARLASTITEMS", "ARLEN",
             "ARMGET", "ARNEXT", "AROP", "ARSCAN",
             "HIMPORT PREPARE", "HIMPORT DISCARD", "HIMPORT DISCARDALL",

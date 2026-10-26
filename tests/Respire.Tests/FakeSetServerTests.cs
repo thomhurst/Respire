@@ -73,7 +73,7 @@ public class FakeSetServerTests
     }
 
     [Test]
-    public async Task UnsupportedSamplingAndScanningDoNotMutateSets()
+    public async Task UnsupportedSamplingDoesNotMutateSets()
     {
         await using var server = new RespireFakeServer();
 #pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
@@ -82,7 +82,7 @@ public class FakeSetServerTests
         await client.Sets.AddAsync("set", "member");
         foreach (var (command, args) in new (string, RespireValue[])[]
         {
-            ("SPOP", ["set"]), ("SRANDMEMBER", ["set"]), ("SSCAN", ["set", 0]),
+            ("SPOP", ["set"]), ("SRANDMEMBER", ["set"]),
         })
         {
             var error = await Assert.That(async () => { using var ignored = await client.ExecuteAsync(command, args); })
