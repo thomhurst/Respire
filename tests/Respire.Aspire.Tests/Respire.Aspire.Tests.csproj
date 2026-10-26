@@ -5,8 +5,8 @@
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../src/Aspire.Respire.HybridCaching/Aspire.Respire.HybridCaching.csproj" />
-    <ProjectReference Include="../../src/Aspire.Respire.OutputCaching/Aspire.Respire.OutputCaching.csproj" />
+    <ProjectReference Include="../../src/Respire.Aspire.HybridCaching/Respire.Aspire.HybridCaching.csproj" />
+    <ProjectReference Include="../../src/Respire.Aspire.OutputCaching/Respire.Aspire.OutputCaching.csproj" />
     <ProjectReference Include="../../src/Respire.Azure/Respire.Azure.csproj" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />

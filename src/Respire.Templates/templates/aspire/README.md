@@ -2,7 +2,7 @@
 
 An Aspire AppHost runs a Redis container (`cache`) and a minimal API (`api`).
 `WithReference(cache)` supplies the connection string and credentials;
-`WaitFor(cache)` delays the API until Redis is healthy. `Aspire.Respire` registers
+`WaitFor(cache)` delays the API until Redis is healthy. `Respire.Aspire` registers
 the shared client, Redis readiness check, and Respire OpenTelemetry traces and metrics.
 
 ## Requirements

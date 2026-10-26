@@ -1,4 +1,4 @@
-namespace Aspire.Respire;
+namespace Respire.Aspire;
 
 /// <summary>Host integration settings under <c>Aspire:Respire</c>, optionally overridden by connection name.</summary>
 public sealed class RespireClientSettings

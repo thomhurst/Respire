@@ -1,0 +1,23 @@
+#nullable enable
+Respire.Aspire.AspireRespireClientBuilder
+Respire.Aspire.AspireRespireClientBuilder.GetClient(System.IServiceProvider! services) -> Respire.IRespireClient!
+Respire.Aspire.AspireRespireClientBuilder.HostBuilder.get -> Microsoft.Extensions.Hosting.IHostApplicationBuilder!
+Respire.Aspire.AspireRespireClientBuilder.ServiceKey.get -> string?
+Respire.Aspire.AspireRespireClientBuilder.Settings.get -> Respire.Aspire.RespireClientSettings!
+Respire.Aspire.RespireClientSettings
+Respire.Aspire.RespireClientSettings.ConnectionString.get -> string?
+Respire.Aspire.RespireClientSettings.ConnectionString.set -> void
+Respire.Aspire.RespireClientSettings.DisableHealthChecks.get -> bool
+Respire.Aspire.RespireClientSettings.DisableHealthChecks.set -> void
+Respire.Aspire.RespireClientSettings.DisableLogging.get -> bool
+Respire.Aspire.RespireClientSettings.DisableLogging.set -> void
+Respire.Aspire.RespireClientSettings.DisableMetrics.get -> bool
+Respire.Aspire.RespireClientSettings.DisableMetrics.set -> void
+Respire.Aspire.RespireClientSettings.DisableTracing.get -> bool
+Respire.Aspire.RespireClientSettings.DisableTracing.set -> void
+Respire.Aspire.RespireClientSettings.RespireClientSettings() -> void
+Microsoft.Extensions.Hosting.AspireRespireExtensions
+static Microsoft.Extensions.Hosting.AspireRespireExtensions.AddKeyedRespireClient(this Microsoft.Extensions.Hosting.IHostApplicationBuilder! builder, string! connectionName, System.Action<Respire.Aspire.RespireClientSettings!>? configureSettings = null, System.Func<System.IServiceProvider!, Respire.RespireOptions!, Respire.RespireOptions!>? configureOptions = null) -> void
+static Microsoft.Extensions.Hosting.AspireRespireExtensions.AddKeyedRespireClientBuilder(this Microsoft.Extensions.Hosting.IHostApplicationBuilder! builder, string! connectionName, System.Action<Respire.Aspire.RespireClientSettings!>? configureSettings = null, System.Func<System.IServiceProvider!, Respire.RespireOptions!, Respire.RespireOptions!>? configureOptions = null) -> Respire.Aspire.AspireRespireClientBuilder!
+static Microsoft.Extensions.Hosting.AspireRespireExtensions.AddRespireClient(this Microsoft.Extensions.Hosting.IHostApplicationBuilder! builder, string! connectionName, System.Action<Respire.Aspire.RespireClientSettings!>? configureSettings = null, System.Func<System.IServiceProvider!, Respire.RespireOptions!, Respire.RespireOptions!>? configureOptions = null) -> void
+static Microsoft.Extensions.Hosting.AspireRespireExtensions.AddRespireClientBuilder(this Microsoft.Extensions.Hosting.IHostApplicationBuilder! builder, string! connectionName, System.Action<Respire.Aspire.RespireClientSettings!>? configureSettings = null, System.Func<System.IServiceProvider!, Respire.RespireOptions!, Respire.RespireOptions!>? configureOptions = null) -> Respire.Aspire.AspireRespireClientBuilder!

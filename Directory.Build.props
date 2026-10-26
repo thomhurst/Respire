@@ -29,10 +29,10 @@
       src/, or when a src/ project is neither listed nor in RespireNonPackageProjects.
     -->
     <RespirePackageProjects>
-      Aspire.Respire;
-      Aspire.Respire.DistributedCaching;
-      Aspire.Respire.HybridCaching;
-      Aspire.Respire.OutputCaching;
+      Respire.Aspire;
+      Respire.Aspire.DistributedCaching;
+      Respire.Aspire.HybridCaching;
+      Respire.Aspire.OutputCaching;
       Respire;
       Respire.AI;
       Respire.Compression.Lz4;

@@ -40,10 +40,10 @@ $documentPaths = @(
 )
 
 $requiredPackages = @(
-    'Aspire.Respire'
-    'Aspire.Respire.DistributedCaching'
-    'Aspire.Respire.HybridCaching'
-    'Aspire.Respire.OutputCaching'
+    'Respire.Aspire'
+    'Respire.Aspire.DistributedCaching'
+    'Respire.Aspire.HybridCaching'
+    'Respire.Aspire.OutputCaching'
     'Respire.Compression.Lz4'
     'Respire.Compression.Zstd'
     'Respire'

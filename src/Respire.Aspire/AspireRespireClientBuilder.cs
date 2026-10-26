@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using global::Respire;
 
-namespace Aspire.Respire;
+namespace Respire.Aspire;
 
 /// <summary>A registered Respire client and its host context, used by the companion cache integrations.</summary>
 public sealed class AspireRespireClientBuilder

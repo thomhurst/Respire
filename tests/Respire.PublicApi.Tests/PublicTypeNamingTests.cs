@@ -21,7 +21,7 @@ public class PublicTypeNamingTests
         "Respire.Analyzers.UnboundedReadAnalyzer",
         "Respire.Analyzers.UndisposedPooledResultAnalyzer",
         "Respire.Analyzers.UndisposedPooledResultCodeFixProvider",
-        "Aspire.Respire.AspireRespireClientBuilder",
+        "Respire.Aspire.AspireRespireClientBuilder",
         "Microsoft.Extensions.Hosting.AspireRespireExtensions",
         "Microsoft.Extensions.Hosting.AspireRespireDistributedCachingExtensions",
         "Microsoft.Extensions.Hosting.AspireRespireHybridCachingExtensions",

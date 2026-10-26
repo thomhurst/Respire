@@ -1,11 +1,11 @@
-# Aspire.Respire.OutputCaching
+# Respire.Aspire.OutputCaching
 
 Use ASP.NET Core output caching with an Aspire-registered Respire client.
 
 ## Install
 
 ```sh
-dotnet add package Aspire.Respire.OutputCaching
+dotnet add package Respire.Aspire.OutputCaching
 ```
 
 ## Usage

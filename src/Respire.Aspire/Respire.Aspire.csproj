@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <PackageId>Aspire.Respire</PackageId>
+    <PackageId>Respire.Aspire</PackageId>
     <Description>Respire client registration, configuration, health checks and telemetry for .NET Aspire.</Description>
     <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
   </PropertyGroup>

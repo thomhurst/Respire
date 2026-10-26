@@ -45,7 +45,7 @@ app.Run();
   expired tag references.
 - For a keyed or other specific client, pass a factory:
   `AddRespireOutputCache(configure, provider => provider.GetRequiredKeyedService<IRespireClient>("cache"))`.
-- With .NET Aspire, use the [`Aspire.Respire.OutputCaching`](aspire.md#cache-companions)
+- With .NET Aspire, use the [`Respire.Aspire.OutputCaching`](aspire.md#cache-companions)
   companion instead.
 - To invalidate a tag, resolve `IOutputCacheStore` and call
   `EvictByTagAsync("products", cancellationToken)`.

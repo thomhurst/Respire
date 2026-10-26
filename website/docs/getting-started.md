@@ -67,7 +67,7 @@ Redis readiness. The API establishes its client connection before serving
 `PUT /values/hello`, then call `GET /values/hello` to read it back. Values expire
 after five minutes; a missing value returns HTTP 404.
 
-`Aspire.Respire` registers the client, Redis health check, and Respire traces and
+`Respire.Aspire` registers the client, Redis health check, and Respire traces and
 metrics. Logs and telemetry export to the Aspire dashboard through its injected
 OTLP configuration. See the generated README for runnable requests and
 [Aspire integration](integrations/aspire.md) for configuration options.

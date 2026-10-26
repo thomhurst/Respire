@@ -2,7 +2,7 @@
   "solution": {
     "path": "../../Respire.slnx",
     "projects": [
-      "tests/Aspire.Respire.Tests/Aspire.Respire.Tests.csproj",
+      "tests/Respire.Aspire.Tests/Respire.Aspire.Tests.csproj",
       "tests/Respire.Tests/Respire.Tests.csproj",
       "tests/Respire.FusionCache.Tests/Respire.FusionCache.Tests.csproj",
       "tests/Respire.SignalR.Tests/Respire.SignalR.Tests.csproj",

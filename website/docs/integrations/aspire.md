@@ -5,7 +5,7 @@ description: Register Respire clients from Aspire connection strings, with confi
 
 # .NET Aspire
 
-`Aspire.Respire` registers Respire clients from Aspire connection strings, with health checks,
+`Respire.Aspire` registers Respire clients from Aspire connection strings, with health checks,
 OpenTelemetry, and logging. Use it in a .NET 8 or .NET 10 service that an AppHost starts with a
 Redis, Valkey, or Azure Managed Redis reference. For a runnable AppHost, see the
 [.NET Aspire sample](aspire-sample.md).
@@ -13,7 +13,7 @@ Redis, Valkey, or Azure Managed Redis reference. For a runnable AppHost, see the
 ## Install
 
 ```bash
-dotnet add package Aspire.Respire
+dotnet add package Respire.Aspire
 ```
 
 ## Register a client
@@ -38,7 +38,7 @@ builder.AddKeyedRespireClient("valkey");
 
 In the AppHost, use the normal Aspire hosting integrations and references:
 
-<!-- doc-test-ignore: AppHost-only fragment requires generated Projects.Api metadata and Aspire hosting packages; the equivalent sample is built and run by Aspire.Respire.IntegrationTests. -->
+<!-- doc-test-ignore: AppHost-only fragment requires generated Projects.Api metadata and Aspire hosting packages; the equivalent sample is built and run by Respire.Aspire.IntegrationTests. -->
 ```csharp
 var cache = builder.AddRedis("cache");
 var valkey = builder.AddValkey("valkey");
@@ -163,9 +163,9 @@ Install the companion package for each cache API you need:
 
 | Package | Registration on an existing client builder |
 | --- | --- |
-| `Aspire.Respire.DistributedCaching` | `.AddDistributedCache(...)` |
-| `Aspire.Respire.HybridCaching` | `.AddHybridCache(configureCache, configureHybrid)` |
-| `Aspire.Respire.OutputCaching` | `.AddOutputCache(...)` |
+| `Respire.Aspire.DistributedCaching` | `.AddDistributedCache(...)` |
+| `Respire.Aspire.HybridCaching` | `.AddHybridCache(configureCache, configureHybrid)` |
+| `Respire.Aspire.OutputCaching` | `.AddOutputCache(...)` |
 
 ```csharp
 builder.AddRespireClientBuilder("cache")
@@ -181,7 +181,7 @@ and never dispose it.
 - `IDistributedCache`, `HybridCache`, and `IOutputCacheStore` stay unkeyed, even with a keyed
   client. Choose one backend for each. If you register several, the last one wins, with its
   options and client.
-- The base `Aspire.Respire` package has no ASP.NET Core dependency.
+- The base `Respire.Aspire` package has no ASP.NET Core dependency.
 
 ## Azure Managed Redis with Microsoft Entra
 

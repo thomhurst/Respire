@@ -27,10 +27,10 @@
   <Folder Name="/src/">
     <Project Path="src/Respire.Templates/Respire.Templates.csproj" />
     <Project Path="src/Respire.AI/Respire.AI.csproj" />
-    <Project Path="src/Aspire.Respire/Aspire.Respire.csproj" />
-    <Project Path="src/Aspire.Respire.DistributedCaching/Aspire.Respire.DistributedCaching.csproj" />
-    <Project Path="src/Aspire.Respire.HybridCaching/Aspire.Respire.HybridCaching.csproj" />
-    <Project Path="src/Aspire.Respire.OutputCaching/Aspire.Respire.OutputCaching.csproj" />
+    <Project Path="src/Respire.Aspire/Respire.Aspire.csproj" />
+    <Project Path="src/Respire.Aspire.DistributedCaching/Respire.Aspire.DistributedCaching.csproj" />
+    <Project Path="src/Respire.Aspire.HybridCaching/Respire.Aspire.HybridCaching.csproj" />
+    <Project Path="src/Respire.Aspire.OutputCaching/Respire.Aspire.OutputCaching.csproj" />
     <Project Path="benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj" />
     <Project Path="src/Respire.Analyzers/Respire.Analyzers.csproj" />
     <Project Path="src/Respire.Compression.Lz4/Respire.Compression.Lz4.csproj" />
@@ -72,8 +72,8 @@
     <Project Path="tests/Respire.AI.Tests/Respire.AI.Tests.csproj" />
     <Project Path="tests/Respire.Hangfire.Acceptance.Tests/Respire.Hangfire.Acceptance.Tests.csproj" />
     <Project Path="tests/Respire.Orleans.Acceptance.Tests/Respire.Orleans.Acceptance.Tests.csproj" />
-    <Project Path="tests/Aspire.Respire.IntegrationTests/Aspire.Respire.IntegrationTests.csproj" />
-    <Project Path="tests/Aspire.Respire.Tests/Aspire.Respire.Tests.csproj" />
+    <Project Path="tests/Respire.Aspire.IntegrationTests/Respire.Aspire.IntegrationTests.csproj" />
+    <Project Path="tests/Respire.Aspire.Tests/Respire.Aspire.Tests.csproj" />
     <Project Path="tests/Respire.HealthChecks.Tests/Respire.HealthChecks.Tests.csproj" />
     <Project Path="tests/Respire.Idempotency.Tests/Respire.Idempotency.Tests.csproj" />
     <Project Path="tests/Respire.RateLimiting.Tests/Respire.RateLimiting.Tests.csproj" />

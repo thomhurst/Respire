@@ -27,8 +27,7 @@ internal static class Program
             throw new InvalidOperationException("No expected runtime assemblies were generated from package references.");
 
         var paths = Directory.GetFiles(AppContext.BaseDirectory, "*.dll")
-            .Where(path => Path.GetFileName(path).StartsWith("Respire", StringComparison.Ordinal)
-                || Path.GetFileName(path).StartsWith("Aspire.Respire", StringComparison.Ordinal))
+            .Where(path => Path.GetFileName(path).StartsWith("Respire", StringComparison.Ordinal))
             .Where(path => Path.GetFileNameWithoutExtension(path) != typeof(Program).Assembly.GetName().Name)
             .ToDictionary(path => Path.GetFileNameWithoutExtension(path), StringComparer.Ordinal);
         var missing = expected.Except(paths.Keys, StringComparer.Ordinal).Order().ToArray();
@@ -48,8 +47,8 @@ internal static class Program
             var publicTypes = assembly.GetExportedTypes();
             // Aspire companions expose host extensions in Microsoft's conventional namespace.
             // Keep this exception limited to the four explicitly audited integration packages.
-            var aspirePackage = name is "Aspire.Respire" or "Aspire.Respire.DistributedCaching"
-                or "Aspire.Respire.HybridCaching" or "Aspire.Respire.OutputCaching";
+            var aspirePackage = name is "Respire.Aspire" or "Respire.Aspire.DistributedCaching"
+                or "Respire.Aspire.HybridCaching" or "Respire.Aspire.OutputCaching";
             if (!publicTypes.Any(type => type.Namespace == name
                 || (aspirePackage && IsHostExtension(type))))
                 throw new InvalidOperationException($"{name} has no public types in its root namespace.");
