@@ -71,6 +71,21 @@ test('serializers treat array-like objects as objects rather than iterating thei
   }
 });
 
+test('build consumers escape script end tags at the end of function source', () => {
+  for (const consumer of [cssMinimizer, copyPlugin]) {
+    const serialize = consumer('serialize-javascript');
+    // GHSA-m5mm-p8h7-m29v: the formatting newline supplies the tag delimiter
+    // missing from the function source. Keep the payload small and inert.
+    for (const tag of ['</script', '</ScRiPt']) {
+      const transform = value => value;
+      transform.toString = () => `function transform(value) { return value; }//${tag}`;
+      const output = serialize({nested: {transform}}, {space: 2});
+      assert.doesNotMatch(output, /<\/script(?:[\t\n\f\r />]|$)/i);
+      assert.equal(runInNewContext(`(${output})`).nested.transform('respire'), 'respire');
+    }
+  }
+});
+
 const css = `
   /* Exercise selector deduplication, pseudo traversal, attributes and calc. */
   .card, .card { color: rgb(255, 0, 0); width: calc(10px + 10px); }
