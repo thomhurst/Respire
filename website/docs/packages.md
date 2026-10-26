@@ -5,7 +5,7 @@ description: Choose Respire packages by feature, with matching assembly and name
 
 # Packages and namespaces
 
-Each library uses one name for its NuGet package, assembly, and root namespace: install `Respire.Search`, import `Respire.Search`. The .NET Aspire integrations are the exception; they follow Aspire's `Aspire.<Product>` naming.
+Each library uses one name for its NuGet package, assembly, and root namespace: install `Respire.Search`, import `Respire.Search`. The .NET Aspire integrations use `Respire.Aspire` and its companion package names.
 
 ## Public API review and deprecation
 
@@ -44,6 +44,10 @@ Packing also runs SDK package validation. See [Contributing API changes](contrib
 for the released-package baseline, intentional-break process, and experimental API exceptions.
 
 ## Choose a package
+
+The `Respire.Aspire*` packages listed below are implemented but not yet published
+on NuGet as of October 26, 2026. See the [Aspire installation guide](integrations/aspire.md#install)
+for availability and how to try the source sample before publication.
 
 [`Respire.Templates`](getting-started.md#project-template) installs project starters
 with `dotnet new install Respire.Templates`. It contains template files rather than

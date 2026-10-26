@@ -12,6 +12,21 @@ Redis, Valkey, or Azure Managed Redis reference. For a runnable AppHost, see the
 
 ## Install
 
+:::warning Not yet published
+
+As of October 26, 2026, `Respire.Aspire`, `Respire.Aspire.DistributedCaching`,
+`Respire.Aspire.HybridCaching`, and `Respire.Aspire.OutputCaching` are implemented
+in this repository but are not yet published on NuGet. The install command below
+requires the first release containing these packages; it cannot restore them today.
+The former `Aspire.Respire*` names were replaced by `Respire.Aspire*` in
+[PR #2193](https://github.com/thomhurst/Respire/pull/2193).
+
+To try the integration now, build the [repository sample](aspire-sample.md), which
+uses project references. The release pipeline already includes all four packages;
+ordinary pushes validate them, while publication requires an explicit release.
+
+:::
+
 ```bash
 dotnet add package Respire.Aspire
 ```

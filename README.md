@@ -157,7 +157,7 @@ string? expired = await client.GetStringAsync("session"); // null
 | --- | --- |
 | [ASP.NET Core registration](https://respire.tomlonghurst.dev/docs/integrations/dependency-injection) | `services.AddRespire(connectionString)` |
 | [`IDistributedCache` and `HybridCache`](https://respire.tomlonghurst.dev/docs/integrations/caching) | `services.AddRespireHybridCache(...)` |
-| [.NET Aspire](https://respire.tomlonghurst.dev/docs/integrations/aspire) | `builder.AddRespireClient("cache")` |
+| [.NET Aspire](https://respire.tomlonghurst.dev/docs/integrations/aspire) (not yet published on NuGet) | `builder.AddRespireClient("cache")` |
 | [Stream consumer workers](https://respire.tomlonghurst.dev/docs/guides/stream-workers) | `services.AddRespireStreamWorker<THandler>(stream, group)` |
 | [Job queues with retries and scheduling](https://respire.tomlonghurst.dev/docs/guides/job-queues) | `services.AddRespireJobQueue<THandler, TJob>(...)` |
 | [Leader election with fencing tokens](https://respire.tomlonghurst.dev/docs/guides/coordination) | `new RespireLeaderElection(...)` |

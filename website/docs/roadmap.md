@@ -12,6 +12,12 @@ The next supported major targets **2.0.0** to avoid the occupied NuGet 1.x line.
 The pipeline supports manually published [release candidates](getting-started.md#release-candidates)
 before the stable cut; ordinary pushes only validate packages.
 
+The [Aspire integration](integrations/aspire.md#install) and its cache companions
+are implemented as `Respire.Aspire*`, but those packages are not yet published on
+NuGet as of October 26, 2026. The [source sample](integrations/aspire-sample.md)
+uses project references and can be tried before publication. The Aspire template
+requires a release containing the matching integration packages.
+
 Six settling surfaces now require an explicit [experimental API opt-in](experimental-apis.md):
 VectorData, semantic chat caching, hedged reads, hash import sessions, deferred raw commands,
 and StackExchange.Redis compatibility. These remain outside the 2.0 compatibility promise.
