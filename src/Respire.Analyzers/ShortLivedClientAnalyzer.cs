@@ -24,7 +24,17 @@ public sealed class ShortLivedClientAnalyzer : DiagnosticAnalyzer
     {
         context.EnableConcurrentExecution();
         context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
-        context.RegisterOperationAction(Analyze, OperationKind.Invocation);
+        context.RegisterCompilationStartAction(start =>
+        {
+            // Tests deliberately own isolated clients. Check references once per compilation,
+            // so fixture helpers and framework-free testing-package consumers are covered too.
+            if (start.Compilation.ReferencedAssemblyNames.Any(assembly => assembly.Name is
+                "Respire.Testing" or "Respire.Testing.Containers"
+                or "TUnit.Core" or "xunit.core" or "xunit.v3.core"
+                or "nunit.framework" or "Microsoft.VisualStudio.TestPlatform.TestFramework")) return;
+
+            start.RegisterOperationAction(Analyze, OperationKind.Invocation);
+        });
     }
 
     private static void Analyze(OperationAnalysisContext context)

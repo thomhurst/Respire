@@ -27,6 +27,10 @@ if (await client.GetStringAsync("greeting") is not null)
 
 ## Server and client lifetime
 
+The [RESP010 lifetime warning](../diagnostics/RESP010.md) is disabled in projects
+referencing `Respire.Testing`. Test methods and fixture helpers can own isolated
+clients without suppressing the warning, including multiple clients for one server.
+
 - Each server has independent data. All clients created from its options share that data, and each command runs atomically.
 - `CreateOptions()` returns fresh options each call. Use a `with` expression to set protocol (RESP2/RESP3), connection count, serializers, and timeouts.
 - Do not change the endpoint: it throws `NotSupportedException` on connection. A connection string cannot represent the fake server.
