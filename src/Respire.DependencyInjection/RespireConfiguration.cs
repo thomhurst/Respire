@@ -61,7 +61,7 @@ internal static class RespireConfiguration
         ConnectionMaxLifetimeJitter = section.GetValue("ConnectionMaxLifetimeJitter", options.ConnectionMaxLifetimeJitter),
         GatheredWriteStallTimeout = OptionalTimeSpan(section, "GatheredWriteStallTimeout", options.GatheredWriteStallTimeout),
         CommandTimeout = OptionalTimeSpan(section, "CommandTimeout", options.CommandTimeout),
-        RunContinuationsAsynchronously = section.GetValue("RunContinuationsAsynchronously", options.RunContinuationsAsynchronously),
+        ContinuationDispatch = section.GetValue("ContinuationDispatch", options.ContinuationDispatch),
         StalledDeliveryThreshold = section.GetValue("StalledDeliveryThreshold", options.StalledDeliveryThreshold),
         ThreadPoolMonitoring = section.GetValue("ThreadPoolMonitoring", options.ThreadPoolMonitoring),
         ThreadPoolWarningThreshold = section.GetValue("ThreadPoolWarningThreshold", options.ThreadPoolWarningThreshold),

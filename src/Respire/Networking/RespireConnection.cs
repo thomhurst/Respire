@@ -334,7 +334,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _inflight = new InflightRing(options.MaxInflightCommands);
         if (port != 0)
             _connectionMetrics = ConnectionTelemetry.Attach(this, options);
-        _runContinuationsAsynchronously = options.RunContinuationsAsynchronously;
+        _runContinuationsAsynchronously = options.ContinuationDispatch == RespireContinuationDispatch.ThreadPool;
+        _completions.AdaptiveDispatchEnabled = options.ContinuationDispatch == RespireContinuationDispatch.Adaptive;
         _sourcePool = new PendingResponsePool(options.CompletionSourcePoolSize, _runContinuationsAsynchronously);
         _streamPayloadPool = options.StreamPayloadPool ?? ArrayPool<byte>.Shared;
         _activeBuffer = new WriteBuffer(options.WriteBufferSize);
@@ -4651,9 +4652,9 @@ internal sealed record RespireConnectionOptions
     /// How long parsed replies may wait behind a slow or blocked continuation
     /// before they are delivered on another thread.
     /// </summary>
-    internal TimeSpan StalledDeliveryThreshold { get; init; } = TimeSpan.FromMilliseconds(500);
+    internal TimeSpan StalledDeliveryThreshold { get; init; } = TimeSpan.FromMilliseconds(20);
 
-    internal bool RunContinuationsAsynchronously { get; init; }
+    internal RespireContinuationDispatch ContinuationDispatch { get; init; }
 
     /// <summary>
     /// During teardown, how long replies may sit behind a delivery runner that never starts,

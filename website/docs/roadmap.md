@@ -71,8 +71,9 @@ are described in the guides below; release preparation is summarized separately.
 
 ### Connections, routing, and recovery
 
-- Opt-in [asynchronous command continuations](fundamentals/connections.md#command-continuations)
-  isolate reply delivery from caller CPU work and blocking waits, with a configurable inline stall threshold.
+- [Adaptive command continuations](fundamentals/connections.md#command-continuations) keep
+  fast continuations inline and move CPU-heavy ones to the thread pool, with a configurable
+  stall threshold for blocking waits.
 
 - Opt-in [Linux Multipath TCP](fundamentals/connections.md#multipath-tcp-on-linux), with logged local TCP fallback.
 

@@ -56,6 +56,8 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
         _hasDirectResult = true;
     }
 
+    internal override void DispatchContinuationAsynchronously() => _core.RunContinuationsAsynchronously = true;
+
     protected override void SetResultCore(in RespValue result)
     {
         _duration.MarkCompleted();

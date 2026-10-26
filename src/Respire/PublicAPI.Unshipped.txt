@@ -1,6 +1,10 @@
 #nullable enable
-Respire.RespireOptions.RunContinuationsAsynchronously.get -> bool
-Respire.RespireOptions.RunContinuationsAsynchronously.init -> void
+Respire.RespireContinuationDispatch
+Respire.RespireContinuationDispatch.Adaptive = 0 -> Respire.RespireContinuationDispatch
+Respire.RespireContinuationDispatch.Inline = 1 -> Respire.RespireContinuationDispatch
+Respire.RespireContinuationDispatch.ThreadPool = 2 -> Respire.RespireContinuationDispatch
+Respire.RespireOptions.ContinuationDispatch.get -> Respire.RespireContinuationDispatch
+Respire.RespireOptions.ContinuationDispatch.init -> void
 Respire.RespireOptions.StalledDeliveryThreshold.get -> System.TimeSpan
 Respire.RespireOptions.StalledDeliveryThreshold.init -> void
 Respire.RespireOptions.ReplicaRedirectValidator.get -> System.Func<Respire.RespireEndpoint, bool>?

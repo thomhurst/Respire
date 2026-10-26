@@ -121,7 +121,7 @@ public class DependencyInjectionOptionsTests
             ["ConnectionIdleReadTimeout"] = "00:00:12", ["GatheredWriteStallTimeout"] = "00:00:13",
             ["ConnectionMaxLifetime"] = "00:05:00", ["ConnectionMaxLifetimeJitter"] = "00:00:30",
             ["CommandTimeout"] = "00:00:05", ["ThreadPoolMonitoring"] = "false",
-            ["RunContinuationsAsynchronously"] = "true", ["StalledDeliveryThreshold"] = "00:00:00.025",
+            ["ContinuationDispatch"] = "ThreadPool", ["StalledDeliveryThreshold"] = "00:00:00.025",
             ["ThreadPoolWarningThreshold"] = "00:00:00.200", ["Connections"] = "3",
             ["DedicatedPool:MinimumSize"] = "2", ["DedicatedPool:MaximumSize"] = "12",
             ["DedicatedPool:MaximumIdle"] = "5", ["DedicatedPool:IdleTimeout"] = "00:00:30",

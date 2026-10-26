@@ -497,29 +497,32 @@ public sealed record RespireOptions
     public TimeSpan? CommandTimeout { get; init; } = DefaultCommandTimeout;
 
     /// <summary>
-    /// Queues command await continuations to the thread pool instead of running them inline
-    /// during reply delivery. Defaults to false for sequential throughput.
+    /// Where command await continuations run when their replies arrive. Defaults to
+    /// <see cref="RespireContinuationDispatch.Adaptive"/>.
     /// </summary>
     /// <remarks>
-    /// Enable this for shared clients when application continuations perform CPU-bound work
-    /// or blocking waits. Replies still complete in wire order, but caller continuations may
-    /// run concurrently and in any order. Already-completed awaits can still run synchronously.
+    /// Inline continuations avoid a thread-pool hop per reply, but they run one at a time on the
+    /// connection's delivery runner, so CPU work after an await delays other callers. Adaptive
+    /// dispatch keeps fast continuations inline and moves slow ones to the thread pool. Replies
+    /// still complete in wire order, but pool-dispatched continuations may run concurrently and in
+    /// any order. Already-completed awaits can still run synchronously.
     /// </remarks>
-    public bool RunContinuationsAsynchronously { get; init; }
+    public RespireContinuationDispatch ContinuationDispatch { get; init; }
 
     /// <summary>
     /// How long replies may wait behind a slow or blocked inline continuation before delivery
-    /// moves to another thread. Defaults to 500 milliseconds; must be at least one millisecond.
+    /// moves to another thread. Defaults to 20 milliseconds; must be at least one millisecond.
+    /// Timer resolution can lengthen short thresholds, to about 15 milliseconds on Windows.
     /// </summary>
     /// <remarks>This is a rescue threshold, not a latency guarantee under thread-pool starvation.</remarks>
-    public TimeSpan StalledDeliveryThreshold { get; init; } = TimeSpan.FromMilliseconds(500);
+    public TimeSpan StalledDeliveryThreshold { get; init; } = TimeSpan.FromMilliseconds(20);
 
     /// <summary>Enables the shared process-wide thread-pool scheduling probe. Defaults to true.</summary>
     /// <remarks>One background thread samples once per second while enabled clients exist. Disabling this
     /// client removes its warning subscription; other clients may still provide process-wide timeout samples.</remarks>
     public bool ThreadPoolMonitoring { get; init; } = true;
 
-    /// <summary>Scheduling delay that triggers a diagnostic warning. Defaults to 500 milliseconds.</summary>
+    /// <summary>Scheduling delay that triggers a diagnostic warning. Defaults to 20 milliseconds.</summary>
     /// <remarks>Must be positive. Warnings are limited to one per client per 30 seconds.
     /// This is a diagnostic threshold; no thread-pool settings are changed.</remarks>
     public TimeSpan ThreadPoolWarningThreshold { get; init; } = TimeSpan.FromMilliseconds(500);
@@ -705,6 +708,7 @@ public sealed record RespireOptions
         Require(Connections >= 1, nameof(Connections), "must be at least one");
         Require(Database >= 0, nameof(Database), "cannot be negative");
         Require(ConnectTimeout > TimeSpan.Zero, nameof(ConnectTimeout), "must be positive");
+        Require(Enum.IsDefined(ContinuationDispatch), nameof(ContinuationDispatch), "must be Adaptive, Inline, or ThreadPool");
         Require(StalledDeliveryThreshold >= TimeSpan.FromMilliseconds(1),
             nameof(StalledDeliveryThreshold), "must be at least one millisecond");
         Require(CredentialRefreshBeforeExpiry >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshBeforeExpiry), "must be at least one millisecond");
@@ -880,7 +884,7 @@ public sealed record RespireOptions
             ResponseTimeout = ConnectionIdleReadTimeout,
             GatheredWriteStallTimeout = GatheredWriteStallTimeout,
             CommandTimeout = CommandTimeout,
-            RunContinuationsAsynchronously = RunContinuationsAsynchronously,
+            ContinuationDispatch = ContinuationDispatch,
             StalledDeliveryThreshold = StalledDeliveryThreshold,
             UseTls = UseTls,
             TlsOptions = TlsOptions,

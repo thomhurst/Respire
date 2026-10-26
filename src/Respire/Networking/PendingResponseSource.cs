@@ -104,6 +104,15 @@ internal abstract partial class PendingResponse
         mutationReference.Release();
     }
 
+    /// <summary>
+    /// Queues this completion's caller continuation to the thread pool instead of running it
+    /// inline. The scheduler calls this before completing a reserved reply when inline
+    /// continuations have recently been slow enough to hold up replies queued behind them.
+    /// </summary>
+    internal virtual void DispatchContinuationAsynchronously()
+    {
+    }
+
     internal virtual bool CompleteReservedResult(in RespValue result)
     {
         SetResultCore(in result);
@@ -419,6 +428,8 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
         return true;
     }
 
+    internal override void DispatchContinuationAsynchronously() => _core.RunContinuationsAsynchronously = true;
+
     protected override void SetResultCore(in RespValue result) => _core.SetResult(result);
 
     protected override Exception PrepareException(Exception exception)
@@ -521,6 +532,8 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
         _observation = observation;
     }
 
+    internal override void DispatchContinuationAsynchronously() => _core.RunContinuationsAsynchronously = true;
+
     protected override void SetResultCore(in RespValue result) => _core.SetResult(result);
 
     protected override void SetExceptionCore(Exception exception) => _core.SetException(exception);
@@ -578,6 +591,7 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
         _observation = default;
         _commandName = null;
         _core.Reset();
+        _core.RunContinuationsAsynchronously = _pool?.RunContinuationsAsynchronously ?? false;
     }
 
     internal readonly struct PoolPolicy(PendingResponsePool pool) : IPooledObjectPolicy<PendingResponseSource>
@@ -642,6 +656,8 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         source.ErrorAttempts = errorAttempts;
         return source;
     }
+
+    internal override void DispatchContinuationAsynchronously() => _core.RunContinuationsAsynchronously = true;
 
     protected override void SetResultCore(in RespValue result)
     {
@@ -800,6 +816,8 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         _directResult = result;
         _hasDirectResult = true;
     }
+
+    internal override void DispatchContinuationAsynchronously() => _core.RunContinuationsAsynchronously = true;
 
     protected override void SetResultCore(in RespValue result)
     {
