@@ -38,8 +38,8 @@ Add `--isolated` to `aspire start` when running multiple copies. Use the dashboa
 login URL printed by Aspire and the API's HTTP URL from the dashboard or `describe`;
 ports are assigned dynamically. Keep the dashboard login token private.
 
-The API sends a bounded startup PING because Respire health checks probe existing
-connections. `/health/ready` checks Redis; `/health/live` checks only that the API
+The Redis client connects in the background when the API starts, so `/health/ready`
+turns healthy without waiting for a request. `/health/ready` checks Redis; `/health/live` checks only that the API
 can respond. Aspire also uses `/health/ready` for the API resource health state.
 
 ## Store and read a value

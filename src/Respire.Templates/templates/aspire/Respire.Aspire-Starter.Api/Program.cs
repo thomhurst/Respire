@@ -13,11 +13,6 @@ if (!string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOIN
 }
 
 await using var app = builder.Build();
-// Health checks probe existing connections; establish one before serving readiness.
-using (var startup = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
-{
-    await app.Services.GetRequiredService<IRespireClient>().PingAsync(startup.Token);
-}
 
 app.MapHealthChecks("/health/ready");
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });

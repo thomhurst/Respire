@@ -26,10 +26,9 @@ An existing Redis server can replace the local container entirely.
 To export Respire traces and metrics, set `OTEL_EXPORTER_OTLP_ENDPOINT` to your
 collector URL before starting the app. Without it, no exporter is configured.
 Use the standard OpenTelemetry environment variables for exporter authentication
-and protocol settings. A bounded startup PING establishes the connection before
-`/health/ready` probes it. Startup fails if Redis cannot answer within 30 seconds;
-the app exits rather than serving an unhealthy endpoint. Start Redis before
-`dotnet run`.
+and protocol settings. The Redis client connects in the background when the app
+starts and retries until Redis answers. Startup does not wait for Redis;
+`/health/ready` reports unhealthy until the connection is established.
 
 Stop the application with Ctrl+C, then remove this project's Redis container:
 

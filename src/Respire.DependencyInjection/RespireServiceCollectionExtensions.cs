@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -70,8 +71,10 @@ public static class RespireServiceCollectionExtensions
 
     /// <summary>
     /// Registers a singleton <see cref="IRespireClient"/> (and <see cref="RespireClient"/>).
-    /// Construction is lazy — nothing connects until the first command — so startup never
-    /// blocks on Redis. <see cref="RespireOptions.ConnectTimeout"/> bounds socket and TLS setup;
+    /// Construction is lazy, so startup never blocks on Redis. When a host starts, the client
+    /// connects in the background, retrying until the first connection succeeds; set
+    /// <see cref="RespireStartupOptions.ConnectOnStart"/> to <see langword="false"/> to wait for the
+    /// first command instead. <see cref="RespireOptions.ConnectTimeout"/> bounds socket and TLS setup;
     /// the Redis handshake and non-blocking commands use
     /// <see cref="RespireOptions.CommandTimeout"/>. Blocking commands use their explicit wait
     /// timeout, and caller cancellation applies throughout. Standalone clients surface setup
@@ -111,6 +114,7 @@ public static class RespireServiceCollectionExtensions
         ThrowIfRegistered(services, serviceKey: null);
         services.AddSingleton(provider => RespireClient.Create(Resolve(provider, configure)));
         services.AddSingleton<IRespireClient>(provider => provider.GetRequiredService<RespireClient>());
+        AddStartupConnection(services, serviceKey: null);
         return services;
     }
 
@@ -158,7 +162,15 @@ public static class RespireServiceCollectionExtensions
         services.AddKeyedSingleton(serviceKey, (provider, _) => RespireClient.Create(Resolve(provider, configure)));
         services.AddKeyedSingleton<IRespireClient>(
             serviceKey, (provider, key) => provider.GetRequiredKeyedService<RespireClient>(key));
+        AddStartupConnection(services, serviceKey);
         return services;
+    }
+
+    private static void AddStartupConnection(IServiceCollection services, string? serviceKey)
+    {
+        services.AddOptions();
+        services.AddSingleton(new RespireClientRegistration(serviceKey));
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, RespireStartupConnector>());
     }
 
     private static RespireOptions Build(Action<RespireOptionsBuilder> configure)

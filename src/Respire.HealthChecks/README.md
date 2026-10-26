@@ -30,6 +30,6 @@ app.MapHealthChecks("/health/ready");
 app.Run();
 ```
 
-The check opens no connections; a lazy client that has never connected reports unhealthy. Connect or send a bounded PING during startup when initial readiness is required.
+The check opens no connections. A client registered with `AddRespire` connects in the background when the host starts, so readiness does not wait for application traffic. A lazy client created another way reports unhealthy until it connects.
 
 [Read the guide](https://respire.tomlonghurst.dev/docs/integrations/health-checks) for configuration, requirements, and further examples.

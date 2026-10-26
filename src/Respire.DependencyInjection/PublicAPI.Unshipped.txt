@@ -66,3 +66,7 @@ Respire.DependencyInjection.RespireOptionsBuilder.StreamProducerId.get -> string
 Respire.DependencyInjection.RespireOptionsBuilder.StreamProducerId.set -> void
 static Respire.DependencyInjection.RespireServiceCollectionExtensions.AddRespire(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, Microsoft.Extensions.Configuration.IConfigurationSection! configuration, System.Func<System.IServiceProvider!, Respire.RespireOptions!, Respire.RespireOptions!>? configure = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
 static Respire.DependencyInjection.RespireServiceCollectionExtensions.AddKeyedRespire(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, string! serviceKey, Microsoft.Extensions.Configuration.IConfigurationSection! configuration, System.Func<System.IServiceProvider!, Respire.RespireOptions!, Respire.RespireOptions!>? configure = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+Respire.DependencyInjection.RespireStartupOptions
+Respire.DependencyInjection.RespireStartupOptions.ConnectOnStart.get -> bool
+Respire.DependencyInjection.RespireStartupOptions.ConnectOnStart.set -> void
+Respire.DependencyInjection.RespireStartupOptions.RespireStartupOptions() -> void

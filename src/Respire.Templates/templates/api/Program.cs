@@ -22,11 +22,6 @@ if (!string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOIN
 }
 
 await using var app = builder.Build();
-// The health check probes existing connections; establish one before serving readiness.
-using (var startup = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
-{
-    await app.Services.GetRequiredService<IRespireClient>().PingAsync(startup.Token);
-}
 
 app.MapHealthChecks("/health/ready");
 app.MapGet("/", () => "Try GET /values/hello, then repeat it to reuse the cached value.");

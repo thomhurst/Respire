@@ -72,7 +72,7 @@ Use `Create` when the application must start before Redis:
 await using var redis = RespireClient.Create(options);
 ```
 
-`Create` performs no network I/O. The first command connects; a later command retries a failed attempt. Dependency-injection registration uses `Create`, so Redis availability does not block host startup.
+`Create` performs no network I/O. The first command connects; a later command retries a failed attempt. Dependency-injection registration uses `Create`, so Redis availability does not block host startup. A hosted client then connects in the background; see [connect at startup](../integrations/dependency-injection.md#connect-at-startup).
 
 ## Custom connection streams
 

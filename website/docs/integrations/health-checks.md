@@ -39,9 +39,10 @@ app.MapHealthChecks("/health/ready");
 For `RespireClient`, the check sends `PING` on an existing usable command connection. It never
 creates a client, opens a connection, discovers topology, or rents a dedicated connection.
 
-- A lazy client that has not connected yet reports unhealthy until application work opens a
-  connection. To validate Redis at startup, register a client created with
-  `RespireClient.ConnectAsync`.
+- A client registered with `AddRespire` connects in the background when the host starts, so
+  the check turns healthy without application traffic. See
+  [connect at startup](./dependency-injection.md#connect-at-startup). A lazy client created
+  another way reports unhealthy until application work opens a connection.
 - By default it probes one primary. For Cluster, that is one primary with a usable connection;
   it does not prove every slot owner is available.
 - `ProbeAllNodes = true` probes every known primary and replica (for Standalone and Sentinel:
