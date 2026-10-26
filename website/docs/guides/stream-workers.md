@@ -69,13 +69,16 @@ Unicode normalization is not applied, so composed and decomposed names remain di
 ### Startup availability
 
 Consumer-group creation and job-queue rate-limit initialization retry transient connection failures
-and timeouts until Redis answers or the host stops. Delays start at one second and double up to
-30 seconds. Each failure logs a warning with the exception type and the next delay. Shutdown
+and timeouts until Redis answers or the host stops. Transient Redis replies (`LOADING`, `MASTERDOWN`,
+`CLUSTERDOWN`, `TRYAGAIN` and `BUSY`) also retry, including when wrapped by connection setup.
+Delays start at one second and double up to 30 seconds. Each failure logs a warning with
+the exception type and the next delay. Shutdown
 cancels both the pending operation and its retry delay; no consumers start before initialization
 succeeds. Successfully initialized rate limits are not reapplied while group creation retries.
 
-Invalid options, key validation, authentication errors, Redis command errors and exhausted reconnect
-limits fail fast. A client that exhausts `ReconnectPolicy.MaxAttempts` must be recreated. These
+Invalid options, key validation, authentication errors, protocol errors, permanent Redis command
+errors and exhausted reconnect limits fail fast. A client that exhausts `ReconnectPolicy.MaxAttempts`
+must be recreated. These
 startup retries do not change failure handling after consumers start. With `CreateGroup = false`,
 group creation is skipped, so the first read follows the normal reader failure behavior.
 
