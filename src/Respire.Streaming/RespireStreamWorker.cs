@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.Sockets;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -43,9 +44,6 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             JobQueueScheduling.ValidateKeys(client, [stream, JobQueueControls.Key(stream), options.JobEventsStream, options.DeadLetterStream!]);
             if (options.JobQueue?.MetricsRetentionMinutes > 0)
                 JobQueueScheduling.ValidateKeys(client, [stream, options.JobEventsStream, options.DeadLetterStream!, stream + ":metrics"]);
-            if (options.JobQueue?.RateLimit is { } rate)
-                await client.Scripts.ExecuteIntegerAsync(JobQueueControls.Configure, [JobQueueControls.Key(stream)],
-                    [rate.PermitLimit, (long)Math.Ceiling(rate.Window.TotalMilliseconds), "initialize"], stoppingToken).ConfigureAwait(false);
         }
         if (options.DeadLetterStream is { } deadLetter)
         {
@@ -56,15 +54,13 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             if (ClusterHash.GetSlot(sourceKey) != ClusterHash.GetSlot(deadLetterKey))
                 throw new ArgumentException("Source and dead-letter streams must share a resolved Cluster slot.");
         }
-        var readers = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         try
         {
-            if (options.CreateGroup)
-                await client.Streams.CreateGroupAsync(stream, group, options.GroupStart,
-                    cancellationToken: readers.Token).ConfigureAwait(false);
+            await InitializeAsync(stoppingToken).ConfigureAwait(false);
         }
-        catch { readers.Dispose(); throw; }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
 
+        var readers = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         var consumers = new Task[options.ConsumerCount + 1];
         for (var i = 0; i < options.ConsumerCount; i++)
             consumers[i] = ConsumeAsync($"{_identity}-{i}", readers);
@@ -77,6 +73,39 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         // The fault's asynchronous continuation can lose to an already completed drain.
         // Its published state still takes precedence over clean completion.
         if (_firstFailure.Task.IsCompleted) await _firstFailure.Task.ConfigureAwait(false);
+    }
+
+    private async Task InitializeAsync(CancellationToken token)
+    {
+        var rateConfigured = false;
+        var retryDelay = TimeSpan.FromSeconds(1);
+        while (true)
+        {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                if (!rateConfigured && options.JobEventsStream is not null && options.JobQueue?.RateLimit is { } rate)
+                {
+                    await client.Scripts.ExecuteIntegerAsync(JobQueueControls.Configure, [JobQueueControls.Key(stream)],
+                        [rate.PermitLimit, (long)Math.Ceiling(rate.Window.TotalMilliseconds), "initialize"], token).ConfigureAwait(false);
+                    rateConfigured = true;
+                }
+                if (options.CreateGroup)
+                    await client.Streams.CreateGroupAsync(stream, group, options.GroupStart,
+                        cancellationToken: token).ConfigureAwait(false);
+                return;
+            }
+            catch (Exception error) when (error is
+                RespireConnectionException and not RespireAuthenticationException
+                or RespireTimeoutException or TimeoutException or SocketException or IOException)
+            {
+                token.ThrowIfCancellationRequested();
+                // Exception messages may contain credentials or endpoints. Log only the type.
+                StartupFailed(logger, error.GetType().FullName ?? error.GetType().Name, retryDelay.TotalSeconds);
+                await Task.Delay(retryDelay, token).ConfigureAwait(false);
+                retryDelay = TimeSpan.FromSeconds(Math.Min(retryDelay.TotalSeconds * 2, 30));
+            }
+        }
     }
 
     private async Task DrainConsumersAsync(Task[] consumers, CancellationTokenSource readers)
@@ -622,4 +651,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "Stream handler or serializer failed ({ExceptionType}).")]
     private static partial void HandlerFailed(ILogger logger, string exceptionType);
+
+    [LoggerMessage(EventId = 2, Level = LogLevel.Warning, Message = "Stream worker initialization failed ({ExceptionType}); retrying in {RetryDelaySeconds} seconds.")]
+    private static partial void StartupFailed(ILogger logger, string exceptionType, double retryDelaySeconds);
 }

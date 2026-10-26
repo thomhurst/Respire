@@ -46,12 +46,14 @@ sent to the dead-letter stream. Source and event streams retain entries; choose
 an application-specific trimming/retention policy before sustained use.
 
 Use `ConnectionStrings__Redis` to override `appsettings.json`, including when
-using an existing server instead of Docker. Start Redis before the worker: the
-job queue creates its consumer group at startup and does not retry, so the app
-exits if Redis cannot answer then. `/health/ready` checks the established Redis
-connection; it
-does not assert that every job has finished. The queue name and Redis result key
-prefix follow the generated project name; instances with the same name share work.
+using an existing server instead of Docker. The host can start while Redis is
+unavailable. Worker initialization retries connection failures and timeouts with
+delays starting at one second and doubling up to 30 seconds, until Redis answers
+or the host stops. Each failure logs a warning; invalid configuration and
+authentication errors still fail startup. `/health/ready` reports unhealthy until
+Redis is connected; it does not assert that every job has finished. The queue name
+and Redis result key prefix follow the generated project name; instances with the
+same name share work.
 
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` to export both `Respire` and `Respire.Streaming`
 traces and metrics. Without it, no exporter is enabled. Standard OpenTelemetry

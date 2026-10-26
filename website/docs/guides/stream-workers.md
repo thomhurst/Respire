@@ -66,6 +66,18 @@ reserving the telemetry name, so rejected registrations leave the service collec
 Valid stream names are preserved exactly, including supplementary characters and a literal U+FFFD;
 Unicode normalization is not applied, so composed and decomposed names remain distinct Redis keys.
 
+### Startup availability
+
+Consumer-group creation and job-queue rate-limit initialization retry transient connection failures
+and timeouts until Redis answers or the host stops. Delays start at one second and double up to
+30 seconds. Each failure logs a warning with the exception type and the next delay. Shutdown
+cancels both the pending operation and its retry delay; no consumers start before initialization
+succeeds. Successfully initialized rate limits are not reapplied while group creation retries.
+
+Invalid options, key validation, authentication errors and Redis command errors fail fast. These
+startup retries do not change failure handling after consumers start. With `CreateGroup = false`,
+group creation is skipped, so the first read follows the normal reader failure behavior.
+
 ### Consumer names
 
 By default each registration picks a random consumer name at every start. Set `ConsumerName` to a
