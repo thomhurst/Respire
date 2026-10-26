@@ -116,9 +116,9 @@ public partial class UnitRetryLifetimeTests
             var read = unit.GetString("key");
             // A member conversion failure is not a transport or commit failure.
             await unit.CommitAsync();
-            await Assert.That(await write).IsTrue();
-            await Assert.That(await read).IsEqualTo("value");
-            numberError = await Failure(async () => await number);
+            await Assert.That(write.Result).IsTrue();
+            await Assert.That(read.Result).IsEqualTo("value");
+            numberError = await Failure(() => Task.FromResult(number.Result));
         }
         else
         {
@@ -232,11 +232,11 @@ public partial class UnitRetryLifetimeTests
             catch (Exception error)
             {
                 // Every member reports the commit's final failure.
-                var member = await Failure(async () => await read);
+                var member = await Failure(() => Task.FromResult(read.Result));
                 await Assert.That(member.GetType()).IsEqualTo(error.GetType());
                 return (null, error);
             }
-            return (await read, null);
+            return (read.Result, null);
         }
         using var batch = client.CreateBatch();
         var value = batch.GetString("key");

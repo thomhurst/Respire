@@ -34,9 +34,6 @@ using System.Diagnostics.CodeAnalysis;
     Scope = "type", Target = "~T:Respire.RespireMessage",
     Justification = "Delivery view includes serializer and owned payload storage; consumers compare explicit channel or payload values instead.")]
 [assembly: SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types",
-    Scope = "type", Target = "~T:Respire.RespirePendingAwaiter`1",
-    Justification = "Await protocol adapter for a pending operation, not a value intended for equality comparison.")]
-[assembly: SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types",
     Scope = "type", Target = "~T:Respire.RespireResult",
     Justification = "Disposable protocol view can borrow a parent's lifetime; it is not a value-equality or hash-key abstraction.")]
 [assembly: SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types",

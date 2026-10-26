@@ -189,7 +189,6 @@ public class SyncOverAsyncAnalyzerTests
                 var pending = batch.GetStringAsync("key");
                 await batch.SendAsync();
                 var text = pending.Result;
-                text = pending.GetAwaiter().GetResult();
                 var task = client.ExecuteAsync("PING");
                 task = default;
                 var result = task.Result;

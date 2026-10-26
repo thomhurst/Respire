@@ -188,8 +188,8 @@ public class FakeServerTests
         var set = batch.Strings.Set("batch", "value");
         var get = batch.Strings.GetString("batch");
         await batch.ExecuteAsync();
-        await Assert.That(await set).IsTrue();
-        await Assert.That(await get).IsEqualTo("value");
+        await Assert.That(set.Result).IsTrue();
+        await Assert.That(get.Result).IsEqualTo("value");
     }
 
     private static async Task<long> Number(RespireClient client, RespireCommand command, params RespireValue[] arguments)

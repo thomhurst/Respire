@@ -618,7 +618,7 @@ public class ClusterRetirementTests
                 using var batch = client.CreateBatch();
                 var pending = batch.Set("key", "value");
                 await batch.ExecuteAsync(timeout.Token);
-                await Assert.That(await pending).IsTrue();
+                await Assert.That(pending.Result).IsTrue();
             }
             else if (path == "tracked")
             {

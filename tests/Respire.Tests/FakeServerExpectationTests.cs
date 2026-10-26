@@ -44,7 +44,7 @@ public class FakeServerExpectationTests
         await using var transaction = client.CreateTransaction();
         var set = transaction.Set("key", "value");
         await transaction.CommitAsync();
-        await set;
+        _ = set.Result;
         server.VerifyAllExpectations();
     }
 
@@ -282,10 +282,10 @@ public class FakeServerExpectationTests
         var accepted = batch.Strings.Set("accepted", "ok");
         var read = batch.Strings.GetString("accepted");
         await Assert.That(async () => await batch.ExecuteAsync()).Throws<RespireServerException>();
-        var error = await Assert.That(async () => await rejected).Throws<RespireServerException>();
+        var error = await Assert.That(() => rejected.Result).Throws<RespireServerException>();
         await Assert.That(error!.Message).IsEqualTo("ERR expected failure");
-        await Assert.That(await accepted).IsTrue();
-        await Assert.That(await read).IsEqualTo("ok");
+        await Assert.That(accepted.Result).IsTrue();
+        await Assert.That(read.Result).IsEqualTo("ok");
         server.VerifyAllExpectations();
         server.ResetExpectations();
         await Assert.That(await client.GetStringAsync("tenant:rejected")).IsNull();

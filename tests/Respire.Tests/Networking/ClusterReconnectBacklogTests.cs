@@ -301,8 +301,8 @@ public class ClusterReconnectBacklogTests
         await fixture.ReleaseAsync();
         await execution.WaitAsync(Limit);
 #pragma warning disable RESP002 // Execution completed before reading either member.
-        await Assert.That(await first).IsEqualTo("value");
-        await Assert.That(await second).IsTrue();
+        await Assert.That(first.Result).IsEqualTo("value");
+        await Assert.That(second.Result).IsTrue();
 #pragma warning restore RESP002
         await Assert.That(fixture.Server.ReceivedCommands.Where(IsApplicationCommand).ToArray())
             .IsEquivalentTo(transaction
@@ -374,8 +374,8 @@ public class ClusterReconnectBacklogTests
         await fixture.ReleaseAsync();
         await execution.WaitAsync(Limit);
 #pragma warning disable RESP002 // Batch execution has completed.
-        await Assert.That(await retry).IsEqualTo("value");
-        await Assert.That(await successful).IsEqualTo("value");
+        await Assert.That(retry.Result).IsEqualTo("value");
+        await Assert.That(successful.Result).IsEqualTo("value");
 #pragma warning restore RESP002
         await Assert.That(await later.WaitAsync(Limit)).IsEqualTo("value");
         var commands = fixture.Server.ReceivedCommands.Where(IsApplicationCommand).ToArray();

@@ -1284,43 +1284,6 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
-    public async Task AwaitedPendingBeforeSend_IsFlagged() => await Verify.VerifyAsync(
-        """
-        using System;
-        using System.Threading.Tasks;
-        using Respire;
-
-        public class Caller
-        {
-            public async Task RunAsync(RespireClient client)
-            {
-                var batch = client.CreateBatch();
-                var pending = batch.GetStringAsync("key");
-                Console.WriteLine({|RESP002:await pending|});
-                await batch.SendAsync();
-            }
-        }
-        """);
-
-    [Test]
-    public async Task InlineAwaitOfQueuedCommand_IsFlagged() => await Verify.VerifyAsync(
-        """
-        using System;
-        using System.Threading.Tasks;
-        using Respire;
-
-        public class Caller
-        {
-            public async Task RunAsync(RespireClient client)
-            {
-                var batch = client.CreateBatch();
-                Console.WriteLine({|RESP002:await batch.GetStringAsync("key")|});
-                await batch.SendAsync();
-            }
-        }
-        """);
-
-    [Test]
     public async Task TransactionResultReadBeforeCommit_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;
@@ -2329,25 +2292,6 @@ public class PendingReadBeforeFlushAnalyzerTests
 
                 await batch.SendAsync();
                 Console.WriteLine(pending.Result);
-            }
-        }
-        """);
-
-    [Test]
-    public async Task ManualGetResultBeforeSend_IsFlagged() => await Verify.VerifyAsync(
-        """
-        using System;
-        using System.Threading.Tasks;
-        using Respire;
-
-        public class Caller
-        {
-            public async Task RunAsync(RespireClient client)
-            {
-                var batch = client.CreateBatch();
-                var pending = batch.GetStringAsync("key");
-                Console.WriteLine({|RESP002:pending.GetAwaiter().GetResult()|});
-                await batch.SendAsync();
             }
         }
         """);

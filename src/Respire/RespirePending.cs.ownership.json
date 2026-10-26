@@ -1,20 +1,9 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.RespirePendingAwaiter`1",
-      "OwnerType": "Respire.RespirePendingAwaiter`1",
-      "Members": [
-        "GetResult():T",
-        "OnCompleted(Action):void",
-        "UnsafeOnCompleted(Action):void"
-      ],
-      "Contract": "Execution reports a terminal command failure once after cleanup. Inspection of a discarded queue, a not-ready pending, or a WATCH abort owns its lifecycle failure; repeated inspection does not republish it. Successful inspection rents no error lease."
-    },
-    {
       "Type": "Respire.RespirePending`1",
       "OwnerType": "Respire.RespirePending`1",
       "Members": [
-        "GetAwaiter():RespirePendingAwaiter<T>",
         "TryGetResult(out T):bool"
       ],
       "Contract": "Execution reports a terminal command failure once after cleanup. Inspection of a discarded queue, a not-ready pending, or a WATCH abort owns its lifecycle failure; repeated inspection does not republish it. Successful inspection rents no error lease."
@@ -27,13 +16,6 @@
       "Member": "Respire.RespirePending`1.Result:T",
       "Owner": "Respire.RespirePending`1.Result:T",
       "Contract": "Execution reports a terminal command failure once after cleanup. Inspection of a discarded queue, a not-ready pending, or a WATCH abort owns its lifecycle failure; repeated inspection does not republish it. Successful inspection rents no error lease."
-    },
-    {
-      "Name": "deferred-awaiter",
-      "Role": "helper",
-      "Member": "Respire.RespirePendingAwaiter`1.GetResult():T",
-      "Owner": "Respire.RespirePending`1.Result:T",
-      "Contract": "Delegate final inspection to pending Result without consuming or replacing the deferred result contract."
     },
     {
       "Name": "deferred-error-publication",

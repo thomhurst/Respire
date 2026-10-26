@@ -75,10 +75,6 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 nodeContext => AnalyzeResultAccess(nodeContext, known), SyntaxKind.SimpleMemberAccessExpression);
             compilationStart.RegisterSyntaxNodeAction(
                 nodeContext => AnalyzeResultBinding(nodeContext, known), SyntaxKind.MemberBindingExpression);
-            compilationStart.RegisterSyntaxNodeAction(
-                nodeContext => AnalyzeAwait(nodeContext, known), SyntaxKind.AwaitExpression);
-            compilationStart.RegisterSyntaxNodeAction(
-                nodeContext => AnalyzeManualGetResult(nodeContext, known), SyntaxKind.InvocationExpression);
         });
     }
 
@@ -117,43 +113,6 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         }
 
         AnalyzeRead(context, read: conditional, pending: conditional.Expression, known);
-    }
-
-    private static void AnalyzeAwait(SyntaxNodeAnalysisContext context, KnownTypes known)
-    {
-        var awaitExpression = (AwaitExpressionSyntax)context.Node;
-        var awaited = ScopeWalker.Unwrap(awaitExpression.Expression);
-
-        var awaitedType = context.SemanticModel.GetTypeInfo(awaited, context.CancellationToken).Type;
-        if (awaitedType is null || !SymbolEqualityComparer.Default.Equals(awaitedType.OriginalDefinition, known.Pending))
-        {
-            return;
-        }
-
-        AnalyzeRead(context, read: awaitExpression, pending: awaited, known);
-    }
-
-    private static void AnalyzeManualGetResult(SyntaxNodeAnalysisContext context, KnownTypes known)
-    {
-        var invocation = (InvocationExpressionSyntax)context.Node;
-        if (ScopeWalker.Unwrap(invocation.Expression) is not MemberAccessExpressionSyntax
-            {
-                Name.Identifier.ValueText: GetResult,
-            } getResult
-            || ScopeWalker.Unwrap(getResult.Expression) is not InvocationExpressionSyntax getAwaiterInvocation
-            || ScopeWalker.Unwrap(getAwaiterInvocation.Expression) is not MemberAccessExpressionSyntax
-            {
-                Name.Identifier.ValueText: GetAwaiter,
-            } getAwaiter
-            || context.SemanticModel.GetSymbolInfo(getAwaiter, context.CancellationToken).Symbol
-                is not IMethodSymbol getAwaiterMethod
-            || !SymbolEqualityComparer.Default.Equals(
-                getAwaiterMethod.ContainingType.OriginalDefinition, known.Pending))
-        {
-            return;
-        }
-
-        AnalyzeRead(context, read: invocation, pending: getAwaiter.Expression, known);
     }
 
     private static void AnalyzeRead(SyntaxNodeAnalysisContext context, ExpressionSyntax read, ExpressionSyntax pending, KnownTypes known)
@@ -588,9 +547,6 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     break;
 
                 case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, use):
-                    break;
-
-                case AwaitExpressionSyntax awaitExpression when ScopeWalker.IsSame(awaitExpression.Expression, use):
                     break;
 
                 case AssignmentExpressionSyntax assignment

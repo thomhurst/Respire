@@ -26,8 +26,8 @@ public class TransactionCommandRetryTests
         var exists = transaction.Exists("key");
         await transaction.CommitAsync();
 
-        await Assert.That(await value).IsEqualTo("value");
-        await Assert.That(await exists).IsTrue();
+        await Assert.That(value.Result).IsEqualTo("value");
+        await Assert.That(exists.Result).IsTrue();
         await Assert.That(execs).IsEqualTo(2);
         await Assert.That(server.ReceivedCommands.Count(command => command == "MULTI")).IsEqualTo(2);
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(2);
@@ -49,7 +49,7 @@ public class TransactionCommandRetryTests
         var value = transaction.GetString("key");
         await transaction.CommitAsync();
 
-        await Assert.That(await value).IsEqualTo("value");
+        await Assert.That(value.Result).IsEqualTo("value");
         await Assert.That(execs).IsEqualTo(2);
     }
 
@@ -73,14 +73,14 @@ public class TransactionCommandRetryTests
         {
             // One accumulating member blocks the whole unit, including the read that is safe alone.
             await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireConnectionException>();
-            await Assert.That(async () => await value).Throws<RespireConnectionException>();
-            await Assert.That(async () => await counter).Throws<RespireConnectionException>();
+            await Assert.That(() => value.Result).Throws<RespireConnectionException>();
+            await Assert.That(() => counter.Result).Throws<RespireConnectionException>();
         }
         else
         {
             await transaction.CommitAsync();
-            await Assert.That(await value).IsEqualTo("value");
-            await Assert.That(await counter).IsEqualTo(2L);
+            await Assert.That(value.Result).IsEqualTo("value");
+            await Assert.That(counter.Result).IsEqualTo(2L);
         }
         await Assert.That(execs).IsEqualTo(expectedExecs);
     }
@@ -103,7 +103,7 @@ public class TransactionCommandRetryTests
         else
         {
             await transaction.CommitAsync();
-            await Assert.That(await set).IsTrue();
+            await Assert.That(set.Result).IsTrue();
         }
         await Assert.That(execs).IsEqualTo(expectedExecs);
     }
@@ -124,7 +124,7 @@ public class TransactionCommandRetryTests
         var value = transaction.GetString("key");
         await transaction.CommitAsync();
 
-        await Assert.That(await value).IsEqualTo("value");
+        await Assert.That(value.Result).IsEqualTo("value");
         await Assert.That(server.ReceivedCommands.Count(command => command == "EXEC")).IsEqualTo(2);
     }
 
@@ -152,9 +152,9 @@ public class TransactionCommandRetryTests
         var value = transaction.GetString("key");
         await transaction.CommitAsync();
 
-        await Assert.That(await counter).IsEqualTo((long)expectedExecs);
-        if (expectedExecs == 2) await Assert.That(await value).IsEqualTo("value");
-        else await Assert.That(async () => await value).Throws<RespireServerException>();
+        await Assert.That(counter.Result).IsEqualTo((long)expectedExecs);
+        if (expectedExecs == 2) await Assert.That(value.Result).IsEqualTo("value");
+        else await Assert.That(() => value.Result).Throws<RespireServerException>();
         await Assert.That(execs).IsEqualTo(expectedExecs);
         await Assert.That(server.ReceivedCommands.Count(command => command == "MULTI")).IsEqualTo(expectedExecs);
         await Assert.That(server.ReceivedCommands.Count(command => command == "INCR counter")).IsEqualTo(expectedExecs);
@@ -191,8 +191,8 @@ public class TransactionCommandRetryTests
         var value = transaction.GetString("key");
         await transaction.CommitAsync();
 
-        await Assert.That(await counter).IsEqualTo(2L);
-        await Assert.That(async () => await value).Throws<RespireServerException>();
+        await Assert.That(counter.Result).IsEqualTo(2L);
+        await Assert.That(() => value.Result).Throws<RespireServerException>();
         await Assert.That(execs).IsEqualTo(2);
         await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(1L);
         await Assert.That(events.GetValueOrDefault("exhausted")).IsEqualTo(1L);
@@ -212,7 +212,7 @@ public class TransactionCommandRetryTests
         var value = transaction.GetString("key");
 
         await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireServerException>();
-        await Assert.That(async () => await value).Throws<RespireServerException>();
+        await Assert.That(() => value.Result).Throws<RespireServerException>();
         await Assert.That(server.ReceivedCommands.Count(command => command == "EXEC")).IsEqualTo(1);
     }
 
@@ -253,13 +253,13 @@ public class TransactionCommandRetryTests
         if (category == RespireCommandRetryCategory.Never)
         {
             await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireConnectionException>();
-            await Assert.That(async () => await value).Throws<RespireConnectionException>();
+            await Assert.That(() => value.Result).Throws<RespireConnectionException>();
             await Assert.That(execs).IsEqualTo(1);
         }
         else
         {
             await transaction.CommitAsync();
-            using var result = await value;
+            using var result = value.Result;
             await Assert.That(result.AsString()).IsEqualTo("x");
             await Assert.That(execs).IsEqualTo(2);
         }
@@ -277,7 +277,7 @@ public class TransactionCommandRetryTests
         var raw = transaction.Execute(RespireCommand.Create("GET").WithRetryCategory(RespireCommandRetryCategory.ReadOnly), "other");
         await transaction.CommitAsync();
 
-        using var result = await raw;
+        using var result = raw.Result;
         await Assert.That(result.AsString()).IsEqualTo("x");
         await Assert.That(execs).IsEqualTo(2);
     }
@@ -330,8 +330,8 @@ public class TransactionCommandRetryTests
         var second = transaction.Exists("key");
 
         await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireConnectionException>();
-        await Assert.That(async () => await first).Throws<RespireConnectionException>();
-        await Assert.That(async () => await second).Throws<RespireConnectionException>();
+        await Assert.That(() => first.Result).Throws<RespireConnectionException>();
+        await Assert.That(() => second.Result).Throws<RespireConnectionException>();
         await Assert.That(execs).IsEqualTo(3);
     }
 
@@ -377,7 +377,7 @@ public class TransactionCommandRetryTests
         var error = await Failure(async () => await transaction.CommitAsync(cancellation.Token));
         await Assert.That(error).IsAssignableTo<OperationCanceledException>();
         await Assert.That(((OperationCanceledException)error).CancellationToken).IsEqualTo(cancellation.Token);
-        await Assert.That(async () => await value).Throws<OperationCanceledException>();
+        await Assert.That(() => value.Result).Throws<OperationCanceledException>();
         await Assert.That(execs).IsEqualTo(1);
     }
 
@@ -465,7 +465,7 @@ public class TransactionCommandRetryTests
         var value = transaction.GetString("key");
         await transaction.CommitAsync();
 
-        await Assert.That(await value).IsEqualTo("value");
+        await Assert.That(value.Result).IsEqualTo("value");
         await Assert.That(execs).IsEqualTo(2);
         await Assert.That(published).IsEqualTo(1);
         await Assert.That(underGate).IsEqualTo(0);

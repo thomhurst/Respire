@@ -35,17 +35,6 @@ internal static class RespireApiStub
             {
                 public bool IsCompleted => true;
                 public T Result => default(T);
-                public RespirePendingAwaiter<T> GetAwaiter() => new RespirePendingAwaiter<T>(this);
-            }
-
-            public readonly struct RespirePendingAwaiter<T> : ICriticalNotifyCompletion
-            {
-                private readonly RespirePending<T> _pending;
-                public RespirePendingAwaiter(RespirePending<T> pending) { _pending = pending; }
-                public bool IsCompleted => true;
-                public T GetResult() => _pending.Result;
-                public void OnCompleted(Action continuation) { continuation(); }
-                public void UnsafeOnCompleted(Action continuation) { continuation(); }
             }
 
             public readonly struct RespireBatchResult { }

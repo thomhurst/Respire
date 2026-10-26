@@ -859,7 +859,7 @@ public class CredentialProviderTests
         var stored = transaction.Set("key", "value");
         await transaction.CommitAsync();
         await UntilAsync(() => server.ReceivedCommands.Contains("AUTH user second"));
-        await Assert.That(await stored).IsTrue();
+        await Assert.That(stored.Result).IsTrue();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
             "AUTH user first", "MULTI", "SET key value", "EXEC", "AUTH user second",

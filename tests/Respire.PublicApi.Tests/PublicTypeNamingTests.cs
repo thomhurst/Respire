@@ -13,7 +13,6 @@ public class PublicTypeNamingTests
         "Respire.Analyzers.BlockingSubscriptionHandlerAnalyzer",
         "Respire.Analyzers.DiagnosticIds",
         "Respire.Analyzers.PendingReadBeforeFlushAnalyzer",
-        "Respire.Analyzers.PendingResultSuppressor",
         "Respire.Analyzers.ShortLivedClientAnalyzer",
         "Respire.Analyzers.StackExchangeMigrationAnalyzer",
         "Respire.Analyzers.StackExchangeMigrationCodeFixProvider",
