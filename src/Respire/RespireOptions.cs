@@ -496,6 +496,24 @@ public sealed record RespireOptions
     /// </summary>
     public TimeSpan? CommandTimeout { get; init; } = DefaultCommandTimeout;
 
+    /// <summary>
+    /// Queues command await continuations to the thread pool instead of running them inline
+    /// during reply delivery. Defaults to false for sequential throughput.
+    /// </summary>
+    /// <remarks>
+    /// Enable this for shared clients when application continuations perform CPU-bound work
+    /// or blocking waits. Replies still complete in wire order, but caller continuations may
+    /// run concurrently and in any order. Already-completed awaits can still run synchronously.
+    /// </remarks>
+    public bool RunContinuationsAsynchronously { get; init; }
+
+    /// <summary>
+    /// How long replies may wait behind a slow or blocked inline continuation before delivery
+    /// moves to another thread. Defaults to 500 milliseconds; must be at least one millisecond.
+    /// </summary>
+    /// <remarks>This is a rescue threshold, not a latency guarantee under thread-pool starvation.</remarks>
+    public TimeSpan StalledDeliveryThreshold { get; init; } = TimeSpan.FromMilliseconds(500);
+
     /// <summary>Enables the shared process-wide thread-pool scheduling probe. Defaults to true.</summary>
     /// <remarks>One background thread samples once per second while enabled clients exist. Disabling this
     /// client removes its warning subscription; other clients may still provide process-wide timeout samples.</remarks>
@@ -687,6 +705,8 @@ public sealed record RespireOptions
         Require(Connections >= 1, nameof(Connections), "must be at least one");
         Require(Database >= 0, nameof(Database), "cannot be negative");
         Require(ConnectTimeout > TimeSpan.Zero, nameof(ConnectTimeout), "must be positive");
+        Require(StalledDeliveryThreshold >= TimeSpan.FromMilliseconds(1),
+            nameof(StalledDeliveryThreshold), "must be at least one millisecond");
         Require(CredentialRefreshBeforeExpiry >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshBeforeExpiry), "must be at least one millisecond");
         Require(CredentialRefreshRetryDelay >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshRetryDelay), "must be at least one millisecond");
         Require(ThreadPoolWarningThreshold > TimeSpan.Zero, nameof(ThreadPoolWarningThreshold), "must be positive");
@@ -860,6 +880,8 @@ public sealed record RespireOptions
             ResponseTimeout = ConnectionIdleReadTimeout,
             GatheredWriteStallTimeout = GatheredWriteStallTimeout,
             CommandTimeout = CommandTimeout,
+            RunContinuationsAsynchronously = RunContinuationsAsynchronously,
+            StalledDeliveryThreshold = StalledDeliveryThreshold,
             UseTls = UseTls,
             TlsOptions = TlsOptions,
             Username = Username,

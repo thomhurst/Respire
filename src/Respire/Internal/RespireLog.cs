@@ -557,8 +557,8 @@ internal static partial class RespireLog
         => ConnectionQueuedDeliveryDelayedMessage(logger, host, port, milliseconds, null);
 
     [LoggerMessage(88, LogLevel.Warning, "Reply delivery for {Host}:{Port} was blocked by a continuation for over {Milliseconds} ms; "
-                + "delivering the remaining replies on another thread. Avoid blocking on Respire results "
-                + "inside continuations.", EventName = "ConnectionContinuationDeliveryBlocked")]
+                + "delivering the remaining replies on another thread. Blocking waits or CPU-bound work inside continuations "
+                + "can delay other callers. Consider RespireOptions.RunContinuationsAsynchronously.", EventName = "ConnectionContinuationDeliveryBlocked")]
     private static partial void ConnectionContinuationDeliveryBlockedMessage(ILogger logger, string host, int port, long milliseconds, Exception? exception);
 
     internal static void ConnectionContinuationDeliveryBlocked(this ILogger logger, string host, int port, long milliseconds)

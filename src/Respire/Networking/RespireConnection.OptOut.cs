@@ -25,7 +25,7 @@ internal sealed partial class RespireConnection
             throw new NotSupportedException("Ordered admission does not support streaming command payloads.");
         if (!deadline.IsSet && armCommandDeadline) deadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var prefixed = new PrefixedCommand<ClientCachingCommand, TCommand>(new(optOut: true), command, _cacheMutationAdmission);
-        var source = MultiReplyPendingResponseSource.Rent(2, 0, commandName);
+        var source = MultiReplyPendingResponseSource.Rent(2, 0, commandName, _runContinuationsAsynchronously);
         source.ErrorAttempts = observation.Attempts;
         bool enqueued;
         bool startedBatch;

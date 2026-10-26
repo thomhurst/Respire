@@ -15,13 +15,16 @@ the snapshot with server latency and application scheduling at the same time.
 Respire's [native APIs are async-only](async-only.md). Awaiting a command releases the
 calling thread while the socket is busy. Commands share multiplexed connections and
 are automatically coalesced by a persistent flush loop. The receive loop parses replies
-in wire order and hands response completion batches to a thread-pool worker, keeping
-application continuations off the receive loop and avoiding a separate work item for
-every reply in a batch.
+in wire order and delivers response completions in batches. By default, the delivery
+runner can run inline on the receive loop, including application continuations, to
+avoid a separate work item for every reply in a batch. Enable
+[`RunContinuationsAsynchronously`](../fundamentals/connections.md#command-continuations)
+to queue command continuations independently of reply delivery.
 
 This reduces scheduling work; it does **not** remove the dependency on the .NET thread
-pool. A continuation can block a completion worker and delay replies behind it. Respire
-has stalled-delivery recovery, but that is a fallback, not permission to block. Socket
+pool. An inline continuation's CPU work or blocking wait can delay replies behind it.
+Respire has stalled-delivery recovery controlled by `StalledDeliveryThreshold` (500 ms
+by default), but that is a fallback, not permission to block. Socket
 progress, completion delivery, cancellation, and timeout notification can still be
 delayed when the process cannot schedule work. The reported timeout budget is not a
 guarantee that the caller regains control at exactly that instant.

@@ -26,7 +26,7 @@ internal sealed partial class RespireConnection
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
         var source = BytesPendingResponseSource.Rent(commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
-            observeErrors: observation.IsEmpty, duration: duration);
+            observeErrors: observation.IsEmpty, duration: duration, runContinuationsAsynchronously: _runContinuationsAsynchronously);
         bool enqueued;
         bool startedBatch;
         try

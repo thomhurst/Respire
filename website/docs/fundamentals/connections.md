@@ -74,6 +74,38 @@ await using var redis = RespireClient.Create(options);
 
 `Create` performs no network I/O. The first command connects; a later command retries a failed attempt. Dependency-injection registration uses `Create`, so Redis availability does not block host startup. A hosted client then connects in the background; see [connect at startup](../integrations/dependency-injection.md#connect-at-startup).
 
+## Command continuations
+
+By default, command awaits run their continuations inline during reply delivery. This
+avoids a thread-pool hop for sequential callers. CPU-bound work or blocking waits after
+an `await` can therefore delay unrelated callers sharing the connection.
+
+For shared clients in web hosts and workers, enable asynchronous continuations:
+
+```csharp
+var options = new RespireOptions
+{
+    Endpoints = [new("localhost", 6379)],
+    RunContinuationsAsynchronously = true,
+};
+```
+
+This queues each pending command's continuation to the thread pool, allowing reply
+delivery to continue independently. It trades scheduling overhead for isolation. Replies
+still complete in wire order; application continuations can run concurrently and in any
+order. An await whose result is already available can still complete synchronously.
+Thread-pool starvation can delay queued continuations.
+
+Both direct clients and DI/Aspire registrations retain the same default (`false`).
+Set `RunContinuationsAsynchronously` on the DI builder or in configuration to opt in.
+
+With inline continuations, `StalledDeliveryThreshold` controls how long waiting replies
+can remain behind a slow or blocked continuation before another thread takes over
+delivery. It defaults to 500 ms and accepts values of at least 1 ms. This rescue is not
+a latency guarantee, particularly under thread-pool starvation. Warning
+`ConnectionContinuationDeliveryBlocked` covers both blocking waits and CPU-bound work.
+The threshold is also available through the DI builder and configuration.
+
 ## Custom connection streams
 
 Set `RespireOptions.ConnectionFactory` to supply a connected duplex `Stream`. Use this for custom sockets, tunnels, or an in-memory test transport:
