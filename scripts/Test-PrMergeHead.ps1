@@ -15,7 +15,7 @@ function global:gh {
         $sha = if ($Gate) { $data.GateHead } else { $data.InitialHead }
         return @{
             headRefName = 'fixture'; headRefOid = $sha; isCrossRepository = $false
-            state = 'OPEN'; mergeable = 'MERGEABLE'; mergeStateStatus = 'CLEAN'
+            state = 'OPEN'; isDraft = $false; mergeable = 'MERGEABLE'; mergeStateStatus = 'CLEAN'
             statusCheckRollup = @(@{ name = 'build'; status = 'COMPLETED'; conclusion = 'SUCCESS' })
             latestReviews = @(); commits = @(); author = @{ login = 'maintainer' }
         } | ConvertTo-Json -Depth 5 -Compress

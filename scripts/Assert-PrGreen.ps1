@@ -2,7 +2,7 @@
 # Fail-closed merge gate for the issue-pr-loop skill.
 #
 # Exits 0 ONLY when PR #<N> is provably safe to merge:
-#   - state OPEN
+#   - state OPEN and not a draft
 #   - mergeable == MERGEABLE
 #   - mergeStateStatus == CLEAN
 #   - every status check is terminal AND passing (CheckRun: status=COMPLETED and
@@ -21,14 +21,22 @@
 # and review dispositions. The merge wrapper calls this fail-closed gate
 # immediately before `gh pr merge`, and only merges if it exits 0.
 #
-# Usage: pwsh scripts/Assert-PrGreen.ps1 -Pr 1234 [-Repo owner/name]
-# Exit:  0 = safe to merge; 1 = DO NOT MERGE (reason printed to stderr).
+# -ForAutoMerge is the gate for arming native auto-merge (Enable-AutoMerge.ps1).
+# GitHub then waits for the required `CI Passed` check itself, so CI may still be
+# queued or running, and mergeStateStatus may be BLOCKED by that pending check.
+# Everything else still applies: no check has failed, the `claude-review` check for
+# the current head has completed and passed (so its review exists and was read),
+# no unresolved threads, and the current-head Claude review is CLEAR or disposed.
+#
+# Usage: pwsh scripts/Assert-PrGreen.ps1 -Pr 1234 [-Repo owner/name] [-ForAutoMerge]
+# Exit:  0 = safe to merge (or to arm auto-merge); 1 = DO NOT MERGE (reason printed to stderr).
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][int]$Pr,
     [string]$Repo,
-    [ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedHead
+    [ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedHead,
+    [switch]$ForAutoMerge
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,7 +51,7 @@ $repoArgs = @()
 if ($Repo) { $repoArgs = @('--repo', $Repo) }
 
 # Re-fetch fresh — survey output goes stale within seconds.
-$raw = gh pr view $Pr @repoArgs --json number,state,mergeable,mergeStateStatus,statusCheckRollup,latestReviews,commits,headRefOid,author 2>$null
+$raw = gh pr view $Pr @repoArgs --json number,state,isDraft,mergeable,mergeStateStatus,statusCheckRollup,latestReviews,commits,headRefOid,author 2>$null
 if ($LASTEXITCODE -ne 0) { Deny "gh pr view failed (exit $LASTEXITCODE)" }
 try {
     $view = $raw | ConvertFrom-Json
@@ -53,9 +61,14 @@ catch {
 }
 
 if ($view.state -ne 'OPEN') { Deny "state=$($view.state) (need OPEN)" }
+if ($view.isDraft -ne $false) { Deny 'PR is a draft; mark it ready only after its reviewers approve the current head' }
 if ($ExpectedHead -and $view.headRefOid -ne $ExpectedHead) { Deny 'PR head changed before gate validation' }
 if ($view.mergeable -ne 'MERGEABLE') { Deny "mergeable=$($view.mergeable) (need MERGEABLE)" }
-if ($view.mergeStateStatus -ne 'CLEAN') { Deny "mergeStateStatus=$($view.mergeStateStatus) (need CLEAN)" }
+# Arming waits for required checks, so BLOCKED/UNSTABLE are expected then; failures are caught below.
+$allowedMergeStates = if ($ForAutoMerge) { @('CLEAN', 'BLOCKED', 'UNSTABLE', 'HAS_HOOKS', 'BEHIND') } else { @('CLEAN') }
+if ($allowedMergeStates -notcontains $view.mergeStateStatus) {
+    Deny "mergeStateStatus=$($view.mergeStateStatus) (need $($allowedMergeStates -join '/'))"
+}
 
 $checks = @($view.statusCheckRollup | Where-Object { $null -ne $_ })
 if ($checks.Count -eq 0) {
@@ -63,11 +76,17 @@ if ($checks.Count -eq 0) {
 }
 
 $allowedConclusions = @('SUCCESS', 'SKIPPED', 'NEUTRAL')
+$reviewCheck = 'claude-review'
+if ($ForAutoMerge -and -not ($checks | Where-Object { $_.name -eq $reviewCheck })) {
+    Deny "no $reviewCheck check on the current head yet; wait for the review before arming auto-merge"
+}
 $bad = @()
 foreach ($c in $checks) {
     if ($null -ne $c.status) {
-        # CheckRun: must be terminal AND passing.
+        # CheckRun: must be terminal AND passing. Auto-merge waits for pending CI
+        # itself, but never for the review, whose findings must be read first.
         if ($c.status -ne 'COMPLETED') {
+            if ($ForAutoMerge -and $c.name -ne $reviewCheck) { continue }
             $bad += "$($c.name): status=$($c.status)"
             continue
         }
@@ -76,8 +95,9 @@ foreach ($c in $checks) {
         }
     }
     elseif ($null -ne $c.state) {
-        # StatusContext: state must be SUCCESS.
+        # StatusContext: state must be SUCCESS (or still pending when arming).
         if ($c.state -ne 'SUCCESS') {
+            if ($ForAutoMerge -and $c.state -in @('PENDING', 'EXPECTED')) { continue }
             $bad += "$($c.context): state=$($c.state)"
         }
     }
@@ -208,5 +228,10 @@ $claudeReviewReason = Get-UnansweredClaudeReviewReason -Comments $issueComments 
     -HeadSha $view.headRefOid -RequireReview:$requiresClaude -ReviewSkipped:$skippedClaude
 if ($claudeReviewReason) { Deny $claudeReviewReason }
 
-Write-Host "OK #${Pr} -- MERGEABLE, CLEAN, $($checks.Count) check(s) green, no unresolved threads, Claude review answered. Safe to merge."
+if ($ForAutoMerge) {
+    Write-Host "OK #${Pr} -- MERGEABLE, no failed checks, $reviewCheck complete, no unresolved threads, Claude review answered. Safe to arm auto-merge."
+}
+else {
+    Write-Host "OK #${Pr} -- MERGEABLE, CLEAN, $($checks.Count) check(s) green, no unresolved threads, Claude review answered. Safe to merge."
+}
 exit 0

@@ -264,7 +264,7 @@ jobs:
           redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
 
   benchmark-policy:
-    name: Benchmark label cancellation policy
+    name: Workflow policy checks
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -277,6 +277,7 @@ jobs:
           python -B -m unittest discover -s scripts/workflows -p '*Tests.py'
           python -B -m unittest discover -s scripts/benchmarks -p '*Tests.py'
           python scripts/workflows/BenchmarkWorkflowPolicy.py
+          python scripts/workflows/CiPassedPolicy.py
 
   repository-tooling:
     name: Repository tooling checks
@@ -709,8 +710,8 @@ jobs:
           retention-days: 14
 
   build-and-test-net10:
-    # The name is a required status check. It passes only when every net10.0 job passed,
-    # and on main it merges their coverage into one report.
+    # Passes only when every net10.0 job passed, and on main merges their coverage into
+    # one report. `CI Passed` (the required check) needs this job.
     name: Build and Test (net10.0)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -949,8 +950,8 @@ jobs:
           path: writer-invariants-net8.0/
 
   build-and-test-net8:
-    # The name is a required status check. It passes only when every net8.0 job passed;
-    # net8.0 is a smoke run, and net10.0 carries the full suite.
+    # Passes only when every net8.0 job passed; net8.0 is a smoke run, and net10.0 carries
+    # the full suite. `CI Passed` (the required check) needs this job.
     name: Build and Test (net8.0)
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1034,3 +1035,44 @@ jobs:
           name: performance-validation
           path: benchmarks/Respire.Benchmarks/PerformanceResults/
           retention-days: 7
+
+  ci-passed:
+    # The only required status check (the `Main` ruleset requires `CI Passed`), so native
+    # auto-merge merges as soon as this passes. It needs every other pull request job here,
+    # and on pull requests it also waits for every other workflow run on the head and fails
+    # if any failed (scripts/workflows/PrWorkflowGate.py).
+    # The name is an expression on purpose. A job skipped by `if:` still reports a fixed
+    # name as a skipped check, and a skipped check satisfies a required check; with an
+    # expression name the skipped draft run reports the expression text instead, so a
+    # draft can never satisfy `CI Passed`. scripts/workflows/CiPassedPolicy.py enforces this.
+    name: ${{ github.event.pull_request.draft && 'CI (draft)' || 'CI Passed' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    needs: [public-api-lifecycle, vector-data, stackexchange-interop, mapper-native-aot, benchmark-policy, repository-tooling, observability-sample, aspire-integration, aspnet-sample, net10-unit, net10-integration, net10-components, net10-analyzers, build-and-test-net10, integration-tests-resp2, net8-smoke, net8-debug-invariants, build-and-test-net8]
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require every CI job to pass
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "CI job results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != success ]; then exit 1; fi
+          done
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          sparse-checkout: scripts/workflows
+          persist-credentials: false
+
+      - name: Wait for the other pull request workflows on this head
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/workflows/PrWorkflowGate.py --repo "$REPOSITORY" --head-sha "$HEAD_SHA" --own-path .github/workflows/ci.yml --timeout-minutes 60
