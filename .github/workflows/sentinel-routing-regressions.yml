@@ -2,6 +2,8 @@ name: Sentinel routing regressions
 
 on:
   pull_request:
+    # Drafts skip every job before a runner starts; marking the PR ready runs them on the reviewed head.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
     paths:
       - 'src/Respire/**'
       - 'tests/Respire.Tests/Networking/Sentinel*'
@@ -17,6 +19,7 @@ concurrency:
 
 jobs:
   sentinel:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Sentinel uninstrumented routing (${{ matrix.framework }})
     runs-on: ubuntu-latest
     timeout-minutes: 30

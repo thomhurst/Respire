@@ -3,6 +3,8 @@ name: Topology sample smoke
 on:
   workflow_dispatch:
   pull_request:
+    # Drafts skip every job before a runner starts; marking the PR ready runs them on the reviewed head.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
     paths:
       - '.github/workflows/topology-sample-smoke.yml'
       - 'scripts/smoke_topology_samples.py'
@@ -13,8 +15,14 @@ on:
 permissions:
   contents: read
 
+# A newer push supersedes an older run, and converting the PR to draft cancels it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   smoke:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: ${{ matrix.sample }} sample (${{ matrix.framework }})
     runs-on: ubuntu-latest
     timeout-minutes: 20

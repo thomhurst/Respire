@@ -19,6 +19,10 @@ on:
   pull_request:
     branches:
       - main
+    # Draft PRs run no jobs: every job is gated on `draft == false`, so a draft rents no runner.
+    # `ready_for_review` starts CI on the reviewed head; `converted_to_draft` cancels an in-flight
+    # run through the concurrency group below.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
 
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
@@ -59,6 +63,7 @@ concurrency:
 jobs:
   public-api-lifecycle:
     name: Shipping API lifecycle (${{ matrix.framework }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -75,6 +80,7 @@ jobs:
 
   vector-data:
     name: VectorData contracts and NativeAOT (${{ matrix.framework }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -140,6 +146,7 @@ jobs:
 
   stackexchange-interop:
     name: StackExchange compatibility (${{ matrix.framework }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -225,6 +232,7 @@ jobs:
 
   mapper-native-aot:
     name: Generated mapper Native AOT (${{ matrix.framework }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -257,6 +265,7 @@ jobs:
 
   benchmark-policy:
     name: Benchmark label cancellation policy
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -271,6 +280,7 @@ jobs:
 
   repository-tooling:
     name: Repository tooling checks
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -306,6 +316,7 @@ jobs:
 
   observability-sample:
     name: Prometheus dashboard smoke (${{ matrix.framework }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -329,6 +340,7 @@ jobs:
 
   aspire-integration:
     name: Aspire Redis and Valkey integration
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -352,6 +364,7 @@ jobs:
 
   aspnet-sample:
     name: ASP.NET Core sample (${{ matrix.framework }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -420,6 +433,7 @@ jobs:
   # The net10.0 suite runs as parallel jobs; "Build and Test (net10.0)" below gates on all of them.
   net10-unit:
     name: Unit Tests (net10.0, ${{ matrix.shard.name }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -502,6 +516,7 @@ jobs:
 
   net10-integration:
     name: Integration Tests (net10.0, RESP3)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -565,6 +580,7 @@ jobs:
 
   net10-components:
     name: Component Tests (net10.0)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -656,6 +672,7 @@ jobs:
   net10-analyzers:
     # Analyzer tests need no containers, so they run beside the component job instead of inside it.
     name: Analyzer Tests (net10.0)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -698,7 +715,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [net10-unit, net10-integration, net10-components, net10-analyzers, public-api-lifecycle]
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
 
     steps:
       - name: Require every net10.0 job to pass
@@ -760,6 +777,7 @@ jobs:
 
   integration-tests-resp2:
     name: Integration Tests (net10.0, RESP2)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -810,6 +828,7 @@ jobs:
 
   net8-smoke:
     name: Smoke Tests (net8.0)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -896,6 +915,7 @@ jobs:
   net8-debug-invariants:
     # Debug builds enable the publication guards these suites assert, so they need their own build.
     name: Debug Invariants (net8.0)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -935,7 +955,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [net8-smoke, net8-debug-invariants, public-api-lifecycle]
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
 
     steps:
       - name: Require every net8.0 job to pass

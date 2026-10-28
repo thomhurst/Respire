@@ -5,6 +5,8 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+    # Drafts skip the job before a runner starts; marking the PR ready runs it on the reviewed head.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
     inputs:
       publish-packages:
@@ -20,6 +22,7 @@ concurrency:
 
 jobs:
   modularpipeline:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish-packages && 'Production' || 'Pull Requests' }}
     runs-on: ubuntu-latest
     permissions:

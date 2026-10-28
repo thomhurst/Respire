@@ -2,6 +2,8 @@ name: Aggregate progress correctness
 
 on:
   pull_request:
+    # Drafts skip every job before a runner starts; marking the PR ready runs them on the reviewed head.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
     paths:
       - 'src/Respire/Protocol/**'
       - 'tests/Respire.Tests/Protocol/**'
@@ -21,6 +23,7 @@ concurrency:
 
 jobs:
   progress:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Aggregate progress (net10.0)
     runs-on: ubuntu-latest
     timeout-minutes: 15

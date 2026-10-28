@@ -3,6 +3,8 @@ name: Agent Guard
 on:
   workflow_dispatch:
   pull_request:
+    # Drafts skip every job before a runner starts; marking the PR ready runs them on the reviewed head.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
     paths:
       - scripts/Invoke-AgentDotNet.ps1
       - scripts/Test-AgentDotNetProcessTree.ps1
@@ -125,6 +127,7 @@ jobs:
           exit 0
 
   guard:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Agent Guard (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -235,6 +238,7 @@ jobs:
           exit 0
 
   runner-overrides:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: SDK runner overrides (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10

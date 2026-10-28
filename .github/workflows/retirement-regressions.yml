@@ -5,6 +5,8 @@ on:
   schedule:
     - cron: '17 6 * * 1'
   pull_request:
+    # Drafts skip every job before a runner starts; marking the PR ready runs them on the reviewed head.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
     paths:
       - 'src/Respire/Networking/**'
       - 'src/Respire/Infrastructure/**'
@@ -26,6 +28,7 @@ concurrency:
 
 jobs:
   retirement:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Retirement (${{ matrix.os }}, ${{ matrix.framework }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15

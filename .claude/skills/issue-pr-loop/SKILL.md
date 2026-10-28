@@ -13,7 +13,7 @@ Run unattended. At each iteration, run `pwsh scripts/Remove-MergedWorktrees.ps1`
 
 1. Fix a red `main`, following [Red main](#red-main).
 2. Merge an eligible PR.
-3. Fix conflicts, failed CI, or review findings on an open PR and push.
+3. Fix conflicts, failed CI, or review findings on an open PR and push, or move a draft PR through [Draft review lifecycle](#draft-review-lifecycle).
 4. Publish finished work stranded on a local `issue-<N>-*` branch that has no PR, or recover valuable changes from a preserved merged-PR worktree, following [recovery guidance](references/recovery.md).
 5. Tidy the issue queue: close a parent whose native sub-issues are all closed, and close an issue that `origin/main` already implements or that another issue supersedes.
 6. Claim an available issue, implement its full scope, and open a PR. Prefer issues that block other issues.
@@ -153,7 +153,7 @@ Immediately after checkout, run `pwsh $agentLocks renew -LockName $lockName -Wor
 
 ## Maintain PRs
 
-Survey with `gh pr list --author @me --state open --json number,title,headRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,isDraft`. Include other authors only when the user's queue scope includes them. Paginate or increase limits so an incomplete first page cannot make the queue appear empty. Skip PRs labeled `needs-human` (see [Rework budget](#rework-budget)) or `on-hold`.
+Survey with `gh pr list --author @me --state open --json number,title,headRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,isDraft`. Include other authors only when the user's queue scope includes them. Paginate or increase limits so an incomplete first page cannot make the queue appear empty. Include drafts. Skip PRs labeled `needs-human` (see [Rework budget](#rework-budget)) or `on-hold`.
 
 Inspect all review surfaces, including pagination and replies: REST `pulls/<N>/reviews`, `pulls/<N>/comments`, `issues/<N>/comments` under `repos/{owner}/{repo}`, and GraphQL `reviewThreads` with IDs, resolution state, bodies, authors, and timestamps.
 
@@ -165,10 +165,22 @@ A `COMMENTED` review body can block with zero unresolved threads. Address outsta
 | CI failure | Read failed logs and fix the cause. Investigate timing/synchronization failures. At most one rerun for a demonstrated infrastructure problem or diagnosed flake when local rules permit; never rerun for green, skip/delete failing tests, or mask a failure. |
 | Stale CI | When failed checks ran on a base far behind `origin/main`, or the failure was an infrastructure problem and the rerun allowance is spent, rebase onto fresh `origin/main` and push for a fresh run instead of deferring. This push is not a rerun and does not spend the allowance; an unchanged head never leaves deferral. Treat a failure that repeats on the fresh base as a real CI failure. |
 | Feedback | Verify every finding against code and classify it. **Blocking**: a correctness, concurrency, security, contract, or performance defect, or missing tests for changed behavior. Fix each valid blocking finding in this PR. **Non-blocking**: naming, style, wording, optional refactors, extra tests for unchanged behavior, and "consider" suggestions. Implement a non-blocking suggestion only when it is small and you already push a blocking fix. Otherwise decline it in the disposition with a one-line reason and push nothing for it. Decline a wrong finding with evidence from the code. Move architectural work that is genuinely out of scope to a filed follow-up issue, linked in the reply. "Not done" or "left as is" without a classification, reason, or linked issue is not a disposition. Reply once per review covering each finding, and reply on each thread. Discuss disagreement once; implement reaffirmed blocking feedback. A disposition-only reply on the current head needs no new push, so it does not start another review cycle. |
+| Draft | Follow [Draft review lifecycle](#draft-review-lifecycle): request missing reviews, dispose of findings, and mark the PR ready once every required reviewer approves its current head. |
 | Pending | Take another item now; do not wait for CI, reviews, or benchmarks. After a fix push, allow a subsequent bot review/CI cycle before considering merge in a later iteration. A benchmark you started by label is reported in the PR description when a later iteration finds the run finished. |
 | Merge candidate | Confirm every condition below, then invoke the wrapper. |
 
 Resolve every review thread under the PR lock, whether a human or a bot opened it, as soon as it is dispositioned: the fix commit is in the remote PR head and the reply names it, or the reply pushes back on the finding with evidence. Do not wait for another review/CI cycle to resolve a dispositioned thread; that cycle still gates merging. Leave a thread open only while it has no disposition: the fix is not pushed, the item waits on the user, or the reviewer replied after your disposition. On each later review cycle, re-fetch every thread, resolved ones included; a reviewer reply newer than your disposition reopens it: run GraphQL `unresolveReviewThread` and handle it as reaffirmed feedback. Reply to addressed review-body findings and request re-review when an outstanding changes-requested review needs updating; do not dismiss reviews to bypass approval requirements. Post each thread reply with `pwsh scripts/Reply-ReviewThread.ps1 -Pr <N> -CommentId <first comment id> -BodyFile <file> -Resolve`: write the body to a file first, never through an interpolated PowerShell string, which can post `System.Collections.Hashtable.Body` instead of the disposition. The script rejects such text, confirms GitHub stored the exact body, and then runs GraphQL `resolveReviewThread`. Then re-fetch reviews, threads, checks, and head SHA.
+
+### Draft review lifecycle
+
+Open every PR as a draft (`gh pr create --draft`), including recovery and split PRs, and keep it in draft while reviewers review it and you fix their findings. Build and test CI does not run on drafts, so CI runs once, on a head that the reviewers already approved, instead of on every review-fix push. The [repository guidance](references/repository.md) names the required reviewers, how each one reviews drafts, and what counts as its verdict.
+
+1. After creating the PR and after each push, re-fetch `isDraft` and `headRefOid`. Request each required reviewer that does not review drafts automatically, as the repository guidance describes. Fetch all issue comments first: do not duplicate a pending request, and do not request a review of a head that already has a positive verdict. A reviewer that has not answered is pending, not a reason to park or abandon the PR: report it as waiting and take another item.
+2. Read every review surface, as described in [Maintain PRs](#maintain-prs). A successful check, a request, an eyes reaction, silence, or an approval of an older head is not approval. Require a completed, positive verdict from every required reviewer for the current head. Do not approve your own PR or manufacture a reviewer's approval.
+3. Dispose of every finding, following the Feedback row. A fix push changes the head: keep the draft and wait for fresh verdicts on the new head. Never reuse an earlier head's approval.
+4. Under the PR lock, re-fetch the head, draft state, verdicts, threads, and mergeability. Skipped or missing CI on a draft is expected and does not block promotion. When every required reviewer approves the same current head, every finding is dispositioned, and the PR has no conflicts, run `gh pr ready <N>`. Verify that `isDraft` is false and the head is unchanged. When the head changed during promotion, run `gh pr ready <N> --undo` and review the new head.
+5. Marking the PR ready starts CI on the approved head. Take another item; do not wait for CI. Merge on a later visit through the [Merge gate](#merge-gate) once that CI is terminal and green. Never merge in the unit that marked the PR ready: checks that were skipped while the PR was a draft can still appear in the rollup until the new run registers.
+6. To push a fix to a ready PR, for example after a CI failure or a late review, first run `gh pr ready <N> --undo`. This cancels in-flight CI, and the fix goes through steps 1 to 4 again before CI runs on it.
 
 ### Rework budget
 
@@ -195,7 +207,7 @@ Keep new PRs small enough to converge. When an issue's change would touch many f
 
 ### Merge gate
 
-Merge requires an open, ready-for-review PR; `MERGEABLE` and `CLEAN`; every applicable check present, terminal, and passing (`SUCCESS`, `SKIPPED`, or `NEUTRAL`, with successful legacy commit statuses); no unresolved threads, unaddressed comments, or outstanding review-body concerns; approval when required; and a bot review/CI cycle after the last fix push. Missing expected checks and nonterminal checks block merging. Reassess if the head changes.
+Merge requires an open, ready-for-review PR; `MERGEABLE` and `CLEAN`; every applicable check present, terminal, and passing (`SUCCESS`, `SKIPPED`, or `NEUTRAL`, with successful legacy commit statuses); no unresolved threads, unaddressed comments, or outstanding review-body concerns; approval when required; positive verdicts from every required reviewer on the current head, as in [Draft review lifecycle](#draft-review-lifecycle); and a bot review/CI cycle after the last fix push. The CI must come from a run that started after the PR became ready: a check skipped while the PR was a draft is not a pass. Missing expected checks and nonterminal checks block merging. Reassess if the head changes.
 
 Use current repository rules/instructions for approval requirements. Historical merges without approval do not prove approval is optional; inaccessible protection APIs do not prove no protection exists.
 
@@ -226,7 +238,7 @@ Follow local validation, resource limits, target frameworks, generated-code boun
 Review the full diff for correctness, reuse, and efficiency (`/simplify` when available, otherwise equivalent review). Preserve performance/contracts and batch related fixes into one push. Use CI for environment-specific validation with limitations documented; avoid arbitrary local debugging retry counts.
 
 - Use non-interactive commit messages (`-m`, `--file`, or `--amend --no-edit`) and disable editors for rebases and continuation: `git -c core.editor=true -c sequence.editor=true rebase ...`.
-- Reference the issue in commits. Create normal ready-for-review PRs unless the user explicitly requests a draft. Follow the repository PR template and use `--body-file` for multiline descriptions. Put `Closes #<N>` on its own line only when the full issue is delivered.
+- Reference the issue in commits. Open draft PRs and follow [Draft review lifecycle](#draft-review-lifecycle). Follow the repository PR template and use `--body-file` for multiline descriptions. Put `Closes #<N>` on its own line only when the full issue is delivered.
 - Use ordinary pushes for new commits and `git push --force-with-lease` when rewriting an owned PR branch. Never use bare `--force` or rewrite main. Confirm ownership and the remote PR head before reporting completion.
 - Completion requires commit, successful push, PR creation/update, and `gh pr view <N> --json headRefOid` matching local `git rev-parse HEAD`. Push/ownership failure means preserve work, report failure, release ownership, and continue. Keep committed work on its `issue-<N>-*` branch: the driver finds unpublished branches and assigns them for publishing. Release locks in every outcome and stop owned services when no longer needed.
 

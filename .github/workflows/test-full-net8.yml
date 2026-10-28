@@ -3,7 +3,10 @@ name: Full .NET 8 tests
 on:
   workflow_dispatch:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    # Drafts skip the suite even when labelled; marking the PR ready runs it when the label is present.
+    # No `converted_to_draft`: the cancellation group is job-scoped so an unrelated label cannot cancel
+    # an active run, and a skipped job never joins that group.
+    types: [opened, synchronize, reopened, labeled, ready_for_review]
 
 permissions:
   contents: read
@@ -12,8 +15,9 @@ jobs:
   full-suite:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.action == 'labeled' && github.event.label.name == 'test-full-net8') ||
-      (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'test-full-net8'))
+      (github.event.pull_request.draft == false && (
+        (github.event.action == 'labeled' && github.event.label.name == 'test-full-net8') ||
+        (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'test-full-net8'))))
     name: Full test suite (net8.0)
     concurrency:
       group: full-net8-${{ github.event.pull_request.number || github.ref }}

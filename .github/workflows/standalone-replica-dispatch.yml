@@ -2,6 +2,8 @@ name: Standalone replica dispatch regressions
 
 on:
   pull_request:
+    # Drafts skip every job before a runner starts; marking the PR ready runs them on the reviewed head.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
     paths:
       - 'src/Respire/RespireClient*.cs'
       - 'src/Respire/Internal/ReadEndpointRouter*.cs'
@@ -23,6 +25,7 @@ jobs:
   # net10.0 unit shards run every class in it in Release without the HTML reporter. This job adds
   # Windows scheduling and tiered compilation for the same cases.
   routing:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Standalone replica dispatch (${{ matrix.os }}, net10.0)
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
