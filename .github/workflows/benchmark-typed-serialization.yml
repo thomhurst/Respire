@@ -30,7 +30,7 @@ jobs:
         framework: [net10.0]
     services:
       redis:
-        image: mirror.gcr.io/library/redis:8.10@sha256:0a014ae5c04f55c82aaad2314de411c7a203de1c4312c3e526939226a0185dd9
+        image: mirror.gcr.io/library/redis:8.10@sha256:39cd96e5b51a2e6f67f6756e80e7d482905f713b3395763464f82ec5b217f60a
         ports: ['6379:6379']
         options: >-
           --health-cmd "redis-cli ping"
