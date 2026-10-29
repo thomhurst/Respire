@@ -4,6 +4,7 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+[SkipOnGarnet("Garnet 2.1.8 has no SORT or SORT_RO command.")]
 public class KeySortIntegrationTests(RedisTestContainer fixture)
 {
     public enum Mode { Immediate, Batch, Transaction }

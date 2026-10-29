@@ -148,7 +148,7 @@ public class CountdownLatchTests(RedisTestContainer fixture)
             restricted = await RespireClient.ConnectAsync(new RespireOptions
             {
                 Endpoints = [new(fixture.Host, fixture.Port)],
-                Database = fixture.Database, KeyPrefix = fixture.KeyPrefix,
+                Database = fixture.IsolatedDatabase,
                 Username = username,
                 Password = password,
                 Protocol = RespireProtocol.Resp3,
@@ -268,7 +268,7 @@ public class CountdownLatchTests(RedisTestContainer fixture)
 
     private ValueTask<RespireClient> ConnectAsync() => RespireClient.ConnectAsync(new RespireOptions
     {
-        Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database, KeyPrefix = fixture.KeyPrefix,
+        Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
         Connections = 2, Protocol = RespireProtocol.Resp3,
     });
 

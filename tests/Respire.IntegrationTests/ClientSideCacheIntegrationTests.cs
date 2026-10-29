@@ -10,6 +10,7 @@ namespace Respire.IntegrationTests;
 // legitimately cause a continuity flush and turn a local hit into a server miss.
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
 [NotInParallel(TestConstraints.ClientCacheHits)]
+[SkipOnGarnet("Garnet 2.1.8 rejects CLIENT TRACKING, which client-side caching requires.")]
 public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
 {
     [Test]

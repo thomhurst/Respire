@@ -37,6 +37,7 @@ public class PubSubIntegrationTests
     [Arguments(RespireProtocol.Resp3, RespireSubscriptionKind.Channel, true)]
     public async Task BinaryChannels_RoundTrip(RespireProtocol protocol, RespireSubscriptionKind kind, bool useFake)
     {
+        Skip.When(RedisTestContainer.GarnetSelected && !useFake && kind == RespireSubscriptionKind.Sharded, "Garnet 2.1.8 supports sharded pub/sub only in cluster mode.");
         await using var server = useFake ? new RespireFakeServer() : null;
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
         byte[] prefix = [.. System.Text.Encoding.UTF8.GetBytes(IsolatedChannel("binary:")), 0xff, 0, (byte)':'];
@@ -92,6 +93,7 @@ public class PubSubIntegrationTests
     }
 
     [Test]
+    [SkipOnGarnet("Garnet 2.1.8 supports sharded pub/sub only in cluster mode.")]
     public async Task ShardedPublishSubscribe_Roundtrip()
     {
         var channel = IsolatedChannel("it:shard");
@@ -230,6 +232,7 @@ public class PubSubIntegrationTests
     }
 
     [Test]
+    [SkipOnGarnet("Garnet 2.1.8 CLIENT LIST has no cmd= field, which this test uses to find the subscriber connection.")]
     public async Task SubscriberConnectionDeath_ReconnectsResubscribesAndReportsState()
     {
         var channel = IsolatedChannel("it:reconnect");

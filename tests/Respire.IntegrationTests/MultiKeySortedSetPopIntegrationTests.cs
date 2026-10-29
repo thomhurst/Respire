@@ -4,6 +4,7 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+[SkipOnGarnet("Garnet 2.1.8 multi-key sorted-set pops are unreliable: repeated runs return nil for non-empty keys and close RESP3 connections.")]
 public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
 {
     public enum PopMode { Immediate, Batch, Transaction, Blocking }

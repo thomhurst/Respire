@@ -6,6 +6,7 @@ namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
 [NotInParallel(TestConstraints.ClientCacheHits)]
+[SkipOnGarnet("Garnet 2.1.8 rejects CLIENT TRACKING, which client-side caching requires.")]
 public class OptOutClientCacheIntegrationTests(RedisTestContainer fixture)
 {
     [Test]

@@ -15,6 +15,7 @@ public class CopyDatabaseIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, ExecutionMode.Immediate)]
     [Arguments(3, ExecutionMode.Batch)]
     [Arguments(3, ExecutionMode.Transaction)]
+    [SkipOnGarnet("Garnet 2.1.8 has no COPY command.")]
     public async Task CopyTargetsRequestedDatabaseWithoutChangingSource(int protocol, ExecutionMode mode)
     {
         var options = RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol };

@@ -50,6 +50,7 @@ public class FakeSetParityTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    [SkipOnGarnet("Garnet 2.1.8 diverges from the Redis error, atomicity and reply-shape semantics this parity test pins.")]
     public async Task AlgebraAndStoreAliasingPreserveRedisSemantics(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
@@ -97,6 +98,7 @@ public class FakeSetParityTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    [SkipOnGarnet("Garnet 2.1.8 diverges from the Redis error, atomicity and reply-shape semantics this parity test pins.")]
     public async Task WrongTypesCannotPartiallyMutateDestinations(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
@@ -137,6 +139,7 @@ public class FakeSetParityTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    [SkipOnGarnet("Garnet 2.1.8 diverges from the Redis error, atomicity and reply-shape semantics this parity test pins.")]
     public async Task InvalidCountsAndArityLeaveSetsUnchanged(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;

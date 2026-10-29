@@ -4,6 +4,7 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+[SkipOnGarnet("Garnet 2.1.8 has no stream commands; XADD and the rest return ERR unknown command.")]
 public class StreamReadIntegrationTests(RedisTestContainer fixture)
 {
     [Test]

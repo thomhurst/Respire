@@ -6,5 +6,5 @@ namespace Respire.IntegrationTests;
 /// </summary>
 public sealed class Redis7ReferenceContainer : RedisTestContainer
 {
-    protected override string ServerImage => "redis:7.0.15";
+    protected override string ServerImage => ReferenceRedisImage;
 }

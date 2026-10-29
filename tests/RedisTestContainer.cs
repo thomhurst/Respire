@@ -31,11 +31,15 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
     /// <summary>A second database that no test owns. Keys written there must be unique to the writing test.</summary>
     public const int ScratchDatabase = 1;
 
+    /// <summary>The default Redis image, and the reference server for tests that pin Redis semantics.</summary>
+    public const string ReferenceRedisImage = "redis:7.0.15";
+
     private const int FirstIsolatedDatabase = 2;
     private const ushort RedisPort = 6379;
 
     private readonly string[] _serverArguments;
-    private readonly ConcurrentDictionary<int, int> _leasedDatabases = new();
+    // Lazy values lease exactly once even when GetOrAdd races and discards a losing value.
+    private readonly ConcurrentDictionary<int, Lazy<int>> _leasedDatabases = new();
     private readonly ConcurrentBag<int> _freeDatabases = [.. Enumerable.Range(FirstIsolatedDatabase, DatabaseCount - FirstIsolatedDatabase)];
     private readonly SemaphoreSlim _freeDatabaseCount = new(DatabaseCount - FirstIsolatedDatabase);
     private IContainer? _container;
@@ -55,7 +59,7 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
             var image = Environment.GetEnvironmentVariable("RESPIRE_TEST_REDIS_IMAGE");
             // redis-server arguments do not apply to Garnet, so such containers keep the reference Redis server.
             return string.IsNullOrWhiteSpace(image) || (IsGarnetImage(image) && _serverArguments.Length != 0)
-                ? "redis:7.0.15"
+                ? ReferenceRedisImage
                 : image;
         }
     }
@@ -81,7 +85,8 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
     /// A database leased to the current test alone, for tests that inspect or clear a whole database.
     /// It is emptied and returned to the pool when the test ends.
     /// </summary>
-    public int IsolatedDatabase => _leasedDatabases.GetOrAdd(TestId, static (_, container) => container.LeaseDatabase(), this);
+    public int IsolatedDatabase =>
+        _leasedDatabases.GetOrAdd(TestId, static (_, container) => new Lazy<int>(container.LeaseDatabase), this).Value;
 
     /// <summary>A connection string for <see cref="IsolatedDatabase"/>, without a key prefix.</summary>
     public string IsolatedConnectionString => $"redis://{Host}:{Port}/{IsolatedDatabase}?protocol={TestProtocol}";
@@ -138,23 +143,20 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
 
     async ValueTask ITestEndEventReceiver.OnTestEnd(TestContext context)
     {
-        if (!_leasedDatabases.TryRemove(context.Isolation.UniqueId, out var database))
+        if (!_leasedDatabases.TryRemove(context.Isolation.UniqueId, out var lease) || !lease.IsValueCreated)
         {
             return;
         }
 
-        try
+        var database = lease.Value;
+        if (_container is not null)
         {
-            if (_container is not null)
-            {
-                await DeleteAllKeysAsync(database).ConfigureAwait(false);
-            }
+            // A database that could not be emptied stays out of the pool, so no later test inherits its keys.
+            await DeleteAllKeysAsync(database).ConfigureAwait(false);
         }
-        finally
-        {
-            _freeDatabases.Add(database);
-            _freeDatabaseCount.Release();
-        }
+
+        _freeDatabases.Add(database);
+        _freeDatabaseCount.Release();
     }
 
     // FLUSHDB would send a flush invalidation to every tracking client on the server, emptying the

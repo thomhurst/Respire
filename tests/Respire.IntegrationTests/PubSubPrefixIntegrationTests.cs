@@ -14,6 +14,7 @@ public class PubSubPrefixIntegrationTests(RedisTestContainer fixture)
         [Matrix(2, 3)] int protocol,
         [Matrix(RespireSubscriptionKind.Channel, RespireSubscriptionKind.Pattern, RespireSubscriptionKind.Sharded)] RespireSubscriptionKind kind)
     {
+        Skip.When(RedisTestContainer.GarnetSelected && kind == RespireSubscriptionKind.Sharded, "Garnet 2.1.8 supports sharded pub/sub only in cluster mode.");
         byte[] prefix = [.. Encoding.UTF8.GetBytes($"events:{Guid.NewGuid():N}:"), 255, 0,
             (byte)'*', (byte)'?', (byte)'[', (byte)']', (byte)'\\', (byte)':'];
         var options = RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol };
@@ -64,6 +65,7 @@ public class PubSubPrefixIntegrationTests(RedisTestContainer fixture)
 
     [Test]
     [MatrixDataSource]
+    [SkipOnGarnet("Garnet 2.1.8 supports sharded pub/sub only in cluster mode.")]
     public async Task ReconnectPreservesPrefixedRoutesAndPhysicalGapIdentity(
         [Matrix(2, 3)] int protocol,
         [Matrix(RespireSubscriptionKind.Channel, RespireSubscriptionKind.Pattern, RespireSubscriptionKind.Sharded)] RespireSubscriptionKind kind)

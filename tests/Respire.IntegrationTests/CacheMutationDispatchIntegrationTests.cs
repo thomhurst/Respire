@@ -10,6 +10,7 @@ namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 [Category(TestCategories.ProtocolIndependent)]
+[SkipOnGarnet("Garnet 2.1.8 rejects CLIENT TRACKING, which client-side caching requires.")]
 public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
 {
     [Test]

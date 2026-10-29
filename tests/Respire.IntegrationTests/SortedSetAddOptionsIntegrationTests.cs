@@ -14,6 +14,7 @@ public class SortedSetAddOptionsIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, "immediate")]
     [Arguments(3, "batch")]
     [Arguments(3, "transaction")]
+    [SkipOnGarnet("Garnet 2.1.8 returns 0 instead of nil when ZADD XX INCR targets a missing member.")]
     public async Task ConditionsChangeCountsAndNullableIncrements(int protocol, string mode)
     {
         await using var client = await RespireClient.ConnectAsync(
@@ -55,6 +56,7 @@ public class SortedSetAddOptionsIntegrationTests(RedisTestContainer fixture)
     [Arguments("immediate")]
     [Arguments("batch")]
     [Arguments("transaction")]
+    [SkipOnGarnet("Garnet 2.1.8 rejects CLIENT TRACKING, which client-side caching requires.")]
     public async Task WritesInvalidateCachedScores_AndPreserveTypedMembers(string mode)
     {
         await using var client = await RespireClient.ConnectAsync(

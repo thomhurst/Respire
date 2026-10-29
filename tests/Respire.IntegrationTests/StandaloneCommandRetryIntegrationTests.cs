@@ -24,6 +24,7 @@ public class StandaloneCommandRetryIntegrationTests(RedisTestContainer fixture)
     [Arguments("CONFIG SET", true, true)]
     public async Task LostReplyPreservesRealRedisEffectsAndExplicitRisk(string operation, bool highRisk, bool retries)
     {
+        Skip.When(RedisTestContainer.GarnetSelected && operation == "CONFIG SET", "Garnet 2.1.8 does not allow CONFIG SET timeout at runtime.");
         var options = RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5) };
         await using var observer = await RespireClient.ConnectAsync(options);
@@ -98,6 +99,8 @@ public class StandaloneCommandRetryIntegrationTests(RedisTestContainer fixture)
     [Arguments("undeclared", true, false)]
     public async Task LostReplyHonorsCallerDeclaredScriptAndRawCategories(string shape, bool highRisk, bool retries)
     {
+        Skip.When(RedisTestContainer.GarnetSelected && shape == "function", "Garnet 2.1.8 has no FUNCTION or FCALL command.");
+        Skip.When(RedisTestContainer.GarnetSelected && shape == "script", "On Garnet 2.1.8 the script's write is not visible after its reply is lost.");
         var options = RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5) };
         await using var observer = await RespireClient.ConnectAsync(options);

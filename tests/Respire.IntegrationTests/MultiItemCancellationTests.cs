@@ -43,6 +43,7 @@ public class MultiItemCancellationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [SkipOnGarnet("Garnet 2.1.8 has no TOUCH command.")]
     public async Task MultiItemCommands_WithLiveToken_Succeed()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);

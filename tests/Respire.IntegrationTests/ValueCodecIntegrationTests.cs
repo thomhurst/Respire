@@ -92,6 +92,7 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
     [Arguments("deflate")]
     [Arguments("lz4")]
     [Arguments("zstd")]
+    [SkipOnGarnet("Garnet 2.1.8 rejects CLIENT TRACKING, which client-side caching requires.")]
     public async Task CachedFramesDecodeIntoIndependentTypedValues(string algorithm)
     {
         var codec = CreateCodec(algorithm);

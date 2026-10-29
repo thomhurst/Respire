@@ -11,6 +11,7 @@ public class DeferredStreamIntegrationTests(RedisTestContainer fixture)
     [Arguments(2, true)]
     [Arguments(3, false)]
     [Arguments(3, true)]
+    [SkipOnGarnet("Garnet 2.1.8 has no stream commands; XADD and the rest return ERR unknown command.")]
     public async Task NonBlockingStreamCommandsRoundTrip(int protocol, bool transactional)
     {
         await using var client = await RespireClient.ConnectAsync(
@@ -66,6 +67,7 @@ public class DeferredStreamIntegrationTests(RedisTestContainer fixture)
     [Arguments(2, true)]
     [Arguments(3, false)]
     [Arguments(3, true)]
+    [SkipOnGarnet("Garnet 2.1.8 has no stream commands; XADD and the rest return ERR unknown command.")]
     public async Task StreamErrorsDoNotHideOtherResults(int protocol, bool transactional)
     {
         await using var client = await RespireClient.ConnectAsync(
