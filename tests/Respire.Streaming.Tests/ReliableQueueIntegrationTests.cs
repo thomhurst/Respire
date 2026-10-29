@@ -370,14 +370,14 @@ public class ReliableQueueIntegrationTests(RedisTestContainer redis)
     [Arguments(3, "nack", "zadd")]
     public async Task DeniedWriteLeavesOperationRetryable(int protocol, string operation, string deniedCommand)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
             with { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
         var username = "reliable-" + Guid.NewGuid().ToString("N");
         var queue = Queue(admin);
         await admin.Server.AclSetUserAsync(username, ["on", ">queue-password", "~*", "+@all", "-" + deniedCommand]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Protocol = (RespireProtocol)protocol, Username = username, Password = "queue-password" });
             var restrictedQueue = Queue(restricted);
             if (operation == "send")
@@ -426,7 +426,7 @@ public class ReliableQueueIntegrationTests(RedisTestContainer redis)
     [Arguments(3, "xackdel")]
     public async Task DeniedOptionalCapabilityUsesCompatibleAcknowledgement(int protocol, string deniedCommand)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
             with { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
         if (deniedCommand == "xackdel")
         {
@@ -437,7 +437,7 @@ public class ReliableQueueIntegrationTests(RedisTestContainer redis)
         await admin.Server.AclSetUserAsync(username, ["on", ">queue-password", "~*", "+@all", "-" + deniedCommand]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Protocol = (RespireProtocol)protocol, Username = username, Password = "queue-password" });
             var queue = Queue(restricted, deliveryLimit: 1);
             await queue.SendAsync("acknowledge");
@@ -453,7 +453,7 @@ public class ReliableQueueIntegrationTests(RedisTestContainer redis)
     }
 
     private ValueTask<RespireClient> ConnectAsync(int protocol)
-        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
 
     private static RespireReliableQueue<string> Queue(IRespireClient client, string name = "queue", int deliveryLimit = 5)
         => new(client, name, Encoding.UTF8.GetBytes, Encoding.UTF8.GetString, deliveryLimit);

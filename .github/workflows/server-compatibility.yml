@@ -20,7 +20,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.label.name == 'run-server-compatibility'
     name: ${{ matrix.server }} (net10.0)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -73,6 +73,16 @@ jobs:
           --minimum-expected-tests 100
           --results-directory "$GITHUB_WORKSPACE/TestResults/compatibility"
           --report-trx --report-trx-filename valkey92-full.trx
+          --hangdump --hangdump-timeout 5m
+      - name: Run full integration suite with Garnet
+        if: matrix.server == 'garnet'
+        env:
+          RESPIRE_TEST_REDIS_IMAGE: ghcr.io/microsoft/garnet:2.1.8
+        run: >-
+          dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build --
+          --minimum-expected-tests 100
+          --results-directory "$GITHUB_WORKSPACE/TestResults/compatibility"
+          --report-trx --report-trx-filename garnet-full.trx
           --hangdump --hangdump-timeout 5m
       - name: Upload compatibility evidence
         if: always()

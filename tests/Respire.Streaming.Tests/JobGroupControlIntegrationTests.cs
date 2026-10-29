@@ -338,7 +338,7 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
     [Arguments("zrem")]
     public async Task DeniedLeaseMutationLeavesJobStaged(string denied)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         await queue.SetGroupOptionsAsync("a", new() { MaxConcurrency = 1 });
         await queue.EnqueueScheduledAsync("job", "p", new() { Group = "a" });
@@ -347,7 +347,7 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-" + denied]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = user, Password = "password" });
             await Assert.That(async () => await Read(restricted, queue, "owner")).Throws<RespireServerException>();
             await Assert.That(await admin.Streams.CountAsync(queue.StreamKey)).IsEqualTo(0);
@@ -486,7 +486,7 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
     }
 
     private ValueTask<RespireClient> Connect(int protocol = 3) => RespireClient.ConnectAsync(
-        RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        RespireOptions.Parse(redis.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
     private static RespireJobQueue<string> Queue(IRespireClient client) => new(client, "group-controls", Encoding.UTF8.GetBytes);
     private static Task<RespireStreamEntry[]> Read(IRespireClient client, RespireJobQueue<string> queue, string consumer, int count = 1)
         => JobGroupIntegrationTests.Read(client, queue, consumer, count);

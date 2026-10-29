@@ -14,6 +14,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     private static readonly RespireCacheAsideOptions Options = new() { WaitTimeout = TimeSpan.FromSeconds(10) };
 
     [Test]
+    [SkipOnGarnet("Garnet 2.1.8 rejects SET with PXAT, which the cache-aside lease scripts use, and has no CLIENT TRACKING.")]
     public async Task ManyIndependentClientsRecomputeOncePerExpiry()
     {
         var clients = new List<RespireClient>();
@@ -48,6 +49,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [SkipOnGarnet("Garnet 2.1.8 rejects SET with PXAT, which the cache-aside lease scripts use, and has no CLIENT TRACKING.")]
     public async Task CrashedHolderExpiresAndAnotherClientPopulates()
     {
         await using var client = await ConnectAsync();
@@ -70,6 +72,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [SkipOnGarnet("Garnet 2.1.8 rejects SET with PXAT, which the cache-aside lease scripts use, and has no CLIENT TRACKING.")]
     public async Task WaitBudgetDoesNotStartAnUnprotectedFactory()
     {
         await using var client = await ConnectAsync();
@@ -88,6 +91,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [SkipOnGarnet("Garnet 2.1.8 rejects SET with PXAT, which the cache-aside lease scripts use, and has no CLIENT TRACKING.")]
     public async Task ContendersServeStaleWhileElectedCallerAwaitsRefresh()
     {
         await using var first = await ConnectAsync();
@@ -119,6 +123,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [SkipOnGarnet("Garnet 2.1.8 rejects SET with PXAT, which the cache-aside lease scripts use, and has no CLIENT TRACKING.")]
     public async Task EarlyRefreshUsesSharedRecomputeDurationAcrossClients()
     {
         await using var first = await ConnectAsync();
@@ -249,7 +254,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     public async Task InternalScriptsBorrowOneHookScopeAndFactoryCommandsRemainIndependent()
     {
         var hook = new RecordingHook();
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         {
             Connections = 1, CommandHook = hook,
         });
@@ -292,6 +297,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     [Arguments(true, false, 0)]
     [Arguments(true, true, 0)]
     [Arguments(true, true, 250)]
+    [SkipOnGarnet("Garnet 2.1.8 rejects SET with PXAT, which the cache-aside lease scripts use, and has no CLIENT TRACKING.")]
     public async Task AbsoluteExpiryIsPreservedWithEarlyRefresh(bool past, bool singleFlight, int staleMilliseconds)
     {
         await using var client = await ConnectAsync();
@@ -312,6 +318,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    [SkipOnGarnet("Garnet 2.1.8 rejects SET with PXAT, which the cache-aside lease scripts use, and has no CLIENT TRACKING.")]
     public async Task RefreshRetainsGenerationBeyondPayloadExpiryWithoutServingExpiredData(bool stale)
     {
         await using var first = await ConnectAsync();
@@ -350,6 +357,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     [Arguments(true, false, true)]
     [Arguments(true, true, false)]
     [Arguments(true, true, true)]
+    [SkipOnGarnet("Garnet 2.1.8 rejects SET with PXAT, which the cache-aside lease scripts use, and has no CLIENT TRACKING.")]
     public async Task PopulationCannotOverwriteDeletedOrReplacedGeneration(bool warm, bool replace, bool singleFlight)
     {
         await using var client = await ConnectAsync();
@@ -391,6 +399,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     [Arguments(true, false, "null")]
     [Arguments(true, false, "failure")]
     [Arguments(true, false, "cancellation")]
+    [SkipOnGarnet("Garnet 2.1.8 rejects SET with PXAT, which the cache-aside lease scripts use, and has no CLIENT TRACKING.")]
     public async Task FailedColdFillCannotRemoveSuccessorGeneration(bool singleFlight, bool deleteGeneration, string outcome)
     {
         await using var client = await ConnectAsync();
@@ -452,9 +461,10 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [SkipOnGarnet("Garnet 2.1.8 rejects SET with PXAT, which the cache-aside lease scripts use, and has no CLIENT TRACKING.")]
     public async Task LeaseScriptsPreserveUnrelatedClientCacheEntries()
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Connections = 1, Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var unrelated = NewKey();
         await client.SetAsync(unrelated, "cached");
@@ -487,5 +497,5 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     }
     private static string NewKey() => $"stampede:{Guid.NewGuid():N}:";
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private ValueTask<RespireClient> ConnectAsync() => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Connections = 1 });
+    private ValueTask<RespireClient> ConnectAsync() => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with { Connections = 1 });
 }

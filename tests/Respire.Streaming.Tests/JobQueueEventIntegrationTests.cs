@@ -116,14 +116,14 @@ public partial class JobQueueIntegrationTests
     [Arguments("xdel")]
     public async Task DeniedTerminalWritePreservesPendingDelivery(string denied)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         var delivery = await PendingJobAsync(admin, queue);
         var username = "events-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">event-test-password", "~*", "+@all", "-" + denied]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = username, Password = "event-test-password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(JobScript("Complete"),
                 [queue.StreamKey, queue.EventsStreamKey, queue.DeadLetterStreamKey],
@@ -140,7 +140,7 @@ public partial class JobQueueIntegrationTests
     [Test]
     public async Task FailedNativeAcknowledgementRollsBackItsAlreadyAppendedEvent()
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var info = await admin.Server.InfoAsync("server");
         var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
         var version = Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]);
@@ -151,7 +151,7 @@ public partial class JobQueueIntegrationTests
         await admin.Server.AclSetUserAsync(username, ["on", ">event-test-password", "~*", "+@all", "-xackdel"]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = username, Password = "event-test-password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(JobScript("CompleteAndDelete"),
                 [queue.StreamKey, queue.EventsStreamKey],

@@ -12,11 +12,12 @@ public class FakeCollectionScanParityTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    [SkipOnGarnet("Garnet 2.1.8 diverges from the Redis error, atomicity and reply-shape semantics this parity test pins.")]
     public async Task BinaryCollectionScansPreserveReplyShapesAndTtl(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         await using var client = await RespireClient.ConnectAsync(
-            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
+            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString))
             with { Protocol = (RespireProtocol)protocol, Connections = 1 });
         byte[] member = [0, 255, 128, 13, 10];
         foreach (var command in new[] { "SSCAN", "HSCAN", "ZSCAN" })

@@ -18,6 +18,7 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, ExecutionMode.Immediate)]
     [Arguments(3, ExecutionMode.Batch)]
     [Arguments(3, ExecutionMode.Transaction)]
+    [SkipOnGarnet("Garnet 2.1.8 rejects SET with EXAT or PXAT as a syntax error.")]
     public async Task AbsoluteExpiryDistinguishesMissingPersistentAndPrecisions(int protocol, ExecutionMode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
@@ -49,6 +50,7 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, ExecutionMode.Immediate)]
     [Arguments(3, ExecutionMode.Batch)]
     [Arguments(3, ExecutionMode.Transaction)]
+    [SkipOnGarnet("Garnet 2.1.8 reports OBJECT ENCODING raw for short strings and does not track LFU frequency.")]
     public async Task ObjectMetadataPreservesMissingKeysAndNonLfuPolicyErrors(int protocol, ExecutionMode mode)
     {
         await using var client = await RespireClient.ConnectAsync(

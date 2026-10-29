@@ -99,6 +99,7 @@ public class ServiceCollectionTests(RedisTestContainer fixture)
         {
             options.Endpoints.Add(endpoint);
             options.Database = fixture.Database;
+            options.KeyPrefix = fixture.KeyPrefix;
             options.ClientName = "respire-di-test";
         });
 
@@ -120,6 +121,7 @@ public class ServiceCollectionTests(RedisTestContainer fixture)
         {
             options.Endpoints.Add(endpoint);
             options.Database = fixture.Database;
+            options.KeyPrefix = fixture.KeyPrefix;
             options.UseClientSideCaching(new RespireClientSideCacheOptions { MaxEntries = 123 });
         });
 

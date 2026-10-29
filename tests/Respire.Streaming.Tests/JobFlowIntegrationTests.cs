@@ -192,7 +192,7 @@ public partial class JobQueueIntegrationTests
     [Arguments("xack")]
     public async Task DeniedFlowCompletionLeavesChildAndParentRecoverable(string denied)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         await queue.EnqueueFlowAsync("flow", new("parent", "parent") { Children = [new("leaf", "leaf")] });
         await admin.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
@@ -204,7 +204,7 @@ public partial class JobQueueIntegrationTests
         RespireValue[] args = [RespireJobQueue<string>.ConsumerGroup, "consumer", leaf.Id.Value, 1, "completed"];
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = username, Password = "flow-password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(JobScript("Complete"), keys, args))
                 .Throws<RespireServerException>();
@@ -223,12 +223,12 @@ public partial class JobQueueIntegrationTests
     [Arguments("xdel")]
     public async Task DeniedFlowEnqueueDoesNotReserveIdOrAppendLeaves(string denied)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var username = "flow-enqueue-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">flow-password", "~*", "+@all", "-" + denied]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = username, Password = "flow-password" });
             var tree = new RespireJobFlow<string>("parent", "parent") { Children = [new("leaf", "leaf")] };
             await Assert.That(async () => await Queue(restricted).EnqueueFlowAsync("flow", tree)).Throws<RespireServerException>();
@@ -243,7 +243,7 @@ public partial class JobQueueIntegrationTests
     [Test]
     public async Task FlowNativeAckFailureRollsBackResultParentActivationAndEvent()
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var info = await admin.Server.InfoAsync("server");
         var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
         if (Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]) < new Version(8, 2)) return;
@@ -258,7 +258,7 @@ public partial class JobQueueIntegrationTests
         RespireValue[] args = [RespireJobQueue<string>.ConsumerGroup, "consumer", leaf.Id.Value, 1, "completed", "", "", 1, "result"];
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = username, Password = "flow-password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(JobScript("CompleteAndDelete"), keys, args))
                 .Throws<RespireServerException>();

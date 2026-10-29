@@ -1,4 +1,5 @@
 using StackExchange.Redis;
+using StackExchange.Redis.KeyspaceIsolation;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -9,6 +10,7 @@ namespace Respire.IntegrationTests;
 // legitimately cause a continuity flush and turn a local hit into a server miss.
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
 [NotInParallel(TestConstraints.ClientCacheHits)]
+[SkipOnGarnet("Garnet 2.1.8 rejects CLIENT TRACKING, which client-side caching requires.")]
 public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
@@ -376,7 +378,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
 
         var actual = await Assert.That(async () =>
         {
-            await using var resources = await Resources.CreateAsync(client, FailConnection);
+            await using var resources = await Resources.CreateAsync(client, FailConnection, fixture.KeyPrefix);
         }).Throws<InvalidOperationException>();
 
         await Assert.That(actual).IsSameReferenceAs(failure);
@@ -410,17 +412,19 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
     {
         await using var resources = await Resources.CreateAsync(fixture, reuseHashFields: true, coalesce: coalesce);
         var key = $"cache:hash-partial:{Guid.NewGuid():N}";
+        // Caller-supplied raw commands keep physical keys, so they name the prefixed key.
+        var physicalKey = fixture.KeyPrefix + key;
         byte[] binaryField = [0, 255, 1];
         await resources.Database.HashSetAsync(key, [new HashEntry(binaryField, "binary"), new HashEntry("a", "A")]);
         await Assert.That(await resources.Client.Hashes.GetManyAsync(key, "a", "missing"))
             .IsEquivalentTo(new string?[] { "A", null });
-        using (var mixed = await resources.Client.ExecuteAsync("HMGET", key, "a", binaryField, "missing", binaryField))
+        using (var mixed = await resources.Client.ExecuteAsync("HMGET", physicalKey, "a", binaryField, "missing", binaryField))
         {
             await Assert.That(mixed.Select(value => value.IsNull ? null : value.AsString()).ToArray())
                 .IsEquivalentTo(new string?[] { "A", "binary", null, "binary" });
         }
         var hits = resources.Client.ClientSideCache!.GetStatistics().Hits;
-        using (var cached = await resources.Client.ExecuteAsync("HMGET", key, binaryField, "missing"))
+        using (var cached = await resources.Client.ExecuteAsync("HMGET", physicalKey, binaryField, "missing"))
         {
             await Assert.That(cached[0].AsString()).IsEqualTo("binary");
             await Assert.That(cached[1].IsNull).IsTrue();
@@ -428,7 +432,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
         await Assert.That(resources.Client.ClientSideCache.GetStatistics().Hits - hits).IsEqualTo(2);
         await resources.Database.HashSetAsync(key, binaryField, "changed");
         await WaitForCacheEvictionAsync(resources.Client);
-        using var fresh = await resources.Client.ExecuteAsync("HMGET", key, binaryField, "a");
+        using var fresh = await resources.Client.ExecuteAsync("HMGET", physicalKey, binaryField, "a");
         await Assert.That(fresh[0].AsString()).IsEqualTo("changed");
         await Assert.That(fresh[1].AsString()).IsEqualTo("A");
     }
@@ -526,11 +530,11 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
 
     private sealed class Resources : IAsyncDisposable
     {
-        private Resources(RespireClient client, ConnectionMultiplexer multiplexer)
+        private Resources(RespireClient client, ConnectionMultiplexer multiplexer, string keyPrefix)
         {
             Client = client;
             Multiplexer = multiplexer;
-            Database = multiplexer.GetDatabase();
+            Database = multiplexer.GetDatabase().WithKeyPrefix(keyPrefix);
         }
 
         public RespireClient Client { get; }
@@ -548,11 +552,11 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
             };
             var client = await RespireClient.ConnectAsync(options);
             return await CreateAsync(client, () => ConnectionMultiplexer.ConnectAsync(
-                fixture.StackExchangeConnectionString));
+                fixture.StackExchangeConnectionString), fixture.KeyPrefix);
         }
 
         public static async Task<Resources> CreateAsync(
-            RespireClient client, Func<Task<ConnectionMultiplexer>> connectMultiplexer)
+            RespireClient client, Func<Task<ConnectionMultiplexer>> connectMultiplexer, string keyPrefix)
         {
             ConnectionMultiplexer multiplexer;
             try
@@ -573,7 +577,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
                 throw;
             }
 
-            return new Resources(client, multiplexer);
+            return new Resources(client, multiplexer, keyPrefix);
         }
 
         public async ValueTask DisposeAsync()

@@ -18,7 +18,7 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
     [Arguments("DEL", true, 3)]
     public async Task ReclaimsManuallyRemovedEnvelopes(string removal, bool scheduled, int protocol)
     {
-        await using var root = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+        await using var root = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
             with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix("tenant:");
         var queue = Queue(client);
@@ -45,7 +45,7 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
     [Test]
     public async Task SupersededBodyDoesNotProtectAMissingCurrentRevision()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "job", "obsolete");
         var latest = await queue.EnqueueAsync("job", "current");
@@ -57,7 +57,7 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
     [Test]
     public async Task PreservesActiveGenerationAfterItsStreamIsDeleted()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "job", "active");
         await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
@@ -71,7 +71,7 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
     [Test]
     public async Task ReclaimsMissingFollowupWithoutRetiringItsActiveParent()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.EnqueueAsync(RespireJobDeduplicationMode.KeepLastIfActive, "job", "active");
         await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
@@ -92,7 +92,7 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
     [Arguments(false)]
     public async Task ScanLimitFailureDoesNotRemoveAnyOrphans(bool hashLimit)
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "orphan", "orphan");
         await client.Keys.DeleteAsync(queue.StreamKey);
@@ -111,7 +111,7 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
     [Arguments(true)]
     public async Task WrongStreamTypeFailsBeforeRemovingFields(bool scheduled)
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "job", "orphan");
         await client.Keys.DeleteAsync(queue.StreamKey);
@@ -123,7 +123,7 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
     [Test]
     public async Task DeniedCleanupPreservesAllFields()
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "job", "orphan");
         await admin.Keys.DeleteAsync(queue.StreamKey);
@@ -131,7 +131,7 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-hdel"]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = user, Password = "password" });
             var error = await Assert.That(async () => await Queue(restricted).ReclaimOrphanedDeduplicationAsync())
                 .Throws<RespireServerException>();
@@ -144,7 +144,7 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
     [Test]
     public async Task ScansBeyondOnePageAndAcceptsTheExactBudget()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "orphan", "orphan");
         await client.Keys.DeleteAsync(queue.StreamKey);
@@ -160,7 +160,7 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
     [Arguments(-1)]
     public async Task RejectsNonpositiveLimits(int maximumEntries)
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         await Assert.That(async () => await Queue(client).ReclaimOrphanedDeduplicationAsync(maximumEntries))
             .Throws<ArgumentOutOfRangeException>();
     }

@@ -113,14 +113,14 @@ public partial class JobQueueIntegrationTests
     [Arguments("pexpireat")]
     public async Task DeniedLogWriteLeavesNoPartialList(string command)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         var entry = await PendingJobAsync(admin, queue);
         var username = "logs-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">log-test-password", "~*", "+@all", "-" + command]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = username, Password = "log-test-password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(JobScript("Log"),
                 [queue.StreamKey, JobLogKeys.ForJob(queue.StreamKey, "job")],

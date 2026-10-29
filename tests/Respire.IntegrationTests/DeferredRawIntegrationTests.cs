@@ -14,7 +14,7 @@ public class DeferredRawIntegrationTests(RedisTestContainer fixture)
     public async Task RawCommandsPreserveOrderPrefixesBinaryAndAggregateReplies(int protocol, bool transactional)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+            RespireOptions.Parse(fixture.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix("raw:");
         using var batch = transactional ? null : view.CreateBatch();
         await using var transaction = transactional ? view.CreateTransaction() : null;
@@ -65,7 +65,7 @@ public class DeferredRawIntegrationTests(RedisTestContainer fixture)
     public async Task WatchedTransactionsExposeTheSameRawQueue(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+            RespireOptions.Parse(fixture.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix("watched:");
         await using var transaction = await view.CreateTransactionAsync("key");
         var pending = transaction.Execute("SET", "key", "value");

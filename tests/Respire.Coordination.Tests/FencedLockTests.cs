@@ -124,7 +124,7 @@ public class FencedLockTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
+            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
             Connections = 1, Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
         var pair = Keys();
@@ -145,7 +145,7 @@ public class FencedLockTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
+            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
             Connections = 1, Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
         var pair = Keys();
@@ -261,7 +261,7 @@ public class FencedLockTests(RedisTestContainer fixture)
 
     private ValueTask<RespireClient> ConnectAsync(int protocol) => RespireClient.ConnectAsync(new RespireOptions
     {
-        Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
+        Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
         Connections = 1, Protocol = (RespireProtocol)protocol,
     });
     private static (RespireKey Key, RespireKey Counter) Keys()

@@ -7,7 +7,7 @@ namespace Respire.StackExchangeCompat.Tests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class HashListTests(RedisTestContainer fixture)
 {
-    private RespireOptions Options(int protocol) => RespireOptions.Parse(fixture.ConnectionString) with
+    private RespireOptions Options(int protocol) => RespireOptions.Parse(fixture.IsolatedConnectionString) with
     {
         Connections = 1,
         Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
@@ -20,7 +20,7 @@ public class HashListTests(RedisTestContainer fixture)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
         var database = connection.GetDatabase();
-        RedisKey key = new byte[] { 0xff, 0, (byte)fixture.Database };
+        RedisKey key = new byte[] { 0xff, 0, (byte)fixture.IsolatedDatabase };
         RedisValue field = new byte[] { 0x80, 0 };
         byte[] value = [0xfe, 0, 0xff];
         database.HashSet(key, [new(field, value), new("empty", "")]);

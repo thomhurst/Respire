@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Respire.Testing;
 using StackExchange.Redis;
+using StackExchange.Redis.KeyspaceIsolation;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -36,7 +37,7 @@ public class RepositoryTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)],
-            Database = fixture.Database,
+            Database = fixture.Database, KeyPrefix = fixture.KeyPrefix,
             Protocol = RespireProtocol.Resp3,
             ClientSideCache = new(),
         });
@@ -67,7 +68,7 @@ public class RepositoryTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)],
-            Database = fixture.Database,
+            Database = fixture.Database, KeyPrefix = fixture.KeyPrefix,
             ReplicaEndpoints = [new("127.0.0.1", 1)],
             ReadFrom = RespireReadFrom.Replica,
         });
@@ -123,7 +124,8 @@ public class RepositoryTests(RedisTestContainer fixture)
         await Assert.That(XNode.DeepEquals(first, elements[0])).IsTrue();
         await Assert.That(XNode.DeepEquals(second, elements[1])).IsTrue();
         await Assert.That(XNode.DeepEquals(first, elements[2])).IsTrue();
-        using var ttl = await client.ExecuteAsync("PTTL", key);
+        // Caller-supplied raw commands keep physical keys.
+        using var ttl = await client.ExecuteAsync("PTTL", fixture.KeyPrefix + key);
         await Assert.That(ttl.AsInteger()).IsEqualTo(-1);
     }
 
@@ -133,7 +135,7 @@ public class RepositoryTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
         using var connection = await ConnectionMultiplexer.ConnectAsync(fixture.StackExchangeConnectionString);
         var key = $"keys:{Guid.NewGuid():N}";
-        var microsoft = new RedisXmlRepository(() => connection.GetDatabase(), key);
+        var microsoft = new RedisXmlRepository(() => connection.GetDatabase().WithKeyPrefix(fixture.KeyPrefix), key);
         var respire = new RespireXmlRepository(() => client, key);
         var first = XElement.Parse("<key id='microsoft'><value>one</value></key>");
         var second = XElement.Parse("<revocation><value>two</value></revocation>");
@@ -164,7 +166,8 @@ public class RepositoryTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
         var key = $"keys:{Guid.NewGuid():N}";
-        using var response = await client.ExecuteAsync("SET", key, "not-a-list");
+        // Caller-supplied raw commands keep physical keys.
+        using var response = await client.ExecuteAsync("SET", fixture.KeyPrefix + key, "not-a-list");
         var repository = new RespireXmlRepository(() => client, key);
 
         await Assert.That(() => repository.GetAllElements()).Throws<RespireServerException>();
@@ -182,7 +185,7 @@ public class RepositoryTests(RedisTestContainer fixture)
         var key = $"keys:{Guid.NewGuid():N}";
         var microsoftServices = new ServiceCollection();
         microsoftServices.AddDataProtection().SetApplicationName("shared-app")
-            .PersistKeysToStackExchangeRedis(connection, key);
+            .PersistKeysToStackExchangeRedis(() => connection.GetDatabase().WithKeyPrefix(fixture.KeyPrefix), key);
         using var microsoftProvider = microsoftServices.BuildServiceProvider();
         var microsoft = microsoftProvider.GetRequiredService<IDataProtectionProvider>().CreateProtector("purpose");
         var respireServices = new ServiceCollection();

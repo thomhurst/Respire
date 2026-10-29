@@ -162,7 +162,7 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
     [Arguments("xrange")]
     public async Task DeniedSelectionLeavesTheJobStagedAndUndelivered(string denied)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         await queue.EnqueueScheduledAsync("id", "p", new() { Group = "a" });
         await admin.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
@@ -170,7 +170,7 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-" + denied]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = user, Password = "password" });
             await Assert.That(async () => await JobGroupIntegrationTests.Read(restricted, queue, "owner")).Throws<RespireServerException>();
             await Assert.That(await admin.Streams.CountAsync(queue.StreamKey)).IsEqualTo(0);
@@ -268,6 +268,6 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
     }
 
     private ValueTask<RespireClient> Connect(int protocol = 3) => RespireClient.ConnectAsync(
-        RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        RespireOptions.Parse(redis.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
     private static RespireJobQueue<string> Queue(IRespireClient client) => new(client, "fair", Encoding.UTF8.GetBytes);
 }

@@ -5,6 +5,7 @@ namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
 [NotInParallel(TestConstraints.ClientCacheHits)]
+[SkipOnGarnet("Garnet 2.1.8 rejects CLIENT TRACKING, which client-side caching requires.")]
 public class CacheMutationLayoutIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
@@ -14,7 +15,7 @@ public class CacheMutationLayoutIntegrationTests(RedisTestContainer fixture)
     [Arguments("PFMERGE")]
     public async Task DestinationWritesInvalidateCachedMissAndRetainSourceEntries(string operation)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var prefix = "cache-layout:" + Guid.NewGuid().ToString("N") + ":";
         RespireKey first = prefix + "first", second = prefix + "second", destination = prefix + "destination";

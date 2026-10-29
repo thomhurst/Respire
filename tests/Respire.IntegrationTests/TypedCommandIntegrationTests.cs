@@ -77,6 +77,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [SkipOnGarnet("Garnet 2.1.8 has no stream commands; XADD and the rest return ERR unknown command.")]
     public async Task StreamAddOptionsAndDescendingRange_RoundTripAgainstRedis()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
@@ -106,6 +107,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [SkipOnGarnet("Garnet 2.1.8 has no stream commands; XADD and the rest return ERR unknown command.")]
     public async Task StreamConsumerRecovery_RoundTripsClaimsAndPendingReplay()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
@@ -155,6 +157,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [SkipOnGarnet("Garnet 2.1.8 has no COPY command.")]
     public async Task KeyCommands_RoundTripConditionalCopyAndTypedScan()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
@@ -431,7 +434,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     [Test]
     public async Task CatalogDescriptor_ExecutesAgainstRedis()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
 
         using var result = await client.ExecuteAsync(RespireCommands.Server.DBSIZE);
 
@@ -441,7 +444,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     [Test]
     public async Task BlockingCatalogDescriptor_DoesNotStallMultiplexedCommands()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
         var pop = client.ExecuteAsync(
@@ -458,7 +461,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     [Test]
     public async Task BlockingCatalogDescriptor_CancellationDiscardsDedicatedConnection()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
         var execute = async () =>

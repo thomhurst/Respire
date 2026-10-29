@@ -20,7 +20,7 @@ public class RedisDataProtectionBuilderExtensionsTest(RedisTestContainer fixture
     [Test]
     public void PersistKeysToRedis_UsesRedisXmlRepository()
     {
-        using var connection = RespireConnectionMultiplexer.Create(RespireOptions.Parse(fixture.ConnectionString));
+        using var connection = RespireConnectionMultiplexer.Create(RespireOptions.Parse(fixture.IsolatedConnectionString));
         var serviceCollection = new ServiceCollection();
         var builder = serviceCollection.AddDataProtection();
         builder.PersistKeysToStackExchangeRedis(connection);

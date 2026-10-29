@@ -11,7 +11,7 @@ namespace Respire.StackExchangeCompat.Tests;
 [NotInParallel]
 public class OrleansCommandsTests(RedisTestContainer redis)
 {
-    private RespireOptions Options(int protocol) => RespireOptions.Parse(redis.ConnectionString) with
+    private RespireOptions Options(int protocol) => RespireOptions.Parse(redis.IsolatedConnectionString) with
     {
         Connections = 1,
         Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
@@ -122,7 +122,7 @@ public class OrleansCommandsTests(RedisTestContainer redis)
     public async Task LexicographicReadsMatchUpstreamBoundsAndPagination(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var database = connection.GetDatabase();
         var expected = control.GetDatabase();
         RedisValue[] members = [Array.Empty<byte>(), new byte[] { 0 }, "+", "-", "[", "a", "b", new byte[] { 0xff, 0 }, 1, 2];
@@ -162,7 +162,7 @@ public class OrleansCommandsTests(RedisTestContainer redis)
     public async Task LexicographicRemovalMatchesUpstreamAcrossDispatchPaths(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var database = connection.GetDatabase();
         var expected = control.GetDatabase();
         StackExchange.Redis.SortedSetEntry[] members = [new("a", 0), new("b", 0), new("c", 0), new(new byte[] { 0xff, 0 }, 0)];

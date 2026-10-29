@@ -280,7 +280,7 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
     [Arguments(3, "receive", "xadd")]
     public async Task DeniedSchedulingWriteLeavesOriginalStateRetryable(int protocol, string operation, string deniedCommand)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
             with { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
         var username = "schedule-" + Guid.NewGuid().ToString("N");
         var queue = Queue(admin);
@@ -288,7 +288,7 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
         await admin.Server.AclSetUserAsync(username, ["on", ">password", "~*", "+@all", "-" + deniedCommand]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Protocol = (RespireProtocol)protocol, Username = username, Password = "password" });
             var denied = Queue(restricted);
             if (operation == "schedule")
@@ -311,7 +311,7 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
     }
 
     private ValueTask<RespireClient> ConnectAsync(int protocol)
-        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
 
     private static RespireReliableQueue<string> Queue(IRespireClient client)
         => new(client, "queue", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString);

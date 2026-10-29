@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using FluentAssertions;
 using StackExchange.Redis;
+using StackExchange.Redis.KeyspaceIsolation;
 using TUnit.Core;
 
 namespace Respire.IntegrationTests;
@@ -18,7 +19,7 @@ public class PrimitiveValueInteroperabilityTests(RedisTestContainer fixture)
     {
         _respireClient = await RespireClient.ConnectAsync(fixture.ConnectionString);
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(fixture.StackExchangeConnectionString);
-        _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
+        _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase().WithKeyPrefix(fixture.KeyPrefix);
     }
 
     [After(Test)]

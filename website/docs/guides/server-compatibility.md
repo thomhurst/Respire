@@ -28,6 +28,12 @@ Other versions need their own compatibility run. ARM hosts need x64 emulation fo
 The Valkey 9.2 RC job also runs the full integration project with the shared Redis fixture
 pointing at Valkey. Tests that intentionally pin a different server or module version keep
 those pins. The [Valkey 9.2 command scenarios](valkey-92.md) run in ordinary CI as well.
+The Garnet job does the same with `RESPIRE_TEST_REDIS_IMAGE=ghcr.io/microsoft/garnet:2.1.8`.
+Garnet allows at most 256 logical databases, so the shared fixture isolates tests by key prefix
+rather than by database. Tests of features that Garnet 2.1.8 lacks are skipped, and the report gives
+the reason for each one. The gaps are client-side caching, streams, `SORT`, `COPY`, `TOUCH`, `FUNCTION`,
+`SET` with `EXAT` or `PXAT`, `RESTORE` options, sharded pub/sub outside Cluster mode, and multi-key
+sorted-set pops.
 
 ## Compatibility matrix
 
@@ -72,6 +78,9 @@ failover, slot migration, replication, Sentinel, authentication, TLS, or module 
 - **Garnet client-side caching:** Garnet 2.1.8 rejects `CLIENT TRACKING` as an unknown
   subcommand. Leave `ClientSideCache` disabled for this version. The suite skips the caching
   scenario with that reason; ordinary connections and core commands pass.
+- **Garnet distributed locks:** Garnet 2.1.8 answers `DELEX`, `DELIFEQ` and `SET ... IFEQ` with
+  a bare `ERR unknown command`. The lock API's Lua fallback does not recognize that reply yet, so
+  `client.Locks` fails on this version ([#2229](https://github.com/thomhurst/Respire/issues/2229)).
 - **KeyDB client metadata:** KeyDB 6.3.4 rejects `CLIENT SETINFO` as an unknown subcommand.
   This is an explicit [connection-specific administration API](client-administration.md),
   not an automatic handshake requirement. The suite verifies the rejection and then reads the

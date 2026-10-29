@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using StackExchange.Redis;
+using StackExchange.Redis.KeyspaceIsolation;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -8,6 +9,7 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+[SkipOnGarnet("Garnet 2.1.8 answers DELEX, DELIFEQ and SET IFEQ with a bare ERR unknown command, which the lock Lua fallback does not recognize; see #2229.")]
 public class DistributedLockTests(RedisTestContainer fixture)
 {
     private const string Key = "locks:job:42";
@@ -26,7 +28,7 @@ public class DistributedLockTests(RedisTestContainer fixture)
         _respireClient = await RespireClient.ConnectAsync(_fixture.ConnectionString);
 
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.StackExchangeConnectionString);
-        _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
+        _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase().WithKeyPrefix(_fixture.KeyPrefix);
 
     }
 

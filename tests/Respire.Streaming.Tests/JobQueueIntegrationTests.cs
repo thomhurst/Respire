@@ -64,13 +64,13 @@ public partial class JobQueueIntegrationTests(RedisTestContainer redis)
     [Arguments(3, "xdel")]
     public async Task DeniedEnqueueWriteDoesNotAppendOrReserveTheJobId(int protocol, string deniedCommand)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
             with { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
         var username = "job-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">job-test-password", "~*", "+@all", "-" + deniedCommand]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Protocol = (RespireProtocol)protocol, Username = username, Password = "job-test-password" });
             var queue = Queue(restricted);
             for (var attempt = 0; attempt < 2; attempt++)
@@ -283,7 +283,7 @@ public partial class JobQueueIntegrationTests(RedisTestContainer redis)
         }
     }
     private ValueTask<RespireClient> ConnectAsync(int protocol = 3)
-        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
 
     private static RespireJobQueue<string> Queue(IRespireClient client, string name = "test")
         => new(client, name, Encoding.UTF8.GetBytes);

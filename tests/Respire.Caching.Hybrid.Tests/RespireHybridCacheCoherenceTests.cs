@@ -56,7 +56,7 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
     public async Task AnotherProviderUpdatesL1OnlyWhenCoherenceIsEnabled(bool enabled, bool registeredClient)
     {
         var key = NewKey();
-        await using var root = RespireClient.Create(RespireOptions.Parse(fixture.ConnectionString) with { KeyPrefix = "client:" });
+        await using var root = RespireClient.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with { KeyPrefix = "client:" });
         await using var writer = BuildProvider(false, root);
         await using var reader = BuildProvider(enabled, registeredClient ? root : null,
             clientPrefix: registeredClient ? null : "client:");
@@ -100,7 +100,7 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
     public async Task CodecAndMutableCopiesSurviveGenerationChanges(bool registeredClient)
     {
         var key = NewKey();
-        await using var root = RespireClient.Create(fixture.ConnectionString);
+        await using var root = RespireClient.Create(fixture.IsolatedConnectionString);
         await using var writer = BuildProvider(false, codec: true);
         await using var reader = BuildProvider(true, registeredClient ? root : null, codec: true);
         var original = Enumerable.Repeat((byte)42, 4096).ToArray();
@@ -204,7 +204,7 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
         await using var reader = BuildProvider(true);
         await writer.GetRequiredService<HybridCache>().SetAsync(key, "old", LongLived);
         await PrimeAsync(reader.GetRequiredService<HybridCache>(), key);
-        await using var external = RespireClient.Create(fixture.ConnectionString);
+        await using var external = RespireClient.Create(fixture.IsolatedConnectionString);
         using var result = expire
             ? await external.ExecuteAsync("PEXPIRE", InstanceName + key, "1")
             : await external.ExecuteAsync("DEL", InstanceName + key);
@@ -227,7 +227,7 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
     public async Task ExplicitClearRetiresLocalStateWithoutDeletingL2(bool clearSource)
     {
         var key = NewKey();
-        await using var source = RespireClient.Create(RespireOptions.Parse(fixture.ConnectionString) with { ClientSideCache = new() });
+        await using var source = RespireClient.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with { ClientSideCache = new() });
         await using var writer = BuildProvider(false);
         await using var reader = BuildProvider(true, source);
         await writer.GetRequiredService<HybridCache>().SetAsync(key, "value", LongLived);
@@ -247,7 +247,7 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
         await writer.GetRequiredService<HybridCache>().SetAsync(key, "old", LongLived);
         await PrimeAsync(reader.GetRequiredService<HybridCache>(), key);
         using var identity = await Coherent(reader).TrackingClient.ExecuteAsync("CLIENT", "ID");
-        await using var external = RespireClient.Create(fixture.ConnectionString);
+        await using var external = RespireClient.Create(fixture.IsolatedConnectionString);
         using var killed = await external.ExecuteAsync("CLIENT", "KILL", "ID", identity.AsInteger().ToString(System.Globalization.CultureInfo.InvariantCulture));
         await UntilAsync(() => Coherent(reader).ObservationCount == 0);
         await writer.GetRequiredService<HybridCache>().SetAsync(key, "new", LongLived);
@@ -458,7 +458,7 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
     {
         var calls = 0;
         var services = new ServiceCollection();
-        services.AddRespireHybridCache(fixture.ConnectionString, InstanceName, options =>
+        services.AddRespireHybridCache(fixture.IsolatedConnectionString, InstanceName, options =>
         {
             calls++;
             options.DefaultEntryOptions = new HybridCacheEntryOptions
@@ -478,7 +478,7 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
     public async Task RegisteredClientPrefixViewsResolveTheObservedPhysicalKey()
     {
         var key = NewKey();
-        await using var root = RespireClient.Create(RespireOptions.Parse(fixture.ConnectionString) with { KeyPrefix = "tenant:" });
+        await using var root = RespireClient.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with { KeyPrefix = "tenant:" });
         var view = (RespireClient)root.WithKeyPrefix("service:");
         await using var writer = BuildProvider(false, view);
         await using var reader = BuildProvider(true, view);
@@ -496,11 +496,11 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
         var key = NewKey();
         var username = "coherence-" + key;
         const string password = "ephemeral-test-password";
-        await using var admin = RespireClient.Create(fixture.ConnectionString);
+        await using var admin = RespireClient.Create(fixture.IsolatedConnectionString);
         using (var created = await admin.ExecuteAsync("ACL", "SETUSER", username, "on", ">" + password, "~*", "+@all", "-hexists")) { }
         try
         {
-            await using var restricted = RespireClient.Create(RespireOptions.Parse(fixture.ConnectionString) with
+            await using var restricted = RespireClient.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with
             {
                 Username = username,
                 Password = password,
@@ -573,7 +573,7 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
     public async Task NarrowSourcePrefixesDoNotPreventIndependentTracking()
     {
         var key = NewKey();
-        await using var source = RespireClient.Create(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var source = RespireClient.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         {
             ClientSideCache = new() { KeyPrefixes = ["elsewhere:"] },
         });
@@ -631,7 +631,7 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
         if (client is not null) services.AddSingleton<IRespireClient>(client);
         var builder = services.AddRespireHybridCache(options =>
         {
-            if (client is null) options.ClientOptions = _ => RespireOptions.Parse(fixture.ConnectionString) with { KeyPrefix = clientPrefix ?? "" };
+            if (client is null) options.ClientOptions = _ => RespireOptions.Parse(fixture.IsolatedConnectionString) with { KeyPrefix = clientPrefix ?? "" };
             options.InstanceName = InstanceName;
             if (codec) options.ValueCodec = new RespireBrotliValueCodec();
             if (valueCodec is not null) options.ValueCodec = valueCodec;

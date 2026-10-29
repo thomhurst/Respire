@@ -14,7 +14,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task JobQueueSnapshotAndPageExposeControlsWithoutLeakingUnavailableState()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = new RespireJobQueue<string>(client.WithKeyPrefix("tenant:"), "dashboard", System.Text.Encoding.UTF8.GetBytes);
         await queue.PauseAsync();
         var view = client.WithKeyPrefix("tenant:");
@@ -41,7 +41,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     [Arguments(true)]
     public async Task WorkerGeneratedDeadLetterCanBeRetriedAndConsumed(bool jobs)
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton<IRespireClient>(client);
@@ -91,7 +91,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     [Arguments(true, true)]
     public async Task DeadLetteredBatchMemberRetriesIndependentlyOfRetainedBatch(bool removeBatch, bool rejectRetry)
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = new RespireJobQueue<string>(client, "dashboard-batch", System.Text.Encoding.UTF8.GetBytes);
         await queue.CreateBatchAsync(new() { OnComplete = new("callback", "callback") }, "batch");
         await queue.AddBatchJobAsync("batch", "member", "original");
@@ -178,14 +178,14 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     [Arguments("xdel")]
     public async Task RetryPermissionFailureLeavesBothStreamsUntouched(string denied)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         await admin.Streams.CreateGroupAsync("{dash}:source", "g", RespireStreamId.Beginning);
         var id = await AddDead(admin);
         var username = "dashboard-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">dashboard-test-password", "~*", "+@all", "-" + denied]);
         try
         {
-            await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = username, Password = "dashboard-test-password" });
             var state = new DashboardState(client, DashboardSecurityTests.Options());
             await Assert.That(async () => await state.MutateAsync(0, id.ToString(), true, default)).Throws<RespireServerException>();
@@ -214,7 +214,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     [Arguments(true)]
     public async Task AuthorizedPostRetriesWithAntiforgeryToken(bool nested)
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         await client.Streams.CreateGroupAsync("{dash}:source", "g", RespireStreamId.Beginning);
         var id = await AddDead(client);
         await using var app = await DashboardSecurityTests.CreateApplication(client, nested: nested);
@@ -240,7 +240,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task ConcurrentRetriesPreserveBinaryFieldsAndConsumeDeadLetterOnce()
     {
-        await using var root = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var client = root.WithKeyPrefix("tenant:");
         await client.Streams.CreateGroupAsync("{dash}:source", "g", RespireStreamId.Beginning);
         using (await root.ExecuteAsync("XADD", ["tenant:{dash}:dead", "1-0", "_respire.source_id", "9-0",
@@ -275,7 +275,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task RetryRejectsForeignMetadataAndDeleteNeverPublishes()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         await client.Streams.CreateGroupAsync("{dash}:source", "g", RespireStreamId.Beginning);
         var foreign = await AddDead(client, "other");
         var state = new DashboardState(client, DashboardSecurityTests.Options());
@@ -291,7 +291,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task MissingSourceGroupCannotLoseDeadLetter()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         await client.Streams.AddAsync("{dash}:source", ("payload", "other"));
         var id = await AddDead(client);
         var state = new DashboardState(client, DashboardSecurityTests.Options());
@@ -307,7 +307,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task UnavailableDeadLettersDoNotHideSourceInspection()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         await client.Streams.CreateGroupAsync("{dash}:source", "g", RespireStreamId.Beginning);
         await client.Streams.AddAsync("{dash}:source", ("payload", "test"));
         using (await client.ExecuteAsync("SET", ["{dash}:dead", "wrong-type"])) { }
@@ -322,7 +322,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task MissingSourceStillAllowsDeadLetterInspectionAndDeletion()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var id = await AddDead(client);
         var state = new DashboardState(client, DashboardSecurityTests.Options());
         var snapshot = await state.ReadAsync(default);
@@ -340,7 +340,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task JobRetryRetainsIdentityAndResetsAttemptExpiryAndReplacementFence()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = new RespireJobQueue<string>(client, "dashboard", System.Text.Encoding.UTF8.GetBytes);
         var options = new RespireDashboardOptions();
         options.Streams.Add(new() { Name = "jobs", Stream = queue.StreamKey,
@@ -367,7 +367,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task InspectionBoundsEntriesAndMeasuresDeliveryRate()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         await client.Streams.CreateGroupAsync("{dash}:source", "g", RespireStreamId.Beginning);
         for (var i = 0; i < 5; i++)
         {

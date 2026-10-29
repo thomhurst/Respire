@@ -252,7 +252,7 @@ public class ReliableTopicIntegrationTests(RedisTestContainer redis)
     [Arguments(3)]
     public async Task DeniedAckPermissionPreventsDeadLetterAndInitialReadMutations(int protocol)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
             with { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
         var topic = Topic(admin, deliveryLimit: 1);
         var subscription = await topic.SubscribeAsync("permissions");
@@ -261,7 +261,7 @@ public class ReliableTopicIntegrationTests(RedisTestContainer redis)
         await admin.Server.AclSetUserAsync(username, ["on", ">topic-password", "~*", "+@all", "-xack"]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Protocol = (RespireProtocol)protocol, Username = username, Password = "topic-password" });
             var other = await Topic(restricted, deliveryLimit: 1).SubscribeAsync("permissions");
             await Assert.That(async () => await other.ReceiveAsync(Visibility)).Throws<RespireServerException>();
@@ -309,7 +309,7 @@ public class ReliableTopicIntegrationTests(RedisTestContainer redis)
     }
 
     private ValueTask<RespireClient> Connect(int protocol)
-        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
 
     private static RespireReliableTopic<string> Topic(IRespireClient client, int deliveryLimit = 5, int? maximumLength = null)
         => new(client, "topic", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString, deliveryLimit, maximumLength);

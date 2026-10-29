@@ -24,7 +24,7 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
     [Arguments(true, true)]
     public async Task ArrayApisRoundTripMixedFramesAndPreserveMetadata(bool deflate, bool synchronous)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var codec = CreateCodec(deflate);
         await using var cache = new RespireDistributedCache((IRespireClient)client, new()
         {
@@ -55,7 +55,7 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
     [Arguments(true)]
     public async Task BufferApisUseDestinationDecoderAndSupportMultipleSegments(bool synchronous)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var codec = new DestinationCodec();
         await using var cache = new RespireDistributedCache((IRespireClient)client, new() { ValueCodec = codec });
         var first = new Segment([0, 255, 128]);
@@ -82,7 +82,7 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
     [Arguments("algorithm")]
     public async Task InvalidFramesFailWithoutAdvancingDestination(string corruption)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var codec = CreateCodec();
         await using var raw = new RespireDistributedCache((IRespireClient)client);
         await using var cache = new RespireDistributedCache((IRespireClient)client, new() { ValueCodec = codec });
@@ -105,7 +105,7 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task OversizedWritesAndPreCancellationDoNotPublishOrInvokeCodec()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         await using var cache = new RespireDistributedCache((IRespireClient)client, new() { ValueCodec = CreateCodec() });
         await Assert.That(async () => await cache.SetAsync("too-large", new byte[8193], new()))
             .Throws<ArgumentOutOfRangeException>();
@@ -127,7 +127,7 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task CodecSelectionIsCapturedAndIndependentOfClientSerializerAndOwnership()
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         {
             Serializer = new RespireValueCodecSerializer(RespireSerializer.Default, new RejectCallsCodec()),
         });
@@ -150,12 +150,12 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
     [Arguments(true)]
     public async Task DependencyInjectionUsesExplicitCodecForOwnedAndRegisteredClients(bool owned)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var services = new ServiceCollection();
         if (!owned) services.AddSingleton<IRespireClient>(client);
         services.AddRespireDistributedCache(options =>
         {
-            if (owned) options.ClientOptions = _ => RespireOptions.Parse(fixture.ConnectionString);
+            if (owned) options.ClientOptions = _ => RespireOptions.Parse(fixture.IsolatedConnectionString);
             options.ValueCodec = CreateCodec();
             options.InstanceName = "di-codec:";
         });
@@ -173,7 +173,7 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task ExpiryAndRefreshOperateOnMetadataWithoutDecodingPayload()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         await using var cache = new RespireDistributedCache((IRespireClient)client, new() { ValueCodec = CreateCodec() });
         var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
         await cache.SetAsync("expiry", [1, 2, 3], new()
@@ -210,7 +210,7 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task CancellationDuringEncodingPreventsPublication()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         using var cancellation = new CancellationTokenSource();
         await using var cache = new RespireDistributedCache((IRespireClient)client, new()
         {
@@ -227,7 +227,7 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
     [Arguments(true)]
     public async Task CustomDecoderFailurePreservesCommittedPrefix(bool synchronous)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var expected = new InvalidDataException("custom decode failure");
         await using var cache = new RespireDistributedCache((IRespireClient)client, new()
         {

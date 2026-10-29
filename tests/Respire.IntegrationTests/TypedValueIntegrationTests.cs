@@ -16,10 +16,11 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    [SkipOnGarnet("Garnet 2.1.8 rejects SET with EXAT or PXAT as a syntax error.")]
     public async Task RepeatedSetAndGetExModifiersMatchRedis(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
-        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString);
         await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var key = Guid.NewGuid().ToString("N");
         await client.SetAsync(key, "original");
@@ -49,10 +50,11 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    [SkipOnGarnet("Garnet 2.1.8 accepts some calls that Redis rejects with an arity error.")]
     public async Task CommandArityErrorsPreserveStateAndFollowingReplies(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
-        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString);
         await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var key = Guid.NewGuid().ToString("N");
         await client.SetAsync(key, "original");
@@ -252,6 +254,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    [SkipOnGarnet("Garnet 2.1.8 ignores the count argument of RPOP and LPOP.")]
     public async Task ListCountPop_RoundTrip(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;

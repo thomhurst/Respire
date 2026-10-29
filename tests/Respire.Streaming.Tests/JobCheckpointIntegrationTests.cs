@@ -16,7 +16,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task TransactionalEnqueuePreservesRuntimeAndDeduplicatesCheckpointIdentity()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await using var transaction = client.CreateTransaction();
         var pending = queue.EnqueueScheduled(transaction, "job", "payload", new() { MaximumRuntime = TimeSpan.FromSeconds(2) });
@@ -37,7 +37,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task SaveHonorsExpiryAndSameConsumerGeneration()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         const string group = RespireJobQueue<string>.ConsumerGroup;
         await client.Streams.CreateGroupAsync(queue.StreamKey, group, RespireStreamId.Beginning);
@@ -66,7 +66,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task DeniedSavePreservesLastCheckpointAndPendingDelivery()
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         const string group = RespireJobQueue<string>.ConsumerGroup;
         await admin.Streams.CreateGroupAsync(queue.StreamKey, group, RespireStreamId.Beginning);
@@ -80,7 +80,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-set"]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = user, Password = "password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(SaveScript(), [queue.StreamKey, key],
                 [group, "owner", entry.Value, 1, "denied", Array.Empty<byte>(), 0])).Throws<RespireServerException>();
@@ -96,7 +96,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task EveryCompletionVariantFitsRedisLuaCompilerLimits()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var assembly = typeof(RespireJob<>).Assembly;
         var wrap = assembly.GetType("Respire.Streaming.JobCheckpoints")!
             .GetMethod("Complete", BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -114,7 +114,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task DeniedCleanupCannotAcknowledgeOrLoseCheckpoint()
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         const string group = RespireJobQueue<string>.ConsumerGroup;
         await admin.Streams.CreateGroupAsync(queue.StreamKey, group, RespireStreamId.Beginning);
@@ -135,7 +135,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-del"]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = user, Password = "password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(script, keys, arguments)).Throws<RespireServerException>();
             await Assert.That((await RespireJobCheckpoints.ReadAsync(admin, queue.StreamKey, entry))!.Cursor).IsEqualTo("saved");
@@ -153,7 +153,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
     [Arguments(true)]
     public async Task RuntimeSlicesPreserveCheckpointAndFailureBudget(bool grouped)
     {
-        await using var root = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var client = root.WithKeyPrefix("tenant:");
         var queue = Queue(client);
         await queue.EnqueueScheduledAsync("job", "payload", new()
@@ -195,7 +195,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
     [Arguments(3)]
     public async Task ExplicitResultAfterRuntimeExpiryKeepsCompletionPolicy(int completion)
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.EnqueueScheduledAsync("job", "payload", new() { MaximumRuntime = TimeSpan.FromMilliseconds(250) });
         var calls = 0;
@@ -252,7 +252,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task RecoveryOnAnotherWorkerReadsLastSaveAndFencesOldOwner()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.EnqueueScheduledAsync("job", "payload", new() { MaximumRuntime = TimeSpan.FromMinutes(1) });
         var firstSaved = new TaskCompletionSource<RespireJob<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -298,7 +298,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task ShutdownSavesFinalCheckpointAndRequeuesWithoutFailure()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.EnqueueScheduledAsync("job", "payload", new() { MaximumRuntime = TimeSpan.FromMinutes(1) });
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -334,7 +334,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task CheckpointsSurviveOrdinaryRetryAndValidateLimits()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.EnqueueScheduledAsync("job", "payload", new() { MaximumRuntime = TimeSpan.FromMinutes(1) });
         var calls = 0;

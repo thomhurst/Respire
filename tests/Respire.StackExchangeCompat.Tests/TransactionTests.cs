@@ -12,7 +12,7 @@ namespace Respire.StackExchangeCompat.Tests;
 [NotInParallel]
 public class TransactionTests(RedisTestContainer redis)
 {
-    private RespireOptions Options(int protocol) => RespireOptions.Parse(redis.ConnectionString) with
+    private RespireOptions Options(int protocol) => RespireOptions.Parse(redis.IsolatedConnectionString) with
     {
         Connections = 1,
         Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
@@ -26,7 +26,7 @@ public class TransactionTests(RedisTestContainer redis)
         byte[] prefix = [0x80, 0];
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol) with { PubSubPrefix = new RespireKey(prefix) });
         var subscriber = connection.GetSubscriber();
-        byte[] channelBytes = [0xff, 0, (byte)redis.Database];
+        byte[] channelBytes = [0xff, 0, (byte)redis.IsolatedDatabase];
         RedisChannel channel = new(channelBytes.ToArray(), RedisChannel.PatternMode.Literal);
         byte[] payload = [0xfe, 0, 0x81];
         var delivered = new TaskCompletionSource<RedisValue>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -53,7 +53,7 @@ public class TransactionTests(RedisTestContainer redis)
     public async Task PrefixedConditionsReadEverySupportedCommandAndAbortOnMismatch(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol) with { KeyPrefix = "tenant:" });
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var expected = control.GetDatabase();
         await expected.StringSetAsync("tenant:string", "abc");
         await expected.StringSetAsync("string", "wrong namespace");
@@ -97,7 +97,7 @@ public class TransactionTests(RedisTestContainer redis)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
         var storage = new Hangfire.Redis.StackExchange.RedisStorage(connection,
-            new Hangfire.Redis.StackExchange.RedisStorageOptions { Db = redis.Database, UseTransactions = true });
+            new Hangfire.Redis.StackExchange.RedisStorageOptions { Db = redis.IsolatedDatabase, UseTransactions = true });
         using var storageConnection = storage.GetConnection();
         var concrete = (Hangfire.Storage.JobStorageConnection)storageConnection;
         using (var transaction = storageConnection.CreateWriteTransaction())
@@ -198,7 +198,7 @@ public class TransactionTests(RedisTestContainer redis)
     public async Task MultiExecNeverExposesPartialUpdates(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var database = connection.GetDatabase();
         var expected = control.GetDatabase();
         await expected.StringSetAsync([new KeyValuePair<RedisKey, RedisValue>("left", 0), new("right", 0)]);
@@ -232,7 +232,7 @@ public class TransactionTests(RedisTestContainer redis)
     public async Task ConditionsSnapshotBinaryValuesAndReportEachOutcome(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var expected = control.GetDatabase();
         byte[] key = [0xff, 0, 0x81];
         byte[] value = [0xfe, 0, 0x82];
@@ -268,7 +268,7 @@ public class TransactionTests(RedisTestContainer redis)
     public async Task SortedSetConditionsPreserveNumericInfinityAndSnapshotByteValues(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var expected = control.GetDatabase();
         foreach (var score in new[] { double.NegativeInfinity, double.PositiveInfinity })
         {
@@ -319,7 +319,7 @@ public class TransactionTests(RedisTestContainer redis)
     public async Task SupportedConditionFamiliesMatchUpstream(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var expected = control.GetDatabase();
         await expected.HashSetAsync("hash", "field", "value");
         await expected.ListRightPushAsync("list", ["first", "last"]);
@@ -365,7 +365,7 @@ public class TransactionTests(RedisTestContainer redis)
     public async Task WatchedMutationAfterConditionReadAbortsAllCommands(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol) with { KeyPrefix = "tenant:" });
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var expected = control.GetDatabase();
         await expected.StringSetAsync("tenant:guard", "old");
         var transaction = connection.GetDatabase().CreateTransaction();
@@ -477,7 +477,7 @@ public class TransactionTests(RedisTestContainer redis)
     [Arguments(3)]
     public async Task RedisQueueErrorsDiscardEveryCommandAndDoNotPoisonRepeatExecution(int protocol)
     {
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var server = control.GetServer(redis.Host, redis.Port);
         var username = "transaction-" + Guid.NewGuid().ToString("N");
         await server.ExecuteAsync("ACL", "SETUSER", username, "on", ">password", "~*", "+@all", "-incr");
@@ -607,7 +607,7 @@ public class TransactionTests(RedisTestContainer redis)
     public async Task OverlappingExecutionsKeepQueuesAndLatestConflictStatusSeparate()
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(2));
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var transaction = connection.GetDatabase().CreateTransaction();
         transaction.AddCondition(Condition.KeyNotExists("guard"));
         var aborted = transaction.StringIncrementAsync("counter");

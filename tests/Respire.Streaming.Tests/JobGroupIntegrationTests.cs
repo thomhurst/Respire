@@ -135,7 +135,7 @@ public class JobGroupIntegrationTests(RedisTestContainer redis)
     }
 
     private async Task<RespireClient> ConnectAsync(int protocol = 3)
-        => await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        => await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
 
     private static RespireJobQueue<string> Queue(IRespireClient client) => new(client, "groups", Encoding.UTF8.GetBytes);
     internal static RespireKey[] Keys(RespireJobQueue<string> queue) => [queue.StreamKey, queue.StreamKey + ":scheduled", queue.StreamKey + ":due",

@@ -8,7 +8,7 @@ namespace Respire.StackExchangeCompat.Tests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class ServerLockTests(RedisTestContainer fixture)
 {
-    private RespireOptions Options(int protocol) => RespireOptions.Parse(fixture.ConnectionString) with
+    private RespireOptions Options(int protocol) => RespireOptions.Parse(fixture.IsolatedConnectionString) with
     {
         Connections = 1,
         Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
@@ -21,7 +21,7 @@ public class ServerLockTests(RedisTestContainer fixture)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
         var storage = new Hangfire.Redis.StackExchange.RedisStorage(connection,
-            new Hangfire.Redis.StackExchange.RedisStorageOptions { Db = fixture.Database, UseTransactions = false });
+            new Hangfire.Redis.StackExchange.RedisStorageOptions { Db = fixture.IsolatedDatabase, UseTransactions = false });
         using var storageConnection = storage.GetConnection();
         Assert.InRange(((Hangfire.Storage.JobStorageConnection)storageConnection).GetUtcDateTime(), DateTime.UtcNow.AddSeconds(-5), DateTime.UtcNow.AddSeconds(5));
         using (storageConnection.AcquireDistributedLock("adapter-lock", TimeSpan.FromSeconds(1)))
@@ -42,7 +42,7 @@ public class ServerLockTests(RedisTestContainer fixture)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
         var parsed = ConfigurationOptions.Parse(connection.Configuration);
-        Assert.Equal(fixture.Database, parsed.DefaultDatabase);
+        Assert.Equal(fixture.IsolatedDatabase, parsed.DefaultDatabase);
         Assert.Null(parsed.Password);
         var database = connection.GetDatabase();
         var endpoint = Assert.Single(connection.GetEndPoints());
@@ -82,7 +82,7 @@ public class ServerLockTests(RedisTestContainer fixture)
         var first = connection.GetServer(connection.GetEndPoints()[0]);
         var target = connection.GetServer(second.Host, second.Port);
         Assert.NotEqual(first.InfoRaw("server"), target.InfoRaw("server"));
-        await using var control = await RespireClient.ConnectAsync(RespireOptions.Parse(second.ConnectionString) with { Protocol = RespireProtocol.Resp2 });
+        await using var control = await RespireClient.ConnectAsync(RespireOptions.Parse(second.IsolatedConnectionString) with { Protocol = RespireProtocol.Resp2 });
         using (await control.ExecuteAsync(RespireCommands.Server.REPLICAOF, "127.0.0.1", 1)) { }
         Assert.True(target.IsConnected);
         Assert.True(target.IsReplica);
@@ -102,7 +102,7 @@ public class ServerLockTests(RedisTestContainer fixture)
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
         await using var control = await RespireClient.ConnectAsync(Options(protocol));
         var database = connection.GetDatabase();
-        RedisKey key = new byte[] { 0xff, 0, (byte)fixture.Database };
+        RedisKey key = new byte[] { 0xff, 0, (byte)fixture.IsolatedDatabase };
         RedisValue token = new byte[] { 0xfe, 0, 0x80 };
         Assert.True(database.LockTake(key, token, TimeSpan.FromMinutes(1)));
         using (var reply = await control.ExecuteAsync(RespireCommands.String.GET, (byte[]?)key!))
@@ -153,7 +153,7 @@ public class ServerLockTests(RedisTestContainer fixture)
         await using var native = await RespireClient.ConnectAsync(Options(protocol) with { PubSubPrefix = new RespireKey(new byte[] { 0x80, 0 }) });
         await using var connection = RespireConnectionMultiplexer.Wrap(native);
         var subscriber = connection.GetSubscriber();
-        byte[] channelBytes = [0xff, 0, (byte)fixture.Database];
+        byte[] channelBytes = [0xff, 0, (byte)fixture.IsolatedDatabase];
         RedisChannel channel = new(channelBytes, RedisChannel.PatternMode.Literal);
         RedisChannel original = new(channelBytes.ToArray(), RedisChannel.PatternMode.Literal);
         byte[] payload = [0xfe, 0, 0x80];

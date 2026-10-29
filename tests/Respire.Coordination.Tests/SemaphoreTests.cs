@@ -152,7 +152,7 @@ public class SemaphoreTests(RedisTestContainer fixture)
 
     private ValueTask<RespireClient> ConnectAsync(int protocol) => RespireClient.ConnectAsync(new RespireOptions
     {
-        Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
+        Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
         Connections = 1, Protocol = (RespireProtocol)protocol,
     });
 }

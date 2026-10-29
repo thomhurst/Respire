@@ -29,7 +29,7 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
         var serializer = new RespireValueCodecSerializer(RespireSerializer.Default, codec);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
+            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database, KeyPrefix = fixture.KeyPrefix,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3, Serializer = serializer,
         });
         var view = client.WithKeyPrefix($"codec:{Guid.NewGuid():N}:");
@@ -92,6 +92,7 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
     [Arguments("deflate")]
     [Arguments("lz4")]
     [Arguments("zstd")]
+    [SkipOnGarnet("Garnet 2.1.8 rejects CLIENT TRACKING, which client-side caching requires.")]
     public async Task CachedFramesDecodeIntoIndependentTypedValues(string algorithm)
     {
         var codec = CreateCodec(algorithm);
