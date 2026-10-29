@@ -180,7 +180,7 @@ public partial class JobQueueIntegrationTests
     [Arguments("pexpireat", true)]
     public async Task MetricsErrorsDoNotBlockCancelledBatchCompletion(string failure, bool delete)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         await queue.CreateBatchAsync(new() { OnComplete = new("callback", "ok") }, "batch");
         await queue.AddBatchJobAsync("batch", "member", "ok");
@@ -200,7 +200,7 @@ public partial class JobQueueIntegrationTests
         await admin.Server.AclSetUserAsync(username, permissions.ToArray());
         try
         {
-            await using var limited = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var limited = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = username, Password = "metrics-test" });
             var script = JobScript(delete ? "CompleteAndDeleteWithMetrics" : "CompleteWithMetrics");
             RespireKey[] keys = [queue.StreamKey, queue.EventsStreamKey, queue.DeadLetterStreamKey,
@@ -326,14 +326,14 @@ public partial class JobQueueIntegrationTests
     [Arguments("pexpireat")]
     public async Task MetricsDeniedWritePreservesDelivery(string denied)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         var id = await PendingJobAsync(admin, queue);
         var username = "metrics-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">metrics-test", "~*", "+@all", "-" + denied]);
         try
         {
-            await using var limited = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Username = username, Password = "metrics-test" });
+            await using var limited = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { Username = username, Password = "metrics-test" });
             await Assert.That(async () => await limited.Scripts.ExecuteIntegerAsync(JobScript("CompleteWithMetrics"),
                 [queue.StreamKey, queue.EventsStreamKey, queue.StreamKey + ":metrics"],
                 [RespireJobQueue<string>.ConsumerGroup, "crashed", id.Value, 1, "completed", "", "", 0, Array.Empty<byte>(), 3])).Throws<RespireServerException>();

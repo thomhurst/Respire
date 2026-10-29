@@ -15,7 +15,7 @@ namespace Respire.Testing;
 /// Clients built by hand, and other client libraries, must apply <see cref="KeyPrefix"/> themselves.
 /// Pub/sub channels are server-wide and are not prefixed; tests must still use unique channel names.
 /// A test that inspects or clears a whole database (SCAN, KEYS, DBSIZE, FLUSHDB, SWAPDB, ...) uses
-/// <see cref="IsolatedDatabase"/> instead: a database leased for the test, flushed and returned when it ends.
+/// <see cref="IsolatedDatabase"/> instead: a database leased for the test, emptied and returned when it ends.
 /// <see cref="ScratchDatabase"/> serves tests that need a second database; their keys there must be unique.
 /// Use <c>SharedType.Keyed</c> to get a separate container for tests that change server-wide state.
 /// Set <c>RESPIRE_TEST_REDIS_IMAGE</c> to a Valkey or Microsoft Garnet image to run the suite against that server.
@@ -63,6 +63,9 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
     /// <summary>Whether this container runs Microsoft Garnet.</summary>
     public bool IsGarnet => IsGarnetImage(ServerImage);
 
+    /// <summary>Whether <c>RESPIRE_TEST_REDIS_IMAGE</c> selects Garnet for the shared container.</summary>
+    public static bool GarnetSelected => IsGarnetImage(Environment.GetEnvironmentVariable("RESPIRE_TEST_REDIS_IMAGE") ?? "");
+
     private static bool IsGarnetImage(string image) => image.Contains("microsoft/garnet", StringComparison.OrdinalIgnoreCase);
 
     private IContainer Container =>
@@ -76,7 +79,7 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
 
     /// <summary>
     /// A database leased to the current test alone, for tests that inspect or clear a whole database.
-    /// It is flushed and returned to the pool when the test ends.
+    /// It is emptied and returned to the pool when the test ends.
     /// </summary>
     public int IsolatedDatabase => _leasedDatabases.GetOrAdd(TestId, static (_, container) => container.LeaseDatabase(), this);
 
@@ -144,8 +147,7 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
         {
             if (_container is not null)
             {
-                await using var client = await RespireClient.ConnectAsync($"redis://{Host}:{Port}/{database}").ConfigureAwait(false);
-                using var flushed = await client.ExecuteAsync("FLUSHDB").ConfigureAwait(false);
+                await DeleteAllKeysAsync(database).ConfigureAwait(false);
             }
         }
         finally
@@ -153,6 +155,25 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
             _freeDatabases.Add(database);
             _freeDatabaseCount.Release();
         }
+    }
+
+    // FLUSHDB would send a flush invalidation to every tracking client on the server, emptying the
+    // client-side caches of concurrent tests. Deleting the leased database's keys invalidates only those keys.
+    private async Task DeleteAllKeysAsync(int database)
+    {
+        await using var client = await RespireClient.ConnectAsync($"redis://{Host}:{Port}/{database}").ConfigureAwait(false);
+        var cursor = "0";
+        do
+        {
+            using var page = await client.ExecuteAsync("SCAN", cursor, "COUNT", 1000).ConfigureAwait(false);
+            cursor = page[0].AsString()!;
+            var keys = page[1];
+            if (keys.Count == 0) continue;
+            var arguments = new RespireValue[keys.Count];
+            for (var index = 0; index < keys.Count; index++) arguments[index] = keys[index].AsBytes();
+            using var deleted = await client.ExecuteAsync("UNLINK", arguments).ConfigureAwait(false);
+        }
+        while (cursor != "0");
     }
 
     public async ValueTask DisposeAsync()
@@ -171,4 +192,14 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
             await container.DisposeAsync().ConfigureAwait(false);
         }
     }
+}
+
+/// <summary>
+/// Skips a test or class when <c>RESPIRE_TEST_REDIS_IMAGE</c> selects Garnet, before its fixture starts.
+/// The reason names the Garnet version and the missing command, so the report shows each known gap.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
+public sealed class SkipOnGarnetAttribute(string reason) : SkipAttribute(reason)
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) => Task.FromResult(RedisTestContainer.GarnetSelected);
 }

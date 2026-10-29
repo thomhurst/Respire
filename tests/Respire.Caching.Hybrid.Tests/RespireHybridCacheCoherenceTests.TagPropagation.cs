@@ -71,7 +71,7 @@ public partial class RespireHybridCacheCoherenceTests
     {
         var channel = "tags:" + NewKey();
         RespireHybridCacheCoherenceOptions? configured = null;
-        await using var source = RespireClient.Create(fixture.ConnectionString);
+        await using var source = RespireClient.Create(fixture.IsolatedConnectionString);
         await using var provider = BuildProvider(true, source, configure: options =>
         {
             TagOptions(channel)(options);
@@ -255,7 +255,7 @@ public partial class RespireHybridCacheCoherenceTests
         var tag = NewKey();
         var key = NewKey();
         var codec = new CountingCodec();
-        await using var monitor = RespireClient.Create(fixture.ConnectionString);
+        await using var monitor = RespireClient.Create(fixture.IsolatedConnectionString);
         await using var subscription = await monitor.SubscribeAsync(channel);
         await using var messages = subscription.GetAsyncEnumerator();
         await using var writer = BuildProvider(true, configure: TagOptions(channel));
@@ -293,7 +293,7 @@ public partial class RespireHybridCacheCoherenceTests
         var probe = NewKey();
         await using var writer = BuildProvider(false);
         await using var reader = BuildProvider(true, configure: TagOptions(channel));
-        await using var publisher = RespireClient.Create(fixture.ConnectionString);
+        await using var publisher = RespireClient.Create(fixture.IsolatedConnectionString);
         var write = writer.GetRequiredService<HybridCache>();
         var read = reader.GetRequiredService<HybridCache>();
         await write.SetAsync(key, "old", LongLived, [tag]);
@@ -332,7 +332,7 @@ public partial class RespireHybridCacheCoherenceTests
             TagOptions(channel)(options);
             options.MaxTagInvalidationMessageBytes = 128;
         });
-        await using var publisher = RespireClient.Create(fixture.ConnectionString);
+        await using var publisher = RespireClient.Create(fixture.IsolatedConnectionString);
         var write = writer.GetRequiredService<HybridCache>();
         var read = reader.GetRequiredService<HybridCache>();
         await write.SetAsync(key, "old", LongLived, [tag]);
@@ -353,7 +353,7 @@ public partial class RespireHybridCacheCoherenceTests
     public async Task ProviderDisposalUnsubscribesWithoutDisposingTheRegisteredClient(bool synchronous, bool prefixedView)
     {
         var channel = "tags:" + NewKey();
-        await using var root = RespireClient.Create(RespireOptions.Parse(fixture.ConnectionString) with { PubSubPrefix = "source-only:" });
+        await using var root = RespireClient.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with { PubSubPrefix = "source-only:" });
         var source = prefixedView ? (RespireClient)root.WithPubSubPrefix("view-only:") : root;
         var provider = BuildProvider(true, source, configure: TagOptions(channel));
         try
@@ -414,11 +414,11 @@ public partial class RespireHybridCacheCoherenceTests
         var key = NewKey();
         var username = "tag-subscriber-" + NewKey();
         const string password = "ephemeral-tag-test-password";
-        await using var admin = RespireClient.Create(fixture.ConnectionString);
+        await using var admin = RespireClient.Create(fixture.IsolatedConnectionString);
         using (var created = await admin.ExecuteAsync("ACL", "SETUSER", username, "on", ">" + password, "~*", "&*", "+@all")) { }
         try
         {
-            await using var source = RespireClient.Create(RespireOptions.Parse(fixture.ConnectionString) with
+            await using var source = RespireClient.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with
             {
                 Username = username,
                 Password = password,
@@ -535,7 +535,7 @@ public partial class RespireHybridCacheCoherenceTests
             TagOptions(channel)(options);
             options.TagInvalidationBufferSize = 1;
         }, memory: memory);
-        await using var publisher = RespireClient.Create(fixture.ConnectionString);
+        await using var publisher = RespireClient.Create(fixture.IsolatedConnectionString);
         var write = writer.GetRequiredService<HybridCache>();
         var read = reader.GetRequiredService<HybridCache>();
         await write.SetAsync(key, "old", LongLived, [tag]);
@@ -577,12 +577,12 @@ public partial class RespireHybridCacheCoherenceTests
         var key = NewKey();
         var username = "tag-denied-" + NewKey();
         const string password = "ephemeral-tag-test-password";
-        await using var admin = RespireClient.Create(fixture.ConnectionString);
+        await using var admin = RespireClient.Create(fixture.IsolatedConnectionString);
         using (var created = await admin.ExecuteAsync("ACL", "SETUSER", username, "on", ">" + password,
             "~*", "&*", "+@all", "-subscribe")) { }
         try
         {
-            await using var source = RespireClient.Create(RespireOptions.Parse(fixture.ConnectionString) with
+            await using var source = RespireClient.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with
             { Username = username, Password = password });
             await using var writer = BuildProvider(false);
             await using var reader = BuildProvider(true, source, configure: TagOptions(channel));
