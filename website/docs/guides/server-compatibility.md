@@ -28,6 +28,9 @@ Other versions need their own compatibility run. ARM hosts need x64 emulation fo
 The Valkey 9.2 RC job also runs the full integration project with the shared Redis fixture
 pointing at Valkey. Tests that intentionally pin a different server or module version keep
 those pins. The [Valkey 9.2 command scenarios](valkey-92.md) run in ordinary CI as well.
+The Garnet job does the same with `RESPIRE_TEST_REDIS_IMAGE=ghcr.io/microsoft/garnet:2.1.8`.
+Garnet allows at most 256 logical databases, so the shared fixture isolates tests by key prefix
+rather than by database.
 
 ## Compatibility matrix
 

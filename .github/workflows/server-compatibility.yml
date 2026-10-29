@@ -20,7 +20,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.label.name == 'run-server-compatibility'
     name: ${{ matrix.server }} (net10.0)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
