@@ -250,7 +250,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
     [Test]
     public async Task BatchAndTransaction_QueueTypedReadsAndScripts()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         await client.SetAsync("deferred:typed", 0);
         var script = RespireScript.Create("return {KEYS[1], ARGV[1]}");
 

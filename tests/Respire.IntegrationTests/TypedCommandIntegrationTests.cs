@@ -431,7 +431,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     [Test]
     public async Task CatalogDescriptor_ExecutesAgainstRedis()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
 
         using var result = await client.ExecuteAsync(RespireCommands.Server.DBSIZE);
 
@@ -441,7 +441,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     [Test]
     public async Task BlockingCatalogDescriptor_DoesNotStallMultiplexedCommands()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
         var pop = client.ExecuteAsync(
@@ -458,7 +458,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     [Test]
     public async Task BlockingCatalogDescriptor_CancellationDiscardsDedicatedConnection()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
         var execute = async () =>

@@ -1,5 +1,6 @@
 using FluentAssertions;
 using StackExchange.Redis;
+using StackExchange.Redis.KeyspaceIsolation;
 using TUnit.Core;
 using TUnit.Assertions;
 
@@ -23,7 +24,7 @@ public class DataTypeInteroperabilityTests
     {
         _respireClient = await RespireClient.ConnectAsync(_fixture.ConnectionString);
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.StackExchangeConnectionString);
-        _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
+        _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase().WithKeyPrefix(_fixture.KeyPrefix);
     }
 
     [After(HookType.Test)]
@@ -248,19 +249,20 @@ public class DataTypeInteroperabilityTests
         await _stackExchangeDb.StringSetAsync("pattern:b:1", "value3");
         await _respireClient.SetAsync("pattern:b:2", "value4");
 
-        // Use StackExchange to scan keys
+        // Use StackExchange to scan keys; server scans see physical keys, so the pattern carries the test prefix.
         var server = _stackExchangeMultiplexer.GetServer(_fixture.Host, _fixture.Port);
         var keys = new List<RedisKey>();
-        await foreach (var key in server.KeysAsync(database: _fixture.Database, pattern: "pattern:a:*"))
+        await foreach (var key in server.KeysAsync(database: _fixture.Database, pattern: _fixture.KeyPrefix + "pattern:a:*"))
         {
             keys.Add(key);
         }
         keys.Should().HaveCount(2);
 
-        // Delete pattern with StackExchange
+        // Delete pattern with StackExchange, through the unprefixed database because the scanned keys are physical
+        var physicalDb = _stackExchangeMultiplexer.GetDatabase(_fixture.Database);
         foreach (var key in keys)
         {
-            await _stackExchangeDb.KeyDeleteAsync(key);
+            await physicalDb.KeyDeleteAsync(key);
         }
 
         // Verify with Respire

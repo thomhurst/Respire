@@ -19,7 +19,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     public async Task RepeatedSetAndGetExModifiersMatchRedis(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
-        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString);
         await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var key = Guid.NewGuid().ToString("N");
         await client.SetAsync(key, "original");
@@ -52,7 +52,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     public async Task CommandArityErrorsPreserveStateAndFollowingReplies(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
-        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString);
         await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var key = Guid.NewGuid().ToString("N");
         await client.SetAsync(key, "original");

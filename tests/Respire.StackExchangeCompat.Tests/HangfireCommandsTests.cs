@@ -13,7 +13,7 @@ namespace Respire.StackExchangeCompat.Tests;
 [NotInParallel]
 public class HangfireCommandsTests(RedisTestContainer redis)
 {
-    private RespireOptions Options(int protocol) => RespireOptions.Parse(redis.ConnectionString) with
+    private RespireOptions Options(int protocol) => RespireOptions.Parse(redis.IsolatedConnectionString) with
     {
         Connections = 1,
         Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
@@ -25,7 +25,7 @@ public class HangfireCommandsTests(RedisTestContainer redis)
     public async Task UnboundedSortedSetLengthIncludesInfiniteScoresAcrossAllDispatchPaths(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var database = connection.GetDatabase();
         var expected = control.GetDatabase();
         await expected.SortedSetAddAsync("length", [new("negative", double.NegativeInfinity), new("zero", 0), new("positive", double.PositiveInfinity)]);
@@ -136,7 +136,7 @@ public class HangfireCommandsTests(RedisTestContainer redis)
     public async Task SortedSetBoundsOrderingScoresAndPaginationMatchStackExchangeRedis(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var database = connection.GetDatabase();
         var expected = control.GetDatabase();
         byte[] binary = [0xff, 0, 0x80];
@@ -174,7 +174,7 @@ public class HangfireCommandsTests(RedisTestContainer redis)
     public async Task ReversedScoreBoundsPreserveEndpointExclusionsAcrossAllDispatchPaths(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var database = connection.GetDatabase();
         var expected = control.GetDatabase();
         RedisSortedSetEntry[] entries = [new("negative", -1), new("zero", 0), new("one", 1), new("two", 2), new("three", 3)];

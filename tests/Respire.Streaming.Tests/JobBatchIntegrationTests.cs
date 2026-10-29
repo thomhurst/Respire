@@ -303,7 +303,7 @@ public partial class JobQueueIntegrationTests
     [Arguments("xackdel", true)]
     public async Task DeniedBatchFinalizationRollsBackCountsCallbacksAndEvents(string denied, bool delete)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         if (delete)
         {
             var info = await admin.Server.InfoAsync("server");
@@ -320,7 +320,7 @@ public partial class JobQueueIntegrationTests
         await admin.Server.AclSetUserAsync(username, ["on", ">batch-password", "~*", "+@all", "-" + denied]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = username, Password = "batch-password" });
             await Assert.That(async () => await CompleteBatchJob(restricted, queue, member, delete: delete))
                 .Throws<RespireServerException>();

@@ -361,7 +361,7 @@ public class FairLockTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
+            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database, KeyPrefix = fixture.KeyPrefix,
             Protocol = RespireProtocol.Resp3, ClientSideCache = new() { NoLoop = true }, Connections = 1,
         });
         var fair = Create(client);
@@ -387,7 +387,7 @@ public class FairLockTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
+            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database, KeyPrefix = fixture.KeyPrefix,
             Protocol = RespireProtocol.Resp3, ClientSideCache = new() { KeyPrefixes = ["covered:"] }, Connections = 1,
         });
         var uncovered = Create(client);
@@ -401,7 +401,7 @@ public class FairLockTests(RedisTestContainer fixture)
 
     private ValueTask<RespireClient> ConnectAsync(RespireClientTrackingMode trackingMode = RespireClientTrackingMode.OptIn) => RespireClient.ConnectAsync(new RespireOptions
     {
-        Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
+        Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database, KeyPrefix = fixture.KeyPrefix,
         Protocol = RespireProtocol.Resp3, ClientSideCache = new() { TrackingMode = trackingMode }, Connections = 1,
     });
 

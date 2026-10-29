@@ -15,7 +15,7 @@ namespace Respire.StackExchangeCompat.Tests.Upstream;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class DataProtectionRedisTests(RedisTestContainer fixture)
 {
-    private RespireConnectionMultiplexer Connect() => RespireConnectionMultiplexer.Create(RespireOptions.Parse(fixture.ConnectionString));
+    private RespireConnectionMultiplexer Connect() => RespireConnectionMultiplexer.Create(RespireOptions.Parse(fixture.IsolatedConnectionString));
 
     [Test]
     public void GetAllElements_ReturnsAllXmlValuesForGivenKey()

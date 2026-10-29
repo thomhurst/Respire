@@ -249,7 +249,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     public async Task InternalScriptsBorrowOneHookScopeAndFactoryCommandsRemainIndependent()
     {
         var hook = new RecordingHook();
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         {
             Connections = 1, CommandHook = hook,
         });
@@ -454,7 +454,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     [Test]
     public async Task LeaseScriptsPreserveUnrelatedClientCacheEntries()
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Connections = 1, Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var unrelated = NewKey();
         await client.SetAsync(unrelated, "cached");
@@ -487,5 +487,5 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     }
     private static string NewKey() => $"stampede:{Guid.NewGuid():N}:";
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private ValueTask<RespireClient> ConnectAsync() => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Connections = 1 });
+    private ValueTask<RespireClient> ConnectAsync() => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with { Connections = 1 });
 }

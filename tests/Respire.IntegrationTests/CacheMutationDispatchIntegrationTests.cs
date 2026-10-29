@@ -29,7 +29,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
     [Arguments("transaction", 32, true)]
     public async Task RejectsUnadmittedNativeWrites(string path, int payloadLength, bool dedicated = false)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         RespireKey key = "dispatch-contract:" + Guid.NewGuid().ToString("N");
         DedicatedConnectionPool? pool = null;
@@ -102,7 +102,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
     [Arguments(true)]
     public async Task DiagnosticNamesCannotAuthorizeUnknownDispatch(bool preEncoded)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         RespireKey key = "dispatch-name:" + Guid.NewGuid().ToString("N");
         try
@@ -142,7 +142,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
     [Arguments("fenced-body")]
     public async Task MutatingPreludesCannotBorrowTheirFinalCommandsAdmission(string path)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var suffix = Guid.NewGuid().ToString("N");
         RespireKey prefixKey = "dispatch-prelude:" + suffix, bodyKey = "dispatch-body:" + suffix;
@@ -197,7 +197,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
     [Arguments(true)]
     public async Task RejectsForeignOrRetiredMutationAdmissions(bool foreign)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         RespireKey key = "dispatch-owner:" + Guid.NewGuid().ToString("N");
         var owner = foreign ? new ClientSideCacheCoordinator(new()) : client.Core.ClientCache!;
@@ -224,7 +224,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
     [Test]
     public async Task ExplicitReadOnlyDispatchRetainsTheResidentCacheEntry()
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         RespireKey key = "dispatch-read:" + Guid.NewGuid().ToString("N");
         try
@@ -250,7 +250,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
     {
         var suffix = Guid.NewGuid().ToString("N");
         var prefix = "dispatch-protocol:" + suffix + ":";
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp3, ClientSideCache = new() { TrackingMode = mode, KeyPrefixes = [prefix] } });
         RespireKey key = prefix + "key";
         try

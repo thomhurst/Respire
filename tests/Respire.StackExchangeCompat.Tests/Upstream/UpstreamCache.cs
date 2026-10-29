@@ -7,7 +7,7 @@ internal static class UpstreamCache
 {
     internal static RedisCache Create(RedisTestContainer fixture)
     {
-        var connection = RespireConnectionMultiplexer.Create(RespireOptions.Parse(fixture.ConnectionString));
+        var connection = RespireConnectionMultiplexer.Create(RespireOptions.Parse(fixture.IsolatedConnectionString));
         return new RedisCache(Options.Create(new RedisCacheOptions
         {
             ConnectionMultiplexerFactory = () => Task.FromResult<StackExchange.Redis.IConnectionMultiplexer>(connection),

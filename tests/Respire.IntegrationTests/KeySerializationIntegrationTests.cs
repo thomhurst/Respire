@@ -21,7 +21,7 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     public async Task BinaryAndListRoundTripsPreserveOwnedPayloads(int protocol, Mode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+            RespireOptions.Parse(fixture.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"dump:{Guid.NewGuid():N}:");
         byte[] bytes = [0, 255, 128, 13, 10, 1];
         await view.SetAsync("source", (RespireValue)bytes);
@@ -53,7 +53,7 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     public async Task ExpiryAndReplacementPreserveExplicitSemantics(int protocol, Mode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+            RespireOptions.Parse(fixture.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
         var prefix = $"restore-expiry:{Guid.NewGuid():N}:";
         var view = client.WithKeyPrefix(prefix);
         await view.SetAsync("source", "new", expiry: TimeSpan.FromMinutes(1));
@@ -88,7 +88,7 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     public async Task IdleTimeAndServerErrorsArePreserved(int protocol, Mode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+            RespireOptions.Parse(fixture.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
         var prefix = $"restore-errors:{Guid.NewGuid():N}:";
         var view = client.WithKeyPrefix(prefix);
         await view.SetAsync("source", "a non-integer value");
@@ -116,7 +116,7 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     [Arguments(3)]
     public async Task FrequencyRoundTripsUnderLfuWithoutChangingSharedServer(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Lfu.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Lfu.IsolatedConnectionString) with
         {
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3, Connections = 1
         });

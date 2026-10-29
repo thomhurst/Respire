@@ -40,7 +40,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task DecoratorForwardsCacheAsideToEnabledClient()
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Server.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Server.IsolatedConnectionString) with
         {
             ClientSideCache = new RespireClientSideCacheOptions()
         });
@@ -70,7 +70,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     [Before(Test)]
     public async Task InitializeAsync()
     {
-        _client = await RespireClient.ConnectAsync(Server.ConnectionString);
+        _client = await RespireClient.ConnectAsync(Server.IsolatedConnectionString);
         _cache = new RespireDistributedCache(_client);
     }
 
@@ -629,7 +629,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     private async Task<RespireClient> ConnectTimeoutClientAsync()
     {
         var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(Server.ConnectionString) with { CommandTimeout = TimeSpan.FromSeconds(1) });
+            RespireOptions.Parse(Server.IsolatedConnectionString) with { CommandTimeout = TimeSpan.FromSeconds(1) });
 
         // Allow handshake replies time to arrive while CI runs other suites concurrently.
         // The deliberate server pauses below exceed this deadline. Reliable
@@ -772,7 +772,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         RespireClient? restrictedClient = null;
         try
         {
-            var options = RespireOptions.Parse(Server.ConnectionString) with
+            var options = RespireOptions.Parse(Server.IsolatedConnectionString) with
             {
                 Username = username,
                 Password = password,
@@ -836,7 +836,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         RespireClient? restrictedClient = null;
         try
         {
-            var options = RespireOptions.Parse(Server.ConnectionString) with
+            var options = RespireOptions.Parse(Server.IsolatedConnectionString) with
             {
                 Username = username,
                 Password = password,
@@ -886,7 +886,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task NonCancelableAccess_TracksConnectionWhenClientCommandsAreAllowed()
     {
-        await using var client = await RespireClient.ConnectAsync(Server.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(Server.IsolatedConnectionString);
         await using var cache = new RespireDistributedCache(client);
 
         await cache.SetAsync("tracked-default", [1], new DistributedCacheEntryOptions());
@@ -906,7 +906,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         RespireClient? restrictedClient = null;
         try
         {
-            var options = RespireOptions.Parse(Server.ConnectionString) with
+            var options = RespireOptions.Parse(Server.IsolatedConnectionString) with
             {
                 Username = username,
                 Password = password,
@@ -1020,7 +1020,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     public async Task Remove_WithoutConfiguredTimeout_IsBoundedByLeaseTtl()
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(Server.ConnectionString) with { CommandTimeout = null });
+            RespireOptions.Parse(Server.IsolatedConnectionString) with { CommandTimeout = null });
         await using var cache = new RespireDistributedCache(client);
         await cache.SetAsync("default-timeout-remove", [1], new DistributedCacheEntryOptions());
         client.RemovalLeaseTtl = TimeSpan.FromMilliseconds(100);
@@ -1300,7 +1300,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         // correction is sent on all of them; on a multi-connection client the one sharing the
         // set's connection must still shrink the stale TTL.
         await using var multiClient = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(Server.ConnectionString) with { Connections = 3 });
+            RespireOptions.Parse(Server.IsolatedConnectionString) with { Connections = 3 });
 
         var absexp = DateTimeOffset.UtcNow.AddSeconds(30).UtcTicks;
         await RunDelayedSetAsync("broadcast-cap", absexp, staleTtlMs: 120_000);
@@ -1317,7 +1317,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     public async Task Correction_BroadcastFencesDeadSlot_AndRetriesOnReplacement()
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(Server.ConnectionString) with { Connections = 1 });
+            RespireOptions.Parse(Server.IsolatedConnectionString) with { Connections = 1 });
         await client.EnsureReliableCorrectionOrderingAsync();
 
         // Kill the only local socket after its Redis client ID has been captured. The
@@ -1347,7 +1347,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         RespireClient? restrictedClient = null;
         try
         {
-            var options = RespireOptions.Parse(Server.ConnectionString) with
+            var options = RespireOptions.Parse(Server.IsolatedConnectionString) with
             {
                 Username = username,
                 Password = password,

@@ -25,11 +25,11 @@ public class StackExchangeInteropTests(RedisTestContainer fixture)
     [Before(Test)]
     public async Task InitializeAsync()
     {
-        _client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        _client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         _respireCache = new RespireDistributedCache(_client, new RespireCacheOptions { InstanceName = InstanceName });
         _microsoftCache = new RedisCache(new RedisCacheOptions
         {
-            Configuration = fixture.StackExchangeConnectionString,
+            Configuration = fixture.IsolatedStackExchangeConnectionString,
             InstanceName = InstanceName,
         });
     }

@@ -178,7 +178,7 @@ public class FakeHashParityTests(RedisTestContainer fixture)
     }
 
     private ValueTask<RespireClient> Connect(RespireFakeServer? fake, int protocol)
-        => RespireClient.ConnectAsync((fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
+        => RespireClient.ConnectAsync((fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString))
             with { Protocol = (RespireProtocol)protocol, Connections = 1 });
 
     private static async Task<long> Number(IRespireClient client, string command, params RespireValue[] args)

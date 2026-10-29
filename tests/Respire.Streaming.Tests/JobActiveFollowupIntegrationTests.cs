@@ -25,14 +25,14 @@ public class JobActiveFollowupIntegrationTests(RedisTestContainer redis)
     [Arguments(RespireJobDeduplicationMode.Replace, true)]
     public async Task OrdinaryEnqueuesRetainTheirKeyPermissions(RespireJobDeduplicationMode mode, bool transactional)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         var user = "ordinary-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "+@all", "~" + queue.StreamKey,
             "~" + Dedup(queue), "~" + Lifecycle(queue)]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = user, Password = "password" });
             var producer = Queue(restricted);
             async Task<RespireJobEnqueueResult> Submit(string payload)
@@ -87,7 +87,7 @@ public class JobActiveFollowupIntegrationTests(RedisTestContainer redis)
     [Arguments(true)]
     public async Task ActiveFollowupStillRequiresStagingKeyPermissions(bool transactional)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         await queue.EnqueueAsync(Mode, "job", "first");
         await admin.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
@@ -98,7 +98,7 @@ public class JobActiveFollowupIntegrationTests(RedisTestContainer redis)
             "~" + Dedup(queue), "~" + Lifecycle(queue)]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = user, Password = "password" });
             var error = await Assert.That(async () =>
             {
@@ -272,7 +272,7 @@ public class JobActiveFollowupIntegrationTests(RedisTestContainer redis)
     [Arguments("xdel")]
     public async Task DeniedFollowupWritesPreserveTheActiveJob(string command)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         await queue.EnqueueAsync(Mode, "job", "first");
         await admin.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
@@ -282,7 +282,7 @@ public class JobActiveFollowupIntegrationTests(RedisTestContainer redis)
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-" + command]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = user, Password = "password" });
             await Assert.That(async () => await Queue(restricted).EnqueueAsync("job", "denied")).Throws<RespireServerException>();
             await Assert.That(await admin.GetStringAsync(Dedup(queue))).IsEqualTo(record);
@@ -461,7 +461,7 @@ public class JobActiveFollowupIntegrationTests(RedisTestContainer redis)
     }
 
     private ValueTask<RespireClient> Connect(int protocol = 3)
-        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
     private static RespireJobQueue<string> Queue(IRespireClient client) => new(client, "followup", Encoding.UTF8.GetBytes);
     private static string Lifecycle(RespireJobQueue<string> queue) => queue.StreamKey + ":dedup-deliveries";
     private static string Dedup(RespireJobQueue<string> queue) => queue.StreamKey + ":dedup:" + Convert.ToHexString(SHA256.HashData("job"u8));

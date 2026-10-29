@@ -17,7 +17,7 @@ public class FakeListParityTests(Redis7ReferenceContainer fixture)
     public async Task PushPopRangesAndRemovalPreserveOrderAndBinaryData(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
-        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString);
         await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         byte[] binary = [255, 0, 128];
         byte[] binaryKey = [0, 255, .. Guid.NewGuid().ToByteArray()];
@@ -69,7 +69,7 @@ public class FakeListParityTests(Redis7ReferenceContainer fixture)
     public async Task ErrorsAndSearchOptionsDoNotMutateLists(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
-        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString);
         await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         await client.Lists.RightPushAsync("list", "a", "b", "a", "a");
         await Number(client, "PEXPIRE", "list", 60_000);

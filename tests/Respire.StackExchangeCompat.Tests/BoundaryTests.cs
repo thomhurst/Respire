@@ -137,7 +137,7 @@ public class BoundaryTests(RedisTestContainer fixture)
     }
 
     private ValueTask<RespireClient> ConnectAsync(int protocol)
-        => RespireClient.ConnectAsync($"redis://{fixture.Host}:{fixture.Port}/{fixture.Database}?protocol={protocol}");
+        => RespireClient.ConnectAsync($"redis://{fixture.Host}:{fixture.Port}/{fixture.IsolatedDatabase}?protocol={protocol}");
 
     [Test]
     [Arguments(2)]

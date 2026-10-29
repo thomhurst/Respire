@@ -1,5 +1,6 @@
 using FluentAssertions;
 using StackExchange.Redis;
+using StackExchange.Redis.KeyspaceIsolation;
 using TUnit.Core;
 using TUnit.Assertions;
 
@@ -26,7 +27,7 @@ public class ClientComparisonTests
 
         // Initialize StackExchange.Redis client
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.StackExchangeConnectionString);
-        _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
+        _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase().WithKeyPrefix(_fixture.KeyPrefix);
     }
 
     [After(HookType.Test)]

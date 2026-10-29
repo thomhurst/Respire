@@ -19,7 +19,7 @@ public class RespireHybridCacheTests(RedisTestContainer fixture)
     [Before(Test)]
     public async Task InitializeAsync()
     {
-        _client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        _client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
     }
 
     [After(Test)]
@@ -31,7 +31,7 @@ public class RespireHybridCacheTests(RedisTestContainer fixture)
     private ServiceProvider BuildProvider()
     {
         var services = new ServiceCollection();
-        services.AddRespireHybridCache(fixture.ConnectionString, InstanceName);
+        services.AddRespireHybridCache(fixture.IsolatedConnectionString, InstanceName);
         return services.BuildServiceProvider();
     }
 
@@ -123,7 +123,7 @@ public class RespireHybridCacheTests(RedisTestContainer fixture)
             if (registeredClient) services.AddSingleton<IRespireClient>(_client);
             services.AddRespireHybridCache(options =>
             {
-                if (!registeredClient) options.ConnectionString = fixture.ConnectionString;
+                if (!registeredClient) options.ConnectionString = fixture.IsolatedConnectionString;
                 options.InstanceName = InstanceName;
                 options.ValueCodec = new RespireBrotliValueCodec();
             });
@@ -190,7 +190,7 @@ public class RespireHybridCacheTests(RedisTestContainer fixture)
     public async Task SharedRespireClient_IsUsedWhenNoConnectionStringGiven()
     {
         var services = new ServiceCollection();
-        services.AddSingleton<IRespireClient>(_ => RespireClient.Create(fixture.ConnectionString));
+        services.AddSingleton<IRespireClient>(_ => RespireClient.Create(fixture.IsolatedConnectionString));
         services.AddRespireHybridCache(configureCache: options => options.InstanceName = InstanceName);
 
         await using var provider = services.BuildServiceProvider();

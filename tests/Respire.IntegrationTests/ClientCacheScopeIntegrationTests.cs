@@ -15,7 +15,7 @@ public class ClientCacheScopeIntegrationTests(RedisTestContainer fixture)
         var root = $"scope:{Guid.NewGuid():N}:";
         var hot = root + "hot:key";
         var cold = root + "cold:key";
-        var options = RespireOptions.Parse(fixture.ConnectionString) with { Connections = 1 };
+        var options = RespireOptions.Parse(fixture.IsolatedConnectionString) with { Connections = 1 };
         await using var writer = await RespireClient.ConnectAsync(options);
         await writer.SetAsync(hot, "old");
         await writer.SetAsync(cold, "outside");
@@ -39,7 +39,7 @@ public class ClientCacheScopeIntegrationTests(RedisTestContainer fixture)
     public async Task WithoutClientCacheReadsServerWhileCachedEntryRemains()
     {
         var key = $"scope:{Guid.NewGuid():N}:fresh";
-        var options = RespireOptions.Parse(fixture.ConnectionString) with { Connections = 1 };
+        var options = RespireOptions.Parse(fixture.IsolatedConnectionString) with { Connections = 1 };
         await using var client = await RespireClient.ConnectAsync(options with { ClientSideCache = new() });
         await client.SetAsync(key, "old");
         await Assert.That(await client.GetStringAsync(key)).IsEqualTo("old");

@@ -16,7 +16,7 @@ public class FakeCollectionScanParityTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         await using var client = await RespireClient.ConnectAsync(
-            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
+            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString))
             with { Protocol = (RespireProtocol)protocol, Connections = 1 });
         byte[] member = [0, 255, 128, 13, 10];
         foreach (var command in new[] { "SSCAN", "HSCAN", "ZSCAN" })

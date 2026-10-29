@@ -1,4 +1,5 @@
 using StackExchange.Redis;
+using StackExchange.Redis.KeyspaceIsolation;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -106,7 +107,7 @@ public class CacheAsideIntegrationTests(RedisTestContainer fixture)
         }
         finally { release.TrySetResult(); }
         await Assert.That(await read.WaitAsync(Limit)).IsEqualTo("winner");
-        var ttl = await multiplexer.GetDatabase().KeyTimeToLiveAsync(key);
+        var ttl = await multiplexer.GetDatabase().WithKeyPrefix(fixture.KeyPrefix).KeyTimeToLiveAsync(key);
         await Assert.That(ttl!.Value > TimeSpan.FromMinutes(19)).IsTrue();
     }
 
@@ -119,7 +120,7 @@ public class CacheAsideIntegrationTests(RedisTestContainer fixture)
         await client.GetOrSetAsync<string>(key, _ => ValueTask.FromResult<string?>("first"), TimeSpan.FromSeconds(1));
         await client.GetOrSetAsync<string>(key, _ => throw new Exception("factory"), Ttl);
         using var timeout = new CancellationTokenSource(Limit);
-        while (await multiplexer.GetDatabase().KeyExistsAsync(key)) await Task.Delay(10, timeout.Token);
+        while (await multiplexer.GetDatabase().WithKeyPrefix(fixture.KeyPrefix).KeyExistsAsync(key)) await Task.Delay(10, timeout.Token);
         await WaitUntilAsync(() => client.ClientSideCache!.Count == 0);
         await Assert.That(await client.GetOrSetAsync<string>(key, _ => ValueTask.FromResult<string?>("second"), Ttl)).IsEqualTo("second");
     }
@@ -174,8 +175,8 @@ public class CacheAsideIntegrationTests(RedisTestContainer fixture)
         canceled.Cancel();
         await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
         await exited.Task.WaitAsync(Limit);
-        await Assert.That(await multiplexer.GetDatabase().KeyExistsAsync(failedKey)).IsFalse();
-        await Assert.That(await multiplexer.GetDatabase().KeyExistsAsync(canceledKey)).IsFalse();
+        await Assert.That(await multiplexer.GetDatabase().WithKeyPrefix(fixture.KeyPrefix).KeyExistsAsync(failedKey)).IsFalse();
+        await Assert.That(await multiplexer.GetDatabase().WithKeyPrefix(fixture.KeyPrefix).KeyExistsAsync(canceledKey)).IsFalse();
     }
 
     [Test]
@@ -184,7 +185,7 @@ public class CacheAsideIntegrationTests(RedisTestContainer fixture)
         var key = NewKey();
         await using var client = await ConnectAsync();
         await using var multiplexer = await ConnectionMultiplexer.ConnectAsync(fixture.StackExchangeConnectionString);
-        var database = multiplexer.GetDatabase();
+        var database = multiplexer.GetDatabase().WithKeyPrefix(fixture.KeyPrefix);
         using var idReply = await client.ExecuteAsync("CLIENT", "ID");
         var id = idReply.AsInteger();
         await database.StringSetAsync(key, "before");

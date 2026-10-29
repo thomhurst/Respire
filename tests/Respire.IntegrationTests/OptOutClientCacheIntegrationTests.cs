@@ -14,7 +14,7 @@ public class OptOutClientCacheIntegrationTests(RedisTestContainer fixture)
     public async Task ExternalInvalidationAndReconnectPreserveOptOutTracking(bool noLoop)
     {
         var key = $"optout:{Guid.NewGuid():N}";
-        var options = RespireOptions.Parse(fixture.ConnectionString) with { AllowAdmin = true, Connections = 1 };
+        var options = RespireOptions.Parse(fixture.IsolatedConnectionString) with { AllowAdmin = true, Connections = 1 };
         await using var writer = await RespireClient.ConnectAsync(options);
         await writer.SetAsync(key, "old");
         await using var reader = await RespireClient.ConnectAsync(options with
@@ -50,7 +50,7 @@ public class OptOutClientCacheIntegrationTests(RedisTestContainer fixture)
     public async Task NoLoopStillEvictsLocalWritesIncludingBypassViews(RespireClientTrackingMode mode)
     {
         var key = $"noloop:{Guid.NewGuid():N}";
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         {
             AllowAdmin = true,
             Connections = 1,
@@ -83,7 +83,7 @@ public class OptOutClientCacheIntegrationTests(RedisTestContainer fixture)
         var prefix = $"optout-bypass:{Guid.NewGuid():N}:";
         var freshKey = prefix + "fresh";
         var trackedKey = prefix + "tracked";
-        var options = RespireOptions.Parse(fixture.ConnectionString) with { AllowAdmin = true, Connections = 1 };
+        var options = RespireOptions.Parse(fixture.IsolatedConnectionString) with { AllowAdmin = true, Connections = 1 };
         await using var writer = await RespireClient.ConnectAsync(options);
         await writer.SetAsync(freshKey, "fresh");
         await writer.SetAsync(trackedKey, "tracked");

@@ -16,7 +16,7 @@ public class BroadcastClientCacheIntegrationTests(RedisTestContainer fixture)
     {
         var prefix = $"broadcast:{Guid.NewGuid():N}:";
         var key = prefix + "key";
-        var options = RespireOptions.Parse(fixture.ConnectionString) with { AllowAdmin = true, Connections = 1 };
+        var options = RespireOptions.Parse(fixture.IsolatedConnectionString) with { AllowAdmin = true, Connections = 1 };
         await using var writer = await RespireClient.ConnectAsync(options);
         await writer.SetAsync(key, "old");
         await using var reader = await RespireClient.ConnectAsync(options with
@@ -48,7 +48,7 @@ public class BroadcastClientCacheIntegrationTests(RedisTestContainer fixture)
         byte[] prefix = [255, 0, (byte)'*', .. Guid.NewGuid().ToByteArray()];
         byte[] covered = [.. prefix, 0, 128];
         byte[] uncovered = [254, .. prefix, 0, 128];
-        var options = RespireOptions.Parse(fixture.ConnectionString);
+        var options = RespireOptions.Parse(fixture.IsolatedConnectionString);
         await using var writer = await RespireClient.ConnectAsync(options);
         await writer.SetAsync(covered, "old");
         await writer.SetAsync(uncovered, "outside");
@@ -67,7 +67,7 @@ public class BroadcastClientCacheIntegrationTests(RedisTestContainer fixture)
     public async Task HashAndMultiKeyDependenciesInvalidateInSelectedDatabase()
     {
         var prefix = $"broadcast:{Guid.NewGuid():N}:";
-        var options = RespireOptions.Parse(fixture.ConnectionString);
+        var options = RespireOptions.Parse(fixture.IsolatedConnectionString);
         await using var writer = await RespireClient.ConnectAsync(options);
         await using var reader = await RespireClient.ConnectAsync(options with { ClientSideCache = Broadcast([prefix]) });
         var hash = prefix + "hash";

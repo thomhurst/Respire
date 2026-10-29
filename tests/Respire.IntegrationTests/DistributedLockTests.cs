@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using StackExchange.Redis;
+using StackExchange.Redis.KeyspaceIsolation;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -26,7 +27,7 @@ public class DistributedLockTests(RedisTestContainer fixture)
         _respireClient = await RespireClient.ConnectAsync(_fixture.ConnectionString);
 
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.StackExchangeConnectionString);
-        _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
+        _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase().WithKeyPrefix(_fixture.KeyPrefix);
 
     }
 

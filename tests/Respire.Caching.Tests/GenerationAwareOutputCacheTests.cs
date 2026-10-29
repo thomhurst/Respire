@@ -130,7 +130,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
         using (var reply = await client.ExecuteAsync("ACL", ["SETUSER", username, "on", ">" + password, "~*", "+@all", "-zadd", allowedIndexes])) { }
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
             { Protocol = (RespireProtocol)protocol, Username = username, Password = password });
             var failing = new RespireOutputCacheStore(restricted, options);
             await Assert.That(async () => await failing.SetAsync("key", [2], ["orphan", "denied"], TimeSpan.FromMinutes(1)))
@@ -162,7 +162,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
         using (var reply = await client.ExecuteAsync("ACL", ["SETUSER", username, "on", ">" + password, "~*", "+@all", "-pexpireat"])) { }
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
             { Protocol = (RespireProtocol)protocol, Username = username, Password = password });
             await Assert.That(async () => await new RespireOutputCacheStore(restricted, options)
                 .SetAsync("key", [2], ["new"], TimeSpan.FromMinutes(1))).Throws<RespireServerException>();
@@ -375,7 +375,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
     }
 
     private ValueTask<RespireClient> ConnectAsync(int protocol) => RespireClient.ConnectAsync(
-        RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        RespireOptions.Parse(fixture.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
 
     private static RespireOutputCacheOptions Options() => new()
     {

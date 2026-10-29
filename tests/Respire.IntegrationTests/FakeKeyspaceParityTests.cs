@@ -16,7 +16,7 @@ public class FakeKeyspaceParityTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         await using var client = await RespireClient.ConnectAsync(
-            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespireProtocol)protocol });
+            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString)) with { Protocol = (RespireProtocol)protocol });
         await client.SetAsync("", "empty-key");
         await client.SetAsync("nonempty", "value");
 
@@ -54,7 +54,7 @@ public class FakeKeyspaceParityTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         await using var client = await RespireClient.ConnectAsync(
-            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespireProtocol)protocol });
+            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString)) with { Protocol = (RespireProtocol)protocol });
         var prefix = Guid.NewGuid().ToString("N") + ":";
         foreach (var suffix in new[] { "a", "-", "z", "b" })
             await client.SetAsync(prefix + suffix, "value");
@@ -84,7 +84,7 @@ public class FakeKeyspaceParityTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         await using var client = await RespireClient.ConnectAsync(
-            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespireProtocol)protocol });
+            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString)) with { Protocol = (RespireProtocol)protocol });
         using var time = await client.ExecuteAsync("TIME");
         time.Type.Should().Be(RespireDataType.Array);
         time.Count.Should().Be(2);
@@ -118,7 +118,7 @@ public class FakeKeyspaceParityTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         await using var client = await RespireClient.ConnectAsync(
-            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespireProtocol)protocol });
+            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString)) with { Protocol = (RespireProtocol)protocol });
         var prefix = System.Text.Encoding.ASCII.GetBytes(Guid.NewGuid().ToString("N") + ":");
         byte[] key = [.. prefix, 0, 255, (byte)'c', (byte)'*'];
         using var set = await client.ExecuteAsync("SET", key, "value");

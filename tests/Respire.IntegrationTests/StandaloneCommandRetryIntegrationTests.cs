@@ -24,7 +24,7 @@ public class StandaloneCommandRetryIntegrationTests(RedisTestContainer fixture)
     [Arguments("CONFIG SET", true, true)]
     public async Task LostReplyPreservesRealRedisEffectsAndExplicitRisk(string operation, bool highRisk, bool retries)
     {
-        var options = RespireOptions.Parse(fixture.ConnectionString) with
+        var options = RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5) };
         await using var observer = await RespireClient.ConnectAsync(options);
         var key = "retry-effects:" + Guid.NewGuid().ToString("N");
@@ -98,7 +98,7 @@ public class StandaloneCommandRetryIntegrationTests(RedisTestContainer fixture)
     [Arguments("undeclared", true, false)]
     public async Task LostReplyHonorsCallerDeclaredScriptAndRawCategories(string shape, bool highRisk, bool retries)
     {
-        var options = RespireOptions.Parse(fixture.ConnectionString) with
+        var options = RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5) };
         await using var observer = await RespireClient.ConnectAsync(options);
         var key = "retry-declared:" + Guid.NewGuid().ToString("N");

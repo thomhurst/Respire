@@ -221,7 +221,7 @@ public class JobReplacementIntegrationTests(RedisTestContainer redis)
     [Arguments("zadd", true)]
     public async Task DeniedReplacementWritesPreserveTheWinningEnvelope(string command, bool scheduled)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var queue = Queue(admin);
         await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "job", "original");
         var state = await Lifecycle(admin, queue);
@@ -231,7 +231,7 @@ public class JobReplacementIntegrationTests(RedisTestContainer redis)
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-" + command]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = user, Password = "password" });
             await Assert.That(async () =>
             {
@@ -379,7 +379,7 @@ public class JobReplacementIntegrationTests(RedisTestContainer redis)
     }
 
     private ValueTask<RespireClient> Connect(int protocol = 3)
-        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
     private static RespireJobQueue<string> Queue(IRespireClient client) => new(client, Name, Encoding.UTF8.GetBytes);
     private static string LifecycleKey(RespireJobQueue<string> queue) => queue.StreamKey + ":dedup-deliveries";
     private static string DedupKey(RespireJobQueue<string> queue) => queue.StreamKey + ":dedup:" + Convert.ToHexString(SHA256.HashData("job"u8));

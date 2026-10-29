@@ -21,7 +21,7 @@ public class OutputCacheTests(RedisTestContainer fixture)
     [Arguments(true, true)]
     public async Task StoresRawValuesWithPrefixTagsAndTimeout(bool segmented, bool withTags)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var prefix = NewPrefix();
         var store = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
         string[] tags = withTags ? ["one", "two"] : [];
@@ -46,7 +46,7 @@ public class OutputCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task MissingEmptyAndSegmentedValuesUseBufferContract()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var store = new RespireOutputCacheStore(client, new() { InstanceName = NewPrefix() });
         await Assert.That(await store.GetAsync("missing")).IsNull();
         using var output = new MemoryStream();
@@ -68,14 +68,14 @@ public class OutputCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task MicrosoftAndRespireReadAndEvictEachOthersEntries()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var prefix = NewPrefix();
         var store = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddStackExchangeRedisOutputCache(options =>
         {
-            options.Configuration = fixture.StackExchangeConnectionString;
+            options.Configuration = fixture.IsolatedStackExchangeConnectionString;
             options.InstanceName = prefix;
         });
         await using var provider = services.BuildServiceProvider();
@@ -100,14 +100,14 @@ public class OutputCacheTests(RedisTestContainer fixture)
     [Arguments(true, true)]
     public async Task OverwriteRetainsOldTagMembershipLikeMicrosoft(bool microsoftWrites, bool microsoftEvicts)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var prefix = NewPrefix();
         var respire = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddStackExchangeRedisOutputCache(options =>
         {
-            options.Configuration = fixture.StackExchangeConnectionString;
+            options.Configuration = fixture.IsolatedStackExchangeConnectionString;
             options.InstanceName = prefix;
         });
         await using var provider = services.BuildServiceProvider();
@@ -126,7 +126,7 @@ public class OutputCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task MasterScoreNeverShrinksAndEvictionLeavesUnrelatedTags()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var prefix = NewPrefix();
         var store = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
         await store.SetAsync("long", new byte[] { 1 }, ["shared"], TimeSpan.FromHours(1));
@@ -145,7 +145,7 @@ public class OutputCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task EvictionSpansSeveralChunksWithoutLosingTheRemainder()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var prefix = NewPrefix();
         var store = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
         var keys = new RespireValue[601];
@@ -172,7 +172,7 @@ public class OutputCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task CleanupHonorsMicrosoftLockAndRemovesOnlyExpiredReferences()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var prefix = NewPrefix();
         var store = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -204,7 +204,7 @@ public class OutputCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task RegistrationUsesBufferStoreAndOneCleanupServiceWithoutOwningClient()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton<IRespireClient>(client);
@@ -221,7 +221,7 @@ public class OutputCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task PreCanceledAndInvalidWritesDoNotStoreValues()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var store = new RespireOutputCacheStore(client, new() { InstanceName = NewPrefix() });
         await Assert.That(async () => await store.SetAsync("key", new byte[] { 1 }, null,
             TimeSpan.FromMinutes(1), new CancellationToken(true))).Throws<OperationCanceledException>();

@@ -21,7 +21,7 @@ public class JobQueueControlTests(RedisTestContainer redis)
     [Arguments(3)]
     public async Task GroupedSelectionHonorsPauseAndSharedAdmissionBudget(int protocol)
     {
-        await using var connection = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+        await using var connection = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
             with { Protocol = (RespireProtocol)protocol });
         var client = connection.WithKeyPrefix("group-controls:" + Guid.NewGuid().ToString("N") + ":");
         var queue = Queue(client);
@@ -58,13 +58,13 @@ public class JobQueueControlTests(RedisTestContainer redis)
     [Arguments(3)]
     public async Task PauseIsDurableIdempotentAndEmitsTypedEvents(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
             with { Protocol = (RespireProtocol)protocol });
         var queue = Queue(client.WithKeyPrefix("tenant:"));
         await Assert.That(await queue.ResumeAsync()).IsFalse();
         await Assert.That(await queue.PauseAsync()).IsTrue();
         await Assert.That(await queue.PauseAsync()).IsFalse();
-        await using var other = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var other = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var restarted = Queue(other.WithKeyPrefix("tenant:"));
         await Assert.That((await restarted.GetStateAsync()).IsPaused).IsTrue();
         await Assert.That(await restarted.ResumeAsync()).IsTrue();
@@ -89,7 +89,7 @@ public class JobQueueControlTests(RedisTestContainer redis)
     [Arguments("Claim")]
     public async Task PausedAdmissionDoesNotReadReplayOrRecover(string operation)
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.EnqueueAsync("job", "payload");
         await client.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
@@ -112,8 +112,8 @@ public class JobQueueControlTests(RedisTestContainer redis)
     [Test]
     public async Task ConcurrentClientsShareOneBudgetAndDeniedClaimsDoNotConsumeRetries()
     {
-        await using var first = await RespireClient.ConnectAsync(redis.ConnectionString);
-        await using var second = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var first = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
+        await using var second = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(first);
         await queue.SetRateLimitAsync(new() { PermitLimit = 3, Window = TimeSpan.FromHours(1) });
         await first.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
@@ -140,7 +140,7 @@ public class JobQueueControlTests(RedisTestContainer redis)
     [Test]
     public async Task EmptyReadsDoNotConsumePermitsAndWindowRefills()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.SetRateLimitAsync(new() { PermitLimit = 1, Window = TimeSpan.FromMilliseconds(150) });
         await client.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
@@ -162,7 +162,7 @@ public class JobQueueControlTests(RedisTestContainer redis)
     [Arguments("Claim")]
     public async Task RateDeniedRecoveryKeepsOwnershipAndDeliveryCount(string operation)
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await client.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
         await queue.EnqueueAsync("pending", "payload");
@@ -183,7 +183,7 @@ public class JobQueueControlTests(RedisTestContainer redis)
     [Test]
     public async Task ConflictingStartupPolicyCannotOverwriteSharedConfiguration()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.SetRateLimitAsync(new() { PermitLimit = 2 });
         var script = ControlScript("Configure");
@@ -201,12 +201,12 @@ public class JobQueueControlTests(RedisTestContainer redis)
     [Arguments("xadd")]
     public async Task DeniedPauseDoesNotChangeStateOrAppendAnEvent(string command)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var user = "controls-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-" + command]);
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = user, Password = "password" });
             await Assert.That(async () => await Queue(restricted).PauseAsync()).Throws<RespireServerException>();
             await Assert.That((await Queue(admin).GetStateAsync()).IsPaused).IsFalse();
@@ -218,7 +218,7 @@ public class JobQueueControlTests(RedisTestContainer redis)
     [Test]
     public async Task FailedEventAppendRollsBackPause()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         using (await client.ExecuteAsync("SET", [queue.EventsStreamKey, "wrong-type"])) { }
         await Assert.That(async () => await queue.PauseAsync()).Throws<RespireServerException>();
@@ -237,8 +237,8 @@ public class JobQueueControlTests(RedisTestContainer redis)
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => metrics.Enqueue((instrument.Name, value)));
         listener.Start();
-        await using var first = await RespireClient.ConnectAsync(redis.ConnectionString);
-        await using var second = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var first = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
+        await using var second = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(first);
         await queue.PauseAsync();
         for (var i = 0; i < 8; i++) await queue.EnqueueAsync(i.ToString(), "payload");
@@ -279,7 +279,7 @@ public class JobQueueControlTests(RedisTestContainer redis)
     [Test]
     public async Task PauseLetsInFlightHandlerFinishWithoutClaimingTheRestOfABatch()
     {
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         await queue.EnqueueAsync("first", "payload");
         await queue.EnqueueAsync("second", "payload");
@@ -319,7 +319,7 @@ public class JobQueueControlTests(RedisTestContainer redis)
             if (value == 1) paused.TrySetResult();
         });
         listener.Start();
-        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = Queue(client);
         for (var i = 0; i < 6; i++) await queue.EnqueueAsync("old-" + i, "payload");
         await client.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);

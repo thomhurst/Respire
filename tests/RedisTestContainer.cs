@@ -1,3 +1,6 @@
+using System.Collections.Concurrent;
+using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Containers;
 using Testcontainers.Redis;
 using TUnit.Core;
 using TUnit.Core.Interfaces;
@@ -5,27 +8,37 @@ using TUnit.Core.Interfaces;
 namespace Respire.Testing;
 
 /// <summary>
-/// Session-wide Redis container for integration tests. Each test gets its own logical database,
-/// numbered by TUnit's per-test isolation ID, so suites with more tests than
-/// <see cref="DatabaseCount"/> must split or share a database explicitly.
+/// Session-wide Redis container for integration tests. Tests share <see cref="Database"/> and are isolated by
+/// <see cref="KeyPrefix"/>, which <see cref="ConnectionString"/> applies to every Respire client built from it.
 /// </summary>
 /// <remarks>
-/// Database 0 is never assigned to a test (isolation IDs start at 1). It is reserved as
-/// <see cref="ScratchDatabase"/> for tests that need a second database; they must use unique keys there.
+/// Clients built by hand, and other client libraries, must apply <see cref="KeyPrefix"/> themselves.
+/// Pub/sub channels are server-wide and are not prefixed; tests must still use unique channel names.
+/// A test that inspects or clears a whole database (SCAN, KEYS, DBSIZE, FLUSHDB, SWAPDB, ...) uses
+/// <see cref="IsolatedDatabase"/> instead: a database leased for the test, flushed and returned when it ends.
+/// <see cref="ScratchDatabase"/> serves tests that need a second database; their keys there must be unique.
 /// Use <c>SharedType.Keyed</c> to get a separate container for tests that change server-wide state.
+/// Set <c>RESPIRE_TEST_REDIS_IMAGE</c> to a Valkey or Microsoft Garnet image to run the suite against that server.
 /// </remarks>
-public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable
+public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndEventReceiver
 {
-    /// <summary>The number of logical databases the container is started with.</summary>
-    public const int DatabaseCount = 4096;
+    /// <summary>The number of logical databases the container is started with; Garnet allows at most 256.</summary>
+    public const int DatabaseCount = 256;
 
-    /// <summary>A database that no test owns. Keys written there must be unique to the writing test.</summary>
-    public const int ScratchDatabase = 0;
+    /// <summary>The database every prefixed test shares.</summary>
+    public const int SharedDatabase = 0;
 
+    /// <summary>A second database that no test owns. Keys written there must be unique to the writing test.</summary>
+    public const int ScratchDatabase = 1;
+
+    private const int FirstIsolatedDatabase = 2;
     private const ushort RedisPort = 6379;
 
     private readonly string[] _serverArguments;
-    private RedisContainer? _container;
+    private readonly ConcurrentDictionary<int, int> _leasedDatabases = new();
+    private readonly ConcurrentBag<int> _freeDatabases = [.. Enumerable.Range(FirstIsolatedDatabase, DatabaseCount - FirstIsolatedDatabase)];
+    private readonly SemaphoreSlim _freeDatabaseCount = new(DatabaseCount - FirstIsolatedDatabase);
+    private IContainer? _container;
 
     public RedisTestContainer() : this([])
     {
@@ -40,34 +53,42 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable
         get
         {
             var image = Environment.GetEnvironmentVariable("RESPIRE_TEST_REDIS_IMAGE");
-            return string.IsNullOrWhiteSpace(image) ? "redis:7.0.15" : image;
+            // redis-server arguments do not apply to Garnet, so such containers keep the reference Redis server.
+            return string.IsNullOrWhiteSpace(image) || (IsGarnetImage(image) && _serverArguments.Length != 0)
+                ? "redis:7.0.15"
+                : image;
         }
     }
 
-    private RedisContainer Container =>
+    /// <summary>Whether this container runs Microsoft Garnet.</summary>
+    public bool IsGarnet => IsGarnetImage(ServerImage);
+
+    private static bool IsGarnetImage(string image) => image.Contains("microsoft/garnet", StringComparison.OrdinalIgnoreCase);
+
+    private IContainer Container =>
         _container ?? throw new InvalidOperationException("Redis container has not been initialized.");
 
-    public int Database
-    {
-        get
-        {
-            var database = TestContext.Current?.Isolation.UniqueId
-                ?? throw new InvalidOperationException("A Redis database can only be assigned within a test context.");
+    /// <summary>The database prefixed tests share; isolation comes from <see cref="KeyPrefix"/>.</summary>
+    public int Database => SharedDatabase;
 
-            if (database is <= ScratchDatabase or >= DatabaseCount)
-            {
-                throw new InvalidOperationException(
-                    $"Test isolation ID {database} is outside the Redis database range 1..{DatabaseCount - 1}. "
-                    + $"TUnit numbers every test it builds, so this test project now builds more tests than "
-                    + $"RedisTestContainer has databases. Raise {nameof(DatabaseCount)} or move tests to another project.");
-            }
+    /// <summary>The key prefix that isolates the current test, numbered by its TUnit isolation ID.</summary>
+    public string KeyPrefix => $"test:{TestId}:";
 
-            return database;
-        }
-    }
+    /// <summary>
+    /// A database leased to the current test alone, for tests that inspect or clear a whole database.
+    /// It is flushed and returned to the pool when the test ends.
+    /// </summary>
+    public int IsolatedDatabase => _leasedDatabases.GetOrAdd(TestId, static (_, container) => container.LeaseDatabase(), this);
+
+    /// <summary>A connection string for <see cref="IsolatedDatabase"/>, without a key prefix.</summary>
+    public string IsolatedConnectionString => $"redis://{Host}:{Port}/{IsolatedDatabase}?protocol={TestProtocol}";
+
+    private static int TestId => TestContext.Current?.Isolation.UniqueId
+        ?? throw new InvalidOperationException("Test isolation is only available within a test context.");
 
     // CI runs the shared typed scenarios with each protocol; explicit per-test choices still override it.
-    public string ConnectionString => $"redis://{Host}:{Port}/{Database}?protocol={TestProtocol}";
+    public string ConnectionString =>
+        $"redis://{Host}:{Port}/{SharedDatabase}?protocol={TestProtocol}&keyPrefix={Uri.EscapeDataString(KeyPrefix)}";
     private static string TestProtocol => Environment.GetEnvironmentVariable("RESPIRE_TEST_PROTOCOL") switch
     {
         null or "" => "auto",
@@ -75,17 +96,63 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable
         "3" => "3",
         var value => throw new InvalidOperationException($"Invalid RESPIRE_TEST_PROTOCOL '{value}'; expected 2 or 3."),
     };
-    public string StackExchangeConnectionString => $"{Host}:{Port},defaultDatabase={Database},allowAdmin=true";
+
+    /// <summary>A StackExchange.Redis configuration for <see cref="Database"/>; apply <see cref="KeyPrefix"/> with <c>WithKeyPrefix</c>.</summary>
+    public string StackExchangeConnectionString => $"{Host}:{Port},defaultDatabase={SharedDatabase},allowAdmin=true";
+
+    /// <summary>A StackExchange.Redis configuration for <see cref="IsolatedDatabase"/>.</summary>
+    public string IsolatedStackExchangeConnectionString => $"{Host}:{Port},defaultDatabase={IsolatedDatabase},allowAdmin=true";
     public string Host => Container.Hostname;
     public int Port => Container.GetMappedPublicPort(RedisPort);
 
     public async Task InitializeAsync()
     {
         var image = ServerImage;
+        var databases = DatabaseCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
         // A failed start is removed by the retry helper, which also replaces it after a host-port bind collision.
-        _container = await ContainerStartRetry.StartAsync(() => new RedisBuilder(image)
-            .WithCommand(["redis-server", "--databases", DatabaseCount.ToString(), .. _serverArguments])
-            .Build(), [RedisPort]).ConfigureAwait(false);
+        _container = IsGarnet
+            ? await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image)
+                .WithCommand("--max-databases", databases, "--lua",
+                    "--memory", "256m", "--page", "4m", "--segment", "16m", "--index", "8m")
+                .WithPortBinding(RedisPort, true)
+                .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(RedisPort))
+                .Build(), [RedisPort]).ConfigureAwait(false)
+            : await ContainerStartRetry.StartAsync(() => new RedisBuilder(image)
+                .WithCommand(["redis-server", "--databases", databases, .. _serverArguments])
+                .Build(), [RedisPort]).ConfigureAwait(false);
+    }
+
+    private int LeaseDatabase()
+    {
+        // Few tests need a whole database, so this waits only if many run at once or leases leak.
+        if (!_freeDatabaseCount.Wait(TimeSpan.FromMinutes(2)) || !_freeDatabases.TryTake(out var database))
+        {
+            throw new InvalidOperationException($"No isolated database became free; {_leasedDatabases.Count} are leased.");
+        }
+
+        return database;
+    }
+
+    async ValueTask ITestEndEventReceiver.OnTestEnd(TestContext context)
+    {
+        if (!_leasedDatabases.TryRemove(context.Isolation.UniqueId, out var database))
+        {
+            return;
+        }
+
+        try
+        {
+            if (_container is not null)
+            {
+                await using var client = await RespireClient.ConnectAsync($"redis://{Host}:{Port}/{database}").ConfigureAwait(false);
+                using var flushed = await client.ExecuteAsync("FLUSHDB").ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _freeDatabases.Add(database);
+            _freeDatabaseCount.Release();
+        }
     }
 
     public async ValueTask DisposeAsync()

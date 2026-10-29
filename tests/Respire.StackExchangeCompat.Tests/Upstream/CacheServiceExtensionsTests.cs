@@ -23,7 +23,7 @@ public class CacheServiceExtensionsTests(RedisTestContainer fixture)
     private void AddCache(IServiceCollection services) => services.AddStackExchangeRedisCache(options =>
     {
         options.ConnectionMultiplexerFactory = () => Task.FromResult<StackExchange.Redis.IConnectionMultiplexer>(
-            RespireConnectionMultiplexer.Create(RespireOptions.Parse(fixture.ConnectionString)));
+            RespireConnectionMultiplexer.Create(RespireOptions.Parse(fixture.IsolatedConnectionString)));
     });
 
     [Test]

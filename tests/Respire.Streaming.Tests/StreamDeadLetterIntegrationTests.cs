@@ -18,7 +18,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
     [Arguments(3)]
     public async Task AtomicCompletionPreservesOtherGroupsAndOriginalBytes(int protocol)
     {
-        await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+        await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
             with { Protocol = (RespireProtocol)protocol });
         await using var server = new RespireFakeServer();
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions()
@@ -72,7 +72,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
     [Arguments(10000)]
     public async Task WideEntryCompletionHasExplicitLimitWithoutPartialWrites(int fieldCount)
     {
-        await using var real = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var real = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         await using var server = new RespireFakeServer();
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions());
         foreach (var client in new[] { real, fake })
@@ -104,7 +104,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
     [Test]
     public async Task DeletedSourceCompletionAcknowledgesOnlyTheFencedAttempt()
     {
-        await using var real = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var real = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         await using var server = new RespireFakeServer();
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions());
         foreach (var client in new[] { real, fake })
@@ -127,7 +127,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
     [Arguments(3)]
     public async Task WrongTypeDeadLetterDoesNotAcknowledgeOrMutate(int protocol)
     {
-        await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+        await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
             with { Protocol = (RespireProtocol)protocol });
         await using var server = new RespireFakeServer();
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions()
@@ -151,7 +151,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
     [Arguments("xack", true)]
     public async Task AclPreflightRejectsBothMutationsBeforeDeadLetterWrite(string deniedCommand, bool deletedSource)
     {
-        await using var admin = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var admin = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         await admin.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, ("payload", "body"));
         await admin.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
         await admin.Streams.ReadGroupOnceAsync("s", "g", "owner");
@@ -163,7 +163,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
         using (await admin.ExecuteAsync("ACL SETUSER", [username, "on", ">dlq-test-password", "~*", "+@all", "-" + deniedCommand])) { }
         try
         {
-            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
                 with { Username = username, Password = "dlq-test-password" });
             await Assert.That(async () => await CompleteAsync(restricted, "owner", 1)).Throws<RespireServerException>();
             await Assert.That((await admin.Streams.PendingSummaryAsync("s", "g")).Count).IsEqualTo(1);
@@ -185,7 +185,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
     public async Task StoppedPoisonConsumerEventuallyDeadLettersWithinPolicy(bool useFake, string outcome)
     {
         await using var server = new RespireFakeServer();
-        await using var root = await RespireClient.ConnectAsync(useFake ? server.CreateOptions() : RespireOptions.Parse(redis.ConnectionString));
+        await using var root = await RespireClient.ConnectAsync(useFake ? server.CreateOptions() : RespireOptions.Parse(redis.IsolatedConnectionString));
         var client = root.WithKeyPrefix("{worker}tenant:");
         await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("payload", new byte[] { 0xff, 0, 13, 10 }));
         var abandoned = new HandlerState { Park = true };
@@ -222,7 +222,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
     public async Task AbandonedFinalAttemptDeadLettersWithoutInvokingHandlerAgain(bool useFake)
     {
         await using var server = new RespireFakeServer();
-        await using var root = await RespireClient.ConnectAsync(useFake ? server.CreateOptions() : RespireOptions.Parse(redis.ConnectionString));
+        await using var root = await RespireClient.ConnectAsync(useFake ? server.CreateOptions() : RespireOptions.Parse(redis.IsolatedConnectionString));
         var client = root.WithKeyPrefix("{worker}tenant:");
         await client.Streams.AddAsync("events", ("payload", "body"));
         await client.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);

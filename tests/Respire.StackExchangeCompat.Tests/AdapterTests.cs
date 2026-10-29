@@ -15,7 +15,7 @@ namespace Respire.StackExchangeCompat.Tests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class AdapterTests(RedisTestContainer fixture)
 {
-    private RespireOptions Options(int protocol) => RespireOptions.Parse(fixture.ConnectionString) with
+    private RespireOptions Options(int protocol) => RespireOptions.Parse(fixture.IsolatedConnectionString) with
     {
         Connections = 1,
         Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
@@ -29,10 +29,10 @@ public class AdapterTests(RedisTestContainer fixture)
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
         var database = connection.GetDatabase();
         var other = connection.GetDatabase(0);
-        Assert.Equal(fixture.Database, database.Database);
+        Assert.Equal(fixture.IsolatedDatabase, database.Database);
         Assert.Equal(0, other.Database);
         Assert.Same(connection, database.Multiplexer);
-        RedisKey key = new byte[] { 0xff, 0, 0x80, (byte)fixture.Database };
+        RedisKey key = new byte[] { 0xff, 0, 0x80, (byte)fixture.IsolatedDatabase };
         RedisValue field = new byte[] { 0xfe, 0, 0x81 };
         byte[] value = [0x80, 0, 0xff];
         Assert.True(await database.HashSetAsync(key, field, value));
@@ -100,7 +100,7 @@ public class AdapterTests(RedisTestContainer fixture)
     [Test]
     public async Task BatchCompletesEveryTaskWhenOneCommandFails()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         await client.SetAsync("wrongtype", "string");
         await using var connection = RespireConnectionMultiplexer.Wrap(client);
         var batch = connection.GetDatabase().CreateBatch();
@@ -116,7 +116,7 @@ public class AdapterTests(RedisTestContainer fixture)
     [Test]
     public async Task ClosingCancelsUnexecutedBatchAndPreservesBorrowedClient()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var connection = RespireConnectionMultiplexer.Wrap(client);
         var database = connection.GetDatabase();
         var batch = database.CreateBatch();
@@ -139,7 +139,7 @@ public class AdapterTests(RedisTestContainer fixture)
     [Test]
     public async Task OwnedWrappedClientIsDisposedAndUnsupportedMembersFailClearly()
     {
-        var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         await using var connection = RespireConnectionMultiplexer.Wrap(client, ownsClient: true);
         var database = connection.GetDatabase();
         Assert.Throws<NotSupportedException>(() => connection.GetDatabase(0));

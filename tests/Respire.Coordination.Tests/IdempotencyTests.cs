@@ -246,7 +246,7 @@ public class IdempotencyTests(RedisTestContainer fixture)
         bool allowAdmin = false)
         => await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
+            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database, KeyPrefix = fixture.KeyPrefix,
             Connections = 1, Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             Username = username, Password = password, AllowAdmin = allowAdmin,
         });

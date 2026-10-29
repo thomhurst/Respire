@@ -22,7 +22,7 @@ public class DashboardFlowRetryTests(RedisTestContainer redis)
     [Arguments(true, true, RespireJobFlowFailurePolicy.Continue)]
     public async Task TerminalFlowMemberRetriesIndependently(bool removeFlow, bool failRetry, RespireJobFlowFailurePolicy policy)
     {
-        await using var root = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var client = root.WithKeyPrefix("tenant:");
         var queue = new RespireJobQueue<string>(client, "flow-retry", Encoding.UTF8.GetBytes);
         await queue.EnqueueFlowAsync("flow", new("parent", "parent payload")

@@ -19,13 +19,13 @@ public static class RedisUtils
     public static void Initialize(RedisTestContainer fixture)
     {
         if (_connection is not null) throw new InvalidOperationException("Upstream tests must run sequentially.");
-        var connection = RespireConnectionMultiplexer.Create(RespireOptions.Parse(fixture.ConnectionString) with
+        var connection = RespireConnectionMultiplexer.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         {
             Connections = 1,
         });
         try
         {
-            _control = ConnectionMultiplexer.Connect(fixture.StackExchangeConnectionString);
+            _control = ConnectionMultiplexer.Connect(fixture.IsolatedStackExchangeConnectionString);
             _fixture = fixture;
             _connection = connection;
         }
@@ -62,7 +62,7 @@ public static class RedisUtils
     public static string GetHostAndPort() => $"{GetHost()}:{GetPort()}";
     public static string GetHost() => Fixture.Host;
     public static int GetPort() => Fixture.Port;
-    public static int GetDb() => Fixture.Database;
+    public static int GetDb() => Fixture.IsolatedDatabase;
 
     private static RedisTestContainer Fixture =>
         _fixture ?? throw new InvalidOperationException("The upstream test fixture is not initialized.");

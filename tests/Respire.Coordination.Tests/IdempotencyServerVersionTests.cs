@@ -19,7 +19,7 @@ public class IdempotencyServerVersionTests(IdempotencyRedis62 fixture)
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
+            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database, KeyPrefix = fixture.KeyPrefix,
             Connections = 1, Protocol = (RespireProtocol)protocol,
         });
         var store = new RespireIdempotency(client);

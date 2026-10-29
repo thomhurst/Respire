@@ -349,8 +349,8 @@ public class ProviderScenarios(RedisTestContainer redis)
 
     private async Task Compare(Func<IConnectionMultiplexer, Task> scenario)
     {
-        var shimOptions = RespireOptions.Parse(redis.ConnectionString) with { Connections = 1 };
-        var controlOptions = ConfigurationOptions.Parse(redis.StackExchangeConnectionString);
+        var shimOptions = RespireOptions.Parse(redis.IsolatedConnectionString) with { Connections = 1 };
+        var controlOptions = ConfigurationOptions.Parse(redis.IsolatedStackExchangeConnectionString);
         controlOptions.Protocol = shimOptions.Protocol switch
         {
             RespireProtocol.Resp2 => RedisProtocol.Resp2,

@@ -242,7 +242,7 @@ public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
     private sealed record Payload(int Number, string Name);
 
     private ValueTask<RespireClient> Connect(RespireFakeServer? fake, int protocol)
-        => RespireClient.ConnectAsync((fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
+        => RespireClient.ConnectAsync((fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString))
             with { Protocol = (RespireProtocol)protocol });
 
     private static async Task<long> Number(IRespireClient client, string command, params RespireValue[] args)
