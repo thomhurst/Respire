@@ -53,11 +53,13 @@ public class CacheAsideIntegrationTests(RedisTestContainer fixture)
         await using var first = await ConnectAsync(mode);
         await using var second = await ConnectAsync(mode);
         await Assert.That(await second.GetStringAsync(key)).IsNull();
+        await Assert.That(second.ClientSideCache!.Count).IsEqualTo(1);
         await Assert.That(await first.GetOrSetAsync<string>(key, _ => ValueTask.FromResult<string?>("created"), Ttl)).IsEqualTo("created");
         await WaitUntilAsync(() => second.ClientSideCache!.Count == 0);
         await Assert.That(await second.GetOrSetAsync<string>(key, _ => throw new Exception("factory"), Ttl)).IsEqualTo("created");
         // The SET result is not injected into tracking state; a subsequent GET registers it.
         await first.GetOrSetAsync<string>(key, _ => throw new Exception("factory"), Ttl);
+        await Assert.That(first.ClientSideCache!.Count).IsEqualTo(1);
         await second.SetAsync(key, "changed", Ttl);
         await WaitUntilAsync(() => first.ClientSideCache!.Count == 0);
         await Assert.That(await first.GetOrSetAsync<string>(key, _ => throw new Exception("factory"), Ttl)).IsEqualTo("changed");
@@ -216,7 +218,8 @@ public class CacheAsideIntegrationTests(RedisTestContainer fixture)
             ClientSideCache = new()
             {
                 CoalesceConcurrentMisses = true, TrackingMode = mode,
-                KeyPrefixes = mode == RespireClientTrackingMode.Broadcast ? ["cache-aside:"] : [],
+                // Tracking prefixes match physical keys, which carry the fixture's per-test prefix.
+                KeyPrefixes = mode == RespireClientTrackingMode.Broadcast ? [fixture.KeyPrefix + "cache-aside:"] : [],
             },
         });
     private static async Task WaitUntilAsync(Func<bool> condition)

@@ -56,7 +56,7 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
     {
         get
         {
-            var image = Environment.GetEnvironmentVariable("RESPIRE_TEST_REDIS_IMAGE");
+            var image = ConfiguredImage;
             // redis-server arguments do not apply to Garnet, so such containers keep the reference Redis server.
             return string.IsNullOrWhiteSpace(image) || (IsGarnetImage(image) && _serverArguments.Length != 0)
                 ? ReferenceRedisImage
@@ -68,7 +68,9 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
     public bool IsGarnet => IsGarnetImage(ServerImage);
 
     /// <summary>Whether <c>RESPIRE_TEST_REDIS_IMAGE</c> selects Garnet for the shared container.</summary>
-    public static bool GarnetSelected => IsGarnetImage(Environment.GetEnvironmentVariable("RESPIRE_TEST_REDIS_IMAGE") ?? "");
+    public static bool GarnetSelected => IsGarnetImage(ConfiguredImage ?? "");
+
+    private static string? ConfiguredImage => Environment.GetEnvironmentVariable("RESPIRE_TEST_REDIS_IMAGE");
 
     private static bool IsGarnetImage(string image) => image.Contains("microsoft/garnet", StringComparison.OrdinalIgnoreCase);
 
