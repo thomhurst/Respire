@@ -103,6 +103,7 @@ Do not wait for CI, reviews, benchmark runs, reviewer replies, or any other asyn
 ## Pull request reviews
 
 - Open every agent-created pull request as a draft (`gh pr create --draft`), whether or not the issue-pr-loop is running, and follow `.claude/skills/issue-pr-loop/SKILL.md` § Draft review lifecycle. Build and test CI does not run on drafts. Mark the PR ready only when Claude Code Review and Codex have both approved the current head and every finding is dispositioned, then immediately arm native auto-merge with `scripts/Enable-AutoMerge.ps1`. CI then runs once on that head, and GitHub merges it when the required `CI Passed` check passes. Never arm a draft, and never call `gh pr merge --auto` directly.
+- Every review cycle, check both review threads (`pulls/<N>/reviews`, `pulls/<N>/comments`, GraphQL `reviewThreads`) and PR conversation comments (`issues/<N>/comments`). Reviewers differ: Claude often posts its review as a conversation comment, while other agents use review threads. A finding on either surface needs a disposition before merge.
 - Resolve each PR review thread, whether a human or a bot opened it, as soon as you have dispositioned it: the fix is pushed to the PR head and your reply names the commit, or your reply pushes back on the finding with evidence. Leave a thread open only while it has no disposition. If the reviewer replies after your disposition, unresolve the thread and handle the reply.
 
 ## Autonomous self-improvement
