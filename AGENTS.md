@@ -91,10 +91,11 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-unix-sockets.yml` | `run-unix-sockets-benchmarks` |
 | `benchmark-utf8-decoder.yml` | `run-utf8-decoder-benchmarks` |
 | `benchmark-utf8-suffix.yml` | `run-utf8-suffix-benchmarks` |
+| `benchmark-valkey-glide.yml` | `run-valkey-glide-benchmarks` |
 | `benchmark-value-codecs.yml` | `benchmark-value-codecs` |
 | `benchmark-vector.yml` | `run-vector-benchmarks` |
 
-`benchmark-comparison.yml`, `benchmark-redis-throughput.yml` and `benchmark-redis-container.yml` are not pull request comparisons. `benchmark-compare.yml` is a reusable workflow that the label-triggered workflows call; do not run it directly. Start them with `gh workflow run <file>`. `benchmark-comparison.yml` and `benchmark-redis-throughput.yml` also run weekly on a schedule; the weekly comparison run refreshes the published performance docs.
+`benchmark-comparison.yml`, `benchmark-redis-throughput.yml` and `benchmark-redis-container.yml` are not pull request comparisons. `benchmark-valkey-glide.yml` is not a base-versus-head comparison either: its label measures the pull request head against Valkey GLIDE, and it also supports `gh workflow run`. `benchmark-compare.yml` is a reusable workflow that the label-triggered workflows call; do not run it directly. Start them with `gh workflow run <file>`. `benchmark-comparison.yml` and `benchmark-redis-throughput.yml` also run weekly on a schedule; the weekly comparison run refreshes the published performance docs.
 
 ## Agent output locations
 

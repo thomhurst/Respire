@@ -1,0 +1,159 @@
+name: Respire vs Valkey GLIDE Benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: 'BenchmarkDotNet filter (e.g. *Get* to run only GET benchmarks)'
+        required: false
+        default: '*'
+      job:
+        description: 'BenchmarkDotNet job preset (short matches the pull request label run)'
+        required: false
+        default: short
+        type: choice
+        options:
+          - dry
+          - short
+          - default
+          - medium
+          - long
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  VALKEY_IMAGE: valkey/valkey:9.0
+
+permissions:
+  contents: read
+
+concurrency:
+  # Reapplying the benchmark label supersedes older runs on the same PR; unrelated labels
+  # get their own group, so they never cancel an active run. Manual runs group by branch.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  glide-comparison:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-valkey-glide-benchmarks'
+    name: Benchmark (net10.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      # Load infrastructure from the workflow revision, independently of benchmark source revisions.
+      - name: Checkout Docker mirror action
+        id: docker-mirror-checkout
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: docker-mirror
+          sparse-checkout: .github/actions/docker-hub-mirror
+          persist-credentials: false
+      - name: Use Docker Hub mirror
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted' && steps.docker-mirror-checkout.outcome == 'success'
+        uses: ./docker-mirror/.github/actions/docker-hub-mirror
+      - name: Warn if Docker mirror action could not be loaded
+        if: steps.docker-mirror-checkout.outcome == 'failure'
+        shell: bash
+        run: echo '::warning::Could not load Docker mirror action; pulls go straight to Docker Hub'
+
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            10.0.x
+
+      # Started after the mirror is configured, so the pull goes through mirror.gcr.io.
+      - name: Start Valkey
+        run: |
+          docker run -d --name valkey -p 6379:6379 "$VALKEY_IMAGE"
+          for i in $(seq 1 30); do
+            if docker exec valkey valkey-cli ping 2>/dev/null | grep -q PONG; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo '::error::Valkey did not answer PING within 30 seconds'
+          docker logs valkey
+          exit 1
+
+      - name: Build benchmarks
+        run: dotnet build benchmarks/Respire.GlideComparisonBenchmarks -c Release -f net10.0
+
+      - name: Record dependency and rig metadata
+        run: |
+          artifacts=benchmarks/Respire.GlideComparisonBenchmarks/BenchmarkDotNet.Artifacts
+          mkdir -p "$artifacts"
+          cp benchmarks/Respire.GlideComparisonBenchmarks/obj/project.assets.json "$artifacts/project.assets.json"
+          {
+            echo "Commit: $(git rev-parse HEAD)"
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "Runner image: $ImageOS $ImageVersion"
+            echo 'Server endpoint: localhost:6379 (Docker port mapping, no TLS)'
+            echo "Server image: $VALKEY_IMAGE"
+            docker inspect valkey --format 'Server image ID: {{.Image}}'
+            docker exec valkey valkey-server --version
+            uname -a
+            lscpu
+            dotnet --info
+            python3 -c 'import json; a=json.load(open("benchmarks/Respire.GlideComparisonBenchmarks/obj/project.assets.json")); print("Resolved dependencies:"); print("\n".join(sorted(a["libraries"])))'
+          } > "$artifacts/rig.txt"
+
+      - name: Run comparison benchmarks
+        working-directory: benchmarks/Respire.GlideComparisonBenchmarks
+        env:
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          BENCH_FILTER: ${{ inputs.filter || '*' }}
+          BENCH_JOB: ${{ inputs.job || 'short' }}
+        run: |
+          dotnet run -c Release -f net10.0 --no-build -- \
+            --filter "$BENCH_FILTER" \
+            --job "$BENCH_JOB" \
+            --launchCount 2 \
+            --statisticalTest 5% \
+            --exporters json markdown \
+            --artifacts ./BenchmarkDotNet.Artifacts
+
+      - name: Publish results to job summary
+        if: always()
+        run: |
+          echo "## Respire vs Valkey GLIDE (net10.0)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Baseline is Valkey GLIDE. A Ratio below 1.00 means Respire is faster." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          ARTIFACTS_DIR="benchmarks/Respire.GlideComparisonBenchmarks/BenchmarkDotNet.Artifacts"
+          if [ -f "$ARTIFACTS_DIR/rig.txt" ]; then
+            echo '<details><summary>Dependency versions and rig</summary>' >> $GITHUB_STEP_SUMMARY
+            echo '' >> $GITHUB_STEP_SUMMARY
+            echo '```text' >> $GITHUB_STEP_SUMMARY
+            cat "$ARTIFACTS_DIR/rig.txt" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo '</details>' >> $GITHUB_STEP_SUMMARY
+            echo '' >> $GITHUB_STEP_SUMMARY
+          fi
+          if compgen -G "$ARTIFACTS_DIR/results/*-report-github.md" > /dev/null; then
+            cat "$ARTIFACTS_DIR"/results/*-report-github.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No benchmark results found in $ARTIFACTS_DIR/results" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: valkey-glide-benchmarks-net10.0
+          path: benchmarks/Respire.GlideComparisonBenchmarks/BenchmarkDotNet.Artifacts/
+          retention-days: 90
