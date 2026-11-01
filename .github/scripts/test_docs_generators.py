@@ -101,6 +101,50 @@ class BenchmarkDocsTests(unittest.TestCase):
         self.assertIn('respireLabel="Respire cache hit"', document)
         self.assertIn('"respireServer":145000.0', document)
 
+    def test_multiple_runs_publish_median_ratio(self) -> None:
+        run_means = {1: ("100 μs", "110 μs"), 2: ("100 μs", "95 μs"), 3: ("100 μs", "101 μs")}
+        cpus = {1: "AMD EPYC 9V74", 2: "AMD EPYC 7763", 3: "AMD EPYC 7763"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reports = []
+            for run, (baseline, respire) in run_means.items():
+                report = (
+                    root
+                    / f"comparison-benchmarks-net10.0-round-{run}"
+                    / "results"
+                    / "Respire.Benchmarks.CommonOperationsBenchmarks-report-github.md"
+                )
+                report.parent.mkdir(parents=True)
+                report.write_text(
+                    f"```\nBenchmarkDotNet v0.15.8, Linux\n{cpus[run]} 3.69GHz, 1 CPU\n```\n"
+                    "| Method | Categories | Mean | Ratio |\n"
+                    "|---|---|---:|---:|\n"
+                    f"| StackExchange_Get | GET | {baseline} | 1.00 |\n"
+                    f"| Respire_Get | GET | {respire} | 0.00 |",
+                    encoding="utf-8",
+                )
+                reports.append(report)
+
+            document = benchmark_docs.build_document(
+                reports, root, "abc", "now", "https://example.test/run"
+            )
+
+        self.assertIn("## net10.0", document)
+        self.assertNotIn("round", document)
+        self.assertIn("Every benchmark ran 3 times", document)
+        # Run 3 holds the median ratio (1.01), so the chart uses its real pair.
+        self.assertIn('"other":100000.0,"respire":101000.0', document)
+        self.assertIn("| Respire_Get | GET | 1.10 | 0.95 | 1.01 | **1.01** |", document)
+        self.assertIn("- Run 1: AMD EPYC 9V74 3.69GHz", document)
+        self.assertIn("#### Run 2", document)
+
+    def test_parses_round_before_version_suffix(self) -> None:
+        root = Path("results")
+        report = root / "comparison-benchmarks-net10.0-round-2-seredis-3.4.5" / "r-report-github.md"
+
+        self.assertEqual("net10.0", benchmark_docs._framework_for(report, root))
+        self.assertEqual(2, benchmark_docs._round_for(report, root))
+
     def test_rejects_missing_reports(self) -> None:
         with self.assertRaisesRegex(ValueError, "No BenchmarkDotNet reports"):
             benchmark_docs.build_document([], Path("results"), "abc", "now", "run")
