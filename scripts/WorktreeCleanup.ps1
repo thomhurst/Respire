@@ -3,7 +3,9 @@
 # Remove-MergedWorktrees.ps1 and Remove-ReleasedWorktree.ps1. Not meant to be run directly.
 #
 # Cleanup policy (one place, every caller):
-#   - PRESERVE tracked changes and untracked/ignored files outside known generated paths.
+#   - PRESERVE tracked changes and untracked/ignored files outside known generated paths,
+#     except that a closed work item's tracked and untracked changes are saved to a
+#     retained branch before its checkout is removed (unknown ignored files still preserve it).
 #   - CLEAR known build artifacts and root-level workflow output covered by .gitignore.
 #   - REMOVE a merged checkout (Remove-MergedWorktree) only while every Redis identity
 #     that can own it is reserved by the remover, never after a FREE status check.
@@ -305,16 +307,73 @@ function Get-WorktreeOwnershipBlocker {
     return $null
 }
 
+# Returns the porcelain status entries that are not disposable generated output.
+function Get-WorktreeUncommittedWork {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Status)
+
+    return @($Status | Where-Object {
+        if ($_ -notmatch '^(\?\?|!!) ') { return $true }
+        return -not (Test-DisposableWorktreePath -Path $_.Substring(3))
+    })
+}
+
 function Get-WorktreeStatusBlocker {
     param([Parameter(Mandatory)][string]$Worktree)
     $status = @(git -C $Worktree status --porcelain=v1 --untracked-files=all --ignored=matching 2>$null)
     if ($LASTEXITCODE -ne 0) { return 'could not inspect worktree status' }
-    $work = @($status | Where-Object {
-        if ($_ -notmatch '^(\?\?|!!) ') { return $true }
-        return -not (Test-DisposableWorktreePath -Path $_.Substring(3))
-    })
+    $work = @(Get-WorktreeUncommittedWork -Status $status)
     if ($work.Count -gt 0) { return "uncommitted work: $($work -join ', ')" }
     return $null
+}
+
+# Saves the tracked and untracked changes of a worktree as a stash commit on the branch
+# `retained-worktrees/<name>-wip-<sha12>`, leaving the checkout clean. Restore it anywhere
+# with `git stash apply <branch>`. Ignored files are not saved, so a caller that re-checks
+# the status still preserves unknown ones. Throws when nothing could be saved.
+function Save-WorktreeUncommittedWork {
+    param(
+        [Parameter(Mandatory)][string]$Repo,
+        [Parameter(Mandatory)][string]$Worktree,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    $before = git -C $Repo rev-parse -q --verify refs/stash 2>$null
+    git -C $Worktree stash push --include-untracked --quiet -m "retained worktree $Name" 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'git stash failed' }
+    $stash = git -C $Repo rev-parse -q --verify refs/stash 2>$null
+    if (-not $stash -or $stash -eq $before) { throw 'git stash saved nothing' }
+    $stash = $stash.Trim()
+    $branch = "retained-worktrees/$Name-wip-$($stash.Substring(0, 12))"
+    git -C $Repo branch $branch $stash 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "could not create $branch; the changes remain in git stash list" }
+    # The stash stack is shared by every worktree; drop only the entry created here.
+    if ((git -C $Repo rev-parse -q --verify 'stash@{0}' 2>$null) -eq $stash) {
+        git -C $Repo stash drop --quiet 'stash@{0}' 2>$null | Out-Null
+    }
+    return $branch
+}
+
+# Keeps a detached HEAD reachable from `retained-worktrees/<SHA>` after Git prunes the
+# worktree reflog. Never moves an existing branch. Throws when HEAD cannot be retained.
+function Save-DetachedWorktreeHead {
+    param(
+        [Parameter(Mandatory)][string]$Repo,
+        [Parameter(Mandatory)][string]$Worktree
+    )
+
+    git -C $Worktree symbolic-ref -q HEAD 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { return }
+    $head = git -C $Worktree rev-parse HEAD 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $head) { throw "Cannot resolve HEAD: $Worktree" }
+    $head = $head.Trim()
+    $branch = "retained-worktrees/$head"
+    $existing = git -C $Repo rev-parse -q --verify "refs/heads/$branch" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        git -C $Repo branch $branch $head 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Cannot retain detached HEAD: $Worktree" }
+    } elseif ($existing -ne $head) {
+        throw "Retention branch has moved: $branch"
+    }
 }
 
 function Clear-CompletedWorktreeArtifacts {
@@ -521,6 +580,9 @@ function Remove-RemovedWorktreeBranches {
 # checkout and anything inside it, other repositories, Git-locked worktrees, a changed HEAD,
 # tracked changes, and untracked or ignored files outside known generated output. A failed
 # deletion (a busy directory on Windows) leaves a pending record that the next sweep finishes.
+# -RetainWorkName (a closed work item) instead saves tracked and untracked changes to
+# `retained-worktrees/<name>-wip-<sha12>` and a detached HEAD to `retained-worktrees/<SHA>`
+# before removal; unknown ignored files still preserve the checkout.
 # Returns $true when the checkout is gone, 'preview' when -WhatIf would remove it.
 function Remove-MergedWorktree {
     param(
@@ -529,6 +591,7 @@ function Remove-MergedWorktree {
         [Parameter(Mandatory)][string]$ExpectedHead, # tip the caller verified as merged
         [string[]]$LockNames = @(),                # merge-evidence identities for a pending retry
         [string]$DeleteBranch,
+        [string]$RetainWorkName,                  # closed work item whose changes are retained
         [string]$Label = '',
         [switch]$WhatIf
     )
@@ -563,10 +626,35 @@ function Remove-MergedWorktree {
     if (Test-Path -LiteralPath (Join-Path $gitDirectory 'locked')) { return & $keep 'Git worktree is locked' }
     $head = git -C $Worktree rev-parse HEAD 2>$null
     if ($LASTEXITCODE -ne 0 -or $head -ne $ExpectedHead) { return & $keep 'merged HEAD is missing or changed' }
-    $blocker = Get-WorktreeStatusBlocker -Worktree $Worktree
-    if ($blocker) { return & $keep $blocker }
+    $status = @(git -C $Worktree status --porcelain=v1 --untracked-files=all --ignored=matching 2>$null)
+    if ($LASTEXITCODE -ne 0) { return & $keep 'could not inspect worktree status' }
+    $work = @(Get-WorktreeUncommittedWork -Status $status)
+    # A stash cannot carry ignored files (secrets, local settings), so they always
+    # preserve the checkout.
+    if ($work.Count -gt 0 -and (-not $RetainWorkName -or @($work | Where-Object { $_.StartsWith('!! ') }).Count -gt 0)) {
+        return & $keep "uncommitted work: $($work -join ', ')"
+    }
 
-    if ($WhatIf) { Write-Host "sweep: WOULD remove $Worktree -- $Label"; return 'preview' }
+    if ($WhatIf) {
+        $retained = if ($work.Count -gt 0) { " (saving $($work.Count) uncommitted entr(ies) to a retained branch)" } else { '' }
+        Write-Host "sweep: WOULD remove $Worktree -- $Label$retained"
+        return 'preview'
+    }
+
+    if ($RetainWorkName) {
+        # Nothing will come back for a closed item's checkout. Keep everything it holds
+        # reachable from a branch instead of keeping the directory.
+        try {
+            if ($work.Count -gt 0) {
+                $saved = Save-WorktreeUncommittedWork -Repo $Repo -Worktree $Worktree -Name $RetainWorkName
+                Write-Host "Saved uncommitted work of $Worktree to $saved (restore with: git stash apply $saved)"
+                $blocker = Get-WorktreeStatusBlocker -Worktree $Worktree
+                if ($blocker) { return & $keep "after saving, $blocker" }
+            }
+            Save-DetachedWorktreeHead -Repo $Repo -Worktree $Worktree
+        }
+        catch { return & $keep "could not retain its work: $_" }
+    }
 
     $pendingBranch = Get-DeferredRemoteBranchCleanup -GitDirectory $gitDirectory
     $localBranch = if ($DeleteBranch) { [ordered]@{ Branch = $DeleteBranch; ExpectedHead = $ExpectedHead } } else { $null }

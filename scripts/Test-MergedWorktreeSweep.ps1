@@ -16,6 +16,7 @@ $global:sweepTestMerged = @()
 $global:sweepTestOpen = @()
 $global:sweepTestAssociation = @()
 $global:sweepTestAfterRemove = @{}
+$global:sweepTestClosed = @()
 $holder = $null
 
 function Invoke-TestGit {
@@ -87,6 +88,9 @@ function global:git {
 function global:gh {
     $global:LASTEXITCODE = 0
     if ($args[0] -eq 'repo') { return 'fixture/repo' }
+    if ($args[0] -eq 'api' -and $args[1] -match '/issues/(\d+)$') {
+        return $(if ([int]$Matches[1] -in $global:sweepTestClosed) { 'closed' } else { 'open' })
+    }
     if ($args[0] -eq 'api') { return ConvertTo-Json -InputObject @($global:sweepTestAssociation) -Compress }
     if ($args -contains 'merged') { return ConvertTo-Json -InputObject @($global:sweepTestMerged) -Compress }
     if ($args -contains 'open') { return ConvertTo-Json -InputObject @($global:sweepTestOpen) -Compress }
@@ -169,6 +173,21 @@ exit 0
         New-Item -ItemType Junction -Path (Join-Path $junction 'bin/pkg') -Target $outside | Out-Null
     }
 
+    # Closed work items that no merge tier recognizes: a review branch named differently
+    # from the PR head, with a local commit and uncommitted changes, and a detached commit.
+    $global:sweepTestClosed = @(500, 501, 503, 504)
+    $closedReview = New-Checkout 'pr-500-harness' -Branch 'pr-500-harness-review'
+    $closedReviewHead = Add-Commit $closedReview
+    $global:sweepTestMerged += [pscustomobject]@{ number = 500; mergedAt = '2020-01-01T00:00:00Z'; headRefName = 'pr-500-harness'; headRefOid = $main }
+    Set-Content -LiteralPath (Join-Path $closedReview 'source.txt') -Value 'uncommitted edit'
+    Set-Content -LiteralPath (Join-Path $closedReview 'Draft.cs') -Value 'untracked draft'
+    $closedDetached = New-Checkout 'issue-501-detached' -Detached
+    $closedDetachedHead = Add-Commit $closedDetached
+    # Another worktree's stash entry must survive the save of the closed item's changes.
+    Set-Content -LiteralPath (Join-Path $repo 'source.txt') -Value 'unrelated stash'
+    Invoke-TestGit -C $repo stash push -m 'unrelated'
+    $unrelatedStash = (& $gitExecutable -C $repo rev-parse refs/stash).Trim()
+
     # --- Checkouts the sweep must preserve. -------------------------------------------
     $preserved = [ordered]@{}
     foreach ($state in @('HELD', 'ERROR', 'RACE')) {
@@ -203,6 +222,15 @@ exit 0
     $null = Add-Commit $preserved['harness-managed']
     $global:sweepTestMerged += [pscustomobject]@{ number = 223; mergedAt = '2020-01-01T00:00:00Z'; headRefName = 'pr-223-harness'
         headRefOid = (& $gitExecutable -C $preserved['harness-managed'] rev-parse HEAD).Trim() }
+    $preserved['open work item'] = New-Checkout 'pr-502-open-item'
+    $null = Add-Commit $preserved['open work item']
+    Set-Content -LiteralPath (Join-Path $preserved['open work item'] 'Draft.cs') -Value 'open draft'
+    $preserved['closed item with unknown ignored file'] = New-Checkout 'pr-503-ignored'
+    $null = Add-Commit $preserved['closed item with unknown ignored file']
+    Set-Content -LiteralPath (Join-Path $preserved['closed item with unknown ignored file'] '.env') -Value 'SECRET=1'
+    Set-Content -LiteralPath (Join-Path $preserved['closed item with unknown ignored file'] 'Draft.cs') -Value 'draft'
+    $preserved['closed item with another lock identity'] = New-Checkout 'pr-504-custom' -Marker 'benchmark-run'
+    $null = Add-Commit $preserved['closed item with another lock identity']
     $orphan = Join-Path $worktreeRoot 'pr-201-orphan'
     New-Item -ItemType Directory -Path $orphan | Out-Null
     Set-Content -LiteralPath (Join-Path $orphan '.git') -Value "gitdir: $(Join-Path $repo '.git/worktrees/missing-gitdir')"
@@ -211,7 +239,7 @@ exit 0
 
     # --- -WhatIf reads lock status only and deletes nothing. ---------------------------
     Invoke-Sweep -Preview
-    foreach ($path in @($released, $adHoc, $branchRace, $checkoutRace, $setup, $staleSnapshot) + @($preserved.Values)) {
+    foreach ($path in @($released, $adHoc, $branchRace, $checkoutRace, $setup, $staleSnapshot, $closedReview, $closedDetached) + @($preserved.Values)) {
         Assert (Test-Path -LiteralPath $path) "WhatIf removed $path"
     }
     Assert (Test-Path -LiteralPath (Join-Path $released 'bin/generated.dll')) 'WhatIf cleared generated output.'
@@ -219,6 +247,11 @@ exit 0
     Assert (@($script:calls | Where-Object { $_ -notlike 'status *' }).Count -eq 0) "WhatIf acquired or released a lock: $($script:calls -join '; ')"
     Assert ($script:sweepOutput -match 'WOULD remove \S*pr-201-released') 'WhatIf did not report the removable checkout.'
     Assert (Test-Path -LiteralPath $setupLockFile) 'WhatIf unlocked a setup lock.'
+    Assert ($script:sweepOutput -match 'WOULD remove \S*pr-500-harness -- \(closed work item pr-500\) \(saving 2 uncommitted') 'WhatIf did not report retained closed-item work.'
+    Assert ($script:sweepOutput -match 'WOULD remove \S*issue-501-detached -- \(closed work item issue-501\)') 'WhatIf did not report the closed detached checkout.'
+    Assert (Test-Path -LiteralPath (Join-Path $closedReview 'Draft.cs')) 'WhatIf saved or removed closed-item work.'
+    Assert (@(& $gitExecutable -C $repo for-each-ref 'refs/heads/retained-worktrees/').Count -eq 0) 'WhatIf created a retained branch.'
+    Assert (@(& $gitExecutable -C $repo stash list).Count -eq 1) 'WhatIf changed the stash.'
 
     # --- Real sweep. -------------------------------------------------------------------
     Invoke-Sweep
@@ -239,6 +272,22 @@ exit 0
     Assert ($LASTEXITCODE -eq 0 -and $branchHead -eq $oldMain) 'A branch that moved after removal was deleted.'
     Assert (-not (Test-Path -LiteralPath $checkoutRace)) 'Checkout-race checkout was not removed.'
     Assert ((& $gitExecutable -C $replacementCheckout symbolic-ref HEAD) -eq 'refs/heads/pr-216-checkout-race') 'A branch checked out again after removal was deleted.'
+
+    # Closed work items: the checkout goes, its work stays on branches.
+    Assert (-not (Test-Path -LiteralPath $closedReview)) 'A closed PR review checkout was not removed.'
+    Assert ([bool]($script:calls -match '^acquire pr-500$')) 'Closed-item removal did not reserve the item lock.'
+    Assert ((& $gitExecutable -C $repo rev-parse refs/heads/pr-500-harness-review) -eq $closedReviewHead) 'The closed item branch was not kept.'
+    $wip = @(& $gitExecutable -C $repo for-each-ref --format='%(refname:short)' 'refs/heads/retained-worktrees/pr-500-wip-*')
+    Assert ($wip.Count -eq 1) 'Uncommitted work was not saved to a retained branch.'
+    Assert ((& $gitExecutable -C $repo show "$($wip[0]):source.txt") -eq 'uncommitted edit') 'The saved tracked change is wrong.'
+    Assert ((& $gitExecutable -C $repo show "$($wip[0])^3:Draft.cs") -eq 'untracked draft') 'The saved untracked file is wrong.'
+    $stashes = @(& $gitExecutable -C $repo stash list --format=%H)
+    Assert ($stashes.Count -eq 1 -and $stashes[0] -eq $unrelatedStash) 'Saving work left a stash entry or dropped another one.'
+    Assert (-not (Test-Path -LiteralPath $closedDetached)) 'A closed detached checkout was not removed.'
+    Assert ((& $gitExecutable -C $repo rev-parse "refs/heads/retained-worktrees/$closedDetachedHead") -eq $closedDetachedHead) 'The detached commit was not retained.'
+    Assert (Test-Path -LiteralPath (Join-Path $preserved['open work item'] 'Draft.cs')) 'Open item work was lost.'
+    Assert (Test-Path -LiteralPath (Join-Path $preserved['closed item with unknown ignored file'] 'Draft.cs')) 'Work beside an unknown ignored file was stashed.'
+    Assert ((Get-Lock 'pr-503') -eq 'FREE') 'Preserving a closed item leaked its reservation.'
 
     # A merged named branch at a non-canonical path takes its PR's identity.
     Assert (Test-Path -LiteralPath $adHoc) 'A merged branch checkout was removed while its PR lock was held.'
@@ -307,13 +356,13 @@ exit 0
     Assert (Test-Path -LiteralPath $foreignWorktree) 'Another repository''s checkout was removed.'
     $null = Remove-MergedWorktree -Repo $repo -Worktree $repo -ExpectedHead $main
     Assert (Test-Path -LiteralPath (Join-Path $repo 'source.txt')) 'The main checkout was removed.'
-    Write-Host 'OK merged worktree sweep removes released merged checkouts and preserves owned, dirty, open, fresh, locked and unidentified work.'
+    Write-Host 'OK merged worktree sweep removes released merged checkouts and closed-item checkouts with their work retained, and preserves owned, dirty, open, fresh, locked and unidentified work.'
 }
 finally {
     if ($holder) { Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue }
     Pop-Location -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath Function:\git, Function:\gh -ErrorAction SilentlyContinue
-    Remove-Variable -Name sweepTestGit, sweepTestMerged, sweepTestOpen, sweepTestAssociation, sweepTestAfterRemove -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable -Name sweepTestGit, sweepTestMerged, sweepTestOpen, sweepTestAssociation, sweepTestAfterRemove, sweepTestClosed -Scope Global -ErrorAction SilentlyContinue
     # The fixture root is uniquely created above; never operate on repository worktrees.
     if (-not ([IO.Path]::GetFullPath($testRoot)).StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()), [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe fixture cleanup path.' }
     if (Test-Path -LiteralPath $outside) { Remove-Item -LiteralPath (Join-Path $testRoot '*-junction') -Force -Recurse -ErrorAction SilentlyContinue }

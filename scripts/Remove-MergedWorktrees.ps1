@@ -9,6 +9,14 @@
 # A branch/path name, old commit date, or deleted upstream never proves that the
 # current tip is disposable. Unpublished follow-up commits must survive.
 #
+# CLOSED WORK ITEMS (`gh api repos/../issues/<N>`, only for checkouts still unmatched):
+#   When every lock identity of a checkout is a pr-<N>/issue-<N> item that GitHub reports
+#   closed, its checkout is removed but its work is retained: the branch is kept,
+#   tracked and untracked changes are saved to `retained-worktrees/<item>-wip-<sha12>`
+#   (restore with `git stash apply <branch>`), and a detached HEAD to
+#   `retained-worktrees/<SHA>`. This catches review branches named differently from the
+#   PR head, local commits after a merge, and PRs closed unmerged.
+#
 # REMOVAL (Remove-MergedWorktree in WorktreeCleanup.ps1):
 #   Every Redis identity that can own the checkout (its lock marker, pr-<N>/issue-<N> in
 #   its directory or branch name, and pr-<N> when its named branch is that merged PR's own
@@ -43,7 +51,11 @@
 #   - skip a branch/tip that has an OPEN PR (branch reused for active work)
 #   - skip a named branch with no commits beyond origin/main unless the canonical
 #     pr-<N> path + branch identity of a merged PR proves it
-#   - PRESERVE tracked changes and untracked/ignored files outside known generated output
+#   - PRESERVE tracked changes and untracked/ignored files outside known generated output,
+#     except that a closed work item's tracked and untracked changes move to a retained
+#     branch; unknown ignored files (secrets, local settings) always preserve the checkout
+#   - never delete the local branch of a closed work item, and never drop a stash entry
+#     other than the one created to retain its changes
 #   - worktrees with NO merge evidence are kept and listed; opt in to reaping old
 #     published detached snapshots with -StaleDays <n>
 # -WhatIf only reads lock status: it acquires nothing and deletes nothing.
@@ -216,6 +228,30 @@ try {
             }
         }
 
+        # Closed work item: every identity of the checkout is a pr-<N>/issue-<N> item that
+        # GitHub reports closed (merged or not). Catches review branches named differently
+        # from the PR head, local commits after a merge, and PRs closed unmerged. Nothing
+        # comes back for such a checkout, so removal retains its work instead of the
+        # directory: the branch is kept and uncommitted changes and a detached HEAD are
+        # saved to retained-worktrees/ branches (Remove-MergedWorktree -RetainWorkName).
+        $retainWorkName = ''
+        if (-not $why -and $slug) {
+            try { $itemNames = @(Get-WorktreeAgentLockNames -Worktree $w.Path) } catch { $itemNames = @() }
+            if ($itemNames.Count -gt 0 -and @($itemNames | Where-Object { $_ -cnotmatch '^(pr|issue)-\d+$' }).Count -eq 0) {
+                $allClosed = $true
+                foreach ($itemName in $itemNames) {
+                    # The issues endpoint also serves pull requests; a merged PR is closed.
+                    $state = gh api "repos/$slug/issues/$($itemName.Substring($itemName.IndexOf('-') + 1))" --jq .state 2>$null
+                    if ($LASTEXITCODE -ne 0 -or ($state | Out-String).Trim() -cne 'closed') { $allClosed = $false; break }
+                }
+                if ($allClosed) {
+                    $why = "closed work item $($itemNames -join ', ')"
+                    try { $marker = Get-WorktreeLockMarker -Worktree $w.Path } catch { $marker = $null }
+                    $retainWorkName = if ($marker) { $marker } else { $itemNames[0] }
+                }
+            }
+        }
+
         # Age can select only already-published detached snapshots. It never authorizes
         # deleting clean unpublished commits or a fresh branch, even with stale cleanup.
         if (-not $why -and -not $freshBranch -and $StaleDays -gt 0 -and $mainTip) {
@@ -232,10 +268,11 @@ try {
 
         # Delete the local branch only for merged-PR evidence. It is deleted while the
         # reservation is held, only at the merged head and only when no checkout uses it.
-        $branchToDelete = if ($w.Branch -and -not $w.Detached -and $why -notlike 'published snapshot*') { $w.Branch } else { '' }
+        # A closed item's branch is always kept: it may hold commits that never merged.
+        $branchToDelete = if ($w.Branch -and -not $w.Detached -and -not $retainWorkName -and $why -notlike 'published snapshot*') { $w.Branch } else { '' }
         $outcome = @(Invoke-WithWorktreeCleanupLocks -Repo $mainRepo -Worktree $w.Path -LockNames $evidenceLocks -Preview:$WhatIf -Action {
             Remove-MergedWorktree -Repo $mainRepo -Worktree $w.Path -ExpectedHead $sha -LockNames $evidenceLocks `
-                -DeleteBranch $branchToDelete -Label "($why)" -WhatIf:$WhatIf
+                -DeleteBranch $branchToDelete -RetainWorkName $retainWorkName -Label "($why)" -WhatIf:$WhatIf
         })
         if ($outcome.Count -gt 0 -and ($outcome[-1] -is [bool] -and $outcome[-1] -or $outcome[-1] -eq 'preview')) { $removed++ }
     }
