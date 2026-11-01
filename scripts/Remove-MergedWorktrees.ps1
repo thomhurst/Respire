@@ -29,7 +29,10 @@
 #
 # AGENT EVIDENCE:
 #   Entries under <main checkout>-evidence/ (one folder per work item) are removed once
-#   their newest write is older than -EvidenceRetentionDays (default 7).
+#   their pr-<N>/issue-<N> item is closed (merged or not) and no registered worktree
+#   still resolves to that lock name, while a temporary Redis lease on the item is held.
+#   Any other entry is removed once its newest write is older than -EvidenceRetentionDays
+#   (default 7). If any worktree identity is unreadable, finished evidence is kept.
 #
 # Guards (never delete work):
 #   - skip the main checkout and anything inside it (.claude/worktrees is harness-managed)
@@ -299,11 +302,43 @@ try {
         }
     }
 
-    $evidenceRemoved = Remove-StaleAgentEvidence -Root (Get-AgentEvidenceRoot -MainCheckout $mainRepo) -RetentionDays $EvidenceRetentionDays -WhatIf:$WhatIf
+    # Evidence of a finished item goes with its last worktree. Work items still named by
+    # a registered worktree (or any whose identity cannot be read) keep their evidence.
+    $evidenceRoot = Get-AgentEvidenceRoot -MainCheckout $mainRepo
+    $finishedEntries = @()
+    if ($slug) {
+        $activeLockNames = [Collections.Generic.List[string]]::new()
+        $identitiesReadable = $true
+        foreach ($line in (git -C $mainRepo worktree list --porcelain)) {
+            if ($line -notlike 'worktree *') { continue }
+            $path = $line.Substring(9)
+            if ($path -eq $mainRepo) { continue }
+            # A registration whose .git file is gone resolves by its directory name only.
+            try { $activeLockNames.AddRange([string[]]@(Get-WorktreeAgentLockNames -Worktree $path -Orphan:(-not (Test-IsLinkedWorktree -Path $path)))) }
+            catch { $identitiesReadable = $false }
+        }
+        if ($identitiesReadable) {
+            $isClosed = {
+                param([string]$LockName)
+                $number = $LockName.Substring($LockName.IndexOf('-') + 1)
+                # The issues endpoint also serves pull requests; a merged PR is closed.
+                $state = gh api "repos/$slug/issues/$number" --jq .state 2>$null
+                if ($LASTEXITCODE -ne 0) { throw "could not read state of $LockName" }
+                return ($state | Out-String).Trim() -ceq 'closed'
+            }
+            $finishedEntries = @(Remove-FinishedAgentEvidence -Root $evidenceRoot -AgentLocks (Join-Path $mainRepo 'scripts/AgentLocks.ps1') `
+                -IsClosed $isClosed -ActiveLockNames $activeLockNames.ToArray() -WhatIf:$WhatIf)
+        }
+        else {
+            Warn 'could not read every worktree identity -- keeping finished evidence this round'
+        }
+    }
+
+    $staleRemoved = Remove-StaleAgentEvidence -Root $evidenceRoot -RetentionDays $EvidenceRetentionDays -Skip $finishedEntries -WhatIf:$WhatIf
 
     if (-not $WhatIf) { git -C $mainRepo worktree prune }
     $verb = if ($WhatIf) { 'would remove' } else { 'removed' }
-    Write-Host "sweep: $verb $removed merged worktree(s); finished $pendingRemoved pending removal(s); preserved $orphansPreserved orphaned dir(s) for manual recovery; $verb $evidenceRemoved stale evidence entr(ies) older than $EvidenceRetentionDays day(s)."
+    Write-Host "sweep: $verb $removed merged worktree(s); finished $pendingRemoved pending removal(s); preserved $orphansPreserved orphaned dir(s) for manual recovery; $verb $($finishedEntries.Count) finished-item and $staleRemoved stale evidence entr(ies) (stale: older than $EvidenceRetentionDays day(s))."
 }
 catch {
     Warn "unexpected sweep error (ignored, loop continues): $_"

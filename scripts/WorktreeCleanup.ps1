@@ -9,8 +9,9 @@
 #     that can own it is reserved by the remover, never after a FREE status check.
 #     A checkout without a recoverable identity is preserved.
 #   - DETACH directory junctions and symlinks before deleting, so no delete follows a link.
-#   - DELETE agent evidence (<main checkout>-evidence/<lock name>/) once its newest write
-#     is older than the retention window; it lives outside every checkout.
+#   - DELETE agent evidence (<main checkout>-evidence/<lock name>/) of a pr-<N>/issue-<N>
+#     item once it is closed and no registered worktree uses it, under a temporary Redis
+#     lease, and any other entry once its newest write is older than the retention window.
 
 # A named branch whose tip is already on main has no commits of its own: it was just
 # cut from main, or never got work. Its tip is main's tip, so commit association and
@@ -622,7 +623,7 @@ function Remove-WorktreeDirectoryLinks {
 # AGENT EVIDENCE
 # Agents keep logs, reports and PR-body drafts for a work item under
 # <main checkout>-evidence/<lock name>/, beside the worktree root, so nothing lands
-# loose in the parent directory. Evidence matters only while its item is active.
+# loose in the parent directory. Evidence matters only while its item is open.
 function Get-AgentEvidenceRoot {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$MainCheckout)
@@ -631,12 +632,14 @@ function Get-AgentEvidenceRoot {
 }
 
 # Removes each top-level entry of the evidence root whose newest write is older than
-# the retention window. Returns the number of entries removed (or that would be).
+# the retention window, except entries named in -Skip (already handled by the finished
+# pass, which -WhatIf leaves on disk). Returns the number of entries removed (or that would be).
 function Remove-StaleAgentEvidence {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][int]$RetentionDays,
+        [AllowEmptyCollection()][string[]]$Skip = @(),
         [switch]$WhatIf
     )
 
@@ -644,6 +647,7 @@ function Remove-StaleAgentEvidence {
     $cutoff = [DateTime]::UtcNow.AddDays(-$RetentionDays)
     $removed = 0
     foreach ($entry in (Get-ChildItem -LiteralPath $Root -Force -ErrorAction SilentlyContinue)) {
+        if ($entry.Name -cin $Skip) { continue }
         if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
             Write-Host "sweep: skipping evidence entry that is a link: $($entry.FullName)"
             continue
@@ -655,21 +659,100 @@ function Remove-StaleAgentEvidence {
         }
         $newest = ($items | Measure-Object -Property LastWriteTimeUtc -Maximum).Maximum
         if ($newest -ge $cutoff) { continue }
-        if ($WhatIf) {
-            Write-Host "sweep: WOULD remove stale evidence $($entry.FullName)"
-            $removed++
-            continue
-        }
-        if ($entry.PSIsContainer -and -not (Remove-WorktreeDirectoryLinks -Worktree $entry.FullName -Label '(evidence)')) { continue }
-        Remove-Item -LiteralPath $entry.FullName -Recurse -Force -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath $entry.FullName) {
-            Write-Host "sweep: WARNING could not remove stale evidence $($entry.FullName)"
-            continue
-        }
-        Write-Host "sweep: removed stale evidence $($entry.FullName)"
-        $removed++
+        if (Remove-AgentEvidenceEntry -Entry $entry -Kind 'stale' -WhatIf:$WhatIf) { $removed++ }
     }
     return $removed
+}
+
+# Removes the evidence of finished work items: each `pr-<N>` or `issue-<N>` folder whose
+# item is closed (merged or not) and that no registered worktree still resolves to.
+# Evidence of an open item survives release, because the merge gate cites archives across
+# units. A temporary Redis lease on the item is acquired and held through deletion, so a
+# new owner cannot start writing midway; a held or unavailable lease, or an unreadable
+# item state, keeps the evidence. -WhatIf only reads lock status (FREE is required).
+# Returns the names of the entries removed (or that would be).
+function Remove-FinishedAgentEvidence {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$AgentLocks,     # the primary checkout's AgentLocks.ps1
+        # Receives the lock name; returns $true only when the item is confirmed closed.
+        [Parameter(Mandatory)][scriptblock]$IsClosed,
+        [AllowEmptyCollection()][string[]]$ActiveLockNames = @(),
+        [switch]$WhatIf
+    )
+
+    $removed = [Collections.Generic.List[string]]::new()
+    if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return $removed.ToArray() }
+    if (-not (Test-Path -LiteralPath $AgentLocks -PathType Leaf)) {
+        Write-Host 'sweep: canonical lock script is unavailable; keeping finished evidence'
+        return $removed.ToArray()
+    }
+    $active = New-OrdinalStringMap
+    foreach ($name in $ActiveLockNames) { if ($name) { $active[$name] = $true } }
+
+    foreach ($entry in (Get-ChildItem -LiteralPath $Root -Directory -Force -ErrorAction SilentlyContinue)) {
+        $name = $entry.Name
+        if ($name -cnotmatch '^(pr|issue)-\d+$' -or $active.ContainsKey($name)) { continue }
+        try { if (-not (& $IsClosed $name)) { continue } }
+        catch {
+            Write-Host "sweep: could not read the state of $name; keeping its evidence"
+            continue
+        }
+
+        $owner = "evidence-cleanup-$([Guid]::NewGuid().ToString('N'))"
+        if ($WhatIf) {
+            $state = @(& pwsh -NoProfile -File $AgentLocks status -LockName $name -OwnerId $owner 2>$null)
+            $leased = $LASTEXITCODE -eq 0 -and $state.Count -eq 1 -and $state[0] -eq 'FREE'
+        }
+        else {
+            # Acquire prints a token. Never forward it.
+            $null = @(& pwsh -NoProfile -File $AgentLocks acquire -LockName $name -OwnerId $owner 2>&1)
+            $leased = $LASTEXITCODE -eq 0
+        }
+        if (-not $leased) {
+            Write-Host "sweep: keeping evidence of $name (Redis lock '$name' is held or could not be reserved)"
+            continue
+        }
+        try {
+            if (Remove-AgentEvidenceEntry -Entry $entry -Kind 'finished' -WhatIf:$WhatIf) { $removed.Add($name) }
+        }
+        finally {
+            if (-not $WhatIf) {
+                $null = @(& pwsh -NoProfile -File $AgentLocks release -LockName $name -OwnerId $owner 2>&1)
+                if ($LASTEXITCODE -ne 0) { Write-Host "WARNING: could not release evidence cleanup reservation $name." }
+            }
+        }
+    }
+    return $removed.ToArray()
+}
+
+# Deletes one top-level evidence entry without following links. Returns whether it is
+# gone (or, with -WhatIf, would be removed).
+function Remove-AgentEvidenceEntry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][IO.FileSystemInfo]$Entry,
+        [Parameter(Mandatory)][string]$Kind,
+        [switch]$WhatIf
+    )
+
+    if (($Entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Write-Host "sweep: skipping evidence entry that is a link: $($Entry.FullName)"
+        return $false
+    }
+    if ($WhatIf) {
+        Write-Host "sweep: WOULD remove $Kind evidence $($Entry.FullName)"
+        return $true
+    }
+    if ($Entry -is [IO.DirectoryInfo] -and -not (Remove-WorktreeDirectoryLinks -Worktree $Entry.FullName -Label '(evidence)')) { return $false }
+    Remove-Item -LiteralPath $Entry.FullName -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $Entry.FullName) {
+        Write-Host "sweep: WARNING could not remove $Kind evidence $($Entry.FullName)"
+        return $false
+    }
+    Write-Host "sweep: removed $Kind evidence $($Entry.FullName)"
+    return $true
 }
 
 # PENDING REMOVALS

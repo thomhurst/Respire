@@ -125,7 +125,7 @@ Verify the repository and intended base; examples use `origin/main`. Use a writa
 
 Write nothing loose beside the repository. Every file an agent produces outside its worktree has one home, so cleanup can find it:
 
-- Evidence (build and test logs, reports, PR and comment body drafts, diffs, validation projects) goes in `<repo-parent>/<repoName>-evidence/<lock-name>/`, for example `C:/git/<repoName>-evidence/issue-<N>/build.log`. `scripts/Remove-MergedWorktrees.ps1` deletes an entry once its newest file is older than `-EvidenceRetentionDays` (default 7).
+- Evidence (build and test logs, reports, PR and comment body drafts, diffs, validation projects) goes in `<repo-parent>/<repoName>-evidence/<lock-name>/`, for example `C:/git/<repoName>-evidence/issue-<N>/build.log`. `scripts/Remove-MergedWorktrees.ps1` deletes a `pr-<N>` or `issue-<N>` entry once that item is closed (merged or not) and no registered worktree uses it, and any other entry once its newest file is older than `-EvidenceRetentionDays` (default 7). Release keeps the evidence of an open item; anything that must outlive the item belongs in a durable uploaded artifact.
 - Throwaway checkouts and baselines are worktrees under `$worktreeRoot`, never plain copies or clones.
 - Downloaded SDKs and CLI tools go in `<repo-parent>/toolchains/<name>-<version>/`, shared by every repository.
 - Never write to `<repo-parent>` itself (for example `C:/git`) or to the shared checkout.
