@@ -63,12 +63,9 @@ owned string. String parsing reuses its immutable input. A null string throws
 `ArgumentNullException` from `Parse`; `TryParse` returns `false` with `RespireKey.Empty`
 or `RespireValue.Null`.
 
-Collection arguments already accept collection expressions through arrays and
-`ReadOnlySpan<T>`. `RespireResult` is a disposable view of response buffers and has no
-collection builder. Numeric increment overloads retain `long` and `double` because they
-select different Redis commands and result types; bitfield operands remain `long` with
-explicit field width and overflow options. A general `INumber<T>` overload would admit
-types Redis cannot represent without narrowing or a separate conversion policy.
+Collection arguments accept collection expressions through arrays and `ReadOnlySpan<T>`.
+Numeric increments take `long` (`INCRBY`) or `double` (`INCRBYFLOAT`), and bitfield operands
+take `long` with an explicit field width and overflow option.
 
 ## Typed output
 
@@ -140,8 +137,8 @@ Typed reads, including `GetAndSetAsync<T>` and `GetAndSetConditionalAsync<T>`, r
 
 ## Binary serializer packages
 
-Install the adapter for your format; each package pins the matching core Respire version.
-Both generic and runtime-Type methods implement the existing `IRespireSerializer` contract.
+Install the adapter for your format; each package pins the matching core Respire version and
+implements the full `IRespireSerializer` contract.
 
 | Package | Serializer | Model setup | Adapter copies |
 | --- | --- | --- | --- |
@@ -150,8 +147,7 @@ Both generic and runtime-Type methods implement the existing `IRespireSerializer
 | `Respire.Serialization.MemoryPack` | `RespireMemoryPackSerializer` | `[MemoryPackable]` on a partial type; reference MemoryPack in the model project for its generator | Direct writer and span; no adapter payload copy |
 
 MessagePack defaults to `Standard.WithSecurity(MessagePackSecurity.UntrustedData)`.
-Its read copy is necessary because the upstream serializer accepts memory or a sequence,
-not a span. The copy is owned rather than pooled so custom formatters can retain memory.
+Its read copy is owned rather than pooled, so custom formatters can safely retain memory.
 Protobuf has no root null representation: this adapter rejects null writes; an empty
 protobuf message represents a default-valued object. MemoryPack and MessagePack support
 null roots. Configure options and models before sharing a serializer between threads;
@@ -198,9 +194,7 @@ await using var map = new RespireMap<string, Order>(redis, "orders:map", key => 
 ```
 
 Those delegate APIs require owned arrays, so encoding copies the written bytes regardless
-of format. The typed-serialization benchmark workflow compares these adapters with
-System.Text.Json on small and large models, including MessagePack's read copy in its
-latency and allocation measurements.
+of format.
 
 **Trimming and AOT:** MemoryPack and MessagePack need generated/preserved formatters for
 every model. Their reflection fallback and runtime-Type dispatch are not a general AOT

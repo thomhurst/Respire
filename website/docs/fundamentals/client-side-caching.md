@@ -251,15 +251,15 @@ created and deleted before the `SET` runs, the computed value is stored.
 - **No lock or exactly-once guarantee.** Another writer can change the key right afterward.
 - **No capability check.** On an unsupported server or proxy, the factory can run before the write
   fails. Keep factories safe to run without a following write.
-- `GetOrSetAsync` is a required `IRespireClient` member. Custom implementations and decorators
-  must implement or forward it; omitting it is a compile error.
+- `GetOrSetAsync` is a required `IRespireClient` member, so custom implementations and decorators
+  must implement or forward it.
 - **Expiry** uses `RespireExpiry`: pass a `TimeSpan` for a relative TTL or a `DateTimeOffset` /
   `RespireExpiry.At(instant)` for an absolute deadline. Relative TTLs must be at least 1 ms, are
   truncated to whole milliseconds, and start at the successful server write. Absolute deadlines
   use PXAT and must be after the Unix epoch; Redis applies a past deadline immediately, even if
   the factory has just produced the returned value. `None`, `Keep`, and `Persist` are rejected.
   Hits and failed conditional writes do not extend expiry. `LocalExpiration` is separate.
-  Existing positional `TimeSpan` calls still compile; rename named `ttl:` arguments to `expiry:`.
+  The parameter is named `expiry` (formerly `ttl`); positional `TimeSpan` arguments work unchanged.
 - **Null:** a factory that returns `null` does not write, and a later call can run it again. A stored
   `0`, empty string, or serialized JSON `null` counts as present.
 - Each caller gets its own deserialized result, never the factory's object. Use the same
@@ -267,7 +267,7 @@ created and deleted before the `SET` runs, the computed value is stored.
 - The write invalidates other tracking clients but is not inserted into the local cache. The next
   `GET` registers tracking and populates it.
 
-With a [command hook](../guides/command-hooks.md#cache-operation-owners), each caller
+With a [command hook](../guides/command-hooks.md#cache-operations), each caller
 receives one `GETORSET` scope before cache lookup or factory execution, including hits
 and cache-bypass views. Completion includes serialization, insertion and final conversion;
 application commands inside the factory have independent scopes.
@@ -334,8 +334,8 @@ Use dedicated keys. This overload stores a **Redis hash**, containing the serial
 recompute duration, generation token, and stale retention. Do not use ordinary GET/SET or the
 overload without options on those keys. Start with a new namespace when migrating existing string
 entries. Delete the hash to invalidate it. All callers must agree on type, factory meaning, expiry,
-and options. Custom `IRespireClient` implementations and decorators must implement the new
-member explicitly, as they do the existing cache-aside overload.
+and options. Custom `IRespireClient` implementations and decorators must implement this overload
+too.
 
 - **Single-flight** (enabled by default) elects a factory with `SET NX PX` and a unique token.
   Other callers retry every `RetryDelay` (default 25 ms), returning the published value. A missing
@@ -390,34 +390,23 @@ where the application owns the factory; do not point those integrations at its h
 
 ## Why this is different
 
-StackExchange.Redis 3.x supports RESP3 and keyspace notifications but has no built-in
-server-assisted local cache (its 4.0 previews add an opt-in one). Its
+StackExchange.Redis 3.x has no built-in server-assisted local cache (its 4.0 previews add an
+opt-in one). Its
 [keyspace-notification documentation](https://stackexchange.github.io/StackExchange.Redis/KeyspaceNotifications.html)
-presents notifications as a building block for your own invalidation strategy. That needs Redis
-server configuration plus application-owned storage, subscriptions, node coverage, bounds, command
-eligibility, and race handling.
+presents notifications as a building block for your own invalidation strategy, which leaves you to
+handle server configuration, storage, subscriptions, node coverage, bounds, command eligibility,
+and races.
 
-Respire uses `CLIENT TRACKING` directly; no `notify-keyspace-events` setting is needed. Redis's
-[client-side caching support table](https://redis.io/docs/latest/develop/clients/client-side-caching/#which-client-libraries-support-client-side-caching)
-does not list StackExchange.Redis.
+Respire handles all of that for you with `CLIENT TRACKING`; no `notify-keyspace-events` setting is
+needed.
 
 ## Measured impact
 
-These results compare a local Respire cache hit with an ordinary StackExchange.Redis server read,
-showing the value of skipping the round trip. Uncached Respire and StackExchange.Redis reads were
-statistically equivalent in the same net10 run.
-
-| net10 operation | StackExchange.Redis server read | Respire client-cache hit | Hit latency |
-| --- | ---: | ---: | ---: |
-| `GET`, present | 186.5 μs | 151.5 ns | 0.081% |
-| `GET`, missing | 185.9 μs | 129.5 ns | 0.070% |
-| `HGET` | 186.8 μs | 466.5 ns | 0.250% |
-| `EXISTS` | 185.6 μs | 387.3 ns | 0.209% |
-
-BenchmarkDotNet used Redis 8.10, two launches, three warmups, and three measured iterations on a
-GitHub-hosted Linux runner. See the
-[official net8/net10 run](https://github.com/thomhurst/Respire/actions/runs/31848970849) and
-[benchmark source](https://github.com/thomhurst/Respire/blob/main/benchmarks/Respire.ComparisonBenchmarks/ClientSideCachingBenchmarks.cs).
+A cache hit skips the network round trip entirely. Against a local Redis container, where a server
+read takes roughly 80–100 μs, a Respire `GET` hit takes about 110–120 ns and `HGET` or `EXISTS`
+hits about 300 ns, with no allocation. Over a real network the difference is larger. See
+[Performance](../performance.md#results-against-stackexchangeredis) and
+[Benchmarks](../benchmarks.md) for the full results.
 
 ## Invalidation flow
 
@@ -431,14 +420,13 @@ In `OptIn` mode, Redis tracks only the misses Respire sends with `CLIENT CACHING
 continuity is lost, Respire clears the affected cache state rather than trust entries whose
 invalidations may have been missed.
 
-With replica redirects enabled, each retained target socket keeps bounded provenance for the
-physical keys it reads. Losing that socket invalidates those keys, their dependent queries,
-and overlapping fills; independent keys cached through healthy targets or the source stay warm.
-Keys read through more than one socket are invalidated conservatively when either socket fails.
-Provenance retains at most 4,096 distinct keys and 1 MiB of key bytes per socket, including keys
-whose cached values expired or were evicted. Unknown read dependencies or an exhausted budget
-restore whole-cache invalidation for that socket. New destinations, credential changes, target
-eviction, maintenance retirement and client disposal keep their existing global continuity fences.
+With replica redirects enabled, Respire remembers which keys each target socket read. Losing that
+socket invalidates only those keys and the queries that depend on them; keys cached through healthy
+targets stay warm. A key read through more than one socket is invalidated when either fails. Each
+socket tracks at most 4,096 distinct keys and 1 MiB of key bytes (including keys whose entries have
+since expired or been evicted). Past that budget, or when a read's keys are unknown, losing the
+socket clears the whole cache. New destinations, credential changes, target eviction, maintenance
+retirement and client disposal always clear the whole cache.
 
 ## Opt-out tracking and local writes
 
@@ -569,8 +557,8 @@ event log, distributed lock, or cross-process correctness guarantee. For correct
 coordination, combine authoritative Redis commands with cancellation and periodic reconciliation; an
 undetected network partition can delay notifications indefinitely.
 
-`SubscribeInvalidations` is a required `IRespireClientSideCache` member. Custom implementations
-and decorators must implement or forward it; omitting it is a compile error.
+`SubscribeInvalidations` is a required `IRespireClientSideCache` member, so custom implementations
+and decorators must implement or forward it.
 
 ## ASP.NET Core registration
 

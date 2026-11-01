@@ -1,141 +1,56 @@
 ---
 title: Redis-compatible servers
-description: Focused Garnet, Dragonfly, KeyDB, Valkey and KiviDB compatibility checks, known differences, and how to reproduce them.
+description: Using Respire with Garnet, Dragonfly, KeyDB, Valkey and KiviDB, and the known differences between them.
 ---
 
 # Redis-compatible servers
 
-Respire uses RESP to connect to Redis-compatible servers. Compatibility depends on the server
-version and the features your application uses. The focused compatibility suite exercises Garnet,
-Dragonfly, KeyDB, Valkey 9.2 RC and KiviDB independently; it does not certify every Redis command or production topology.
-
-## Tested scope
-
-The suite covers connection negotiation, optional client metadata, core data types, pub/sub,
-scripting, transactions, client-side caching and Cluster where supported. Known incompatibilities
-have explicit skip reasons in the test report. A feature skipped by a test is not a passing feature.
-
-| Server | Pinned container image | Test configuration |
-| --- | --- | --- |
-| Garnet 2.1.8 | `ghcr.io/microsoft/garnet:2.1.8` | Lua enabled with `--lua`. |
-| Dragonfly 2.0.0 | `docker.dragonflydb.io/dragonflydb/dragonfly:v2.0.0` | One proactor thread; Cluster uses emulated mode. |
-| KeyDB 6.3.4 | `eqalpha/keydb:x86_64_v6.3.4` | One server thread, persistence disabled; Linux x64. |
-| Valkey 9.2 RC1 | `valkey/valkey:9.2.0-rc1-alpine` | Persistence disabled; includes [missing-key replies, ACL roles and typed Path Hashes](valkey-92.md). GA compatibility is unverified. |
-| KiviDB 1.1.2 (Lua) | `kividb/kividb:v1.1.2-lua` | Lua enabled, TLS unavailable. One worker, Tokio I/O, port 6379, protected mode disabled for the disposable container. AOF is disabled by default. |
-
-Other versions need their own compatibility run. ARM hosts need x64 emulation for the KeyDB image.
-
-The Valkey 9.2 RC job also runs the full integration project with the shared Redis fixture
-pointing at Valkey. Tests that intentionally pin a different server or module version keep
-those pins. The [Valkey 9.2 command scenarios](valkey-92.md) run in ordinary CI as well.
-The Garnet job does the same with `RESPIRE_TEST_REDIS_IMAGE=ghcr.io/microsoft/garnet:2.1.8`.
-Garnet allows at most 256 logical databases, so the shared fixture isolates tests by key prefix
-rather than by database. Tests of features that Garnet 2.1.8 lacks are skipped, and the report gives
-the reason for each one. The gaps are client-side caching, streams, `SORT`, `COPY`, `TOUCH`, `FUNCTION`,
-`SET` with `EXAT` or `PXAT`, `RESTORE` options, sharded pub/sub outside Cluster mode, and multi-key
-sorted-set pops.
+Respire speaks standard RESP2 and RESP3, so it works with Redis-compatible servers as well as Redis
+itself. The table below shows what works on each server version that Respire is checked against
+every week. Other versions usually behave the same, but compatibility depends on the server.
 
 ## Compatibility matrix
 
-These results were observed on 15 October 2026 with the pinned images above and .NET 10.
-**Pass** means the focused scenario passed. **Unsupported** means the pinned server rejected the
-required command; that scenario has an explicit skip reason. **Partial** limits the passing
-Cluster result to the topology described below.
+| Feature | Garnet 2.1.8 | Dragonfly 2.0.0 | KeyDB 6.3.4 | Valkey 9.2 RC1 | KiviDB 1.1.2 (Lua) |
+| --- | --- | --- | --- | --- | --- |
+| RESP2 connection | Yes | Yes | Yes | Yes | Yes |
+| RESP3 and automatic negotiation | Yes | Yes | Yes | Yes | Yes |
+| Strings, hashes, lists, sets, sorted sets | Yes | Yes | Yes | Yes | Yes |
+| `CLIENT SETINFO` metadata | Yes | Yes | No | Yes | Yes |
+| Pub/sub | Yes | Yes | Yes | Yes | Yes |
+| Lua `EVAL` | Yes, with `--lua` | Yes | Yes | Yes | Yes |
+| `MULTI`/`EXEC` transactions | Yes | Yes | Yes | Yes | Yes |
+| Client-side caching | No | Yes | Yes | Yes | Yes |
+| Cluster discovery and routing | Single primary | Emulated Cluster mode | Single primary | Single primary | Single primary |
 
-| Feature | Garnet 2.1.8 | Dragonfly 2.0.0 | KeyDB 6.3.4 |
-| --- | --- | --- | --- |
-| RESP2 connection | Pass | Pass | Pass |
-| RESP3 `HELLO` and automatic negotiation | Pass | Pass | Pass |
-| Strings, hashes, lists, sets and sorted sets | Pass | Pass | Pass |
-| Optional `CLIENT SETINFO` metadata | Pass | Pass | Unsupported |
-| Pub/sub delivery | Pass | Pass | Pass |
-| Lua `EVAL` | Pass, with Lua enabled | Pass | Pass |
-| `MULTI`/`EXEC` transactions | Pass | Pass | Pass |
-| RESP3 cache hit and tracking invalidation | Unsupported | Pass | Pass |
-| Cluster discovery and routing | Partial: one primary | Partial: emulated Cluster | Partial: one primary |
+Cluster results cover discovering the slot table and routing keys across slots on the configuration
+shown. Multi-node failover, slot migration, replication, Sentinel, TLS, and modules have not been
+checked on these servers; use Redis or Valkey for those.
 
-Valkey 9.2 RC1 passed all 14 focused scenarios and four command-specific scenarios on
-17 October 2026 under .NET 10. Its Cluster result is also limited to one primary.
+Respire's full integration suite also runs against Valkey 9.2. See [Valkey 9.2 features](valkey-92.md)
+for its new commands.
 
-KiviDB 1.1.2 (Lua) passed all 17 focused cases on 26 October 2026 under .NET 10 in the
-[repository CI run](https://github.com/thomhurst/Respire/actions/runs/40355265418/job/121685899577),
-with zero failures and zero skips. The console output and `kividb.trx` in the
-`server-compatibility-kividb` artifact confirm passing connection negotiation, core data types,
-`CLIENT SETINFO`, pub/sub, Lua, transactions, RESP3 caching and Cluster discovery/routing.
-The Cluster result is partial: one primary only. TLS and multi-node Cluster behavior remain unverified.
+## Known differences
 
-The core data-type checks cover strings, hashes, lists, sets and sorted sets under RESP2 and RESP3,
-plus automatic protocol negotiation. Other feature checks run under both explicit protocols,
-except client-side caching, which uses RESP3. The caching scenario checks a local cache hit and
-invalidation after another connection writes the same key.
+- **Garnet**
+  - Start Garnet with `--lua` to use scripting.
+  - Garnet 2.1.8 does not support `CLIENT TRACKING`, so leave `ClientSideCache` disabled.
+  - `client.Locks` fails on Garnet 2.1.8: it rejects the conditional-delete commands the lock API uses.
+  - Other gaps in 2.1.8: streams, `SORT`, `COPY`, `TOUCH`, `FUNCTION`, `SET` with `EXAT` or `PXAT`,
+    `RESTORE` options, sharded pub/sub outside Cluster mode, and multi-key sorted-set pops.
+  - Garnet allows at most 256 logical databases.
+  - In Cluster mode, Garnet requires the advertised port to match the listening port.
+- **Dragonfly:** for Cluster, use emulated Cluster mode and set `cluster_announce_ip` and
+  `announce_port` to the endpoint clients connect to.
+- **KeyDB:** KeyDB 6.3.4 rejects `CLIENT SETINFO`. Connections and protocol negotiation do not need it;
+  only the explicit [client administration API](client-administration.md)
+  call fails. The KeyDB image is x64 only; ARM hosts need emulation.
+- **KiviDB:** use an image variant that includes what you need. `v1.1.2-lua` includes Lua but not TLS,
+  the default image includes neither, and the `-tls` and `-full` variants add TLS. KiviDB listens on
+  port 6380 by default.
 
-Cluster coverage is limited to discovering one primary's slot table and routing keys in different
-slots. Dragonfly uses its emulated Cluster mode. These checks do not establish multi-node
-failover, slot migration, replication, Sentinel, authentication, TLS, or module compatibility.
+## Related
 
-### Known differences
-
-- **Garnet client-side caching:** Garnet 2.1.8 rejects `CLIENT TRACKING` as an unknown
-  subcommand. Leave `ClientSideCache` disabled for this version. The suite skips the caching
-  scenario with that reason; ordinary connections and core commands pass.
-- **Garnet distributed locks:** Garnet 2.1.8 answers `DELEX`, `DELIFEQ` and `SET ... IFEQ` with
-  a bare `ERR unknown command`. The lock API's Lua fallback does not recognize that reply yet, so
-  `client.Locks` fails on this version ([#2229](https://github.com/thomhurst/Respire/issues/2229)).
-- **KeyDB client metadata:** KeyDB 6.3.4 rejects `CLIENT SETINFO` as an unknown subcommand.
-  This is an explicit [connection-specific administration API](client-administration.md),
-  not an automatic handshake requirement. The suite verifies the rejection and then reads the
-  name from the same physical connection before reporting the metadata scenario as skipped.
-  RESP2, RESP3 and automatic connection negotiation all work without this optional command.
-- **Cluster setup:** Garnet's fixture uses the same selected free port inside and outside Docker,
-  with a loopback advertised address. Its pinned release requires the advertised port to match
-  the listening port. Dragonfly's emulated Cluster fixture sets `cluster_announce_ip` and
-  `announce_port` to the mapped endpoint. These are fixture configuration differences, not
-  evidence of full multi-node compatibility.
-- **KiviDB image variants:** The selected `v1.1.2-lua` image includes Lua but not TLS. The
-  default image includes neither; upstream also publishes `-tls` and `-full` variants.
-  The fixture overrides the default port 6380 with `--port 6379` and explicitly retains
-  `--protected-mode no` when replacing the image command. Tokio I/O avoids requiring
-  io_uring access in Docker. Its distroless image has no shell, so readiness probes check
-  the server-ready log and mapped TCP port. Cluster uses one primary with its mapped port advertised on loopback;
-  multi-node behavior is unverified. TLS is outside this suite's scope.
-
-The configuration choices follow the pinned
-[Garnet endpoint validation](https://github.com/microsoft/garnet/blob/v2.1.8/libs/host/Configuration/Options.cs#L665-L679)
-and [Dragonfly emulated endpoint settings](https://github.com/dragonflydb/dragonfly/blob/v2.0.0/src/server/cluster/cluster_family.cc#L116-L133).
-KiviDB's [release variants](https://github.com/kividbio/kividb/blob/v1.1.2/.github/workflows/release.yml),
-[container defaults](https://github.com/kividbio/kividb/blob/v1.1.2/Dockerfile) and
-[startup options](https://github.com/kividbio/kividb/blob/v1.1.2/src/config.rs) describe the selected configuration.
-
-## Run the compatibility suite
-
-The [Server compatibility workflow](https://github.com/thomhurst/Respire/actions/workflows/server-compatibility.yml)
-runs weekly on Tuesday, on manual dispatch, or when a pull request receives the
-`run-server-compatibility` label. Ordinary pull request pushes do not start it. Remove and reapply
-the label to test a later commit. Each server has its own job, so one failure does not cancel the others.
-Artifacts contain the console output and TRX report, including skipped tests and their reasons.
-
-```sh
-gh pr edit <number> --add-label run-server-compatibility
-gh workflow run server-compatibility.yml
-```
-
-To reproduce one server locally, run a Linux Docker engine and the .NET 10 SDK from the repository
-root. The suite owns and removes its containers; it does not use a running application server.
-
-```powershell
-$env:RESPIRE_COMPATIBILITY_SERVER = 'garnet' # or dragonfly / keydb / valkey92 / kividb
-& scripts/Invoke-AgentDotNet.ps1 -DotNetArguments @(
-    'run', '--project', 'tests/Respire.IntegrationTests', '-c', 'Release', '-f', 'net10.0',
-    '--', '--treenode-filter', '/*/*/ServerCompatibilityTests/*', '--report-trx'
-)
-Remove-Item Env:RESPIRE_COMPATIBILITY_SERVER
-```
-
-Without `RESPIRE_COMPATIBILITY_SERVER`, these tests skip before starting containers. This keeps
-the extra server matrix out of the ordinary Redis/Valkey integration jobs.
-
-Use the [connection protocol options](../fundamentals/connections.md#protocol-negotiation) to choose
-RESP2, RESP3 or automatic negotiation. Server-specific commands are documented separately in
-[Dragonfly and KeyDB extensions](server-extensions.md). The public
-[container fixtures](testing-containers.md) support Redis and Valkey; the compatibility suite uses
-its own fixtures for the additional servers.
+- [Protocol negotiation](../fundamentals/connections.md#protocol-negotiation) to choose RESP2, RESP3 or automatic negotiation.
+- [Dragonfly and KeyDB extensions](server-extensions.md) for server-specific commands.
+- [Container fixtures](testing-containers.md) for Redis and Valkey test servers.

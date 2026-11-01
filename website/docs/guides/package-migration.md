@@ -18,6 +18,6 @@ identities, so rebuild consuming applications and libraries together. The curren
   Do not mix old and renamed packages in one dependency graph.
 
 Upgrade packages that depend on core implementation details together with `Respire`;
-see [version alignment](../packages.md#keep-internal-api-consumers-on-the-same-version).
+see [version alignment](../packages.md#upgrade-packages-together).
 The `Respire.Extensions.<ModuleName>` naming convention is reserved for custom Redis modules
 and is not a current shipping package family.

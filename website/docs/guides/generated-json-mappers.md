@@ -107,6 +107,6 @@ custom converters, `[JsonIgnore]`, `[JsonInclude]`, extension data, and polymorp
 
 For hash storage with field TTL and change tracking, see [generated hash codecs](generated-hash-codecs.md);
 for indexes, see [generated Search schemas](generated-search-schemas.md). The
-[Native AOT conformance sample](generated-hash-codecs.md#native-aot-conformance-sample) runs
+[Native AOT sample](generated-hash-codecs.md#native-aot-sample) runs
 generated hash, JSON, and Search operations on `net8.0` and `net10.0` with reflection-based JSON
 serialization disabled.

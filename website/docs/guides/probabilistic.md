@@ -49,7 +49,7 @@ var percentiles = await probabilistic.TDigestQuantileAsync("latency:api", [0.5, 
 
 ## Command hooks
 
-With a concrete `RespireClient`, [logical command hooks](command-hooks.md#module-result-owners)
+With a concrete `RespireClient`, [logical command hooks](command-hooks.md#typed-modules)
 cover each typed operation from admission before argument preparation through final result
 conversion and owned cleanup. Rejection sends no command; conversion failures report `Failed`
 instead of success for the raw reply. Hook names are the Redis command names, such as `BF.ADD`,
@@ -58,6 +58,4 @@ instead of success for the raw reply. Hook names are the Redis command names, su
 The five Info methods and `TopKListAsync` return raw results: completion occurs at transfer,
 and the caller must dispose the result after reading it. An external `IRespireClient`
 decorator retains its own public execution boundary. Nested commands started by application
-code or hook callbacks remain independently observed. This coverage does not establish a
-client-wide command-blocking policy; the final audit remains tracked in
-[#1708](https://github.com/thomhurst/Respire/issues/1708).
+code or hook callbacks remain independently observed.

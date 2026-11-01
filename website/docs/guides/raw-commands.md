@@ -5,7 +5,7 @@ description: Execute every documented command with pre-encoded, discoverable des
 
 # Complete command catalog
 
-`RespireCommands` has a descriptor for every command in the audited Redis 8.10 and Valkey 9.2 RC references, Redis's integrated modules, Valkey's documented optional modules, and documented KeyDB and Dragonfly extensions. Use it when a typed facet lacks the command or option you need. See [Valkey 9.2 commands](valkey-92.md) for missing-key replies and ACL roles.
+`RespireCommands` has a descriptor for every command in the Redis 8.10 and Valkey 9.2 RC references, Redis's integrated modules, Valkey's documented optional modules, and documented KeyDB and Dragonfly extensions. Use it when a typed facet lacks the command or option you need. See [Valkey 9.2 commands](valkey-92.md) for missing-key replies and ACL roles.
 
 ## Using descriptors
 
@@ -84,7 +84,7 @@ These use `Never`:
 - Unknown commands, default descriptors, implicit string conversions, and `RespireCommand.Create` descriptors, even for known names and explicit cache mutation policies.
 - Read-only scripts and functions. Their read routing is separate: `EVAL_RO` can still read from replicas.
 - Search cursor, aggregation, and profile commands, which can involve server-side cursors.
-- Unlisted writes and extensions, until audited.
+- Writes and extensions that have not been assigned a category.
 
 Categories do not inspect options, so option-sensitive `SET`, `ZADD`, and `BITFIELD` use the conservative `WriteAccumulating`. To declare a category for a whole invocation, call `WithRetryCategory` on the descriptor. Respire does not check that declaration.
 
@@ -127,7 +127,7 @@ Key-layout references: [KeyDB 6.3.4 command table](https://github.com/Snapchat/K
 
 ## Dynamic commands
 
-For a command missing from the audited references, pass a string; it converts implicitly to a `RespireCommand`. For a command you run often, keep a static `RespireCommand.Create("MYMODULE.COMMAND")` descriptor so its name is encoded once.
+For a command missing from the catalog, pass a string; it converts implicitly to a `RespireCommand`. For a command you run often, keep a static `RespireCommand.Create("MYMODULE.COMMAND")` descriptor so its name is encoded once.
 
 ### Explicit arguments
 

@@ -60,4 +60,4 @@ Implementation:
 
 Tests cover cross-level decoding, an independent block fixture, trailing and truncated input,
 checksum-valid malformed blocks, size limits and writer commit behavior. Results are in the
-[value codec benchmarks guide](../website/docs/guides/value-codec-benchmarks.md).
+[value codec benchmarks guide](VALUE_CODEC_BENCHMARKS.md).

@@ -10,18 +10,11 @@ Event IDs and names below are stable within each package. Identify an event by i
 and ID; IDs can repeat across packages. Logger categories still identify the component or
 closed generic type emitting the event. Packages absent from this table emit no events of their own.
 
-Existing explicit IDs are preserved. Previously unnamed event-zero diagnostics now use the
-named IDs below; update filters that depended on event zero. The stream-handler and missing
-Sentinel-epoch warnings also now have explicit IDs instead of generated IDs. Message templates,
-structured properties, levels, and attached exceptions are unchanged.
-
 Sentinel event 139 uses the severity selected for the received Sentinel notification.
 Disabled levels skip state creation and expensive diagnostic formatting.
 
-When adding an event, choose an unused positive ID in its package and add it here. Never
-renumber or reuse an existing ID or rename its event. Keep retired IDs reserved. The
-`LoggingCatalogTests` guard rejects duplicate IDs and checks source against this catalog;
-core logging contract tests also pin templates, levels, structured values, and identities.
+IDs are never renumbered, reused, or renamed, and retired IDs stay reserved, so you can
+filter on them safely.
 
 See [observability](observability.md#logging) for logger configuration.
 

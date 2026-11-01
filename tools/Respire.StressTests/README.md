@@ -82,4 +82,4 @@ runners are too noisy.
 Manual dispatch accepts scenario, client, duration, concurrency, value-size, and
 framework inputs. The report goes to the job summary and the results to an
 artifact. Scheduled runs, and manual runs on `main` with `full_run`, also
-regenerate [`website/docs/stress-tests.md`](../../website/docs/stress-tests.md).
+regenerate [`docs/STRESS_TESTS.md`](../../docs/STRESS_TESTS.md).

@@ -1,14 +1,16 @@
 # Respire
 
-**A fast, modern Redis client for .NET. Plain C# types in, plain C# types out, and the hard parts
-of Redis are one call each**
+**Redis for .NET, without the ceremony.** Plain C# types in, plain C# types out, and the hard
+parts of Redis (caching, locks, queues, rate limits) are one call each.
 
-Works with Redis, Valkey, KeyDB, and other RESP-compatible servers.
+Works with Redis, Valkey, KeyDB, and other RESP-compatible servers, on .NET 8 and .NET 10.
 
 [Documentation](https://respire.tomlonghurst.dev/) ·
-[Getting started](https://respire.tomlonghurst.dev/docs/getting-started) ·
-[Benchmarks](https://respire.tomlonghurst.dev/docs/benchmarks) ·
+[Quick start](https://respire.tomlonghurst.dev/docs/quick-start) ·
+[Performance](https://respire.tomlonghurst.dev/docs/performance) ·
 [Coming from StackExchange.Redis?](https://respire.tomlonghurst.dev/docs/stackexchange-redis)
+
+## Quick start
 
 ```bash
 dotnet add package Respire
@@ -21,26 +23,26 @@ await redis.SetAsync("user:1", new User("Ada", 36), expiry: TimeSpan.FromMinutes
 User? user = await redis.GetAsync<User>("user:1");
 ```
 
-That is the whole setup. No multiplexer to configure, no `RedisValue` to unwrap.
-
-> The public API may change before the first supported major release, **2.0.0**. See
-> [release candidates](https://respire.tomlonghurst.dev/docs/getting-started#release-candidates),
-> the [roadmap](https://respire.tomlonghurst.dev/docs/roadmap), and the
-> [experimental API policy](https://respire.tomlonghurst.dev/docs/experimental-apis).
+That's the whole setup. No multiplexer to configure, no `RedisValue` to unwrap. Create one
+client at startup and share it. Concurrent calls are pipelined automatically, and the client
+reconnects on its own. In ASP.NET Core, use `services.AddRespire(connectionString)` from
+`Respire.DependencyInjection`.
 
 ## Why Respire?
 
 - **Real return types.** `string?`, `long`, `bool`, `TimeSpan`, or your own `T?`.
-- **Reads from memory.** Server-assisted client-side caching: a cached string `GET` takes
-  about 150 ns and allocates nothing. Redis tells Respire when to evict.
+- **Reads from memory.** With server-assisted client-side caching, a cached `GET` takes about
+  150 ns and allocates nothing. Redis tells Respire when to evict.
 - **Pipelined by default.** Concurrent calls share socket writes. No batching switch.
 - **Blocking commands that work.** `BLPOP` and blocking stream reads get their own connections,
   so they never stall other calls.
-- **Coordination built in.** Locks, rate limiters, semaphores, leader election, queues, and
-  stream workers. No extra library to glue on.
+- **Batteries included.** Locks, rate limiters, semaphores, leader election, job queues, and
+  stream workers, with no extra libraries to glue on.
+- **Resilient.** Automatic reconnects, Cluster and Sentinel failover, safe retries, circuit
+  breakers, and timeout errors that tell you what was happening.
 - **Tests without Docker.** An in-memory server with a fake clock runs your real client code.
-- **Every command.** Typed facets per data type, plus a generated catalog of every Redis 8.10 and
-  Valkey 9.1 command.
+- **Every command.** Typed facets per data type (`redis.Hashes`, `redis.Streams`, …), typed
+  JSON, Search, TimeSeries, and vector APIs, plus raw access to any command.
 
 ## The hard parts, one call each
 
@@ -157,7 +159,7 @@ string? expired = await client.GetStringAsync("session"); // null
 | --- | --- |
 | [ASP.NET Core registration](https://respire.tomlonghurst.dev/docs/integrations/dependency-injection) | `services.AddRespire(connectionString)` |
 | [`IDistributedCache` and `HybridCache`](https://respire.tomlonghurst.dev/docs/integrations/caching) | `services.AddRespireHybridCache(...)` |
-| [.NET Aspire](https://respire.tomlonghurst.dev/docs/integrations/aspire) (not yet published on NuGet) | `builder.AddRespireClient("cache")` |
+| [.NET Aspire](https://respire.tomlonghurst.dev/docs/integrations/aspire) (coming to NuGet soon) | `builder.AddRespireClient("cache")` |
 | [Stream consumer workers](https://respire.tomlonghurst.dev/docs/guides/stream-workers) | `services.AddRespireStreamWorker<THandler>(stream, group)` |
 | [Job queues with retries and scheduling](https://respire.tomlonghurst.dev/docs/guides/job-queues) | `services.AddRespireJobQueue<THandler, TJob>(...)` |
 | [Leader election with fencing tokens](https://respire.tomlonghurst.dev/docs/guides/coordination) | `new RespireLeaderElection(...)` |
@@ -180,7 +182,16 @@ string? expired = await client.GetStringAsync("session"); // null
 | `Respire.Testing`, `Respire.Testing.Containers` | An in-memory server, or Redis in a container |
 
 Plus SignalR, DataProtection, output caching, health checks, FusionCache, and more:
-see [all packages](https://respire.tomlonghurst.dev/docs/packages).
+see [choose packages](https://respire.tomlonghurst.dev/docs/packages).
+
+## Versioning
+
+The first supported major release is **2.0.0**. Until it ships, the public API can still change.
+See [versioning and compatibility](https://respire.tomlonghurst.dev/docs/versioning).
+
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

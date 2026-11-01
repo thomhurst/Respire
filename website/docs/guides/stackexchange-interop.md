@@ -20,25 +20,21 @@ The package targets .NET 8 and .NET 10 and depends on StackExchange.Redis 3.4.0 
 dotnet add package Respire.StackExchangeCompat
 ```
 
-## Supported libraries and versions
+## Supported libraries
 
-The adapter supports the call sites these libraries use, tested against the pinned versions on standalone Redis.
-Verify other versions yourself. It does not provide general StackExchange.Redis parity.
+The adapter implements the members these libraries call. It is not a full StackExchange.Redis replacement.
 
-| Library | Pinned version | Status | Native replacement |
+| Library | Tested version | Status | Native replacement |
 | --- | --- | --- | --- |
-| `Microsoft.Extensions.Caching.StackExchangeRedis` | 10.0.13 | Supported (upstream cache, expiration, and registration tests) | `Respire.Caching` via `AddRespireDistributedCache` |
-| `Microsoft.AspNetCore.DataProtection.StackExchangeRedis` | 10.0.13 | Supported (upstream repository and builder tests) | `Respire.DataProtection` via `PersistKeysToRespire` |
-| `Hangfire.Redis.StackExchange` | 1.12.0 | Supported; see [exclusions](./hangfire-acceptance) | Keep the adapter at the Hangfire boundary |
-| `Microsoft.AspNetCore.SignalR.StackExchangeRedis` | 8.0.32 / 10.0.13 | **Not supported** | `Respire.SignalR` via `AddRespire` |
-| Orleans Redis providers | 10.2.2 | Supported; see [Orleans compatibility](./orleans-compatibility) | |
+| `Microsoft.Extensions.Caching.StackExchangeRedis` | 10.0.13 | Supported | `Respire.Caching` via `AddRespireDistributedCache` |
+| `Microsoft.AspNetCore.DataProtection.StackExchangeRedis` | 10.0.13 | Supported | `Respire.DataProtection` via `PersistKeysToRespire` |
+| `Hangfire.Redis.StackExchange` | 1.12.0 | Supported; see [Use Respire with Hangfire](./hangfire-acceptance) | Keep the adapter at the Hangfire boundary |
+| Orleans Redis providers | 10.2.2 | Supported; see [Use Respire with Orleans](./orleans-compatibility) | Keep the adapter at the Orleans boundary |
+| `Microsoft.AspNetCore.SignalR.StackExchangeRedis` | | **Not supported** | `Respire.SignalR` via `AddRespire` |
 
-SignalR's backplane needs queue-returning `ISubscriber` overloads (`ChannelMessageQueue`), which depend on
-StackExchange.Redis internals. Use the native [`Respire.SignalR` backplane](../integrations/signalr) instead;
-it interoperates with servers still running Microsoft's backplane.
-
-The [upstream test inventory](https://github.com/thomhurst/Respire/blob/main/tests/Respire.StackExchangeCompat.Tests/Upstream/NOTICE.md)
-lists each ported test class and exclusion.
+SignalR's backplane needs `ChannelMessageQueue` subscriptions, which depend on StackExchange.Redis
+internals. Use the native [`Respire.SignalR` backplane](../integrations/signalr) instead; it
+interoperates with servers still running Microsoft's backplane.
 
 General rules:
 
@@ -59,11 +55,9 @@ var database = fixture.Connection.GetDatabase();
 await database.HashSetAsync("session", "status", "active");
 ```
 
-Only the intersection of this adapter and the fake server is supported, in database zero.
-The default fixture owns the server; a constructor-supplied `RespireFakeServer` stays caller-owned.
-Dispose fixtures before borrowed servers. Unsupported members, commands and database selections
-fail explicitly. This does not promise general StackExchange.Redis test-suite compatibility.
-See [in-memory testing](in-memory-testing.md#stackexchangeredis-test-fixtures) for setup,
+It supports the commands both this adapter and the fake server implement, in database zero;
+anything else fails explicitly. The default fixture owns the server; a constructor-supplied
+`RespireFakeServer` stays caller-owned, so dispose fixtures before borrowed servers. See [in-memory testing](in-memory-testing.md#stackexchangeredis-test-fixtures) for setup,
 ownership, limitations, and direct composition with
 `RespireConnectionMultiplexer.Create(server.CreateOptions())`.
 
@@ -71,11 +65,9 @@ ownership, limitations, and direct composition with
 
 ### Public type names during migration
 
-Native public types use the `Respire` prefix (`IRespire` for interfaces). Native types
-must not share a simple name with a public StackExchange.Redis type, so importing both
-namespaces leaves each library's types unambiguous. The [public API naming guide](../fundamentals/api-naming.md)
-covers the complete prefix and result-suffix rules, exceptions, and noncolliding renames.
-The following pre-2.0 renames remove all current collisions:
+Native public types use the `Respire` prefix (`IRespire` for interfaces), so you can import both
+namespaces without ambiguity. See the [public API naming guide](../fundamentals/api-naming.md) for
+the full rules. If you are upgrading from a pre-2.0 Respire release, these native types were renamed:
 
 | Previous native name | New native name |
 | --- | --- |
@@ -94,9 +86,8 @@ The following pre-2.0 renames remove all current collisions:
 | `StreamAddOptions` | `RespireStreamAddOptions` |
 | `StreamNackMode` | `RespireStreamNackMode` |
 
-Update native type references when upgrading. StackExchange.Redis types and the adapter's
-StackExchange.Redis signatures retain their names. The old native names have no compatibility
-aliases because those would preserve the ambiguity.
+The old names have no aliases, because aliases would bring the ambiguity back. StackExchange.Redis
+types keep their names.
 
 ```csharp
 using Respire;
@@ -295,17 +286,15 @@ Conditions:
 - A failed check discards the transaction. A Redis error during a check counts as unsatisfied.
 - A change between `WATCH` and `EXEC` returns `false` and cancels all tasks. `WasWatchConflict` tells this apart from a failed check.
 - In Cluster, watched and queued keys must share a slot.
-- During ASK migration, rejected WATCH setup can establish a fresh watch on the importing node within
-  the redirect limit and command timeout. Conditions are checked before `ASKING`/`MULTI`/`EXEC` on that
-  watched socket. Unconditional transactions can follow a complete ASK rejection once on an exclusive
-  importing socket. Commit failures after WATCH, partial EXEC results, and ambiguous outcomes are not replayed.
+- During Cluster slot migration, transactions follow `ASK` redirects to the importing node. A commit
+  that may have reached Redis is never replayed.
 
 Errors:
 
 - A command error inside `EXEC` faults only that task; `Execute` returns `true`.
 - A Redis queue error, or a local error while building the queue, discards the whole transaction and faults every task.
 
-Supported condition factories ([StackExchange.Redis Condition.cs](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/src/StackExchange.Redis/Condition.cs), tested against 3.4.0):
+Supported condition factories:
 
 | Condition family | Supported factories |
 | --- | --- |
@@ -317,7 +306,7 @@ Supported condition factories ([StackExchange.Redis Condition.cs](https://github
 
 Unsupported: `SortedSetContainsStarting`, `SortedSetNotContainsStarting`, `SortedSetScoreExists`, and
 `SortedSetScoreNotExists`. Unknown conditions throw `NotSupportedException` at `AddCondition`; use native `WATCH`.
-The adapter reads condition data through audited private fields, preserved for trimming.
+Conditions work in trimmed applications.
 
 ### Servers and endpoints
 
@@ -346,14 +335,6 @@ The adapter reads condition data through audited private fields, preserved for t
 - Both apply the native pub/sub prefix.
 - `ChannelMessageQueue`, patterns, and other subscriber members are unsupported.
 - Closing the adapter removes only its own subscriptions.
-
-### Call sites covered
-
-- [ASP.NET Core RedisCache](https://github.com/dotnet/aspnetcore/blob/v10.0.12/src/Caching/StackExchangeRedis/src/RedisCache.cs): hash reads and writes, leases, expiry, deletion, batches, wait helpers. It calls unsupported profiling and library-name suffix members and handles the failure.
-- [RedisXmlRepository](https://github.com/dotnet/aspnetcore/blob/v10.0.12/src/DataProtection/StackExchangeRedis/src/RedisXmlRepository.cs): `ListRange` and `ListRightPush`.
-- [`Hangfire.Redis.StackExchange` 1.12.0](https://github.com/marcoCasamento/Hangfire.Redis.StackExchange/tree/da8e39a33df204900afc30aeb65110f76f081c55): the listed commands, scans, transactions with notifications, server discovery, `InfoRaw`, `Time`, locks, and callback subscriptions.
-
-Tests run against real Redis with RESP2 and RESP3 on .NET 8 and .NET 10.
 
 ## Move application code to native APIs
 

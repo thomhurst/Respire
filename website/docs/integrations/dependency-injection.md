@@ -17,7 +17,7 @@ dotnet add package Respire.DependencyInjection
 ```
 
 To try a published `2.0.0-rc.N` candidate, add `--prerelease`, or pin the exact
-version shown in its GitHub release. See [release candidates](../getting-started.md#release-candidates)
+version shown in its GitHub release. See [release candidates](../versioning.md#release-candidates)
 for the channel and version policy.
 
 Register a connection string, then inject `IRespireClient`:

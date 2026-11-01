@@ -6,7 +6,11 @@ Do not create or maintain a release notes or changelog file (for example `docs/R
 
 ## Design docs
 
-Do not recreate `docs/API_DESIGN.md` or add another spec, status list, or roadmap file that feature PRs must update. Such shared files caused merge conflicts between most PRs. Document user-facing features in `website/docs` (the guide for the feature, plus `website/docs/roadmap.md` when status changes). When a rebase or merge hits a conflict on `docs/API_DESIGN.md`, resolve it by deleting the file (`git rm docs/API_DESIGN.md`). Never restore it.
+Do not recreate `docs/API_DESIGN.md` or add another spec, status list, or roadmap file that feature PRs must update. Such shared files caused merge conflicts between most PRs. Document user-facing features in the feature's guide in `website/docs`. When a rebase or merge hits a conflict on `docs/API_DESIGN.md` or `website/docs/roadmap.md`, resolve it by deleting the file (`git rm <file>`). Never restore either.
+
+## Documentation site
+
+`website/docs` and `README.md` are for people using Respire. Write what a feature does, when to use it, how to use it, and its real limitations, stated plainly. Keep these out of the site: roadmaps, status lists, audit or acceptance narratives, benchmark provenance, dated status lines, links to issues, PRs or workflow runs, and contributor or CI process. Engineering evidence belongs in `docs/` (for example `docs/TRANSPORT_WRITE_EVIDENCE.md`), and contributor process belongs in `CONTRIBUTING.md`. New guides need a `website/sidebars.js` entry.
 
 ## Source escape sequences
 

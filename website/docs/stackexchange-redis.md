@@ -5,46 +5,43 @@ description: How Respire compares with StackExchange.Redis, and how to move exis
 
 # Coming from StackExchange.Redis
 
-This page compares Respire with StackExchange.Redis and maps common StackExchange.Redis code to Respire.
-Both cover multiplexed connections, automatic pipelining, Cluster, Sentinel, pub/sub, transactions,
-and scripting. Respire has a different API shape and some extra capabilities.
-
-The opt-in [migration analyzer and code fix](./guides/stackexchange-migration-tool) converts
-supported `IDatabase` methods to native Respire calls and flags other calls for manual review.
-
-To migrate gradually, use the [incremental migration adapter](./guides/stackexchange-interop). It
-accepts `RedisKey`, `RedisValue`, and `RedisResult`, and provides a limited `IConnectionMultiplexer`
-for the official distributed cache, DataProtection, and [Hangfire](./guides/hangfire-acceptance).
-It is not a general StackExchange.Redis replacement. It does not support Microsoft's SignalR
-backplane; use [`Respire.SignalR`](./integrations/signalr).
-
-For applications using RedLock.net or madelson's DistributedLock.Redis, see
-[migrating Redis coordination libraries](./guides/coordination-migration.md) for API mappings,
-renewal and timeout handling, and the differences between quorum leases and fenced locks.
-
-Verified on **14 October 2026** against StackExchange.Redis
-[3.4.5 (latest stable release)](https://github.com/StackExchange/StackExchange.Redis/releases/tag/3.4.5)
-and [4.0.127-alpha (latest published 4.0 preview)](https://www.nuget.org/packages/StackExchange.Redis/4.0.127-alpha).
-The 4.0 column describes that preview, not a stable 4.0 release or a promise about its final API.
-Earlier 3.x releases may lack features added in 3.4. The published [benchmarks](./benchmarks)
-used 3.3.1 and do not measure 4.0.
-
-See the [roadmap](./roadmap) for supported features and the
-[experimental API policy](./experimental-apis) for compatibility limits.
+Respire covers everything you rely on in StackExchange.Redis (multiplexed connections, automatic
+pipelining, Cluster, Sentinel, pub/sub, transactions, and scripting) with a modern, async-only,
+strongly typed API. This page shows what is different, maps your existing code to Respire, and
+explains the ways to move across.
 
 ## Why switch
 
-Respire gives you:
+- **Typed results.** `string?`, `long`, and `T?` instead of a `RedisValue` union you have to convert.
+- **[Client-side caching](./fundamentals/client-side-caching)** with server-assisted invalidation for hot reads.
+- **[Blocking commands](./guides/blocking-queues)** such as `BLPOP`, `BLMOVE`, and `XREADGROUP BLOCK`,
+  on dedicated pooled connections so they never stall other traffic.
+- **`IAsyncEnumerable` everywhere:** pub/sub, stream reads, and scans, with explicit delivery-gap
+  markers so you know when messages may have been lost.
+- **Cancellation** on most methods, and a bounded reconnect backlog by default.
+- **Batteries included:** an [in-memory test server](./guides/in-memory-testing), built-in OpenTelemetry,
+  typed JSON, Search, TimeSeries, and probabilistic modules, and analyzers that catch misuse at compile time.
 
-- [server-assisted client-side caching](./fundamentals/client-side-caching) for hot reads;
-- [blocking commands](./guides/blocking-queues) such as `BLPOP`, `BLMOVE`, and `XREADGROUP BLOCK`
-  without stalling other traffic;
-- typed results (`string?`, `long`, `T?`) instead of a protocol value union;
-- `IAsyncEnumerable` pub/sub, stream reads, and scans;
-- an [in-memory test server](./guides/in-memory-testing) and built-in OpenTelemetry.
+See the [benchmarks](./benchmarks) for measured performance against StackExchange.Redis 3.3.1.
 
-See the [benchmarks](./benchmarks) and [stress tests](./stress-tests) for measurements against
-StackExchange.Redis. The published 3.3.1 results do not establish performance against 4.0.
+## Migration paths
+
+Pick the path that suits your codebase. You can combine them.
+
+| Path | Best for |
+| --- | --- |
+| [Migration analyzer and code fix](./guides/stackexchange-migration-tool) | Rewriting call sites. It converts supported `IDatabase` calls to native Respire calls and flags the rest for review. |
+| [Incremental migration adapter](./guides/stackexchange-interop) | Moving gradually, or running libraries that take an `IConnectionMultiplexer`. It accepts `RedisKey`, `RedisValue`, and `RedisResult`, and runs the official distributed cache, DataProtection, [Hangfire](./guides/hangfire-acceptance), and [Orleans](./guides/orleans-compatibility) providers on Respire. |
+| Manual port | Small codebases, or code you want to modernize anyway. Use the mapping tables below. |
+
+The adapter implements the surface those libraries use, not all of StackExchange.Redis. For SignalR,
+use [`Respire.SignalR`](./integrations/signalr) instead of Microsoft's StackExchange.Redis backplane.
+If you use RedLock.net or DistributedLock.Redis, see
+[migrating Redis coordination libraries](./guides/coordination-migration.md).
+
+The comparison below uses StackExchange.Redis 3.4.5 and the 4.0.127-alpha preview. The 4.0 column
+describes that preview, not a final 4.0 API. See the [experimental API policy](./experimental-apis)
+for Respire's own compatibility guarantees.
 
 ## Feature comparison
 
@@ -135,19 +132,12 @@ Review these before you switch; they can change application behavior.
   for timeout stages, diagnosis, and a mapping of StackExchange.Redis v3 message fields.
 - **Cancellation is supported.** Most methods accept a `CancellationToken`. Cancellation abandons
   the wait only; a command that was already written still runs.
-- **Primary reconnect waits are bounded.** After initial connection, definitely-unsent
-  standalone and Sentinel primary commands wait in a FIFO backlog by default, including raw and
-  fire-and-forget commands, whole batches and unwatched transactions. `BacklogCapacity` defaults
-  to 1024 waiting operations; each keeps its original timeout and cancellation. Set
-  `BacklogPolicy = RespireBacklogPolicy.FailFast` to opt out. This does not replay accepted
-  commands and does not require `RetryPolicy`. Sentinel waiting survives generation retirement
-  and selects a ROLE-validated current primary. Cluster commands use independent slot queues,
-  reselecting the current owner and read policy before sending; a batch slot group or unwatched
-  transaction counts as one entry. Standalone and Sentinel replica reads use a separate FIFO
-  that reselects under the original read policy and current membership, including read-only
-  procedures, streams and hedged reads.
-  See [connection recovery](./guides/reconnect-policy.md#standalone-command-backlog) for exclusions
-  and the distinction between backlog, reconnect and command retry policies.
+- **Reconnect waits are bounded.** While a connection recovers, commands that were never sent wait
+  in a backlog (1024 operations by default, set by `BacklogCapacity`) and keep their own timeout and
+  cancellation. Cluster commands wait per slot and are routed to the current owner; replica reads
+  are re-routed under their original read policy. Commands the server may already have received are
+  never replayed. Set `BacklogPolicy = RespireBacklogPolicy.FailFast` to fail immediately instead.
+  See [connection recovery](./guides/reconnect-policy.md#standalone-command-backlog).
 - **Batch results throw before the batch runs.** Reading `RespirePending<T>.Result` before
   `ExecuteAsync` throws instead of deadlocking.
 - **RESP3 changes raw reply shapes.** Typed methods hide the difference. Raw `RespireResult`

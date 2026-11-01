@@ -71,9 +71,9 @@ Blocking commands are exempt from the response timeout, so pass a cancellation t
 them. Streamed uploads keep their usual command deadline.
 
 During a maintenance handoff, a command not yet accepted by the old connection moves to the
-replacement endpoint and must be admitted there under its original deadline. The client keeps at
-most 16 idle endpoint histories beyond those in use; returning to an evicted endpoint starts a
-fresh history. DNS changes reuse the configured hostname's history.
+replacement endpoint and must be admitted there under its original deadline. Up to 16 idle endpoint
+histories are kept beyond those in use; returning to an evicted endpoint starts a fresh history.
+DNS changes reuse the configured hostname's history.
 
 ## Health classification
 
@@ -126,8 +126,6 @@ history.
 - Pinned node-local reads (`SCAN`, `CLUSTERSCAN`) are checked without changing destination.
 - Blocking commands and streamed uploads are checked on every attempt, including redirects.
 - A disconnected node is checked before reconnecting. Socket, TLS and setup failures count; caller cancellation does not. Background topology refresh is not checked.
-- Live endpoints keep their histories regardless of cluster size.
-- A throwing result converter cannot change endpoint health or cause a replay.
 
 ## Sentinel
 

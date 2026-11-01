@@ -1,7 +1,5 @@
 # Connection recovery
 
-Endpoint-specific recovery failures expose `RespireReconnectLimitException.Endpoint` and retain their underlying causes. Recovery across several Cluster discovery candidates leaves the endpoint null; inspect the inner exceptions for candidate context. See [exception endpoint context](../fundamentals/connections.md#exception-endpoint-context).
-
 `RespireOptions.ReconnectPolicy` adds backoff and attempt limits to connection recovery:
 command connection replacement (including Cluster node connections), dedicated connection
 acquisitions, pub/sub recovery, and Cluster and Sentinel discovery fallback.
@@ -51,7 +49,10 @@ counts attempts separately.
 - After a Cluster topology change, the new node connections have their own counters.
 
 When every connection at an endpoint is exhausted, commands throw
-`RespireReconnectLimitException` (a `RespireConnectionException`). Operations that need every
+`RespireReconnectLimitException` (a `RespireConnectionException`). Its `Endpoint` names the
+exhausted endpoint and its inner exception keeps the underlying failure; Cluster discovery
+exhaustion across several candidates leaves `Endpoint` null (see
+[exception endpoint context](../fundamentals/connections.md#exception-endpoint-context)). Operations that need every
 connection's server client ID throw when any connection is exhausted. Cleanup connections that
 Respire opens after an ambiguous outcome use their own `ConnectTimeout` and ignore this policy.
 
@@ -99,26 +100,22 @@ failure when no usable command connection is available. Connection recovery itse
 `ReconnectPolicy` controls replacement backoff and attempt limits; `BacklogPolicy` controls
 whether eligible unsent work waits for that replacement.
 
-For Sentinel primaries, the FIFO belongs to the router and survives generation retirement.
-Its head rediscovers and ROLE-validates the elected primary before dispatch; queued commands
-never reconnect a retired primary independently. Commands arriving during discovery or drain
-join that same bounded queue, including batches and unwatched transactions. Every next entry
-selects the current generation again. A finite reconnect policy bounds repeated discovery rounds
-for the head, in addition to the resolver's per-round candidate budget; exhaustion fails all
-pending entries. Without an explicit policy, failed discovery rounds use Sentinel's default
-backoff. Discovery timeouts propagate to the waiting head. The command's original deadline
-still bounds its entire wait and execution.
+With Sentinel, the queue survives a primary failover. Before each queued operation is sent,
+Respire rediscovers the current primary and validates it with `ROLE`; queued commands never
+go to a retired primary. A finite reconnect policy limits repeated discovery rounds, and
+exhausting it fails all pending entries. Without a policy, failed discovery rounds use
+Sentinel's default backoff. Each command's original deadline still bounds its whole wait and
+execution.
 
 Cluster clients also queue unsent multiplexed commands after initialization. Each hash slot has
 its own FIFO and `BacklogCapacity` limit; unkeyed commands share a separate queue. A batch is
 grouped by slot, and each group occupies one entry. An unwatched transaction occupies one entry
-for its slot. Healthy slots continue independently while another slot recovers. Each queued head
-reselects the current owner and read policy before dispatch, so an owner change does not leave
-work waiting on the retired generation. Strict replica reads remain on replicas; primary fallback
-is allowed only by the configured read policy. Tracked reads retain their tracking prelude and
-mutations retain their cache fences. Circuits still govern acquisition and dispatch.
+for its slot. Healthy slots continue independently while another slot recovers. Each queued
+operation picks the current slot owner and read policy when it is sent, so it follows owner
+changes. Strict replica reads stay on replicas, client-side caching stays consistent, and
+[circuit breakers](circuit-breakers.md) still apply.
 
-Non-Cluster replica reads use the separate router backlog described below. Initial connection setup, dedicated
+Non-Cluster replica reads use the separate backlog described below. Initial connection setup, dedicated
 connections, watched transactions, import sessions and server-local cursor continuations do not
 join this backlog. The specialized `Locks` expiry-update and release paths also retain their
 existing acquisition and recovery rules and have no ordering guarantee relative to queued
@@ -127,17 +124,17 @@ selected. Lock acquisition (`SET NX PX`) and owner-token reads use ordinary queu
 
 ### Replica-read backlog
 
-After a non-Cluster read router has successfully selected a connection, definitely-unsent reads
+After a non-Cluster client has connected for replica reads, definitely-unsent reads
 can wait in one bounded FIFO shared by its read-policy views. This applies to standalone and
 Sentinel replicas, typed/raw reads, read-only scripts and functions, bulk streams, fire-and-forget,
 fresh cursor reads and the initial selection for hedged reads. `BacklogPolicy` and `BacklogCapacity`
 have the same defaults, timeout, cancellation and overflow behavior as the primary backlog.
 
-Each head reselects using its original `ReadFrom` policy and current membership. Selection still
-validates `ROLE`, respects failed-replica cooldown, Nearest and availability-zone preferences, and
-uses primary fallback only when the policy permits it. Sentinel membership replacement does not
-discard the queue or pin work to an obsolete replica. New arrivals stay behind a draining head,
-even if a ready connection becomes available; primary-only operations use their own dispatch path.
+Each queued read selects a server when it is sent, using its original `ReadFrom` policy and the
+current replica set. Selection still validates `ROLE`, respects failed-replica cooldown, Nearest
+and availability-zone preferences, and falls back to the primary only when the policy permits it.
+A Sentinel replica-set change does not discard the queue. New reads stay behind queued ones,
+even if a ready connection becomes available; primary-only operations are not affected.
 
 An exhausted candidate does not prevent another eligible candidate from serving the read. When
 all eligible candidates report terminal exhaustion, the read fails. Initial acquisition failures,
@@ -145,13 +142,11 @@ server-local cursor continuations and dedicated/blocking rentals retain their ex
 Strict `Replica` reads fail immediately when no standalone replicas are configured; only Sentinel
 discovery can populate an empty replica set during recovery.
 
-Standalone reads wait for eligible connection recovery to succeed or become terminal. With no
-command timeout, that wait can be indefinite while a route remains nonterminal, for example with
-unlimited reconnect attempts or repeated ROLE failures. Later reads remain behind the FIFO head.
-Set a command timeout or cancel the caller to bound that wait. Sentinel heads also have a
-per-command discovery retry budget from `ReconnectPolicy`. Strict replica heads wait through
-cooldown without consuming attempts, while still allowing due Sentinel discovery. Policies that
-permit primary fallback continue to attempt that primary and count those selection rounds.
+Standalone reads wait until an eligible connection recovers or recovery fails permanently. With
+no command timeout, that wait can be indefinite, for example with unlimited reconnect attempts
+or repeated `ROLE` failures, and later reads queue behind it. Set a command timeout or cancel the
+caller to bound the wait. With Sentinel, each queued read also has a discovery retry budget from
+`ReconnectPolicy`; strict `Replica` reads wait through replica cooldown without using attempts.
 
 The backlog never replays an accepted read or an optional hedge. A streamed read releases the
 drain when its stream is returned; the consumer still owns reading and disposing that stream.

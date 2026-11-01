@@ -206,7 +206,7 @@ def build_document(
         ":::info Automated results",
         (
             f"Generated {generated_at} from commit `{commit[:12]}`. "
-            f"See the [GitHub Actions run]({run_url}) for logs and downloadable artifacts."
+            "These results are refreshed weekly."
         ),
         ":::",
         "",
@@ -228,7 +228,7 @@ def build_document(
         [
             "## Reading the results",
             "",
-            "Treat shared-runner measurements as directional evidence. Validate important decisions against your payload sizes, concurrency, Redis deployment, and network.",
+            "These runs use a shared Linux runner and a local Redis container, so expect some variation between runs. Before making an important decision, measure with your own payload sizes, concurrency, Redis deployment, and network.",
             "",
         ]
     )

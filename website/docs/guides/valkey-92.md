@@ -1,8 +1,8 @@
 # Valkey 9.2 commands
 
-Valkey 9.2 adds opt-in missing-key replies and server administration commands. Respire tests
-these against `valkey/valkey:9.2.0-rc1-alpine` under RESP2 and RESP3. This is a release candidate;
-the compatibility matrix will need a new pin when the stable release is available.
+Valkey 9.2 adds opt-in missing-key replies, ACL roles, configuration metadata, and a new
+Path Hash data type. Respire supports all of them with typed APIs over RESP2 and RESP3.
+They are tested against the Valkey 9.2 release candidate (9.2.0-rc1).
 
 ## Distinguish missing keys
 
@@ -30,10 +30,8 @@ unsupported-option errors from older servers; there is no fallback that loses mi
 For `BYSCORE`, `BYLEX`, or legacy range commands with `XX`, use the matching descriptor through
 `ExecuteAsync` and check `RespireResult.IsNull` before reading the array.
 
-The empty `XPENDING` summary is `[0, null, null, null]` on Valkey 9.2. Its release notes correct
-the reply schema rather than introducing an incompatible wire reply. `PendingSummaryAsync`
-already accepts this shape, RESP2 null arrays, and an empty consumers array. It returns zero
-pending entries, null minimum and maximum IDs, and an empty consumers array.
+On Valkey 9.2 the empty `XPENDING` summary is `[0, null, null, null]`. `PendingSummaryAsync`
+handles it, returning zero pending entries, null minimum and maximum IDs, and an empty consumers array.
 
 ## Replace a key in another database
 
@@ -70,13 +68,12 @@ are applied in order. Role identifiers, patterns, and rules receive no key prefi
 operate on one execution node; they do not broadcast changes, persist ACL files, or replicate
 configuration to other Cluster nodes.
 
-`SET IFNE` already uses `RespireValueCondition`; no new condition type is needed.
+`SET IFNE` uses the existing `RespireValueCondition`.
+
 ## Path Hashes
 
-`PathHashes` provides typed operations for Valkey's Path Hash data type. These APIs are tested
-against **9.2.0-rc1**, including RESP2 and RESP3. Valkey 9.2 GA compatibility is unverified until
-the stable release exists. Older servers return their unsupported-command error; there is no
-fallback to an ordinary hash. The raw descriptors remain available under `RespireCommands.PathHash`.
+`PathHashes` provides typed operations for Valkey's Path Hash data type. Older servers return
+their unsupported-command error; there is no fallback to an ordinary hash. The raw descriptors remain available under `RespireCommands.PathHash`.
 
 Each logical path holds field/value pairs. Paths, field names, and payloads are binary-safe.
 Only the containing Redis key receives the client's key prefix. Matching compares bytes, so

@@ -1,58 +1,39 @@
 ---
-title: Packages and namespaces
-description: Choose Respire packages by feature, with matching assembly and namespace names.
+title: Choose packages
+description: Pick the Respire packages for what you're building. Each package name is also its namespace.
 ---
 
-# Packages and namespaces
+# Choose packages
 
-Each library uses one name for its NuGet package, assembly, and root namespace: install `Respire.Search`, import `Respire.Search`. The .NET Aspire integrations use `Respire.Aspire` and its companion package names.
+Start with `Respire`. It includes the client, every command, locks, pub/sub, streams,
+batches, transactions, client-side caching, Cluster, Sentinel, and OpenTelemetry. Add other
+packages only when you need what they provide.
 
-## Public API review and deprecation
+Each package uses one name for its NuGet package, assembly, and root namespace: install
+`Respire.Search`, then add `using Respire.Search;`.
 
-Every shipping library package has a checked-in public API baseline in
-`src/<package>/PublicAPI.Shipped.txt` and `PublicAPI.Unshipped.txt`. Both net8.0 and net10.0
-check the same baseline: the packages expose the same public surface on both frameworks.
-These baselines were seeded from the pre-2.0 API; the filename does not declare a stable release.
-The PublicApiAnalyzers package checks signatures, including nullable annotations, during normal
-builds. Adding, changing, or removing an API without updating its declaration fails the build.
-The Modular Pipeline CI workflow builds all packages and frameworks with these checks enabled.
+## By what you're building
 
-For contributors:
+| I'm building… | Install |
+| --- | --- |
+| A console app, worker, or library | `Respire` |
+| An ASP.NET Core app | `Respire.DependencyInjection` (includes `Respire`) |
+| A .NET Aspire app | `Respire.Aspire` (not on NuGet yet; see [Aspire](integrations/aspire.md)) |
+| `IDistributedCache` or `HybridCache` | `Respire.Caching` or `Respire.Caching.Hybrid` |
+| HTTP output caching, rate limiting, or idempotency keys | `Respire.OutputCaching`, `Respire.RateLimiting`, `Respire.Idempotency` |
+| Rate limiters, semaphores, leader election, or Redlock | `Respire.Coordination` |
+| Job queues, reliable queues, or stream workers | `Respire.Streaming` (plus `Respire.Streaming.Dashboard` for the UI) |
+| JSON documents, search, time series, or Bloom filters | `Respire.Json`, `Respire.Search`, `Respire.TimeSeries`, `Respire.Probabilistic` |
+| AI apps: chat history, semantic cache, vector search | `Respire.AI`, `Respire.VectorData` |
+| Azure, AWS, or Google Cloud managed Redis with IAM | `Respire.Azure`, `Respire.Aws`, `Respire.Gcp` |
+| Health checks | `Respire.HealthChecks` |
+| Tests | `Respire.Testing` (in-memory) or `Respire.Testing.Containers` (real Redis) |
+| A gradual move from StackExchange.Redis | `Respire.StackExchangeCompat` |
 
-- Add new declarations to `PublicAPI.Unshipped.txt` using the analyzer's **Declare public API**
-  code fix. Review the diff alongside the implementation.
-- Keep shipped declarations. For an intentional removal, add `*REMOVED*` followed by the old
-  declaration to the unshipped file. A changed signature is a removal plus an addition.
-- Build both target frameworks before submitting the change. API baselines make changes visible
-  for review; they do not authorize a breaking change. After 2.0, preserve compatibility or plan
-  the removal for a major release.
-- At release time, merge accepted unshipped declarations into the shipped baseline, applying
-  removal markers, and reset the unshipped file to `#nullable enable`.
+To start from a working project instead, use the
+[project templates](getting-started.md#project-template): `dotnet new install Respire.Templates`.
 
-Deprecations are allowed, including after 2.0. An `[Obsolete]` attribute must provide a nonempty
-`DiagnosticId` and an HTTPS `UrlFormat` containing `{0}` (the diagnostic ID), pointing to a published
-migration note. The note should explain the replacement and migration steps. CI runs
-`Respire.PublicApi.Tests` on net8.0 and net10.0 to check exported public types and members in every
-shipping assembly. Its project references and expected assembly manifest come from
-`RespirePackageProjects` in `Directory.Build.props`, plus `Respire.Analyzers`, which ships inside
-the core package rather than as its own package; a missing assembly fails validation.
-The compiler's required-member compatibility marker is excluded; authored deprecations on
-constructors with required members still need migration metadata.
-These checks make no network requests; reviewers verify that the migration note exists.
-
-Packing also runs SDK package validation. See [Contributing API changes](contributing.md)
-for the released-package baseline, intentional-break process, and experimental API exceptions.
-
-## Choose a package
-
-The `Respire.Aspire*` packages listed below are implemented but not yet published
-on NuGet as of October 26, 2026. See the [Aspire installation guide](integrations/aspire.md#install)
-for availability and how to try the source sample before publication.
-
-[`Respire.Templates`](getting-started.md#project-template) installs project starters
-with `dotnet new install Respire.Templates`. It contains template files rather than
-a runtime assembly, so it has no namespace or public API baseline. The release
-pipeline tracks it in `RespireContentPackageProjects`.
+## All packages
 
 | Package, assembly, and root namespace | Purpose |
 | --- | --- |
@@ -97,14 +78,14 @@ pipeline tracks it in `RespireContentPackageProjects`.
 - The Aspire packages put their registration methods in `Microsoft.Extensions.Hosting`.
 - Extension properties such as `redis.Json` and `redis.Coordination` need C# 14 (the `net10.0` default). On earlier language versions, construct the wrapper: `new RespireJsonClient(redis)` or `new RespireCoordination(redis)`.
 
-## Keep internal API consumers on the same version
+## Upgrade packages together
 
-`Respire.Caching`, `Respire.Coordination`, `Respire.StackExchangeCompat`, `Respire.DataProtection`, `Respire.Json`, `Respire.Compression.Lz4`, `Respire.Compression.Zstd`, `Respire.Testing`, `Respire.Streaming`, and `Respire.Streaming.Dashboard` depend on core implementation details. Their NuGet packages require the exact `Respire` version they were built against, including the prerelease suffix. Upgrade these packages together with `Respire`; mixing versions can break internal calls at runtime.
+Keep every Respire package on the same version. `Respire.Caching`, `Respire.Coordination`, `Respire.StackExchangeCompat`, `Respire.DataProtection`, `Respire.Json`, `Respire.Compression.Lz4`, `Respire.Compression.Zstd`, `Respire.Testing`, `Respire.Streaming`, and `Respire.Streaming.Dashboard` require the exact `Respire` version they were built against, including any prerelease suffix. Mixing versions can fail at runtime.
 
 The three `Respire.Serialization.*` adapters also pin their core dependency exactly so
 serializer and client packages are upgraded together, even though they use public APIs.
 
-## Redis features and custom modules
+## Server modules
 
 [Redis Open Source 8 includes JSON, Search, time series, and probabilistic data types](https://redis.io/blog/redis-8-ga/); their client APIs are optional packages. Earlier Redis needs the matching modules or Redis Stack, and other RESP servers may support only some commands. Installing a package does not enable a server feature.
 

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import yaml
 
-GUIDE = 'website/docs/guides/transport-write-evidence.md'
+GUIDE = 'docs/TRANSPORT_WRITE_EVIDENCE.md'
 MERGE, PARENT, HEAD = 'a' * 40, 'b' * 40, 'c' * 40
 BASELINE, CANDIDATE = 'd' * 40, 'e' * 40
 

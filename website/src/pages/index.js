@@ -224,7 +224,7 @@ function Hero() {
               <code>long</code>, and your own types.
             </p>
             <div className={styles.actions}>
-              <Link className={styles.primaryButton} to="/docs/getting-started">Get started</Link>
+              <Link className={styles.primaryButton} to="/docs/quick-start">Get started</Link>
               <InstallCommand />
             </div>
           </div>
@@ -583,7 +583,7 @@ export default function Home() {
               <p className={styles.scaleNote}>
                 Measured with BenchmarkDotNet on .NET 10: 186.5 μs for a StackExchange.Redis GET against a local
                 server, 151.5 ns and 0 B allocated for a Respire cache hit.{' '}
-                <Link href="https://github.com/thomhurst/Respire/actions/runs/31848970849">See the benchmark run</Link>.
+                <Link to="/docs/benchmarks">See the benchmarks</Link>.
               </p>
             </>
           }>

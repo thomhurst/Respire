@@ -101,7 +101,7 @@ Respire's response cache uses `CLIENT TRACKING`, not subkey notifications, becau
 - Notifications on a separate connection cannot prevent a stale in-flight read from entering the cache.
 - Disconnects, buffer drops, and Cluster ownership changes would need extra cache handling.
 
-The [archived evaluation](https://github.com/thomhurst/Respire/blob/d30260306be7cfb440bfbc7d5f7b1fc8e186d5a6/docs/SUBKEY_CACHE_SPIKE.md) has the details. Subkey notifications suit an application cache that is explicitly best effort. The [partial hash cache](../fundamentals/client-side-caching.md#partial-hash-reads) relies on whole-key tracking invalidations.
+Subkey notifications suit an application cache that is explicitly best effort. The [partial hash cache](../fundamentals/client-side-caching.md#partial-hash-reads) relies on whole-key tracking invalidations.
 
 ## Delivery, pressure, and Redis Cluster
 

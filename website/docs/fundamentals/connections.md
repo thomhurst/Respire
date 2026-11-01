@@ -5,54 +5,9 @@ description: Configure endpoints, timeouts, reconnects, and connection lifecycle
 
 # Connections and options
 
-## Multipath TCP on Linux
-
-Set `RespireOptions.EnableMultipathTcp = true` to request Linux Multipath TCP (MPTCP)
-for built-in TCP connections. It defaults to `false`. The dependency injection builder
-and configuration binding expose the same option.
-
-```csharp
-await using var client = await RespireClient.ConnectAsync(new RespireOptions
-{
-    Endpoints = [new("redis.example.com", 6379)],
-    EnableMultipathTcp = true,
-});
-```
-
-The client kernel must support MPTCP (Linux 5.6 or later, built with `CONFIG_MPTCP`
-and enabled with `net.mptcp.enabled=1`). Respire requests `IPPROTO_MPTCP` (262)
-directly, while retaining socket buffers, TCP_NODELAY, keepalive, TLS and connection
-timeouts. On Linux, DNS addresses are tried sequentially with a fresh socket for
-each attempt, sharing one `ConnectTimeout` budget. An unreachable first address can
-consume that budget before later addresses are tried. This also applies when native
-socket creation falls back to TCP; disable the option to restore the default .NET
-hostname-connect path.
-The option applies again on reconnect, and is retained for discovered Cluster nodes,
-replicas, Sentinel, pub/sub and dedicated connections.
-
-Multiple paths also require an MPTCP-enabled server listener or terminating proxy
-and suitable path-manager configuration, such as `ip mptcp endpoint` and limits.
-Enabling the client option alone does not make an ordinary Redis TCP listener use
-multiple paths. See the [Linux MPTCP documentation](https://www.kernel.org/doc/html/v6.12/networking/mptcp.html).
-
-If the libc library or its `socket` entry point cannot be loaded, or native socket
-creation returns `EINVAL`, `EPROTONOSUPPORT` or `ENOPROTOOPT`,
-Respire opens ordinary TCP and emits the Information event `MultipathTcpFallback`
-(143) through `LoggerFactory`. Other creation, configuration and connection errors
-remain errors. On platforms other than Linux, the option uses ordinary TCP and emits
-the same event. If the remote server or a middlebox does not negotiate MPTCP, Linux
-transparently continues over one TCP path; this kernel negotiation does not emit a
-Respire fallback event.
-
-`ConnectionFactory` takes precedence, including factories supplied by proxy helpers:
-the factory owns the transport and must configure MPTCP itself. Unix sockets ignore
-the option. Neither override emits a TCP fallback event.
-
-For deployments that advertise internal node addresses, see [node address mapping](../guides/node-address-mapping.md).
-
 Connect with a URI for the common case, or with `RespireOptions` for explicit control. This page covers connection strings, timeouts, protocol, Cluster, Sentinel, and replica reads.
 
-To stop sending commands to an unhealthy endpoint, configure [circuit breakers](../guides/circuit-breakers.md).
+Related guides: [circuit breakers](../guides/circuit-breakers.md) stop sending commands to an unhealthy endpoint, [connection recovery](../guides/reconnect-policy.md) controls reconnect backoff, and [node address mapping](../guides/node-address-mapping.md) handles deployments that advertise internal node addresses.
 
 ## Connect immediately
 
@@ -102,17 +57,16 @@ Continuations dispatched to the thread pool can run concurrently and in any orde
 whose result is already available still completes synchronously. Thread-pool starvation can
 delay queued continuations.
 
-Measured on Linux with one connection and 64 concurrent callers, adaptive dispatch kept the
-inline throughput of a plain GET loop (`ThreadPool` was about 30% slower). It matched
-`ThreadPool` once callers did 5 µs or more of CPU work per reply, where `Inline` was two to
-four times slower.
+`Adaptive` suits most applications: it keeps inline throughput for trivial continuations
+(where `ThreadPool` is noticeably slower) and matches `ThreadPool` once continuations do a few
+microseconds of CPU work per reply (where `Inline` becomes several times slower).
 
 Inline continuations can still block, for example with a synchronous wait. `StalledDeliveryThreshold`
 controls how long waiting replies can sit behind a continuation that is not making progress
 before another thread takes over delivery. It defaults to 20 ms and accepts values of at
 least 1 ms. Timer resolution can lengthen short thresholds, to about 15 ms on Windows. This
-rescue is not a latency guarantee, particularly under thread-pool starvation. Warning
-`ConnectionContinuationDeliveryBlocked` reports each rescue.
+is a fallback, not a latency guarantee, particularly under thread-pool starvation. The warning
+`ConnectionContinuationDeliveryBlocked` is logged each time it happens.
 
 Both options are available on the DI builder and through configuration.
 
@@ -160,6 +114,43 @@ The factory owns DNS, socket options, and proxy negotiation. Respire's built-in 
 
 For built-in proxy negotiation, use `RespireProxy.Socks5` or `RespireProxy.HttpConnect`.
 See [SOCKS5 and HTTP proxies](../guides/proxies.md) for authentication, proxy-side DNS, and TLS examples.
+
+## Multipath TCP on Linux
+
+Set `RespireOptions.EnableMultipathTcp = true` to request Linux Multipath TCP (MPTCP)
+for built-in TCP connections. It defaults to `false` and is also available on the
+dependency injection builder and through configuration.
+
+```csharp
+await using var client = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = [new("redis.example.com", 6379)],
+    EnableMultipathTcp = true,
+});
+```
+
+Requirements and behavior:
+
+- The client kernel must support MPTCP: Linux 5.6 or later, built with `CONFIG_MPTCP`
+  and enabled with `net.mptcp.enabled=1`.
+- Multiple paths also need an MPTCP-enabled server listener or terminating proxy, plus
+  path-manager configuration such as `ip mptcp endpoint`. The client option alone does not
+  make an ordinary Redis TCP listener use multiple paths. See the
+  [Linux MPTCP documentation](https://www.kernel.org/doc/html/v6.12/networking/mptcp.html).
+- Socket buffers, `TCP_NODELAY`, keepalive, TLS and connection timeouts still apply. The
+  option is used for reconnects and for discovered Cluster nodes, replicas, Sentinel,
+  pub/sub and dedicated connections.
+- With the option enabled, DNS addresses are tried one at a time and share one
+  `ConnectTimeout`, so an unreachable first address can use up the budget before later
+  addresses are tried.
+- If MPTCP sockets are unavailable (libc cannot be loaded, or socket creation returns
+  `EINVAL`, `EPROTONOSUPPORT` or `ENOPROTOOPT`), or the platform is not Linux, Respire uses
+  ordinary TCP and logs the Information event `MultipathTcpFallback` (143). Other socket
+  errors still fail the connection.
+- If the server or a middlebox does not negotiate MPTCP, Linux continues over a single TCP
+  path without a Respire event.
+- A `ConnectionFactory` (including proxy helpers) owns the transport and must configure
+  MPTCP itself. Unix sockets ignore the option.
 
 ## Full configuration
 
@@ -233,35 +224,28 @@ between 30 and 35 minutes. Jitter is additive and uniformly distributed; it spre
 attempts rather than synchronizing all sockets. `ConnectionMaxLifetime` must be at least one
 millisecond. Jitter must be non-negative and requires a configured lifetime.
 
-Multiplexed connections open and validate a replacement before publishing it for new commands.
-Each replacement uses a fresh socket connect, including the platform's DNS resolution, TLS,
-authentication, and tracking setup. Platform DNS caches and load-balancer policies still determine
-which backend receives that connection. If setup fails, the old socket remains available.
-Replacement retries use exponential backoff with independent jitter: the retry cap starts at one
-second, doubles up to 30 seconds, and each delay is uniformly selected between half the cap and
-the cap. A successful publication resets the next connection's retry cap. A replacement that closes
-before publication follows the same retry policy. Accepted commands and streamed replies drain on the old
-socket without replay or a forced lifetime drain deadline. Existing failure and command-timeout
-behavior still applies, and explicit client disposal aborts pending work. Very slow replies can
-therefore keep old sockets open beyond their configured age. Tracked client-side caches are flushed
-at publication so cached entries do not depend on a retired tracking connection.
+**Multiplexed connections** open and validate a replacement (fresh connect, DNS resolution,
+TLS, authentication and tracking setup) before switching new commands to it. Platform DNS
+caches and load-balancer policies still decide which backend the new connection reaches.
+If setup fails, the old socket stays in use and the replacement is retried with jittered
+exponential backoff from one second up to 30 seconds. Commands and streamed replies already
+accepted by the old socket finish there without replay, so very slow replies can keep an old
+socket open past its configured age. Client-side caches are flushed when the replacement takes
+over.
 
-When maintenance or Sentinel retires the owning connection group, old lifetime sockets also use
-the retirement drain budget: `CommandTimeout`, or the 30-second fallback when command timeouts
-are disabled, extended by any active maintenance relaxation. A socket that still cannot drain
-is closed. Streamed replies retain their retirement idle grace while the consumer makes progress.
+When maintenance or a Sentinel failover retires the connection group, old sockets drain within
+`CommandTimeout` (30 seconds when command timeouts are disabled), extended by any maintenance
+relaxation, and are then closed.
 
-Dedicated blocking, transaction, and upload leases recycle only when idle or returned. An expired
-borrowed lease finishes normally; expiration never interrupts a blocking command or upload.
-Idle lifetime expiration applies even without `DedicatedPool.IdleTimeout` and takes precedence
-over its minimum retention count. The next rental creates a replacement when needed.
+**Dedicated leases** (blocking, transaction, and upload) recycle only when idle or returned;
+expiration never interrupts a blocking command or upload. Idle expiration applies even without
+`DedicatedPool.IdleTimeout` and overrides `MinimumSize`.
 
-The option applies to multiplexed data connections and dedicated pools, including Cluster and
-Sentinel data endpoints. Pub/sub and transient control connections retain their existing lifecycle.
-With lifetime disabled, no lifetime timer or worker is created. Multiplexed command submission
-performs no lifetime checks; dedicated rentals and returns do not sample time. A successful recycle emits `redis.client.connection.recycle` in `ConnectionBasic`
-and the `ConnectionRecycled` information log event (142). Closed sockets use the `max_lifetime`
-close reason. Diagnostics use the bounded asynchronous connection measurement delivery queue.
+The option covers multiplexed data connections and dedicated pools, including Cluster and
+Sentinel data endpoints. Pub/sub and short-lived control connections are not recycled. When
+lifetime is disabled it adds no overhead. Each recycle emits the `redis.client.connection.recycle`
+metric (in `ConnectionBasic`) and the `ConnectionRecycled` information log event (142); closed
+sockets report the `max_lifetime` close reason.
 
 ## Dedicated connection pools
 
@@ -289,8 +273,7 @@ var options = new RespireOptions
   blocking timeout does not bound this queue. Pass a cancellation token with a deadline when
   all slots might be occupied by indefinitely blocking commands. An operation that supplies
   its own acquisition deadline, such as a streamed upload, retains that deadline.
-  Waiters are broadcast to because ordinary and streaming leases can be incompatible;
-  no FIFO fairness is promised, and a waiter can starve under sustained contention.
+  Waiters are not served in FIFO order, so a waiter can starve under sustained contention.
 - `MaximumIdle` bounds retained idle connections across ordinary and streaming leases.
   Surplus returns close. It is independent of `MaximumSize`: eight idle slots do not limit
   the number of concurrently rented connections to eight. Zero disables idle reuse.
@@ -313,20 +296,15 @@ For WATCH-heavy workloads, configure both `MaximumSize` and `MaximumIdle` to con
 connection churn and retain leases between bursts. See [WATCH cost and pool sizing](../guides/batches-and-transactions.md#watch-cost-and-pool-sizing)
 for an example and the round trips that pool reuse cannot remove.
 
-Limits apply per pool, not across the client or deployment. Endpoints, replica roles,
-corrective connections and replacement routing generations can own separate pools.
-An old generation drains its leases while a new generation admits its own rentals.
-Ordinary and maintenance-enabled streaming leases share capacity but retain their protocol
-compatibility. At the cap, an incompatible idle connection is closed before its replacement
-is created; fresh-connection operations similarly retire idle entries when necessary.
-Minimum retention does not prevent these replacements, disconnection cleanup or disposal.
+Limits apply per pool, not across the client or deployment. Each endpoint and replica role
+can have its own pool, and after a failover or topology change the old pool drains while a
+new one serves rentals. At the cap, an idle connection that cannot serve the request is closed
+to make room for a new one; `MinimumSize` does not prevent this.
 
 Avoid application dependencies that need another lease from an exhausted pool before an
 existing operation can finish (for example, a streamed upload source that awaits another
 dedicated operation on the same client with `MaximumSize = 1`). Reserve enough capacity or
-use a separate client, and pass cancellation deadlines. Internal upload redirects and
-retirement retries return their source lease before renting the next one; corrective fences
-use separate pools.
+use a separate client, and pass cancellation deadlines.
 
 Use `respire.dedicated_pool.size` to observe occupied capacity and
 `db.client.connection.count` with `db.client.connection.state=used` to observe ready leased
@@ -495,7 +473,7 @@ Cancelling a token abandons the wait; it cannot guarantee the server did not exe
 - **Command response:** treat writes as possibly executed; design retries around idempotency.
 - **Replica function propagation** (distinct message): the function stayed missing on the replica. Check replication and replica health. `CommandTimeout` cannot extend the five-second ceiling (see [Consistency](#consistency)).
 
-`Diagnostics` captures the stage, endpoint, process-local `ConnectionId`, `ServerClientId` (if known), outstanding replies and bytes, unwritten bytes, time since last read and write, thread-pool counts, and a hint. It contains no keys, values, or credentials.
+`Diagnostics` captures the stage, endpoint, process-local `ConnectionId`, `ServerClientId` (if known), outstanding replies and bytes, unwritten bytes, time since last read and write, thread-pool counts, and a hint. It contains no keys, values, or credentials. See [timeouts and thread-pool starvation](../guides/timeouts.md) for how to read each field.
 
 ```csharp
 try
@@ -512,18 +490,18 @@ catch (RespireTimeoutException error)
 
 | Stage | Meaning |
 | --- | --- |
-| `Connecting` | TCP/TLS setup. |
+| `Connecting` | Waiting for a connection or its setup. |
 | `WaitingForCapacity` | Not enqueued. |
 | `Buffered` | Queued, not written. Not safe to retry: it can still be sent after cancellation or timeout. |
 | `Writing` | Partially written. |
 | `AwaitingReply` | Written; a successful write does not prove execution. |
 
-- Retry metadata does not enable transport retries; a partial write stays ambiguous for non-idempotent commands.
+- A partial write stays ambiguous for non-idempotent commands.
 - Counters are best-effort. Null fields mean no connection or measurement was available. Application-created exceptions have no snapshot unless they wrap one.
 - Hints are not root causes. Check blocking code, SLOWLOG, payload sizes, and network before changing timeouts or thread-pool settings.
 
 :::warning Do not block on a result inside a Respire continuation
-`.Result`, `.Wait()`, or `GetAwaiter().GetResult()` on a pending command inside another command's continuation can stall, because replies on one connection arrive in order behind that continuation. After about 500 ms Respire delivers them on another thread and logs "Reply delivery ... was blocked by a continuation". Use `await` instead.
+`.Result`, `.Wait()`, or `GetAwaiter().GetResult()` on a pending command inside another command's continuation can stall, because replies on one connection arrive in order behind that continuation. After [`StalledDeliveryThreshold`](#command-continuations) Respire delivers them on another thread and logs a warning. Use `await` instead.
 :::
 
 Redis error replies throw `RespireServerException` with `Code`, `CommandName`, and `IsTransient` (true for `LOADING`, `BUSY`, `CLUSTERDOWN`, `TRYAGAIN`, `MASTERDOWN`). Use `RespireErrorCodes` in retry policies.
@@ -532,17 +510,17 @@ Redis error replies throw `RespireServerException` with `Code`, `CommandName`, a
 
 Every public Respire exception inherits `RespireException.Endpoint`, a nullable `RespireEndpoint` containing the host and port (or Unix socket address). Use this property instead of parsing an exception message. `null` means no single endpoint is known; failures covering several connection candidates do not select one candidate's endpoint. A populated endpoint does not prove that a command was submitted or executed.
 
-Timeout exceptions take their endpoint from `Diagnostics.Endpoint`, or from a directly wrapped Respire exception when no snapshot endpoint is available. Transaction-retry exceptions retain the rejecting server's endpoint when the original server error has one. Circuit-open and scripting-engine-unavailable exceptions expose their known endpoint through both the base property and their existing non-nullable `Endpoint` property.
+What the endpoint identifies:
 
-Connection owners populate context for unavailable connections, reconnect limits, and replica `ROLE` validation. A rejected `ROLE` reply retains its server exception and the same endpoint as its connection wrapper. Sentinel query failures identify the reporting Sentinel; primary connection and validation failures identify the resolved data candidate. A redirect destination is not the endpoint of the server that rejected a command.
+- **Server and protocol errors** (including batch, transaction and `EXEC` results, and streamed replies): the server that sent the reply.
+- **Connection, authentication and handshake failures**: the endpoint of that connection.
+- **Timeouts**: `Diagnostics.Endpoint`, or the wrapped Respire exception's endpoint.
+- **Sentinel failures**: the reporting Sentinel for query failures; the resolved data node for primary connection and `ROLE` validation failures.
+- **`MOVED`/`ASK` errors**: the server that returned the redirect, not its destination.
+- **Retries**: the endpoint of the failed attempt.
+- **Failures across several candidates** (Cluster seeds, replica selection, Sentinel discovery, Cluster discovery exhaustion): `null`. Inspect the inner exceptions, including nested `AggregateException` instances, for each candidate.
 
-Server and protocol failures from physical replies carry the originating endpoint, including typed, byte and streamed replies, deferred batch conversions, retained transaction queue errors, and individual EXEC results. Connection receive/send failures, authentication and handshake failures, and failures rejected before admission also carry context when the physical connection knows its endpoint. This does not require enabling telemetry.
-
-Retries preserve the endpoint of the failed attempt. A MOVED or ASK error identifies the server that returned the redirect; its destination is not the failure origin. Exception types, underlying causes, and pre-admission classification are preserved. Native framework exceptions such as cancellation or socket errors retain their existing types and do not acquire a Respire property.
-
-Cluster seed, replica-selection, and Sentinel discovery failures covering multiple candidates leave the outer endpoint null. Inspect their inner causes, including nested `AggregateException` instances, for individual candidate failures. Reconnect exhaustion retains its underlying failures; cluster discovery exhaustion has no single endpoint.
-
-Failures without a known single endpoint, including locally constructed errors, may still have a null endpoint. General-purpose exception constructors do not copy endpoint context from an inner exception: that cause could represent only one failed candidate. Application code can attach known context when constructing an exception:
+Native framework exceptions such as cancellation or socket errors keep their own types and have no `Endpoint`. Exception constructors do not copy the endpoint from an inner exception. Application code can attach known context when constructing an exception:
 
 ```csharp
 var failure = new RespireConnectionException("Redis connection failed.")
@@ -826,18 +804,13 @@ command before executing it. When a retry policy is configured, each attempt can
 redirects within the original command deadline; transport failures still use the policy's
 write-safety rules. Cluster continues to use its existing `MOVED`/`ASK` handling.
 
-With client-side caching enabled, redirected cache reads retain RESP3 tracking connections
-and can populate the cache. Repeated reads can hit the cache while the target continues to
-deliver invalidations. The client retains up to eight tracked destinations, shared by its
-views. A new destination, credential renewal, or eviction flushes cache continuity before
-entries can be published without invalidation coverage. Target disconnection invalidates
-the physical keys read through that socket, dependent queries and overlapping fills,
-preserving independent cache hits on healthy sockets. Unknown dependencies or exhausted
-[provenance limits](client-side-caching.md#invalidation-flow) keep the global fence. Unused
-destinations are evicted when capacity is needed; if all retained destinations are serving
-reads, an additional destination uses a temporary connection and bypasses publication.
-Disposing the client closes its retained targets. Other redirected commands continue to
-use temporary connections.
+With client-side caching enabled, redirected reads can populate and hit the cache; the
+target connection keeps delivering invalidations. The client keeps tracking connections to
+up to eight redirect destinations. Adding or evicting a destination, or renewing
+credentials, flushes the cache, and a destination disconnect invalidates the keys read
+through it (see [invalidation flow](client-side-caching.md#invalidation-flow)). When all
+eight are busy, a further destination uses a temporary connection and its reads are not
+cached. Other redirected commands use temporary connections.
 
 Read-policy connections send `READONLY` after successful capability negotiation. Read-only
 commands, including `SCAN` and `RANDOMKEY`, can therefore keep using replicas and accept
@@ -910,11 +883,10 @@ Unknown RTTs rotate only when no measured candidate exists in the preferred tier
 probes remain excluded. This option does not measure replication lag or provide read-your-writes consistency.
 
 `RespireClient.GetReadRoutingSnapshot()` returns the last completed band selection's
-`EligibleEndpoints`, policy, capture time and Cluster slot (null outside Cluster).
-The snapshot is immutable and performs no I/O. An unchanged eligible band, policy and slot reuse the
-same observation and capture time, avoiding per-read snapshot allocation. Views share this observation; concurrent selections
-can publish in any order. It returns null before a band selection completes. Eligibility can change
-after capture as topology, health and RTT estimates change.
+`EligibleEndpoints`, policy, capture time and Cluster slot (null outside Cluster). It is
+immutable, performs no I/O, and returns null before any band selection completes. Views share
+the snapshot, and eligibility can change after capture as topology, health and RTT estimates
+change.
 
 ### Hedged reads
 
@@ -948,7 +920,7 @@ var options = new RespireOptions
 - Eligible: buffered idempotent catalog reads (`GET`, `MGET`, deterministic collection, geo, and stream range reads). Excluded: writes, scripts, random, cursors, blocking, batches, transactions, streamed, unknown.
 - Hedging copies arguments and allocates. Losing requests are not cancelled; they keep their timeout and response slot.
 - A replica hedge can return stale data even when the original targeted the primary.
-- Metrics: `respire.read.hedge.sent`, `.won`, `.extra_load`. See [`tools/Respire.StressTests`](https://github.com/thomhurst/Respire/tree/main/tools/Respire.StressTests).
+- Metrics: `respire.read.hedge.sent`, `.won`, `.extra_load`.
 
 ### Validation and staleness
 

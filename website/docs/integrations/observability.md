@@ -269,15 +269,9 @@ require `Resiliency`, so `None` suppresses them.
 ## Prometheus and the published Redis dashboard
 
 The [observability sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Observability)
-exports through the OpenTelemetry Prometheus ASP.NET Core exporter `1.19.1-beta.1` (SDK
-`1.19.1`). It checks names, units, and labels against every query in
-[the published Redis dashboard at revision `033fe86e47440da7f365ed2d8dd7f5d6217a575a`](https://github.com/redis-developer/redis-client-observability/blob/033fe86e47440da7f365ed2d8dd7f5d6217a575a/grafana/dashboards/redis-client-observability.json),
-and evaluates the adapted queries with promtool `3.5.0`, on .NET 8 and .NET 10. To reproduce
-from the repository root:
-
-```powershell
-pwsh samples/Respire.Samples.Observability/Smoke.ps1 -OutputDirectory ./observability-evidence
-```
+exports through the OpenTelemetry Prometheus ASP.NET Core exporter. Its metric names, units,
+and labels work with the queries in
+[the published Redis client Grafana dashboard](https://github.com/redis-developer/redis-client-observability/blob/033fe86e47440da7f365ed2d8dd7f5d6217a575a/grafana/dashboards/redis-client-observability.json).
 
 Prometheus naming:
 
@@ -676,10 +670,3 @@ Cluster clients count `SMIGRATED` notifications that did not update slot ownersh
 | `deferral_expired` | Waited 30 seconds without the earlier migration |
 
 `MOVED` handling and topology discovery still correct the route in every case.
-
-## For contributors
-
-Every public method on a public core type declares its final error-observation owner in a
-`<source-file>.cs.ownership.json` file next to the source; `CommandRouteOwnershipTests` fails
-until a new method is classified. Rules are in
-[`docs/ERROR_OWNERSHIP.md`](https://github.com/thomhurst/Respire/blob/main/docs/ERROR_OWNERSHIP.md).

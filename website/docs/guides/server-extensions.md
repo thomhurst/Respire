@@ -23,7 +23,7 @@ using RespireResult expiry = await keydb.ExecuteAsync(
 - `EXPIREMEMBER` sets a member expiry, in seconds by default or milliseconds with `ms`.
 - The server validates options and returns its own errors, including for unsupported commands, wrong types, and denied ACL permissions.
 
-## Audited descriptors
+## Descriptors
 
 Names below are exact wire commands. C# identifiers replace punctuation and spaces with underscores: `DFLYCLUSTER_SLOT_MIGRATION_STATUS` sends `DFLYCLUSTER SLOT-MIGRATION-STATUS` as two command words.
 
@@ -36,7 +36,7 @@ Names below are exact wire commands. C# identifiers replace punctuation and spac
 | KeyDB member expiry | `EXPIREMEMBER`, `EXPIREMEMBERAT`, `PEXPIREMEMBERAT` |
 | Other KeyDB extensions | `KEYDB.CRON`, `KEYDB.HRENAME`, `KEYDB.MEXISTS`, `KEYDB.NHGET`, `KEYDB.NHSET`, `REPLPING` |
 
-The [catalog audit](https://github.com/thomhurst/Respire/blob/main/docs/COMMAND_COVERAGE.md) records the server versions and source commits behind this list. Your installed server may be older. `Sources` records where a command was documented, not whether your server supports it or behaves the same.
+The list comes from the vendor references below; your installed server may be older. `Sources` records where a command was documented, not whether your server supports it or behaves the same.
 
 - Dragonfly's `HSETEX` arguments differ from Redis's. Use `RespireCommands.Hash.HSETEX` with the arguments your server documents.
 - KeyDB's subkey forms of `TTL`, `PTTL`, and `PERSIST` also use the existing descriptors.
@@ -55,8 +55,6 @@ These commands follow the raw execution rules: each argument is a separate binar
 - `KEYDB.MEXISTS key [key ...]` is multi-key. With `UseCluster`, all keys are slot-checked before I/O and the request is never split, so use same-slot keys such as `{user}:a` and `{user}:b`. Other keys fail locally with `CROSSSLOT`. It returns one boolean per key in input order (0/1 integers under RESP2). See [raw Cluster validation](raw-commands.md#cluster-key-validation).
 - These descriptors have no [deferred raw](deferred-raw-commands.md) layouts, so queuing them fails before enqueueing.
 - Typed facets keep their Redis/Valkey contracts; using a vendor descriptor does not change them.
-
-Real-server tests cover `CL.THROTTLE`, `SADDEX`, `FIELDTTL`, and `FIELDEXPIRE` on Dragonfly 2.0.0, and `EXPIREMEMBER`, `PEXPIREMEMBERAT`, `KEYDB.HRENAME`, and `KEYDB.MEXISTS` on KeyDB 6.3.4, under RESP2 and RESP3. They use default expiry behavior, not `KEEPTTL` or `ms`, and do not certify every descriptor.
 
 References: [Dragonfly command documentation](https://github.com/dragonflydb/documentation/tree/31881bce033d4cec47cb2e85865d46745760e499/docs/command-reference),
 [Dragonfly Cluster administration](https://github.com/dragonflydb/dragonfly/blob/v2.0.0/docs/cluster-mode.md),

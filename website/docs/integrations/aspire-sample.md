@@ -12,6 +12,8 @@ and credentials, and `WaitFor` starts the service once both servers are healthy,
 ports or passwords in its configuration. For configuration details, see
 [Aspire integration](aspire.md).
 
+The sample uses project references, so you can run it before the `Respire.Aspire` packages are on NuGet.
+
 ## Requirements and build
 
 - The .NET 10 SDK from `global.json` (10.0.402 or a later compatible band) and runtime. The
@@ -34,9 +36,7 @@ Building the AppHost also builds the HTTP service.
 The AppHost sets `AspireUseCliBundle=true`, so orchestration (DCP) and the dashboard come from
 the Aspire CLI bundle. The SDK can prepare the bundle during the first build; without a compatible
 CLI on `PATH`, it uses the SDK-paired CLI package through .NET 10's `dnx`. That first build needs
-network access. The integration test starts this same AppHost through
-`DistributedApplicationTestingBuilder` and uses its resolved bundle paths; the test project does
-not need its own AppHost SDK or bundle setting.
+network access.
 
 ## Start, readiness, and dashboard
 

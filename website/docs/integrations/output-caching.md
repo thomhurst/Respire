@@ -222,7 +222,7 @@ checks publication permissions.
 
 ## Performance
 
-A development measurement on Linux with .NET 10 and Redis 7.0.15 used 500 values of 1 KiB
+A measurement on Linux with .NET 10 and Redis 7.0.15 used 500 values of 1 KiB
 each, serial requests, and one CPU per container. Each cell is the median of three runs.
 These are indicative end-to-end numbers, not throughput guarantees.
 
@@ -241,5 +241,4 @@ A 1 KiB value used 1384 bytes of Redis memory in the default format and 1592 byt
 generation-aware hash. A one-tag index with 500 members used 44960 versus 62560 bytes.
 Generation-aware tagged sets need fewer round trips, but cost more memory and eviction time.
 Measure with representative payloads, tag counts, overwrite rates, concurrency, and latency
-before choosing. The [tagging probe](https://github.com/thomhurst/Respire/blob/main/docs/OUTPUT_CACHING.md)
-describes how to run it.
+before choosing.

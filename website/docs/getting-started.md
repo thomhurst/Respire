@@ -1,138 +1,20 @@
 ---
-sidebar_position: 2
-title: Getting started
-description: Build a small ASP.NET Core app with typed values, pub/sub, and a batch in five minutes.
+sidebar_position: 3
+title: Build an ASP.NET Core app
+description: Build a small ASP.NET Core API with typed values, pub/sub, and a batch in five minutes.
 ---
 
-# Getting started
+# Build an ASP.NET Core app
 
-Build a small ASP.NET Core API that stores a user, publishes updates, and reads two values in a batch. You need the **.NET 10 SDK** and a Redis-compatible server; Docker is enough for this walkthrough.
+In five minutes you'll build a small API that stores a user, publishes updates, and reads
+two values in one round trip. You need the **.NET 10 SDK** and a Redis-compatible server.
+Docker is enough.
 
-Respire targets both `net8.0` and `net10.0`. For an existing .NET 8 app, use a **C# 13 or newer compiler** (SDK 9 or newer) and set `<LangVersion>13</LangVersion>` or higher in its `.csproj`. The .NET 8 SDK's C# 12 compiler cannot call Respire's `params ReadOnlySpan<T>` APIs in expanded form. You can keep `<TargetFramework>net8.0</TargetFramework>` while building with the .NET 10 SDK.
+:::tip Just want to try a command?
 
-## Project template
-
-For a ready-to-run cache-aside API, install the template package with the **.NET 10 SDK**:
-
-Choose the exact template version from its
-[GitHub release](https://github.com/thomhurst/Respire/releases), including the
-`-rc.N` suffix for a release candidate. Replace `<exact-version>` below before running
-the command. Before the first stable template release, an unversioned install
-cannot select a candidate.
-
-```bash
-dotnet new install Respire.Templates@<exact-version>
-dotnet new respire-api -n MyCacheApi
-cd MyCacheApi
-docker compose up -d --wait
-dotnet run
-```
-
-Open `http://localhost:5080/health/ready`, then request
-`http://localhost:5080/values/hello` twice. The API caches a generated value for five
-minutes. Replace its factory with your database or service lookup. The starter
-includes a shared DI client, Redis readiness checks, and OpenTelemetry traces and
-metrics. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable export to your collector.
-
-The container requires Docker Compose and uses Redis 7. Set
-`ConnectionStrings__Redis` to use an existing Redis 7+ server instead.
-Stop the app with Ctrl+C and run `docker compose down` to remove the local container.
-The generated README covers configuration and custom HTTP ports.
-
-### Aspire starter
-
-:::warning Requires unpublished packages
-
-As of October 26, 2026, the starter's `Respire.Aspire` dependency is not yet
-published on NuGet. A generated application cannot restore from NuGet alone until
-a release includes both `Respire.Templates` and its matching `Respire.Aspire`
-version. To try Aspire now, use the [repository sample](integrations/aspire-sample.md),
-which builds the integration from source. See [package availability](integrations/aspire.md#install).
+The [quick start](./quick-start) is a two-minute console app.
 
 :::
-
-After installing the same template package, use `respire-aspire` for an AppHost
-and minimal API with an Aspire-managed Redis container:
-
-```powershell
-dotnet new respire-aspire -n MyRedisApp
-cd MyRedisApp
-dotnet build MyRedisApp.slnx
-cd MyRedisApp.AppHost
-aspire start --non-interactive
-aspire wait api --non-interactive --timeout 120
-aspire describe --non-interactive
-```
-
-You need .NET SDK **10.0.401 or later**, [Aspire CLI](https://aspire.dev/get-started/install-cli/)
-**13.6 or later**, a running Docker-compatible runtime, and a trusted development
-certificate (`dotnet dev-certs https --trust`). The starter uses Aspire 13.6.1
-hosting packages and Redis 8.10. Add `--isolated` to `aspire start` when running
-multiple copies.
-
-Use the API HTTP URL shown by `describe` or the dashboard; ports are dynamic.
-`WithReference` supplies Redis credentials and `WaitFor` gates API startup on
-Redis readiness. The API establishes its client connection before serving
-`/health/ready`; `/health/live` checks only the running API. Send a JSON string to
-`PUT /values/hello`, then call `GET /values/hello` to read it back. Values expire
-after five minutes; a missing value returns HTTP 404.
-
-`Respire.Aspire` registers the client, Redis health check, and Respire traces and
-metrics. Logs and telemetry export to the Aspire dashboard through its injected
-OTLP configuration. See the generated README for runnable requests and
-[Aspire integration](integrations/aspire.md) for configuration options.
-
-Run `aspire stop --non-interactive` from the AppHost directory to stop its API,
-dashboard and Redis container. This starter uses no persistent volume, so Redis
-data is discarded. For a larger example including Valkey and HTTP caching, see
-the [Aspire sample](integrations/aspire-sample.md).
-
-Templates are shipped with Respire releases. Generated Respire package references
-use that same version. To remove the templates, run
-`dotnet new uninstall Respire.Templates`.
-
-### Job worker and dashboard
-
-The same package includes `respire-worker`, a standalone .NET 10 app with a typed
-job queue, sample handler, enqueue API and [operator dashboard](guides/stream-dashboard.md):
-
-```bash
-dotnet new respire-worker -n MyWorker
-cd MyWorker
-docker compose up -d --wait
-export Dashboard__Password='replace-with-your-own-password'
-dotnet run
-```
-
-In PowerShell, set `$env:Dashboard__Password = 'replace-with-your-own-password'`
-instead of `export`. Open `http://localhost:5080/workers/` and sign in as `operator`
-with that password. No default password is shipped. The sample uses HTTP Basic
-authentication with the `QueueOperators` authorization policy; plain HTTP credentials
-are accepted only on loopback in Development. Before deployment, configure HTTPS
-and replace the sample authentication handler with your identity provider.
-
-From another terminal, enqueue a job and read its result (curl prompts for your password):
-
-```bash
-curl -u operator -H 'Content-Type: application/json' -d '{"message":"hello worker"}' http://localhost:5080/jobs/welcome-1
-curl -u operator http://localhost:5080/jobs/welcome-1
-```
-
-Use `curl.exe` in Windows shells that alias `curl`. The handler stores `HELLO WORKER`
-in Redis for one hour and acknowledges the job. GET returns 404 until the result
-exists or after it expires. Reusing the same job ID within one day deduplicates
-enqueue; handlers must still tolerate redelivery. The dashboard retains its
-authorization and antiforgery checks for operator actions.
-
-Set `ConnectionStrings__Redis` for an existing Redis server, or use the generated
-Compose file. `/health/ready` checks Redis connectivity. Set
-`OTEL_EXPORTER_OTLP_ENDPOINT` to export client and worker traces and metrics.
-The generated README explains handler customization, queue retention, ports and
-authentication. Stop the app with Ctrl+C, then run `docker compose down`; removing
-the local Redis container discards queued jobs and results.
-
-The walkthrough below builds a different example by hand, with typed values,
-pub/sub, and batching.
 
 ## 1. Create the app
 
@@ -142,23 +24,7 @@ cd RespireQuickstart
 dotnet add package Respire.DependencyInjection
 ```
 
-`Respire.DependencyInjection` brings in the core `Respire` package. No other Respire package is needed here. This command selects the latest stable package. The API may change before the first supported major release; see [packages](./packages) for optional integrations.
-
-### Release candidates
-
-The next supported major targets **2.0.0**, skipping the 1.x line because NuGet already
-contains an unlisted `Respire 1.0.116` package. Release candidates use `2.0.0-rc.N`
-and are published manually as they become ready. After a candidate is published,
-opt in with:
-
-```bash
-dotnet add package Respire.DependencyInjection --prerelease
-```
-
-Without `--prerelease`, NuGet continues to select stable packages. To reproduce a
-particular candidate, use the exact `--version` command from its
-[GitHub release](https://github.com/thomhurst/Respire/releases). All Respire packages
-in an application should use the same version.
+`Respire.DependencyInjection` brings in the core `Respire` package, so nothing else is needed. See [choose packages](./packages) for optional add-ons, and [versioning](./versioning) for release candidates.
 
 If you do not already have a local server, start one:
 
@@ -280,6 +146,124 @@ Stop the app with Ctrl+C. If you started the walkthrough's Docker container, sto
 ```bash
 docker stop respire-quickstart-redis
 ```
+
+## Start from a template {#project-template}
+
+Prefer a working project to copy from? `Respire.Templates` includes three starters.
+
+### Cache-aside API
+
+Install the templates with the **.NET 10 SDK**. Replace `<exact-version>` with the version
+from the [latest GitHub release](https://github.com/thomhurst/Respire/releases):
+
+```bash
+dotnet new install Respire.Templates@<exact-version>
+dotnet new respire-api -n MyCacheApi
+cd MyCacheApi
+docker compose up -d --wait
+dotnet run
+```
+
+Open `http://localhost:5080/health/ready`, then request
+`http://localhost:5080/values/hello` twice. The API caches a generated value for five
+minutes. Replace its factory with your database or service lookup. The starter
+includes a shared DI client, Redis readiness checks, and OpenTelemetry traces and
+metrics. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable export to your collector.
+
+The container requires Docker Compose and uses Redis 7. Set
+`ConnectionStrings__Redis` to use an existing Redis 7+ server instead.
+Stop the app with Ctrl+C and run `docker compose down` to remove the local container.
+The generated README covers configuration and custom HTTP ports.
+
+### Aspire starter
+
+:::warning Requires unpublished packages
+
+The `Respire.Aspire` packages this starter uses are not on NuGet yet. Until they are,
+try Aspire with the [repository sample](integrations/aspire-sample.md), which builds the
+integration from source.
+
+:::
+
+After installing the same template package, use `respire-aspire` for an AppHost
+and minimal API with an Aspire-managed Redis container:
+
+```powershell
+dotnet new respire-aspire -n MyRedisApp
+cd MyRedisApp
+dotnet build MyRedisApp.slnx
+cd MyRedisApp.AppHost
+aspire start --non-interactive
+aspire wait api --non-interactive --timeout 120
+aspire describe --non-interactive
+```
+
+You need .NET SDK **10.0.401 or later**, [Aspire CLI](https://aspire.dev/get-started/install-cli/)
+**13.6 or later**, a running Docker-compatible runtime, and a trusted development
+certificate (`dotnet dev-certs https --trust`). The starter uses Aspire 13.6.1
+hosting packages and Redis 8.10. Add `--isolated` to `aspire start` when running
+multiple copies.
+
+Use the API HTTP URL shown by `describe` or the dashboard; ports are dynamic.
+`WithReference` supplies Redis credentials and `WaitFor` gates API startup on
+Redis readiness. The API establishes its client connection before serving
+`/health/ready`; `/health/live` checks only the running API. Send a JSON string to
+`PUT /values/hello`, then call `GET /values/hello` to read it back. Values expire
+after five minutes; a missing value returns HTTP 404.
+
+`Respire.Aspire` registers the client, Redis health check, and Respire traces and
+metrics. Logs and telemetry export to the Aspire dashboard through its injected
+OTLP configuration. See the generated README for runnable requests and
+[Aspire integration](integrations/aspire.md) for configuration options.
+
+Run `aspire stop --non-interactive` from the AppHost directory to stop its API,
+dashboard and Redis container. This starter uses no persistent volume, so Redis
+data is discarded. For a larger example including Valkey and HTTP caching, see
+the [Aspire sample](integrations/aspire-sample.md).
+
+Templates are shipped with Respire releases. Generated Respire package references
+use that same version. To remove the templates, run
+`dotnet new uninstall Respire.Templates`.
+
+### Job worker and dashboard
+
+The same package includes `respire-worker`, a standalone .NET 10 app with a typed
+job queue, sample handler, enqueue API and [operator dashboard](guides/stream-dashboard.md):
+
+```bash
+dotnet new respire-worker -n MyWorker
+cd MyWorker
+docker compose up -d --wait
+export Dashboard__Password='replace-with-your-own-password'
+dotnet run
+```
+
+In PowerShell, set `$env:Dashboard__Password = 'replace-with-your-own-password'`
+instead of `export`. Open `http://localhost:5080/workers/` and sign in as `operator`
+with that password. No default password is shipped. The sample uses HTTP Basic
+authentication with the `QueueOperators` authorization policy; plain HTTP credentials
+are accepted only on loopback in Development. Before deployment, configure HTTPS
+and replace the sample authentication handler with your identity provider.
+
+From another terminal, enqueue a job and read its result (curl prompts for your password):
+
+```bash
+curl -u operator -H 'Content-Type: application/json' -d '{"message":"hello worker"}' http://localhost:5080/jobs/welcome-1
+curl -u operator http://localhost:5080/jobs/welcome-1
+```
+
+Use `curl.exe` in Windows shells that alias `curl`. The handler stores `HELLO WORKER`
+in Redis for one hour and acknowledges the job. GET returns 404 until the result
+exists or after it expires. Reusing the same job ID within one day deduplicates
+enqueue; handlers must still tolerate redelivery. The dashboard retains its
+authorization and antiforgery checks for operator actions.
+
+Set `ConnectionStrings__Redis` for an existing Redis server, or use the generated
+Compose file. `/health/ready` checks Redis connectivity. Set
+`OTEL_EXPORTER_OTLP_ENDPOINT` to export client and worker traces and metrics.
+The generated README explains handler customization, queue retention, ports and
+authentication. Stop the app with Ctrl+C, then run `docker compose down`; removing
+the local Redis container discards queued jobs and results.
 
 ## Keep going
 

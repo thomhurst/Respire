@@ -58,8 +58,7 @@ namespace and its children, including extension methods, and user interfaces
 marked `[RespireCommands]` and their implementing methods. It follows `AsTask()`, `ConfigureAwait(...)`,
 `WaitAsync(...)`, and local initializer aliases that are never reassigned or
 passed by reference. It does not trace tasks through fields, parameters, arbitrary
-helper methods, or reassignment. This is a targeted diagnostic, not a proof that
-all calling code is asynchronous.
+helper methods, or reassignment, so it will not catch every blocking call.
 
 The fix preserves `ConfigureAwait` and `WaitAsync` arguments. It can add `async`
 to an existing task-returning method or local function when the edited document

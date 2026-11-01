@@ -107,26 +107,6 @@ Console.WriteLine(count.Result);
 
 Protocol reference: [Redis 8.6 vector-set implementation](https://github.com/redis/redis/blob/8.6.0/modules/vector-sets/vset.c).
 
-## Encoding measurements
+## Encoding performance
 
-BenchmarkDotNet results from September 30, 2026, on one GitHub-hosted runner. They compare encoding alternatives within one build, not releases, and cover encoding only, not end-to-end throughput. The run used an A/B/A sequence with identical production code; the table shows the middle (candidate) phase.
-
-Environment: BenchmarkDotNet 0.15.8, Ubuntu 24.04.5, Intel Xeon 6973P-C 2.60 GHz (2 physical / 4 logical cores exposed), .NET SDK 10.0.401, .NET 10.0.12 X64 RyuJIT, Concurrent Workstation GC.
-
-| Components | Encoding | Candidate mean +/- StdDev (ns) | Managed B/op | Complete RESP bytes |
-| ---: | --- | ---: | ---: | ---: |
-| 16 | Direct FP32 | 35.79 +/- 0.53 | 0 | 120 |
-| 16 | Intermediate array FP32 | 62.54 +/- 1.00 | 88 | 120 |
-| 16 | VALUES | 987.81 +/- 1.82 | 0 | 315 |
-| 1,536 | Direct FP32 | 76.30 +/- 0.25 | 0 | 6,202 |
-| 1,536 | Intermediate array FP32 | 470.97 +/- 35.63 | 6,168 | 6,202 |
-| 1,536 | VALUES | 102,003.89 +/- 152.99 | 0 | 26,026 |
-
-Baseline means, first / second phase (ns): direct FP32 36.16 / 35.57 at 16 components and 78.19 / 77.69 at 1,536; intermediate FP32 60.15 / 61.34 and 387.48 / 405.25; VALUES 987.80 / 1,035.23 and 103,850.83 / 103,113.66.
-
-- Each case encodes the full `VADD vectors ... member` command into preallocated output. Inputs use seed 534 with finite components in [-1, 1].
-- The 1,536-component intermediate-array timing varies widely; do not treat its ratio as stable.
-- VALUES shows 0 B/op but costs the most CPU.
-- Measurements exclude validation, command construction, batch snapshots, networking, Redis and replies. 0 B/op does not mean zero-copy networking.
-
-Reproduce with `benchmarks/Respire.Benchmarks/VectorEncodingBenchmarks.cs` through the `.github/workflows/benchmark-vector.yml` workflow.
+Prefer the default `Fp32` encoding. Encoding a full `VADD` command for a 1,536-component vector takes about 76 ns with `Fp32` and about 102 µs with `Values`, and the command is about 6 KB instead of 26 KB. Neither encoding allocates managed memory. These figures cover command encoding only, not networking or Redis.
