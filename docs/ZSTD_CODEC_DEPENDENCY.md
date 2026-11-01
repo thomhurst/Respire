@@ -59,4 +59,4 @@ A hand-authored RLE frame based on the
 [Zstandard format specification](https://github.com/facebook/zstd/blob/v1.5.7/doc/zstd_compression_format.md),
 concatenated and skippable frames, corruption, length mismatches, destination commit behavior, and the
 shared typed and cache integration cases. Results are in the
-[value codec benchmarks guide](../website/docs/guides/value-codec-benchmarks.md).
+[value codec benchmarks guide](VALUE_CODEC_BENCHMARKS.md).

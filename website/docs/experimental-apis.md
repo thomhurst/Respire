@@ -1,10 +1,11 @@
 ---
 title: Experimental APIs
+description: Features you can try now that may still change, and how to opt in.
 ---
 
 # Experimental APIs
 
-Respire uses `System.Diagnostics.CodeAnalysis.ExperimentalAttribute` to identify public APIs whose contracts are still settling. These APIs are available to try, but are outside the compatibility promise for the first supported major release, targeted at 2.0.0. They may change or be removed in a later release, including a minor or patch release.
+Respire uses `System.Diagnostics.CodeAnalysis.ExperimentalAttribute` to identify public APIs whose contracts are still settling. They're ready to try, but they sit outside the [compatibility promise](versioning.md) and may change or be removed in any release, including a minor or patch release.
 
 The compiler reports an error when you use one of these APIs, even without warnings-as-errors enabled. Opt in by suppressing that feature's diagnostic ID with `NoWarn` in your project or a scoped `#pragma warning disable`. Each diagnostic page shows the exact opt-in. Suppression acknowledges the compatibility risk; it does not change runtime behavior or server requirements.
 
@@ -17,11 +18,8 @@ The compiler reports an error when you use one of these APIs, even without warni
 | [RSP0005](diagnostics/RSP0005.md) | Deferred raw commands |
 | [RSP0006](diagnostics/RSP0006.md) | StackExchange.Redis compatibility |
 
-VectorData, AI, and StackExchangeCompat carry assembly-level attributes, so their entire public surfaces are experimental. Core Respire uses type/member attributes so ordinary client, hash, batch, and transaction APIs do not require an opt-in. Respire's own builds opt in to these six IDs to implement and test the features; that build setting is not shipped to consumers.
+VectorData, AI, and StackExchangeCompat carry assembly-level attributes, so their entire public surfaces are experimental. Core Respire uses type/member attributes so ordinary client, hash, batch, and transaction APIs do not require an opt-in.
 
-The `RSPxxxx` IDs are compiler diagnostics for experimental features. They are distinct from the `RESP001`–`RESP006` analyzer and source-generator diagnostics, which are tracked as shipped in release 2.0.0. An experimental ID remains tied to its feature and will not be reused for a different feature after stabilization.
+The `RSPxxxx` IDs are compiler diagnostics for experimental features. They are distinct from the `RESP0xx` analyzer and source-generator diagnostics. An experimental ID remains tied to its feature and will not be reused for a different feature after stabilization.
 
 See the [C# experimental attribute specification](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/proposals/csharp-12.0/experimental-attribute) for compiler behavior.
-
-Contributors changing these APIs should follow the
-[package-validation exception process](contributing.md#experimental-apis).

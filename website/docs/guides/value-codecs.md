@@ -47,11 +47,35 @@ var profile = await compressed.GetAsync<Dictionary<string, string>>("profile");
 - Above the threshold, a codec keeps compression only if the result is smaller. Small, empty, and
   incompressible values use the same frame with an uncompressed payload.
 - Framing adds 18 bytes, so a small value can grow.
-- Encoding and decoding cost CPU and allocate owned buffers. No throughput gain is promised; see
-  [Measuring value codec costs](./value-codec-benchmarks.md).
+- Encoding and decoding cost CPU and allocate owned buffers. Compression saves storage and network
+  bytes; it does not make individual commands faster. See [Choosing a codec](#choosing-a-codec).
 - Objects the inner serializer returns must own their data, because decoding uses scratch buffers
   that are reused.
 - `MaximumDecodedLength` does not bound serializer buffering, compression workspace, or peak memory.
+
+## Choosing a codec
+
+Measured on 16 KiB of repetitive text with the default settings (codec cost only, excluding
+serialization and Redis):
+
+| Codec | Stored size | Relative speed | Notes |
+| --- | ---: | --- | --- |
+| Brotli (quality 4) | 72 B | Slowest to encode and decode | Smallest output. |
+| Zstandard (level 3) | 87 B | Fast | Near-Brotli size at roughly 3–5 times Brotli's speed. |
+| LZ4 (level 0) | 142 B | Fastest to encode | No managed allocation per call. |
+| DEFLATE (Fastest) | about 200–260 B | Fast | Output size varies by .NET version; allocates per call. |
+
+- **Pick Zstandard** for a good balance of size and speed, **LZ4** when CPU cost matters most,
+  and **Brotli** when storage size matters most. DEFLATE and Brotli need no extra package.
+- **Incompressible data still costs CPU.** On 16 KiB of random bytes every codec falls back to an
+  uncompressed frame, but the attempt took roughly 11–26 μs for LZ4 and Zstandard and 70–140 μs for
+  Brotli and DEFLATE, with DEFLATE allocating about 75 KB per call. Leave already-compressed data
+  (images, archives) unwrapped.
+- **Small values grow.** Below `MinimumLength` a 64 B value becomes an 82 B frame. Even with
+  compression forced on, no codec made a 64 B value smaller than the original. Keep the default
+  1 KiB threshold unless your small values are unusually repetitive.
+- Timings depend on your payloads, hardware and concurrency, so measure with real data before
+  changing the threshold or level.
 
 ## Where codecs apply
 

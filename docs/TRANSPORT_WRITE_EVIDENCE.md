@@ -9,7 +9,7 @@ This is an engineering evidence log, not a usage guide. **Application developers
 
 - **What it is.** Respire records whether each send attempt was definitely not written or may have reached Redis. This log states the limits of that record and keeps dated audits of the `run-transport-benchmarks` comparisons, newest first.
 - **Who needs it.** Contributors changing the transport write path, streaming uploads, batches, or connection selection, and reviewers auditing a transport benchmark run.
-- **What to configure.** Nothing. The only public feature that uses it is [`RespireOptions.RetryPolicy`](./command-retries); leave it `null` (the default) for no automatic retries.
+- **What to configure.** Nothing. The only public feature that uses it is [`RespireOptions.RetryPolicy`](../website/docs/guides/command-retries.md); leave it `null` (the default) for no automatic retries.
 - **Status.** Write evidence works as specified. Only a definitely unwritten attempt can authorize a resend that the command's retry category would not otherwise allow. The [current disposition](#healthy-path-disposition-14-october-2026) leaves transport performance acceptance unmet: latency and allocation results are mixed, with no production defect identified. Closed predecessor issues are historical evidence, not current blockers.
 
 Write evidence never retries anything by itself. An ambiguous outcome cannot authorize an unsafe resend, and an unwritten streaming frame does not make the caller's stream replayable.

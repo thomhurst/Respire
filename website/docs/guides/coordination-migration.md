@@ -6,8 +6,8 @@ description: Move from RedLock.net or DistributedLock.Redis to Respire.Coordinat
 # Migrating Redis coordination libraries
 
 This guide maps RedLock.net and madelson's DistributedLock.Redis to `Respire.Coordination`.
-Choose the coordination model before translating calls. A successful API migration does not
-establish equivalent safety under pauses, network partitions, or failover.
+Choose the coordination model first, then translate calls: the libraries differ in how they behave
+under process pauses, network partitions, and failover, so matching method names is not enough.
 
 ```bash
 dotnet add package Respire.Coordination
@@ -243,8 +243,8 @@ choose a lease duration, renewal schedule, and wait policy for the selected Resp
 
 ## Cut over all participants together
 
-These libraries do not promise a shared on-wire coordination protocol. Reusing a logical lock name
-does not establish interoperability; formats, prefixes, data types, and renewal rules can differ.
+Respire and these libraries do not share an on-wire lock format. Reusing a lock name does not make
+them interoperate: formats, prefixes, data types, and renewal rules differ.
 Using different keys while old workers remain active also allows both groups to enter the critical
 section. Drain old workers and their leases, switch all producers/consumers of the resource, then
 start the new implementation. Never delete a live lock to accelerate migration.
@@ -253,9 +253,6 @@ Before rollout, exercise contention, cancellation during acquisition, process pa
 lease, renewal failures, and unavailable Redis nodes in your deployment. Verify that stale writes
 are rejected by the resource when using fencing. Keep an explicit rollback procedure that drains
 the new workers too, and preserves every fencing counter's history.
-
-Upstream references below are pinned to the source revisions checked for this guide, rather than
-promising compatibility with every package version:
 
 [redlock]: https://github.com/samcook/RedLock.net/blob/dcfe373b3e288caac4f45b78c88b5943f8b47e42/README.md
 [distributed-redis]: https://github.com/madelson/DistributedLock/blob/8007a8686909be235dc339564adca4a0673843bb/docs/DistributedLock.Redis.md

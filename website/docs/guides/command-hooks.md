@@ -1,25 +1,16 @@
 ---
 title: Logical command hooks
-description: Admit and observe logical commands, including scripts, cursor pages, blocking replies, streaming results and subscriptions.
+description: Observe, time and reject logical commands, including scripts, cursor pages, blocking replies, streaming results and subscriptions.
 ---
 
 # Logical command hooks
 
-Set `RespireOptions.CommandHook` to admit and observe supported logical commands. The
-default is `null`: it creates no hook context or delegate and enters no extra async wrapper.
-Client views created with a key prefix, read preference, or cache bypass share the hook.
+Set `RespireOptions.CommandHook` to observe, time or reject the commands your application
+runs. The default is `null`, which adds no overhead. Client views created with a key prefix,
+read preference or cache bypass share the client's hook.
 
-:::important Scope
-Supported routes include ordinary converted-response commands, interpolated and non-interpolated Execute
-APIs, function calls and mutations, script execution, dedicated blocking converted replies, ordinary cursor pages,
-streaming results, subscription setup/teardown, specialized server operations, cluster scan pages,
-multi-key and partial hash cache reads, cache-aside factories, distributed-cache operations,
-explicit pipeline/transaction members, WATCH setup, immediate hash imports,
-import-session acquisition, explicit health-probe rounds, typed RedisJSON, Probabilistic, Search and TimeSeries operations.
-Managed locks, semaphores, countdown latches, rate limiters, Redlock groups and the tracked coordination leases
-described below are also covered. The [policy audit](#policy-boundaries-and-decorators) defines the limits:
-this is **not a client-wide command-blocking policy** for arbitrary decorators, composite adapters or wire commands.
-:::
+A hook sees **logical operations**: one admission and one completion per public API call,
+however many wire commands, retries or redirects that call needs internally.
 
 <!-- doc-test-tail-declaration: split-before=sealed class CommandAudit -->
 ```csharp
@@ -52,351 +43,117 @@ sealed class CommandAudit : RespireCommandHook
 }
 ```
 
-## Supported boundaries
+## Callbacks and outcomes
 
-The hook wraps the client's ordinary string, byte and converted-response helpers. These
-include single-key `GetStringAsync`, `GetBytesAsync`, typed `GetAsync` and `TryGetAsync`,
-ordinary value `SetAsync`, `Strings.LengthAsync`, and other facet methods which finish
-conversion in those helpers. Native sends, ready connections, replica routing, and resident
-query-cache hits use the same boundary. Single-key GET admission precedes cache lookup,
-so rejecting a cached read also prevents returning its value. Each caller of a coalesced
-cache miss receives its own admission and completion.
+**`OnExecuting`** runs synchronously after argument validation and before the operation
+sends anything or reads the client-side cache. Return any object to carry per-operation
+state (such as a start timestamp) to the completion callback.
 
-### Module result owners
+- **Observe or time**: return state and inspect it in `OnCompleted`.
+- **Reject**: throw. Nothing is sent, the caller receives your exception, and `OnCompleted` runs once with `Rejected` and null state. This applies even if you throw an `OperationCanceledException`.
 
-For a concrete `RespireClient`, typed `RespireJsonClient` operations own admission through
-final conversion and disposal of their internal result and serialization buffer. `GetAsync<T>`
-therefore reports `Failed` for invalid JSON or a JSONPath matching multiple values; it does not
-report success when only the raw reply has arrived. Admission also precedes serialization,
-so rejection sends no command and does not invoke the JSON converter. Cancellation and
-serialization failures finish the same owner. Argument validation inside the typed operation
-is reported as `Failed` after admission. `OnCompleted` runs after owned cleanup.
+**`OnCompleted`** runs once, before the caller's task completes, with the same context and
+state and one of these outcomes:
 
-| JSON methods | Hook name |
+| Outcome | Meaning |
 | --- | --- |
-| `GetAsync<T>`, `GetManyAsync<T>`, `GetJsonAsync` | `JSON.GET` |
-| `MultiGetAsync<T>` | `JSON.MGET` |
-| `SetAsync<T>`, both `SetJsonAsync` overloads | `JSON.SET` |
-| `MultiSetAsync<T>` | `JSON.MSET` |
-| `MergeAsync<T>` | `JSON.MERGE` |
-| `DeleteAsync`, `ForgetAsync` | `JSON.DEL`, `JSON.FORGET` |
-| `GetMemoryUsageAsync` | `JSON.DEBUG MEMORY` |
+| `Succeeded` | The operation returned its result. |
+| `Failed` | The operation threw, including reply conversion errors and validation performed inside a composite operation. |
+| `Canceled` | The operation threw `OperationCanceledException`. |
+| `Rejected` | `OnExecuting` threw. |
 
-The `Commands` property continues to expose raw-result transfers: completion occurs before
-any conversion the caller performs later. A client supplied through an external `IRespireClient`
-decorator retains its public `ExecuteAsync` dispatch and that decorator's boundary. Respire
-does not unwrap it or suppress its hooks. Application commands started by a JSON converter
-or hook retain independent scopes. Key prefixing, Cluster slot checks and mutation fences
-still run in the ordinary command dispatch path.
+Completion includes the API's own reply conversion and resource cleanup. A conversion you
+perform later on a raw `RespireResult` (for example `result.AsDouble()`) is outside it.
+Exceptions thrown from `OnCompleted` are ignored and never change the caller's result.
 
-Typed `RespireProbabilisticClient` operations over a concrete `RespireClient` likewise admit
-before validation, option preparation or enumeration of caller-supplied items. Completion
-includes boolean, numeric, array and dump-chunk conversion and disposal of the internal
-result. A malformed Cuckoo insert response, t-digest number or dump reply therefore reports
-`Failed`; rejection sends nothing, and cancellation completes once as `Canceled`.
+Things to know:
 
-| Probabilistic family | Typed hook names |
-| --- | --- |
-| Bloom | `BF.RESERVE`, `BF.ADD`, `BF.EXISTS`, `BF.MADD`, `BF.MEXISTS`, `BF.INSERT`, `BF.CARD`, `BF.SCANDUMP`, `BF.LOADCHUNK` |
-| Cuckoo | `CF.RESERVE`, `CF.ADD`, `CF.ADDNX`, `CF.INSERT`, `CF.INSERTNX`, `CF.DEL`, `CF.EXISTS`, `CF.MEXISTS`, `CF.COUNT`, `CF.SCANDUMP`, `CF.LOADCHUNK` |
-| Count-Min | `CMS.INITBYDIM`, `CMS.INITBYPROB`, `CMS.INCRBY`, `CMS.QUERY`, `CMS.MERGE` |
-| Top-K | `TOPK.RESERVE`, `TOPK.ADD`, `TOPK.INCRBY`, `TOPK.QUERY`, `TOPK.COUNT` |
-| t-digest | `TDIGEST.CREATE`, `TDIGEST.RESET`, `TDIGEST.MERGE`, `TDIGEST.ADD`, `TDIGEST.MIN`, `TDIGEST.MAX`, `TDIGEST.QUANTILE`, `TDIGEST.CDF`, `TDIGEST.RANK`, `TDIGEST.REVRANK`, `TDIGEST.BYRANK`, `TDIGEST.BYREVRANK`, `TDIGEST.TRIMMED_MEAN` |
+- Internal retries, redirects, hedge attempts, `NOSCRIPT` fallback and library reloads stay inside one operation and produce no extra callbacks. An external retry is a new operation.
+- With a hook configured, most operations still admit a call whose token is already cancelled: a rejecting hook wins and reports `Rejected`; otherwise completion reports `Canceled`. No command is sent either way.
+- Fire-and-forget calls complete after the write; success does not mean the server executed the command.
+- APIs that return per-node errors as data (server fan-out, `ProbeHealthAsync`) report `Succeeded` when they return their result array, even if some entries failed.
+- For results transferred to you (leases, streams, subscriptions, import sessions, lock handles), completion happens at the transfer. It does not span the resource's lifetime.
+- Hooks are independent of tracing and metrics.
 
-Each merge overload admits one owner. All five `*InfoAsync` methods and `TopKListAsync`
-retain raw-result transfer boundaries (`BF.INFO`, `CF.INFO`, `CMS.INFO`, `TOPK.INFO`,
-`TDIGEST.INFO` and `TOPK.LIST`); the caller disposes those results. External decorators keep
-their public dispatch and raw boundary. Application commands started by item enumeration
-or hook callbacks receive independent scopes. Prefixing, routing and mutation fences remain
-part of ordinary dispatch, including destination-only invalidation for merges. With no hook,
-typed calls do not create a hook scope.
+## Rejection is not authorization
 
-The module inventory distinguishes these result owners; raw execution coverage alone
-does not promise their outer typed result or composite lifetime:
+Hook names describe logical operations, not every wire command. `GETORSET`, `LOCK ACQUIRE`
+and `RATE LIMIT ACQUIRE` write through internal `SET` or script legs, and an `EVAL` or `FCALL`
+can run arbitrary commands on the server, so denying `SET` alone does not deny every write.
+The context carries the command name only, never keys or values. Use Redis ACLs for
+server-enforced access control.
 
-| Module | Result boundary |
-| --- | --- |
-| JSON | Typed deserialization, cardinality, text/numeric conversion, serialization and buffer cleanup are covered above; `Commands` transfers raw results. |
-| Search | Typed query/profile/aggregation parsing, hybrid capability discovery and cursor recovery are covered below. |
-| TimeSeries | Typed reads/writes and chunked `MultiAddAsync` partial-progress conversion are covered below. |
-| Probabilistic | Typed boolean/numeric/array and dump-chunk conversion and owned cleanup are covered above; Info and Top-K List transfer raw results. |
+Rejection also does not undo earlier commands, and housekeeping never asks the hook:
+connection authentication, database selection, tracking setup, topology and capability
+discovery, sampled health PINGs, background lock renewal, and cleanup owed after a started
+operation. Use [connection hooks](./connection-hooks) to control connection establishment.
 
-External wrappers retain the boundaries described in [Policy boundaries and decorators](#policy-boundaries-and-decorators).
+## Concurrency and reentrancy
 
-### Typed Search operations
+- Callbacks can run concurrently on one hook instance. Keep per-operation data in the state returned by `OnExecuting` and synchronize shared state.
+- Keep callbacks short. They run outside transport locks, but a slow callback delays its caller.
+- A callback can start another command; that command gets its own callbacks. There is no automatic suppression, so guard against unbounded recursion and do not block on work that depends on the calling operation.
+- The context is immutable and safe to keep. Completion exceptions can contain server or application data, so choose what you log.
 
-With a concrete `RespireClient`, `RespireSearchClient` owns each command through typed
-reply parsing and disposal. Admission runs before dispatch; completion reports the final
-typed result, including conversion failures, cancellation and rejection, exactly once.
-Argument validation and command preflight precede admission. A rejected command sends
-nothing and cannot invalidate the client-side cache. With no hook configured, no hook
-context is created; parsing, recovery and normal dispatch remain available.
+## What hooks cover
 
-Supported names are `FT.SEARCH` (also vector search), `FT.AGGREGATE` (including the first
-cursor page), `FT.HYBRID`, `FT.PROFILE` (all three profiling modes), `FT.INFO`, `FT.EXPLAIN`,
-`FT.EXPLAINCLI`, `FT._LIST`, `FT.ALIASLIST`, `FT.ALIASADD`, `FT.ALIASDEL`, `FT.ALIASUPDATE`,
-`FT.CREATE`, `FT.ALTER`, `FT.DROPINDEX`, `FT.CONFIG GET`, `FT.CONFIG SET`, `FT.CURSOR READ`,
-`FT.CURSOR DEL`, `FT.DICTADD`, `FT.DICTDEL`, `FT.DICTDUMP`, `FT.SPELLCHECK`, `FT.SUGADD`,
-`FT.SUGDEL`, `FT.SUGGET`, `FT.SUGLEN`, `FT.SYNUPDATE`, `FT.SYNDUMP` and `FT.TAGVALS`.
+Hooks apply to a concrete `RespireClient` and its views. Each entry below is one logical
+operation.
 
-The `COMMAND INFO` probe used to classify an `FT.HYBRID` failure belongs to the hybrid
-call. Its hook completes after probing and error translation; the probe creates no extra
-admission or completion. Likewise, when a malformed cursor page exposes an orphan cursor
-ID, best-effort deletion belongs to that page and finishes before its failure completion.
-Cleanup does not use the canceled caller token and preserves the original parse failure.
+### Commands and Execute APIs
 
-`AggregatePagesAsync` has **page-level ownership**, with one `FT.AGGREGATE` owner and one
-`FT.CURSOR READ` owner for each requested continuation. Each completes before its page is
-yielded. Consumer processing and the enumeration lifetime are outside those owners.
-Early-exit or failed-read cleanup sends a best-effort cursor delete without another hook.
-Explicit application cursor deletes still have their own `FT.CURSOR DEL` owner; deleting
-an already complete page is a no-op and creates no owner.
+- Typed facet methods (`GetStringAsync`, `GetAsync<T>`, `SetAsync`, `Strings.LengthAsync` and so on), including cache hits, replica reads and bulk writes such as `MSET`, `MSETNX`, `MSETEX`, `HSET`, `HSETEX`, `ARMSET` and `RESTORE`. A rejected GET returns nothing, even when the value is cached.
+- `ExecuteAsync`, `ExecuteLeaseAsync` and `ExecuteFireAndForgetAsync`, for catalog descriptors, raw command names and interpolated commands. The name is normalized and arguments are never included. With a hook, interpolated arguments are snapshotted before admission, so the hook cannot change what is sent. `ExecuteLeaseAsync` completes when it hands you the lease.
+- Server operations: pinned `CLIENT`/`HOTKEYS` commands, `CLIENT ID`, `OnNode` calls and server fan-out. Cluster `DBSIZE`, `FLUSHDB`/`FLUSHALL` and `SCRIPT LOAD`/`EXISTS`/`FLUSH` are one operation across all nodes.
 
-Hooks can start independent application commands, including probes and cursor deletes,
-which retain their own admission and completion. Suppression is never ambient. External
-`IRespireClient` decorators receive all dispatch, probes and cleanup through their public
-interface; Respire does not unwrap them. Their underlying client's raw-command hooks may
-therefore complete before the outer Search parser and observe recovery as separate calls.
-These decorator calls therefore have a different result boundary from native typed calls.
+### Scripts and functions
 
-### TimeSeries result owners
+- `Scripts.Execute*` uses one `EVALSHA` (or `EVALSHA_RO`) operation, including `EVAL` fallback, retries and result conversion. The name stays `EVALSHA` even when fallback sends `EVAL`.
+- `Functions.Execute*` uses one `FCALL` or `FCALL_RO`, including retries and missing-library recovery.
+- `Functions.LoadAsync`, `DeleteAsync`, `FlushAsync` and `RestoreAsync` report `FUNCTION LOAD`, `DELETE`, `FLUSH` and `RESTORE`, covering every Cluster node.
 
-With a concrete `RespireClient` (including its prefixed and cache-bypass views), typed
-`RespireTimeSeriesClient` calls admit before preparing or sending the operation and complete
-after parsing, projecting, and disposing their replies. Supported names are `TS.CREATE`,
-`TS.ALTER`, `TS.ADD`, `TS.MADD`, `TS.INCRBY`, `TS.DECRBY`, `TS.GET`, `TS.MGET`, `TS.RANGE`,
-`TS.REVRANGE`, `TS.MRANGE`, `TS.MREVRANGE`, `TS.DEL`, `TS.CREATERULE`, `TS.DELETERULE`,
-`TS.INFO`, `TS.QUERYINDEX`, `TS.NRANGE`, `TS.NREVRANGE`, `TS.QUERYLABELS`, and `TS.READ`.
-`GetRawInfoAsync` includes the caller's projection in its `TS.INFO` result. Label-name and
-label-value queries both use `TS.QUERYLABELS`. `FollowAsync` owns each `TS.READ` separately;
-consumer processing and delays between reads are outside those command boundaries.
+### Cursor pages, blocking reads and streams
 
-Both `MultiAddAsync` overloads own one `TS.MADD` completion across all chunks, including
-per-sample errors and final partial-progress exception translation. The completion receives
-the same final exception as the caller; cancellation after confirmed progress reports
-`Canceled`. Rejection and pre-cancellation send no chunks. This does not make multiple
-chunks atomic or replay an uncertain write.
+- `Keys.ScanAsync`, `SSCAN`/`HSCAN`/`ZSCAN` enumerations and array scans (`ARSCAN`) admit each page separately, before its items are yielded. Rejecting a later page stops further sends; earlier pages stay delivered.
+- `ScanClusterPageAsync` is one `SCAN` per page (`CLUSTERSCAN` for `ScanValkeyClusterPageAsync`). Asking a completed cursor for another page is still admitted, though nothing is sent.
+- Blocking list, sorted-set and stream commands complete after the reply and dedicated-connection cleanup.
+- `Streams.ReadAllAsync` is one `XREAD` per fetched page, including resolution of `$` start positions, recovery and redirects. The whole page is validated before any entry is yielded.
+- `Streams.AddAsync` is one `XADD`, including automatic idempotency, retries and IDMP fallback on older servers.
+- `Streams.CreateGroupAsync` (`XGROUP CREATE`) reports `Succeeded` with `false` when the group already exists.
 
-Internal sends retain routing, key prefixing, retry rules, and cache mutation fences.
-Commands started by a hook or projection have their own owners. An external `IRespireClient`
-decorator retains its public `ExecuteAsync` dispatch and raw-result boundary; the module
-does not unwrap it. With native hooks, an initially canceled `FollowAsync` admits its first
-`TS.READ`, whether starting from an explicit timestamp or `New`. Cancellation between
-completed reads or yielded samples does not create another owner.
+### Streaming values and subscriptions
 
-### Cache operation owners
+- `Strings.SetAsync` with a `Stream` or `ReadOnlySequence<byte>` is one `SET`, admitted before the source is read. You still own and dispose the source.
+- Large value `SET` calls complete only after the socket has released your buffer, so the completion callback may reuse it.
+- `Strings.GetStreamAsync` is one `GET` that completes when it returns the stream. Reading the stream does not invoke the hook; dispose it to release its connection.
+- `SubscribeAsync` reports `SUBSCRIBE`, `PSUBSCRIBE` or `SSUBSCRIBE` and completes once the subscription is active. `RespireSubscription.DisposeAsync` reports the matching unsubscribe; rejecting it leaves the subscription live so you can retry. Reconnects, resubscription and message delivery do not invoke the hook.
 
-`Strings.GetManyAsync` (including typed overloads) admits one `MGET` before any cache
-lookup. Completion includes combining resident and fetched values, retries, generation
-rechecks, and every selected typed conversion. Raw Execute MGET calls keep their own
-result boundary without admitting the internal cached read again. `Hashes.GetManyAsync`
-uses one `HMGET`, including partial field hits and the remaining fetched fields;
-`Hashes.GetAllAsync<T>` includes its dictionary and typed-value conversion in `HGETALL`.
-Other cacheable facet reads that use the converted-response helpers retain that same
-conversion boundary on both cache hits and misses.
+### Cache operations
 
-`GetOrSetAsync<T>` admits one logical `GETORSET` after factory/expiry validation and
-before cache lookup, tracking, or factory execution. Completion includes factory execution,
-serialization, conditional insertion, mutation-fence cleanup, and final deserialization.
-Internal GET and SET legs do not produce additional hook events. Calls made by the
-application factory or a hook receive independent scopes. Each coalesced caller has its
-own scope and cancellation outcome; canceling one caller can leave the shared producer
-running for other callers. The boundary also applies to `WithoutClientCache` views.
-
-The overload with `RespireCacheAsideOptions` uses the same `GETORSET` scope, including lease
-contention, factory execution, token-checked publication, and cleanup. Options are validated before
-admission. Internal Lua calls do not produce nested hook events; commands called by the factory do.
-
-`RespireDistributedCache` backed by a concrete `RespireClient` (including prefixed views)
-admits `GET` for Get/TryGet, `SET` for both Set overloads, `REFRESH` for Refresh, and
-`UNLINK` for Remove. Synchronous entry points use the same scopes. These are logical
-adapter operations, even when the implementation sends scripts. Admission precedes
-buffer coalescing, codecs and tracked setup. Completion includes decoding or destination
-writes, foreground TTL corrections, and result/lease cleanup. Internal scripts, fallback
-and correction sends do not create extra events. An opaque custom `IRespireClient`
-decorator does not expose its underlying hook to the adapter and is outside this contract.
-
-Non-interpolated `ExecuteAsync`, `ExecuteLeaseAsync`, and `ExecuteFireAndForgetAsync`
-are covered for both catalog descriptors and caller-supplied command names. Raw command
-names are normalized and inline arguments are omitted from the context. Do not interpret
-this name-only API as a key/value authorization mechanism.
-
-The interpolated overloads of all three Execute APIs also admit after preflight validation
-and before dispatch. With a hook configured, tokens and caller-owned binary arguments are
-snapshotted before admission; dispatch uses that same snapshot even if the hook changes the
-original buffers or appends to an explicitly constructed handler.
-Literal command names and recognized subcommands are normalized;
-interpolated arguments are never included in the context. Owned `ExecuteAsync` completes
-after materialization and disposal of the temporary reply lease. `ExecuteLeaseAsync`
-completes when it transfers the result lease to the caller, who must still dispose it.
-Later caller-selected conversions (for example `result.AsDouble()`) are outside both
-result boundaries, including conversion failures. Fire-and-forget completes after its
-existing write/redirect handling. Retries, redirects, blocking dispatch, cluster-wide
-mutation legs and their mutation fences remain within one admitted operation.
-Hooks do not change replay eligibility: interpolated commands retain their raw-command
-restriction against retry-policy replay; cluster redirects keep their existing behavior.
-
-### Functions
-
-Immediate `Functions.ExecuteAsync`, `ExecuteSpanAsync`, `ExecuteLeaseAsync`,
-`ExecuteLeaseSpanAsync`, `ExecuteIntegerAsync`, `ExecuteStringAsync` and typed
-`ExecuteAsync<T>` admit one `FCALL` or `FCALL_RO` after key/argument preflight and
-before the first send. Completion includes declared retries, missing-library
-`FUNCTION LIST`/`LOAD` recovery, replica propagation, and result conversion and cleanup.
-Materialized results complete after copying into owned storage; leased results complete
-when ownership transfers to the caller, who must still dispose them. Later caller-selected
-conversions and disposal do not invoke the hook again.
-
-`Functions.LoadAsync`, `DeleteAsync`, `FlushAsync` and `RestoreAsync` admit one
-`FUNCTION LOAD`, `FUNCTION DELETE`, `FUNCTION FLUSH` or `FUNCTION RESTORE` respectively.
-Cluster fan-out, per-target retries, reply conversion, consistency checks and owned cleanup
-remain inside that scope. Completion waits for every started leg, including when one fails.
-`ListAsync`, `DumpAsync` and `StatsAsync` use the ordinary converted-response boundary.
-Internal library recovery does not create extra function-mutation hooks. Application calls
-started by callbacks retain their own independent scopes. Batch and transaction function
-members use the aggregate member boundary described below.
-
-### Streaming and subscription resources
-
-- `Strings.SetAsync` with a `Stream` or `ReadOnlySequence<byte>` admits one `SET`
-  before reading the source or dispatching. Completion follows the final reply conversion,
-  mutation fence and dedicated-connection cleanup, including source failures and cancellation.
-  The caller still owns the source; Respire does not dispose it.
-- Large array-backed value `SET` calls also complete only after all accepted socket writes
-  release their borrowed memory. A cancellation or early reply cannot invoke completion
-  while a gathered write still uses the buffer. The callback may therefore reuse the buffer.
-- `Strings.GetStreamAsync` admits one `GET` before dispatch and completes when it returns
-  the stream or null, or fails to acquire the result. This is a **stream-transfer boundary**,
-  not a measurement of payload consumption. Later read failures, read cancellation, EOF and
-  stream disposal do not invoke the hook again. The caller must consume or dispose the
-  stream to release its dedicated connection, just as without a hook.
-- `SubscribeAsync` with ordinary, `RespireChannel.Pattern`, or `RespireChannel.Sharded`
-  targets admits one logical
-  `SUBSCRIBE`, `PSUBSCRIBE` or `SSUBSCRIBE` for the requested targets. Completion follows
-  activation and acknowledgement, or failure cleanup. Explicit `RespireSubscription.DisposeAsync`
-  admits the corresponding unsubscribe operation before ending enumeration or removing routes,
-  and completes after teardown. Rejection leaves the subscription live and disposal can be
-  retried. Duplicate, concurrent or callback-reentrant disposal does not create another scope
-  while disposal admission is active; a duplicate call need not await the first disposal.
-
-Subscription hooks describe resource operations even when a shared route needs no wire
-unsubscribe. Client disposal, reconnect/resubscribe, topology recovery and message delivery
-are housekeeping, not new application operations. The setup hook does not remain open for
-the subscription's lifetime. Teardown has no cancellation token; setup uses its caller token.
-
-### Specialized server and cluster operations
-
-Specialized server operations are also covered: pinned client/HOTKEYS commands, `CLIENT ID`
-handle acquisition, explicit `OnNode` operations, server facet conversions and server fan-out.
-Explicit-node completion includes connection-pool disposal and mutation-fence cleanup.
-Cluster `DBSIZE`, `FLUSHDB`/`FLUSHALL`, and `SCRIPT LOAD`/`EXISTS`/`FLUSH` have one scope
-around all targets and their final conversion or reduction. Server fan-out APIs return
-per-node failures as data: publishing their result array is `Succeeded`, even if entries
-contain conversion errors or cancellation. Discovery errors that escape the operation are
-reported as `Failed` or `Canceled`.
-
-`ScanClusterPageAsync` has one `SCAN` scope per page, including resumable Valkey
-`CLUSTERSCAN`, redirects, capability fallback and final checkpoint conversion. Its topology,
-run-ID and capability probes do not generate separate callbacks. Direct
-`ScanValkeyClusterPageAsync` uses a `CLUSTERSCAN` scope. A completed cursor still receives
-admission and completion when asked for another page, even though it sends no command.
+- `Strings.GetManyAsync` is one `MGET` and `Hashes.GetManyAsync` one `HMGET`, covering cached and fetched values together. `Hashes.GetAllAsync<T>` is one `HGETALL`.
+- `GetOrSetAsync<T>` is one `GETORSET`, covering lookup, your factory, serialization and publication, with or without `RespireCacheAsideOptions`. Concurrent callers sharing one load each get their own callbacks; cancelling one leaves the load running for the others.
+- `RespireDistributedCache` reports `GET`, `SET`, `REFRESH` and `UNLINK`, for both sync and async methods.
 
 ### Imports, bulk writes and health probes
 
-`Hashes.CreateImportSessionAsync`, with or without a routing key, admits the logical
-operation `HIMPORT OPEN` after routing validation and before pool discovery or connection
-setup. Completion transfers ownership of the dedicated session to the caller; it does not
-span the session's lifetime. Rejecting acquisition opens no connection.
+- `Hashes.CreateImportSessionAsync` is `HIMPORT OPEN`, completing when it hands you the session; rejecting it opens no connection. Session `PrepareAsync`, `SetAsync`, `DiscardAsync` and `DiscardAllAsync` report `HIMPORT PREPARE`, `SET`, `DISCARD` and `DISCARDALL`; a rejection keeps existing fieldsets usable. Session disposal always runs and is not hooked.
+- Bulk writes use the ordinary command names listed above.
+- `ProbeHealthAsync` is one `PROBE HEALTH`. It reports `Succeeded` when it returns results, even if every node failed; check each result's `Error`. Its internal PINGs are not hooked, but your own PING calls are.
 
-Immediate session `PrepareAsync`, `SetAsync`, `DiscardAsync` and `DiscardAllAsync` admit
-`HIMPORT PREPARE`, `HIMPORT SET`, `HIMPORT DISCARD` and `HIMPORT DISCARDALL` respectively.
-Arguments are validated and snapshotted before admission. Completion includes reply
-conversion, mutation-fence release, sequential-usage release and any required session expiry.
-Hook rejection and cancellation before dispatch keep existing fieldsets usable. Ordinary
-server errors retain the session; uncertain sends still expire it without replay.
+### Batches, transactions and WATCH
 
-Session `DisposeAsync` is unconditional ownership cleanup, with no hook admission or
-completion. It closes the dedicated connection and destroys its fieldsets even if a hook
-would reject commands. Internal expiry uses that same cleanup. `CreateBatch` and
-`CreateTransaction` only construct queues: their member dispatch belongs to the separate
-aggregate contract, not these immediate-operation scopes.
+Batch and transaction members are admitted when the unit executes, not when queued:
 
-Bulk writes already use ordinary converted-response scopes: `Strings.SetManyAsync`,
-`SetManyIfNotExistsAsync` and `SetManyExpireAsync` expose `MSET`, `MSETNX` and `MSETEX`;
-multi-field hash writes expose `HSET`/`HSETEX`, array multi-set exposes `ARMSET`, and key
-restore exposes `RESTORE`. Each includes conversion and preserves existing atomicity and
-expiry semantics. `Functions.RestoreAsync` uses the function-mutation boundary; explicit
-server-node migration and cluster import use the server-node boundary. There is no separate
-multi-command bulk-import helper. Application calls made from callbacks retain independent
-scopes; internal import transport and cleanup do not create duplicate scopes.
+- If a `PipelineHook` is set, it runs first, then `CommandHook.OnExecuting` for each member in queue order (`WAIT`/`WAITAOF` last in a durability batch). All admissions finish before anything is sent.
+- If a member is rejected, nothing is sent and every member fails with that exception. The rejected member reports `Rejected`, earlier members report `Failed` (or `Canceled`), and later members get no callbacks.
+- Members complete in queue order with their own outcome, and the pipeline hook completes last. A failed `WAIT` does not turn successful writes into failures. Members of an aborted watched transaction report `Failed` with `RespireTransactionAbortedException`.
+- `MULTI`, `EXEC` and internal retries are not hooked. An empty unit has no member callbacks.
+- Creating a watched transaction with keys reports one `WATCH`, admitted before a dedicated connection is acquired. Each attempt of the watched-transaction retry helper is a new `WATCH` plus member execution.
 
-`ProbeHealthAsync` admits one logical `PROBE HEALTH` operation after options validation
-and before capturing existing connections or sending any probe. Completion includes all
-started probes and publishing the owned result array. Per-node errors, unavailable nodes,
-and probe-deadline failures are **data**: returning that array is `Succeeded`, even for mixed
-or entirely failed results. Inspect each result's `Error` to determine health. Caller
-cancellation is `Canceled`; snapshot/discovery failures that escape are `Failed`.
-The round's internal PINGs, sampled health PINGs, topology and capability probes do not
-produce additional command hooks. Explicit application PING calls keep their normal scope.
+### Locks and coordination
 
-### Stream appends
-
-`Streams.AddAsync` admits one `XADD` and completes after publishing its stream ID or
-nullable result. Automatic producer identity, lost-reply retries, and fallback when an
-older server rejects IDMP all belong to that same scope. A null reply to an automatically
-idempotent required-result overload is `Failed`; a null optional result is `Succeeded`.
-Internal attempts do not create callbacks, while application commands started by a hook
-receive their own independent scopes. Completion follows the existing mutation fences
-and response cleanup. Ordinary appends and explicitly supplied IDMP options also finish
-their typed conversion inside the scope. Argument validation and command construction
-remain preflight work before admission.
-
-### Scripts, blocking replies and cursor pages
-
-Script-object `Scripts.ExecuteAsync`, `ExecuteSpanAsync`, `ExecuteLeaseAsync`,
-`ExecuteLeaseSpanAsync`, and the typed/integer/string execution conveniences use one
-`EVALSHA` (or `EVALSHA_RO`) scope. It encloses NOSCRIPT fallback to EVAL, declared
-retries, cache mutation cleanup, and the selected result conversion. Both callbacks retain
-the `EVALSHA` or `EVALSHA_RO` command name even when fallback sends `EVAL` or `EVAL_RO`.
-Owned results finish materialization before completion; leased results complete when the
-lease is returned to the caller. The caller's subsequent conversion or disposal of that
-lease is outside the hook boundary.
-
-Dedicated blocking list, sorted-set, and stream commands that use the blocking converted
-response helper complete after reply conversion and dedicated connection cleanup. Their
-internal connection setup and cancellation control commands do not create hook events.
-Continuous `ReadGroupAsync` enumerations with a configured hook admit an initially
-canceled call before reporting cancellation. The single-stream overload that accepts
-`startAt` drains an already fetched batch and then ends quietly if canceled, with or
-without a hook; it does not admit another page. The `RespireStreamReadOptions` overload checks
-cancellation between entries and throws outside the already completed page scope.
-
-Ordinary `Keys.ScanAsync` and collection SSCAN/HSCAN/ZSCAN enumerations admit each
-requested page separately. Completion includes parsing that page, before its items are
-yielded. Rejecting a later page prevents its send while leaving earlier pages delivered.
-Cancellation between yielded items is outside the already completed page.
-
-Continuous `Streams.ReadAllAsync` (single or multiple streams) admits one `XREAD`
-scope for each fetched page. The first page includes resolving every `$` start position
-with internal `XREVRANGE` calls; rejection prevents those calls too. Initial resolution
-failures are terminal. Read recovery, backoff and redirects stay inside the admitted page,
-and a rejection is never retried even when the hook throws a connection exception.
-Completion follows dedicated-connection cleanup and validation of the whole page,
-including stream keys and increasing entry IDs, before any entry is yielded. Buffered
-entries produce no further callbacks. Cancellation between entries is outside the completed
-page; cancellation during recovery completes that page as `Canceled`. Disposing the iterator
-does not admit another operation. The hook-absent path retains incremental entry validation.
-
-`Streams.CreateGroupAsync` completes `XGROUP CREATE` after reducing `BUSYGROUP` to
-the successful result `false`. Other server errors fail the operation. Admission rejection
-always propagates, including when a hook throws a `BUSYGROUP`-shaped server exception.
-`ContinuousStreamCommandHookTests` records these boundaries for [#1773](https://github.com/thomhurst/Respire/issues/1773).
-
-### Locks and tracked coordination
-
-These composite operations use logical names, rather than the Redis command selected by
-capability fallback. Rejecting `SET` or `EVALSHA` alone does not reject a lock operation.
-Use the names in this table when applying a policy to these APIs.
+Coordination APIs report logical names, not the Redis commands they use. Rejecting `SET` or
+`EVALSHA` does not reject a lock operation; use these names instead.
 
 | Public operation | Hook name |
 | --- | --- |
@@ -415,265 +172,58 @@ Use the names in this table when applying a policy to these APIs.
 | Rate limiter `UpdateAsync`, including local adoption | `RATE LIMIT UPDATE` |
 | Public deny-list membership read and write | `RATE LIMIT DENY LIST READ`, `RATE LIMIT DENY LIST WRITE` |
 
-Fenced lock handles delegate to managed locks and use their `LOCK` names for subsequent
-operations. Admission precedes tracked connection setup, mutation fences, ownership changes
-and notification waiting. One completion includes contention polling, native/Lua capability
-fallback, final result conversion and foreground correction/cleanup. A failed
-`AcquireOrThrowAsync` completes as `Failed`; an unsuccessful acquisition attempt is `Succeeded`.
-Each caller joining a managed lock release receives its own scope around its result.
-
-Rejecting release or disposal leaves the handle available for a later attempt; rejecting
-keep-alive stop leaves renewal running. Completion reports the public API's outcome, including
-its existing cleanup exception-swallowing rules. Disposal does not admit a nested release.
-An unsuccessful acquisition attempt has no resource to dispose and creates no disposal scope.
-
-Background renewal, detached cleanup retries, tracked script legs, `CLIENT ID`/`CLIENT KILL`
-fences and notification tracking reads are housekeeping inside or following the owning operation;
-they do not ask policy permission again. Bounded foreground cleanup can hand remaining recovery
-to the existing background queue. Completion does not promise that detached recovery has ended.
-Rejecting `LOCK RENEW` does not stop background keep-alive renewals; use acquisition or
-`LOCK KEEPALIVE START` admission to control their start.
-The acquisition scope ends when it returns the handle, not at the end of the lease's lifetime.
-Application calls from callbacks still receive independent scopes. Coordination coverage applies
-to a concrete `RespireClient`; custom `IRespireClient` decorators retain their own dispatch behavior.
-
-Countdown latch admission precedes script dispatch and notification setup. Creation and
-joining complete when the handle (or a missing-generation null result) is returned; they
-do not span the generation's lifetime. Reset and count-down include the selected script's
-result handling. Joining and waiting include state validation and compatibility fallback
-on servers without read-only script commands. Invalid state or count conversion completes
-as `Failed`, rather than reporting a successful script leg.
-
-One `LATCH WAIT` scope includes repeated state reads, notification subscription, periodic
-resynchronization and foreground subscription/enumerator teardown. Reaching zero or finding
-a replaced/removed generation completes as `Succeeded` with the existing boolean result.
-Cancellation completes as `Canceled` after teardown. The wait's script, SUBSCRIBE and
-UNSUBSCRIBE legs do not invoke hooks: rejecting a separate application unsubscribe cannot
-prevent the wait from cleaning up its own subscription. Callback-initiated application
-commands still have independent scopes. Initially canceled calls are admitted before
-cancellation is reported, without sending commands. These boundaries apply to concrete
-clients and their views; opaque custom client decorators retain their own dispatch behavior.
-`CountdownLatchCommandHookTests` covers no-wire rejection for all five owners, final
-conversion, compatibility fallback, wait teardown, cancellation and application reentrancy.
-
-This extends the tracked-owner inventory for [#1755](https://github.com/thomhurst/Respire/issues/1755)
-with countdown latches ([#1767](https://github.com/thomhurst/Respire/issues/1767)) and
-rate limiters ([#1768](https://github.com/thomhurst/Respire/issues/1768)), plus
-multi-client Redlock groups ([#1769](https://github.com/thomhurst/Respire/issues/1769)).
-
-Custom implementations of the client or its facets own their outer conversions and composite
-lifetimes. Calling covered native helpers does not give an external wrapper the native
-logical-owner contract; see [Policy boundaries and decorators](#policy-boundaries-and-decorators).
-
-Tracked scripts and correction sends belong to the surrounding lock, cache or coordination
-operation. Their internal dispatch helpers deliberately do not create scopes; admitting a
-transport leg would miss earlier setup and finish before correction cleanup.
-This coverage does not establish a client-wide blocking policy.
+- Fenced lock handles use the managed `LOCK` names for later operations.
+- An unsuccessful acquisition attempt reports `Succeeded` (it returned a result); a failed `AcquireOrThrowAsync` reports `Failed`.
+- Rejecting release or disposal leaves the handle usable for a later attempt. Rejecting `LOCK KEEPALIVE STOP` leaves renewal running.
+- Background renewal is not hooked, so rejecting `LOCK RENEW` does not stop keep-alive. Control it through `LOCK ACQUIRE` or `LOCK KEEPALIVE START`.
+- `LATCH WAIT` is one operation covering polling, its notification subscription and teardown.
+- Completion covers foreground cleanup; it does not wait for background recovery that the operation handed off.
 
 ### Multi-client Redlock
 
 `RespireRedlockGroup.TryAcquireAsync`, lease `ResetExpiryAsync`, `ReleaseAsync` and
-`DisposeAsync` use `REDLOCK ACQUIRE`, `REDLOCK RENEW`, `REDLOCK RELEASE` and
-`REDLOCK DISPOSE`. Each native lock facet's configured hook admits the **whole group
-operation**, in the order clients were supplied to the group. A shared hook instance is
-called once per participating client, with separate context and state. Clients without a
-hook add no admission requirement. Duration validation and acquisition key snapshotting
-precede admission; other operation validation remains inside the boundary.
+`DisposeAsync` report `REDLOCK ACQUIRE`, `REDLOCK RENEW`, `REDLOCK RELEASE` and
+`REDLOCK DISPOSE`.
 
-All required admissions finish before any node command, lease-state change, or operation
-gate acquisition. Rejection stops admission and sends nothing: the rejecting hook completes
-as `Rejected` with null state; previously admitted hooks complete as `Failed` (or `Canceled`
-for a cancellation exception), with the same error. Later hooks receive no callbacks.
-After admission, caller cancellation is checked even when already canceled on entry.
-Rejected renewal, release and disposal preserve the existing lease and can be retried.
-Disposal admission rejection propagates; admitted disposal retains best-effort release.
+- Every participating client's hook admits the whole group operation, in the order the clients were supplied, before any node command is sent. A shared hook instance is called once per client. Clients without a hook are skipped.
+- If one hook rejects, nothing is sent: that hook reports `Rejected`, earlier hooks report `Failed` (or `Canceled`), and later hooks get no callbacks. A rejected renewal, release or disposal keeps the lease, so you can retry.
+- Hooks complete in client order after the group operation finishes. They all see the group's outcome: missing quorum is a successful unacquired result, not a hook failure.
+- Internal per-node legs and cleanup are not re-admitted, so cleanup cannot be vetoed once it starts. See the [Redlock guide](./coordination.md#multi-node-redlock) for timing behavior.
+- Group admission is guaranteed only for clients exposing Respire's native lock facet (including prefixed views). A custom lock-facet decorator keeps its own per-node behavior.
 
-Entered hooks complete once, in client order, after fan-out, quorum/drift decisions, final
-lease construction, foreground correction and operation-gate release. Every hook observes
-the group API outcome: unavailable nodes or lack of quorum can produce a successful
-`false`/unacquired result; they are not independent hook failures. Cancellation and exceptions
-escaping the API produce `Canceled` and `Failed`. Observer exceptions are ignored. Each
-explicit call has a scope, including a no-op on an already released lease. Disposing an
-unacquired attempt has no scope.
+### Typed modules
 
-Native SET/renewal/release legs and owed cleanup do not re-admit. Cleanup therefore cannot
-be vetoed after acquisition or renewal has started. Node timeouts still bound waiting;
-uncertain late writes can outlive cleanup and rely on expiry, as described in the
-[Redlock guide](./coordination.md#multi-node-redlock). Release ignores caller cancellation
-once node cleanup starts. Callbacks can start application commands with independent hooks;
-there is no ambient suppression.
+Typed RedisJSON, Search, TimeSeries and Probabilistic operations are admitted before
+serialization and sending, and complete after typed parsing. A malformed reply or invalid
+JSON (for example a JSONPath matching several values in `GetAsync<T>`) reports `Failed`.
 
-This policy covers clients exposing Respire's native lock facet, including prefixed views.
-An opaque custom client or lock-facet decorator cannot expose its underlying policy to the
-group: it retains its public per-node behavior, which can admit, reject or observe internal
-legs separately. Mixed groups therefore guarantee ordered group admission only for their
-native participants. Applications requiring group admission must supply native lock facets
-for every participating client.
-
-### Explicit aggregate members and WATCH
-
-`CommandHook` admits batch and transaction members when the aggregate executes, not when
-commands are queued. When both hooks are configured, `PipelineHook.OnExecuting` runs first,
-then each `CommandHook.OnExecuting` in queue order, with `WAIT` or `WAITAOF` last for a
-durability batch. All admissions finish before connection acquisition or the first member
-send. With a command hook, caller cancellation is checked after admission. Structural and
-lifecycle validation still precede callbacks.
-
-An aggregate-hook rejection invokes no member hooks. A member rejection stops further
-admission and faults **every** queued pending with that same exception. The rejecting member
-completes as `Rejected` with null state; previously admitted members complete as `Failed`
-(or `Canceled` for a cancellation exception). Members whose admission was never entered
-receive no callback. `TryExecuteAsync` returns the pending failures; throwing execution APIs
-retain their existing error behavior. The aggregate hook sees a member rejection as a failed
-or canceled execution, rather than rejection of its own admission.
-
-Entered members complete in queue order after final reply conversion, retries, mutation
-fences and owned cleanup, outside an import session's usage gate. The pipeline hook completes
-last. Each member reports its own pending outcome, so a failed `WAIT`/`WAITAOF` does not turn
-successful writes into failures. An admitted acknowledgement skipped after a member failure
-reports the execution failure. An aborted watched transaction reports `Failed` with
-`RespireTransactionAbortedException` for each entered member, matching inspection of an
-aborted pending; the pipeline hook retains its `Aborted` outcome. `MULTI`, `EXEC`, internal
-retry attempts and protocol housekeeping do not create command events. Empty aggregates
-have no command events, while their pipeline hook still runs.
-
-Creating a watched transaction with nonempty keys admits one independent `WATCH` scope
-after key snapshot/routing validation and before dedicated connection acquisition. It
-completes on transfer of the watched transaction, or after failed-setup cleanup. Rejection
-sends no WATCH. Creating with no watch keys has no WATCH scope. Commit and disposal retain
-their existing connection ownership; rejecting a commit retires its WATCH connection
-without sending MULTI/EXEC. Each fresh watched transaction created by the application-level
-retry helper is a new WATCH and member execution, unlike internal retries of one commit.
-
-`AggregateCommandHookTests` covers both hook combinations, no-wire rejection, final
-conversion failures, cancellation, empty aggregates, retries, watched aborts, durability
-and import member cleanup. This extends the ordinary (#1685) and specialized (#1707)
-boundaries with explicit member-level policy.
-
-## Policy boundaries and decorators
-
-The [#1708 audit](https://github.com/thomhurst/Respire/issues/1708) covers native result owners,
-not arbitrary code implementing `IRespireClient` or a facet interface. Native custom facets
-(arrays, vectors, extended increments, LCS and stream configuration/acknowledgement commands)
-use the converted-response owner: their parsing and typed deserialization finish before
-completion. Array scans own each requested `ARSCAN` page; cancellation while consuming an
-already completed page does not change its successful outcome or admit another page.
-
-With a configured hook, valid initially canceled calls admit before reporting cancellation,
-including array scans, `HSCAN NOVALUES` pages and those custom facets. A rejecting policy
-wins over initial cancellation and receives one `Rejected` completion. An observing policy
-receives one `Canceled` completion with the caller's exception and token. Neither sends a
-command. Existing argument construction/preflight can still fail before admission; without
-a hook, each API retains its existing cancellation/validation order.
-
-| Client or wrapper | Admission and completion contract |
+| Module | Hook names |
 | --- | --- |
-| `RespireClient` and native prefix/read-preference/cache-bypass views | Share the configured hook; the named native operation owns admission, conversion and foreground cleanup. |
-| Decorator returning a native facet unchanged | The native facet retains its owner. Returning `inner.Strings`, for example, preserves native GET admission. |
-| Decorator forwarding `ExecuteAsync` | The inner raw command retains admission and raw-result completion. A typed parser outside that call can fail after the hook reported success. |
-| Custom facet, interface default method or higher-level adapter composing public calls | Each forwarded native call retains its own boundary. There is no inferred outer scope, early admission before the wrapper's own side effects, or once-only completion for the whole composition. |
-| Native coordination/Redlock owner | Admits the documented logical name before its internal legs; background and owed recovery remain housekeeping. Opaque custom lock facets retain their public per-node behavior. |
+| JSON | `JSON.GET` (`GetAsync<T>`, `GetManyAsync<T>`, `GetJsonAsync`), `JSON.MGET`, `JSON.SET`, `JSON.MSET`, `JSON.MERGE`, `JSON.DEL`, `JSON.FORGET`, `JSON.DEBUG MEMORY` |
+| Search | `FT.SEARCH` (including vector search), `FT.AGGREGATE`, `FT.HYBRID`, `FT.PROFILE`, `FT.INFO`, `FT.EXPLAIN`, `FT.EXPLAINCLI`, `FT._LIST`, `FT.ALIASLIST`, `FT.ALIASADD`, `FT.ALIASDEL`, `FT.ALIASUPDATE`, `FT.CREATE`, `FT.ALTER`, `FT.DROPINDEX`, `FT.CONFIG GET`, `FT.CONFIG SET`, `FT.CURSOR READ`, `FT.CURSOR DEL`, `FT.DICTADD`, `FT.DICTDEL`, `FT.DICTDUMP`, `FT.SPELLCHECK`, `FT.SUGADD`, `FT.SUGDEL`, `FT.SUGGET`, `FT.SUGLEN`, `FT.SYNUPDATE`, `FT.SYNDUMP`, `FT.TAGVALS` |
+| TimeSeries | `TS.CREATE`, `TS.ALTER`, `TS.ADD`, `TS.MADD`, `TS.INCRBY`, `TS.DECRBY`, `TS.GET`, `TS.MGET`, `TS.RANGE`, `TS.REVRANGE`, `TS.MRANGE`, `TS.MREVRANGE`, `TS.DEL`, `TS.CREATERULE`, `TS.DELETERULE`, `TS.INFO`, `TS.QUERYINDEX`, `TS.NRANGE`, `TS.NREVRANGE`, `TS.QUERYLABELS`, `TS.READ` |
+| Bloom | `BF.RESERVE`, `BF.ADD`, `BF.EXISTS`, `BF.MADD`, `BF.MEXISTS`, `BF.INSERT`, `BF.CARD`, `BF.SCANDUMP`, `BF.LOADCHUNK` |
+| Cuckoo | `CF.RESERVE`, `CF.ADD`, `CF.ADDNX`, `CF.INSERT`, `CF.INSERTNX`, `CF.DEL`, `CF.EXISTS`, `CF.MEXISTS`, `CF.COUNT`, `CF.SCANDUMP`, `CF.LOADCHUNK` |
+| Count-Min | `CMS.INITBYDIM`, `CMS.INITBYPROB`, `CMS.INCRBY`, `CMS.QUERY`, `CMS.MERGE` |
+| Top-K | `TOPK.RESERVE`, `TOPK.ADD`, `TOPK.INCRBY`, `TOPK.QUERY`, `TOPK.COUNT` |
+| t-digest | `TDIGEST.CREATE`, `TDIGEST.RESET`, `TDIGEST.MERGE`, `TDIGEST.ADD`, `TDIGEST.MIN`, `TDIGEST.MAX`, `TDIGEST.QUANTILE`, `TDIGEST.CDF`, `TDIGEST.RANK`, `TDIGEST.REVRANK`, `TDIGEST.BYRANK`, `TDIGEST.BYREVRANK`, `TDIGEST.TRIMMED_MEAN` |
 
-Respire deliberately does not unwrap decorators or discover a hook through reflection.
-Forwarding only a hook reference would be insufficient: internal wire legs would still
-re-admit, cleanup could be vetoed, and typed conversion could finish outside the scope.
-An external wrapper that needs its own policy must define and enforce that boundary itself.
-Native suppression is explicit on internal dispatch, never ambient; application work started
-by hooks, factories, serializers or projections remains independently admitted.
+Module notes:
 
-Names describe **logical operations**, not a complete list of wire commands. For example,
-`GETORSET`, `LOCK ACQUIRE` and `RATE LIMIT ACQUIRE` can write through internal SET/EVAL legs;
-an EVAL or FCALL can execute arbitrary server-side commands. Denying `SET` alone does not
-deny every write. Context contains no keys or values and is not a server authorization
-boundary. Use server permissions for server-enforced access control.
+- The JSON client's `Commands` property and the Probabilistic `*InfoAsync` and `TopKListAsync` methods return raw results; completion happens before you convert them.
+- `FT.HYBRID` includes its `COMMAND INFO` capability probe. `AggregatePagesAsync` admits the first `FT.AGGREGATE` and each `FT.CURSOR READ` separately; cleanup after early exit is not hooked.
+- `TimeSeries.MultiAddAsync` is one `TS.MADD` across all chunks. Chunks are still not atomic. `FollowAsync` admits each `TS.READ` separately. Label-name and label-value queries both report `TS.QUERYLABELS`.
 
-Housekeeping remains excluded: connection authentication/selection/tracking, topology and
-capability discovery, sampled health PINGs, retry/redirect legs, notification tracking reads,
-library recovery, background renewal and owed correction/cleanup. Explicit application
-probes and commands have their documented owners. Completion includes foreground cleanup;
-it does not wait for detached recovery or the lifetime of a transferred stream, lease or
-subscription. Fan-out/probe APIs returning errors as data report success when that final
-result is successfully returned.
+## Decorators and custom clients
 
-### Acceptance evidence
+Respire never unwraps an `IRespireClient` decorator or looks for its hook. Coverage depends
+on what the wrapper calls:
 
-The suites below exercise rejection before sends or cache/resource mutation, final outcome
-conversion, cancellation, reentrancy and once-only completion at the relevant boundary.
-They live under `tests/Respire.Tests/Networking`, except the cache adapter and coordination suites.
-
-| Owner family | Regression evidence |
+| Client or wrapper | Behavior |
 | --- | --- |
-| Ordinary, raw and custom facets (#1685, #1708) | `CommandHookTests`, including the custom-facet cancellation matrix, forwarded-view/decorator rejection, cache hits, retries and hedges. |
-| Scripts, blocking replies and pages (#1707) | `ScriptBlockingCommandHookTests`, `SpecializedCommandHookTests`, `ContinuousStreamCommandHookTests`. |
-| Streaming/subscriptions/functions/interpolation/XADD | `StreamingCommandHookTests`, `SubscriptionCommandHookTests`, `FunctionCommandHookTests`, `InterpolatedCommandHookTests`, `StreamAddCommandHookTests`. |
-| Aggregate members, WATCH, imports and health | `AggregateCommandHookTests`, `ImportHealthCommandHookTests`. |
-| Cache reads and cache-aside | `CacheCommandHookTests`; `Respire.Caching.Tests/DistributedCacheCommandHookTests`. |
-| Managed locks and coordination | `LockCommandHookTests`; `Respire.Coordination.Tests` hook suites for coordination, countdown latches, rate limiters and Redlock wire operations. |
-| Typed modules | `JsonCommandHookTests`, `SearchCommandHookTests`, `TimeSeriesCommandHookTests`, `ProbabilisticCommandHookTests`, including explicit decorator result-boundary tests. |
+| `RespireClient` and its prefix, read-preference and cache-bypass views | Share the hook; covered as described above. |
+| Decorator returning a native facet unchanged (for example `inner.Strings`) | The native facet keeps its coverage. |
+| Decorator forwarding `ExecuteAsync` | The inner raw command is hooked. A typed parser outside that call can still fail after the hook reported success. |
+| Custom facet or adapter composing public calls | Each forwarded native call is hooked separately; there is no single outer operation. |
 
-### Recorded performance evidence
-
-These completed net10.0 label-driven comparisons are collected from the owner PRs. A/B
-denote the two baseline phases surrounding the candidate. They measure the cited heads
-and fixtures, not every public route or the combined final tree; the linked PRs retain
-head identifiers, allocation details and limitations. No universal speedup or exact
-allocation parity follows from short socket benchmarks.
-
-| Scope | Completed comparison and interpretation |
-| --- | --- |
-| Ordinary dispatch (#1710) | [Conversion](https://github.com/thomhurst/Respire/actions/runs/38657469136): -0.21% to +0.91% versus controls; typed scalar/pipeline allocations remain 0/44 B. [Cache parity](https://github.com/thomhurst/Respire/actions/runs/38657469560): string hits remain 0 B; misses within -1.52% to +1.66%. |
-| Script owners (#1721) | [Retry comparison](https://github.com/thomhurst/Respire/actions/runs/38668566833): ScriptLength -0.19% to +0.55%, overlapping intervals; predates later cancellation corrections. |
-| Resource owners (#1722) | [Large SET](https://github.com/thomhurst/Respire/actions/runs/38669554146): large values retain 0 B/op. [Pub/sub](https://github.com/thomhurst/Respire/actions/runs/38669554973): dispatch retains 32 B/op; launch variation limits latency conclusions. |
-| Server/cluster owners (#1726) | [Conversion](https://github.com/thomhurst/Respire/actions/runs/38671425912): -0.88% to +0.51%, overlapping intervals; shared helpers only. |
-| Functions (#1728) | [Retry owners](https://github.com/thomhurst/Respire/actions/runs/38674127973): FCALL_RO roughly -0.89% to +1.24%; overlapping intervals and noisy allocations. |
-| Interpolation (#1729) | [Conversion](https://github.com/thomhurst/Respire/actions/runs/38678467441): owned/leased means lower; fire-and-forget +4.95%/+9.56% with overlapping intervals and -4.20% baseline drift. No isolated regression established. |
-| XADD (#1730) | [Append comparison](https://github.com/thomhurst/Respire/actions/runs/38676293492): ordinary unconfigured allocation remains 320 B; idempotent unconfigured latency +20.65%/+23.59% has very wide intervals. This run is inconclusive for latency parity. |
-| Aggregate members (#1757) | [Conversion](https://github.com/thomhurst/Respire/actions/runs/38708223215): typed pipeline changes within -0.46% to +0.08%, still 44 B/op. |
-| Cache owners (#1758) | [Cache-aside](https://github.com/thomhurst/Respire/actions/runs/38711080715) and [contention](https://github.com/thomhurst/Respire/actions/runs/38711080432): all six/twelve cases completed; hot-helper allocation check passed. Timings are informational. |
-| Tracked coordination (#1759) | [Fenced locks](https://github.com/thomhurst/Respire/actions/runs/38712655367) and [semaphores](https://github.com/thomhurst/Respire/actions/runs/38712655332): standard-lease controls within -0.11% to +0.29%; candidate fenced/semaphore means 420.916/441.387 microseconds. |
-| Imports/health (#1760) | [Bounded comparison](https://github.com/thomhurst/Respire/actions/runs/38722557755): all 24 measured launches succeeded; see the [PR's fixture and precision limits](https://github.com/thomhurst/Respire/pull/1760). |
-| Rate limiters (#1771) | [Limiter comparison](https://github.com/thomhurst/Respire/actions/runs/38738350646): three candidate means within 0.7% of direct-script controls; predates the separate-client deny-list fix. |
-| Redlock (#1772) | [Group comparison](https://github.com/thomhurst/Respire/actions/runs/38740503273): no consistent latency regression, drift up to 5.91%; hook-free acquire/renew/dispose adds about 98 B (0.53%). Three connections to one server do not model cross-host performance. |
-
-Countdown latch, continuous-read and typed-module owner PRs did not report separate hosted
-comparisons. Their correctness suites and direct unconfigured branches are evidence of
-behavior and code shape, not measured performance parity.
-
-## Order and outcomes
-
-For ordinary commands, after argument construction and preflight validation, `OnExecuting` runs synchronously
-before the covered operation dispatches or reads the cache. It can return any state object.
-Composite coordination and typed JSON owners admit before entering their operation; validation performed
-inside that operation is reported as a failed admitted call.
-Throwing rejects the operation and produces one `Rejected` completion with that same
-exception and null state. This also applies when admission throws a cancellation exception.
-
-After admission, caller cancellation is checked. `OnCompleted` receives the same context
-and admission state, and one of `Succeeded`, `Failed`, or `Canceled`. `Canceled` means the
-result boundary threw `OperationCanceledException`; other failures are `Failed`. Completion
-includes the helper's reply conversion and resource cleanup, and runs before the returned
-operation completes. A later caller-selected conversion of a raw `RespireResult`, or an
-additional conversion performed by a surrounding composite API, is outside this boundary.
-Fire-and-forget completion follows its existing write/redirect semantics: success does not
-promise successful execution on the server, whose ordinary error replies are discarded.
-
-Internal retries, redirects and hedge attempts stay inside a single admitted operation.
-They do not invoke additional callbacks. Another application call, including an external
-retry, is a new operation. Rejection prevents that operation's command submission; it does
-not undo earlier commands, initial connections, or protocol housekeeping. Authentication,
-tracking setup and connection recovery are not application command hook events.
-
-Exceptions from `OnCompleted` are ignored, preserving the original result, cancellation,
-exception and pooled-result ownership. Hooks are independent of tracing and metrics.
-
-## Concurrency and reentrancy
-
-Callbacks may run concurrently on one hook instance. Store per-operation state in the
-value returned by `OnExecuting`; synchronize shared application state. Keep callbacks
-short. They run outside transport gates, but blocking them delays their caller.
-
-A callback can initiate another command. That command receives independent callbacks;
-there is no ambient suppression. Guard against unbounded recursion, and avoid synchronously
-waiting for work whose progress depends on the calling operation. Retaining the immutable
-context is safe. Completion errors may contain server or application data, so choose what
-your audit log records.
+If a wrapper needs a single policy over its whole operation, it must enforce that itself.

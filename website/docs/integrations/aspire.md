@@ -12,24 +12,17 @@ Redis, Valkey, or Azure Managed Redis reference. For a runnable AppHost, see the
 
 ## Install
 
-:::warning Not yet published
-
-As of October 26, 2026, `Respire.Aspire`, `Respire.Aspire.DistributedCaching`,
-`Respire.Aspire.HybridCaching`, and `Respire.Aspire.OutputCaching` are implemented
-in this repository but are not yet published on NuGet. The install command below
-requires the first release containing these packages; it cannot restore them today.
-The former `Aspire.Respire*` names were replaced by `Respire.Aspire*` in
-[PR #2193](https://github.com/thomhurst/Respire/pull/2193).
-
-To try the integration now, build the [repository sample](aspire-sample.md), which
-uses project references. The release pipeline already includes all four packages;
-ordinary pushes validate them, while publication requires an explicit release.
-
-:::
-
 ```bash
 dotnet add package Respire.Aspire
 ```
+
+:::note Coming soon
+
+`Respire.Aspire` and its cache companions are not on NuGet yet; they ship with an upcoming
+release. To try the integration now, run the [Aspire sample](aspire-sample.md), which uses
+project references.
+
+:::
 
 ## Register a client
 
@@ -55,7 +48,7 @@ builder.AddKeyedRespireClient("valkey");
 
 In the AppHost, use the normal Aspire hosting integrations and references:
 
-<!-- doc-test-ignore: AppHost-only fragment requires generated Projects.Api metadata and Aspire hosting packages; the equivalent sample is built and run by Respire.Aspire.IntegrationTests. -->
+<!-- doc-test-ignore: AppHost-only fragment requires generated Projects.Api metadata and Aspire hosting packages. -->
 ```csharp
 var cache = builder.AddRedis("cache");
 var valkey = builder.AddValkey("valkey");

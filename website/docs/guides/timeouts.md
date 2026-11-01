@@ -5,53 +5,35 @@ description: Read RespireTimeoutException snapshots and distinguish connection, 
 
 # Timeouts and thread-pool starvation
 
-A `RespireTimeoutException` means a client wait exceeded its budget. It does not by
-itself prove that Redis is slow, the network is broken, or the thread pool is starved.
-Start with `CommandName`, `Timeout`, `Endpoint`, and `Diagnostics.Stage`, then correlate
-the snapshot with server latency and application scheduling at the same time.
+A `RespireTimeoutException` means a client wait exceeded its budget. On its own it does
+not tell you whether Redis is slow, the network is broken, or the thread pool is starved.
+Start with `CommandName`, `Timeout`, `Endpoint`, and `Diagnostics.Stage`, then compare the
+snapshot with server latency and application scheduling at the same moment.
 
-## What the I/O path does
+## How Respire uses threads
 
 Respire's [native APIs are async-only](async-only.md). Awaiting a command releases the
-calling thread while the socket is busy. Commands share multiplexed connections and
-are automatically coalesced by a persistent flush loop. The receive loop parses replies
-in wire order and delivers response completions in batches. The delivery runner can run
-on the receive loop, and by default it runs fast application continuations inline to
-avoid a separate work item for every reply. Slow continuations move to the thread pool;
+calling thread while the socket is busy. Commands share multiplexed connections and are
+written in coalesced batches. Replies are parsed in wire order and, by default, fast
+continuations run inline on the delivery thread while slow ones move to the thread pool;
 see [`ContinuationDispatch`](../fundamentals/connections.md#command-continuations).
 
-This reduces scheduling work; it does **not** remove the dependency on the .NET thread
-pool. An inline continuation's CPU work or blocking wait can delay replies behind it.
-Respire has stalled-delivery recovery controlled by `StalledDeliveryThreshold` (20 ms
-by default), but that is a fallback, not permission to block. Socket
-progress, completion delivery, cancellation, and timeout notification can still be
-delayed when the process cannot schedule work. The reported timeout budget is not a
-guarantee that the caller regains control at exactly that instant.
+Respire still depends on the .NET thread pool. A continuation that does heavy CPU work or
+blocks delays the replies behind it. `StalledDeliveryThreshold` (20 ms by default) hands
+delivery to another thread when that happens, but it is a fallback, not permission to block.
+When the process cannot schedule work, socket progress, completions, cancellation and timeout
+notification are all delayed, so a caller may regain control later than the timeout budget.
 
 Use `await` throughout the calling path. `.Result`, `.Wait()`, and
 `.GetAwaiter().GetResult()` can starve the pool even on an async-only client; the
 included **RESP009** analyzer flags these patterns. Wrapping blocking I/O in `Task.Run`
 still occupies a worker. `ConfigureAwait(false)` does not make blocking safe.
 
-### Comparing with StackExchange.Redis v3
-
-This guide compares against **StackExchange.Redis 3.4.5**. Its default continuations
-use the global thread pool; the v2 dedicated `mgr` pool and `SocketManager` are no
-longer the v3 model. Its [timeout documentation][ser-timeouts] still discusses raising
-minimum thread counts, but also contains historical v1/v2 advice: do not treat those
-sections as a description of v3 internals.
-
-Since [3.1.31][ser-release], StackExchange.Redis also offers opt-in `DedicatedThreads`
-and the **SER307** sync-over-async analyzer. Its [threading guide][ser-async] explains
-the dedicated reader/writer threads and their limitations. Respire's async-only API
-and completion batching are different choices, not a claim that v3 has no starvation
-mitigations or that Respire is immune to starvation.
-
 ## Read the timeout stage
 
 `Diagnostics` is an immutable, best-effort snapshot. Counters are sampled concurrently,
 not atomically. `null` (rendered as `unknown` in the message) means unavailable, not zero.
-Stages describe the inspected physical command, not proof of what Redis executed.
+The stage describes the client's view of the command, not what Redis executed.
 
 | `Diagnostics.Stage` | Meaning at capture | First checks |
 | --- | --- | --- |
@@ -66,8 +48,7 @@ Stages describe the inspected physical command, not proof of what Redis executed
 the inspected connection. For buffered or submitted commands, timing out abandons the
 wait; a command can still execute later. Sending bytes is not an acknowledgement from
 Redis. Do not use a stage alone as permission to replay a write, especially after
-earlier attempts. See [command retries](command-retries.md) and
-[transport write evidence](transport-write-evidence.md).
+earlier attempts. See [command retries](command-retries.md).
 
 ## Read the remaining fields
 
@@ -145,8 +126,11 @@ fix slow Redis commands, insufficient bandwidth, or saturated CPUs.
 
 ## Map StackExchange.Redis timeout messages
 
-These fields come from the [3.4.5 exception formatter][ser-exceptions]. The mappings
-are diagnostic equivalents, not identical counters or a message parsing contract.
+If you are migrating from StackExchange.Redis 3.x, this table maps the fields in its timeout
+messages to the closest Respire diagnostics. They are rough equivalents, not identical
+counters. StackExchange.Redis v3 uses the global thread pool by default (with opt-in
+`DedicatedThreads`); advice in its [timeout documentation][ser-timeouts] about the v2 `mgr`
+pool does not apply to v3 or to Respire.
 
 | StackExchange.Redis field/symptom | Respire equivalent or next check |
 | --- | --- |
@@ -159,7 +143,7 @@ are diagnostic equivalents, not identical counters or a message parsing contract
 | `inst` (operations since heartbeat) | No direct timeout field. Correlate command throughput using [observability](../integrations/observability.md). |
 | `IOCP: Busy/Min`, `WORKER: Busy/Min` | `BusyIoThreads`/`MinIoThreads` and `BusyWorkerThreads`/`MinWorkerThreads`; message labels are `IO busy/min` and `workers busy/min`. |
 | `POOL: QueuedItems` | `PendingWorkItems` (`pending work` in the message), plus `ThreadPoolProbe` to measure scheduling delay. |
-| Historical v2 `mgr` availability | No equivalent; do not apply the v2 dedicated-pool interpretation to StackExchange.Redis v3 or Respire. |
+| Historical v2 `mgr` availability | No equivalent. |
 
 ## Choose timeout settings after diagnosis
 
@@ -172,8 +156,8 @@ not undo a command already submitted.
 Raise a command budget only when the observed latency is acceptable for the application.
 It does not repair starvation or drain a backed-up queue. For detecting a stalled
 connection, review the separate [receive and write liveness bounds](../fundamentals/connections.md#independent-liveness-bounds):
-those can abort a whole connection, affecting other commands. Borrowed large-write
-memory must remain unchanged until public completion, even after a deadline.
+those can abort a whole connection, affecting other commands. Keep the input of a large
+binary SET unchanged until the call completes, even after a deadline.
 
 Replica function propagation has its own five-second retry ceiling, or a shorter
 `CommandTimeout`. Its timeout message describes that ceiling; increasing or disabling
@@ -181,6 +165,3 @@ Replica function propagation has its own five-second retry ceiling, or a shorter
 described in [scripting](scripting.md).
 
 [ser-timeouts]: https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/Timeouts.md
-[ser-release]: https://github.com/StackExchange/StackExchange.Redis/releases/tag/3.1.31
-[ser-async]: https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/SyncOverAsync.md
-[ser-exceptions]: https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/src/StackExchange.Redis/ExceptionFactory.cs

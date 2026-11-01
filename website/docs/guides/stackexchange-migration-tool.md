@@ -5,11 +5,11 @@ description: Opt in to semantic migration diagnostics and convert supported IDat
 
 # StackExchange.Redis migration code fix
 
-The `Respire` package includes an opt-in Roslyn analyzer and code fix for the classic
-StackExchange.Redis `IDatabase` API. It resolves method symbols from the actual
-`StackExchange.Redis` assembly; unrelated methods with matching names are ignored.
-Tests compile the source and the converted result against StackExchange.Redis 3.4.0
-and the real Respire library. The 4.0 command-group API is outside this tool's scope.
+The `Respire` package includes an opt-in Roslyn analyzer and code fix that rewrites classic
+StackExchange.Redis `IDatabase` calls as native Respire calls, straight from the IDE lightbulb.
+It resolves real StackExchange.Redis symbols, so unrelated methods with matching names are ignored,
+and it only offers a fix when the result compiles and behaves the same. It targets the 3.x
+`IDatabase` API; the 4.0 command-group API is not covered.
 
 ## Install and enable
 
@@ -72,22 +72,20 @@ instance methods, database aliases, batches, transactions, and other commands. A
 StackExchange.Redis SET value can delete a key; the tool never rewrites it to a native SET
 that rejects null. It never drops an option to make a call fit.
 
-The fix checks compiler diagnostics in the edited document and its partial-type declarations.
-It also scans syntax in the project and its transitive dependents, including generated source,
-for uses of the method's name. Any matching name use requires manual migration, even if it
-currently refers to a different method or another kind of symbol. This conservative check
-protects calls and method groups from silently selecting a different overload or becoming
-ambiguous through `using static` after the signature changes. Non-C# dependent projects also
-require manual migration. The fix does not run a full compiler diagnostic pass across dependent
-projects. It is also withheld if the edited document or its partial-type declarations have
-compiler errors or a Respire reference is missing;
-unrelated errors in other documents do not suppress it. RESP007
-can therefore appear without an available fix. Address relevant compilation errors and migrate
-callers/boundaries first, or migrate that method manually. External callers outside the
-loaded solution cannot be checked: changing a public method's parameter is a public API
-change that must be coordinated with its consumers.
+### When RESP007 shows no fix
 
-## Example fixture
+The fix is deliberately conservative, so RESP007 can appear without a lightbulb action. It is withheld when:
+
+- the edited document or its partial-type declarations have compiler errors, or the project has no Respire reference;
+- the method's name is used anywhere else in the project or its dependent projects (including
+  generated source), because changing its signature could make another call pick a different
+  overload or become ambiguous;
+- a dependent project is not C#.
+
+Fix the compiler errors, or migrate callers first, or convert that method by hand. Callers outside
+the loaded solution cannot be checked: changing a public method's parameter is a breaking change for its consumers.
+
+## Example
 
 Before:
 
@@ -110,12 +108,6 @@ public static async Task<string?> ReadAsync(global::Respire.RespireClient databa
     return await database.Strings.GetStringAsync(key).ConfigureAwait(false);
 }
 ```
-
-The [sample fixture](https://github.com/thomhurst/Respire/blob/main/tests/Respire.Analyzers.Tests/Fixtures/StackExchangeMigration.cs.txt)
-contains an existence check, deletion with Boolean handling, a write, a nullable text read,
-and a binary read. The tests apply Fix All without manual source edits and compile the
-result against real Respire references. This fixture starts at the application boundary
-where the host supplies a configured database; it does not create a connection.
 
 ## Configure the host explicitly
 

@@ -269,7 +269,7 @@ Use `GetHashCollection<TRecord>` or `GetJsonCollection<TRecord>` for trimming an
 
 The sample runs every mapping path with reflection serialization disabled, on RESP2 and RESP3:
 
-| Mapping path | Native smoke coverage |
+| Mapping path | Operations covered |
 | --- | --- |
 | Explicit hash codec (`MovieMapper`, immutable record, binary FLOAT32) | CRUD, nullable scalar filters, filtered retrieval, filtered KNN and hybrid; `Memory<float>` and `ReadOnlyMemory<float>` query inputs |
 | Generated JSON metadata (`JsonMovieMapper`, renamed nested data, multiple array vectors) | CRUD, replacement of optional properties, vector inclusion/omission, nested filters, filtered retrieval, selected-vector filtered KNN and hybrid; `float[]` query input |
@@ -292,11 +292,11 @@ The sample also targets .NET 8. Passing a runtime identifier enables NativeAOT o
 - Lua `VREM` then `VADD` survives the reload, but a failed add can leave the old record deleted, with no rollback.
 - Vector-set scores are cosine-based only: score `s` is cosine similarity `2*s-1` or cosine distance `2*(1-s)`. They cannot provide dot-product or L2 ranking.
 
-These results apply to the tested versions. To check another version, run the disposable [durability probe](https://github.com/thomhurst/Respire/blob/main/scripts/Test-VectorSetDurability.ps1). Use [native vector-set commands](vector-sets.md) only with these limits understood.
+Other Redis versions may differ. Use [native vector-set commands](vector-sets.md) only with these limits understood.
 
-## Conformance testing
+## Unsupported VectorData features
 
-The connector runs the official [VectorData conformance suite](https://github.com/dotnet/extensions/tree/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests) (package 10.10.0) for both hash and JSON backends on RESP2 and RESP3. It passes for the advertised API surface, not for every optional upstream capability. Excluded upstream contracts cover features the connector does not offer:
+The connector passes the official Microsoft.Extensions.VectorData conformance tests for both hash and JSON backends on RESP2 and RESP3, except for these features, which it does not offer:
 
 - Dynamic dictionary collections, non-string or generated keys, and models without vectors.
 - Embedding generators and dependency-injection registration.
@@ -304,11 +304,3 @@ The connector runs the official [VectorData conformance suite](https://github.co
 - Captured property getters in filters.
 - Equality filters on `long`, `decimal`, `Guid`, date/time types and whole string arrays.
 - Similarity scores, non-squared Euclidean, Hamming and Manhattan distance.
-
-To run the suite locally:
-
-```bash
-dotnet run --project tests/Respire.VectorData.Conformance.Tests -c Release -f net10.0 -- --filter-not-trait 'Unsupported=*' --minimum-expected-tests 493 --fail-skips on
-```
-
-The fixture starts its own Redis 8.10 container. To use an existing standalone Redis with Query Engine, set `RESPIRE_VECTOR_CONFORMANCE_CONNECTION` to its `redis://` connection string.

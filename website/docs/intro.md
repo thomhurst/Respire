@@ -1,58 +1,38 @@
 ---
 sidebar_position: 1
 slug: /
-title: Meet Respire
-description: A fast, modern RESP client for .NET.
+title: Why Respire
+description: A fast, modern Redis client for .NET. Plain C# types in and out, and the hard parts of Redis built in.
 ---
 
 # Redis code that feels like .NET
 
-Respire is a fast, modern client for Redis, Valkey, KeyDB, and other RESP servers. It keeps protocol details out of application code.
+Respire is a fast, modern client for Redis, Valkey, KeyDB, and other RESP servers.
+You pass plain C# types in and get plain C# types back. Caching, locks, queues, and rate
+limits each take one call.
 
 ```csharp
 await using var redis = await RespireClient.ConnectAsync("redis://localhost");
 
-await redis.SetAsync("greeting", "hello", expiry: TimeSpan.FromMinutes(5));
-string? greeting = await redis.GetStringAsync("greeting");
+await redis.SetAsync("user:1", new User("Ada", 36), expiry: TimeSpan.FromMinutes(5));
+User? user = await redis.GetAsync<User>("user:1");
 ```
 
-The public API may change before the first supported major release, targeted at
-**2.0.0**, including APIs without an experimental opt-in. See the
-[installation guide](./getting-started#release-candidates) for stable package and
-release candidate selection, the [roadmap](./roadmap) for supported features, and the
-[experimental API policy](./experimental-apis) for surfaces that require an explicit opt-in.
+No multiplexer to tune, no `RedisValue` to unwrap, no extra libraries to glue together.
 
-## Why Respire
+**[Try it in two minutes →](./quick-start)**
 
-- **Server-assisted client caching.** Hot reads come from bounded local memory; Redis
-  invalidates entries when keys change.
-- **Real return types.** Commands return `string?`, `long`, `bool`, `TimeSpan`, or `T?`.
-- **Async-first.** Pub/sub, stream consumers, and key scanning use `IAsyncEnumerable`.
-- **Discoverable commands.** Data types live behind facets such as `redis.Hashes` and `redis.Streams`.
-- **Automatic pipelining.** Concurrent calls share socket writes with no batching switch.
-- **Blocking commands.** `BLPOP` and blocking stream reads use dedicated connections.
-- **Integrations.** OpenTelemetry and typed serialization are built in. Dependency injection, Microsoft caching abstractions, and more ship as [separate packages](./packages).
+## Why teams choose Respire
 
-## Design bets
+### It reads like normal C#
 
-| Bet | Rejected alternative | Why |
-| --- | --- | --- |
-| Server-assisted client cache | Every read crosses the network, or every app builds its own cache | Redis tracking gives coherent hot reads without application invalidation plumbing |
-| Facets per data type (`redis.Hashes.GetAsync`) | Hundreds of flat prefixed methods | IntelliSense as documentation; the facet is the namespace |
-| Real return types, serializer for `T` | Protocol union struct (`RedisValue`-style) | Union types push protocol details and disposal onto every caller |
-| Explicit lease API for zero-copy | Disposable results everywhere | A disposal obligation should be visible at the call site |
-| Blocking commands on dedicated pooled connections | Forbidding them | The capability is why people use lists and streams as queues |
-| Throwing server errors | Error-as-value inspection | One error model; `.Code` carries the Redis error class |
-| Batch results are plain values, read after the batch is sent | Awaitable results that deadlock before flush | Only the batch is awaited, so the await-before-flush deadlock cannot be written |
-| Cancellation abandons the wait | Cancelling partially written frames | The wire layer never corrupts the shared connection |
-
-## A small, typed surface
-
-String and key operations sit on the client. Other commands are grouped by data type:
+Commands return `string?`, `long`, `bool`, `TimeSpan`, or your own `T?`, serialized with
+System.Text.Json by default. Each data type has its own facet, such as `redis.Hashes`,
+`redis.Streams`, or `redis.SortedSets`, so IntelliSense shows you what's available.
+Pub/sub, stream reads, and key scans are `await foreach` loops.
 
 ```csharp
-await redis.Hashes.SetAsync("user:1", "name", "Ada");
-await redis.Lists.RightPushAsync("jobs", "resize:42");
+await redis.Hashes.SetAsync("user:1:profile", "city", "London");
 await redis.SortedSets.AddAsync("leaderboard", "ada", 98.5);
 
 await foreach (var key in redis.Keys.ScanAsync(match: "user:*"))
@@ -61,44 +41,87 @@ await foreach (var key in redis.Keys.ScanAsync(match: "user:*"))
 }
 ```
 
-## Interface compatibility
+### It's fast without tuning
 
-Before the first supported major release (2.0.0), public interfaces may change.
-Command facets, script-cache operations,
-cache-aside calls, invalidation observation and prefix views are required members: custom implementations and
-decorators must implement or forward them. Missing implementations are compile errors;
-there are no default members that report an unsupported capability by throwing
-`NotSupportedException`. Server-version and configuration requirements still apply.
+- **Hot reads come from memory.** With [server-assisted client-side caching](./fundamentals/client-side-caching),
+  a cached `GET` takes about 150 ns and allocates nothing. Redis tells Respire when a key
+  changes, so you never write invalidation code.
+- **Pipelined by default.** Concurrent calls share socket writes automatically, with no
+  batching switch.
+- **Blocking commands just work.** `BLPOP` and blocking stream reads get their own pooled
+  connections, so they never stall your other calls.
 
-From 2.0 onward, adding required members to an existing public interface requires a
-major release. Minor releases can add extension methods composed from existing
-operations, or separate optional capability interfaces that callers check explicitly.
-Default interface implementations are allowed only when they provide complete behavior
-using the existing contract, such as forwarding a convenience overload. They must not
-hide an unavailable feature behind a throwing default.
+See [Performance](./performance) for measured comparisons with StackExchange.Redis.
 
-Physical name resolution is an integration capability, separate from `IRespireClient`.
-`RespireClient` and its prefixed views implement `IRespireNameResolver`:
+### The hard parts are built in
+
+Most Redis projects end up adding a lock library, a rate limiter, a job queue, and a
+caching layer on top of the client. Respire includes them, tested together:
+
+| Instead of adding… | Use |
+| --- | --- |
+| A distributed lock library | [`redis.Locks.AcquireAsync(...)`](./guides/distributed-locks): renewing, fenced locks |
+| A rate limiter package | [`redis.Coordination.RateLimiters`](./guides/coordination): a standard .NET `RateLimiter` shared by every server |
+| A background job framework | [Job queues](./guides/job-queues): retries, scheduling, cron, and a dashboard |
+| Hand-written stream consumers | [Stream workers](./guides/stream-workers) and [reliable queues](./guides/reliable-queues) |
+| A cache-aside helper | [`GetOrSetAsync`](./fundamentals/client-side-caching#populate-missing-values-with-a-factory) with stampede protection |
+| A Redis module client | Typed [JSON](./guides/json), [Search](./guides/search), [TimeSeries](./guides/timeseries), and [vector](./guides/vector-sets) APIs |
+
+### It keeps running when the network doesn't
+
+Respire reconnects automatically and holds commands briefly while it does. It follows
+[Cluster](./fundamentals/connections#redis-cluster-endpoint-identity) slot moves and
+[Sentinel](./fundamentals/connections#redis-sentinel) failovers, and resubscribes pub/sub
+channels after a reconnect. When you need more, you can add
+[safe retries](./guides/command-retries), [circuit breakers](./guides/circuit-breakers), and
+[failover groups](./guides/failover-groups) across deployments. Timeout errors say what was
+happening at the time, so you don't have to guess. See the [timeouts guide](./guides/timeouts).
+
+### It's easy to test
+
+[`Respire.Testing`](./guides/in-memory-testing) is an in-memory server with a fake clock. It
+runs your real client code without Docker. You expire a key by moving the clock, not by
+waiting.
 
 ```csharp
-if (redis is IRespireNameResolver resolver)
-{
-    RespireKey physicalKey = resolver.ResolveKey("item");
-    RespireChannel physicalChannel = resolver.ResolveChannel("events");
-}
+using Respire.Testing;
+
+var clock = new RespireFakeClock();
+await using var server = new RespireFakeServer(clock);
+await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+
+await client.SetAsync("session", "abc", expiry: TimeSpan.FromMinutes(20));
+clock.Advance(TimeSpan.FromMinutes(21));
+string? expired = await client.GetStringAsync("session"); // null
 ```
 
-Decorators used with integrations that need physical names (including cache coherence,
-notification-driven coordination waits, streaming dead-letter validation and the
-StackExchange.Redis adapter) must also implement `IRespireNameResolver` and forward both
-methods to the wrapped client's resolver. Such integrations reject a missing resolver
-with `RespireConfigurationException`; they never assume that a custom client has no
-prefix. Command-only implementations need not expose physical names.
+### It fits the .NET stack
 
-## Choose your next step
+Respire works with [dependency injection](./integrations/dependency-injection),
+[`IDistributedCache` and `HybridCache`](./integrations/caching),
+[output caching](./integrations/output-caching), [ASP.NET Core rate limiting](./integrations/rate-limiting),
+[SignalR](./integrations/signalr), [Data Protection](./integrations/data-protection),
+[health checks](./integrations/health-checks), [OpenTelemetry](./integrations/observability),
+[.NET Aspire](./integrations/aspire), and NativeAOT. It also authenticates with Azure, AWS,
+and Google Cloud managed Redis.
 
-- [Get connected](./getting-started) and run the first command.
-- Make hot reads local with [server-assisted client-side caching](./fundamentals/client-side-caching).
-- Learn how [values and serialization](./fundamentals/values-and-serialization) work.
-- Build a [blocking work queue](./guides/blocking-queues).
-- Add Respire to an ASP.NET Core app with [dependency injection](./integrations/dependency-injection).
+## Design choices
+
+| Respire chooses | Instead of | So that |
+| --- | --- | --- |
+| Real return types and a serializer for `T` | A protocol union type (`RedisValue`) | Your code never handles protocol details |
+| Facets per data type (`redis.Hashes.GetAsync`) | Hundreds of flat, prefixed methods | IntelliSense acts as the documentation |
+| A server-assisted local cache | A network round trip for every read | Hot reads are local and stay correct |
+| Dedicated connections for blocking commands | Forbidding them | Lists and streams work as queues |
+| Batch results read after the batch runs | Awaitable results that deadlock before the flush | You can't write the await-before-flush deadlock |
+| Cancellation that abandons the wait | Cancelling half-written frames | A cancelled call never corrupts the shared connection |
+
+## Where to go next
+
+- **[Quick start](./quick-start).** Connect and run your first commands in two minutes.
+- **[Build an ASP.NET Core app](./getting-started).** Dependency injection, typed values,
+  pub/sub, and batches.
+- **[Recipes](./guides/recipes).** Leaderboards, sessions, outboxes, and leader election.
+- **[Coming from StackExchange.Redis](./stackexchange-redis).** What changes, and how to
+  migrate step by step.
+- **[Choose packages](./packages).** Pick the add-ons for what you're building.

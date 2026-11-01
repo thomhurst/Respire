@@ -1,12 +1,12 @@
 ---
 title: Physical connection hooks
-description: Audit, time, or reject physical connection establishment without exposing credentials or command data.
+description: Log, time, or reject physical connection establishment without exposing credentials or command data.
 ---
 
 # Physical connection hooks
 
-Set `RespireOptions.ConnectionHook` to observe or reject each physical connection attempt.
-The default is `null`; that path creates no hook context, delegate, or extra async wrapper.
+Set `RespireOptions.ConnectionHook` to log, time or reject each physical connection attempt.
+The default is `null`, which adds no overhead.
 
 <!-- doc-test-tail-declaration: split-before=sealed class ConnectionAudit -->
 ```csharp
@@ -38,51 +38,42 @@ sealed class ConnectionAudit : RespireConnectionHook
 }
 ```
 
-`OnConnectingAsync` runs before credential acquisition, DNS, or socket creation. Throwing
-rejects the attempt. `OnCompletedAsync` receives `Succeeded`, `Failed`, or `Canceled`, and
-elapsed time measured from before the first callback. A failed attempt includes a rejection
-from the first callback and a connection timeout. `Canceled` means initiating cancellation;
-an independent connect timeout is `Failed`.
+## Callbacks
 
-The same context instance identifies both callbacks for an attempt. Its only properties are
-the requested endpoint and effective TLS setting. No credentials, command values, server
-replies, exception text, or connection handle are passed to the hook. The endpoint is the
-requested name before DNS resolution, or a Unix socket path with port zero. A hostname check
-like the example is an application policy, not a check of the resolved network address.
+- `OnConnectingAsync` runs before credential acquisition, DNS or socket creation. Throw to reject the attempt.
+- `OnCompletedAsync` runs exactly once per attempt with the outcome (`Succeeded`, `Failed` or `Canceled`) and the elapsed time since before the first callback. A rejection from `OnConnectingAsync` or a connect timeout reports `Failed`; `Canceled` means the initiating token was cancelled.
 
-## Completion boundary
+The same `RespireConnectionContext` instance is passed to both callbacks for an attempt. It
+exposes only the requested endpoint and the effective TLS setting. The hook never sees
+credentials, command values, server replies, exception text or the connection itself. The
+endpoint is the requested name before DNS resolution (or a Unix socket path with port zero),
+so a hostname check like the example does not check the resolved address.
 
-Success includes transport connection, TLS, authentication, RESP negotiation, database
-selection, client naming, tracking, `READONLY`, and other configured connection-local setup.
-Generation validation performed inside connection establishment is also included. Routing
-and topology work performed by callers, such as Cluster discovery and replica `ROLE` checks,
-can still fail after the hook reports success. A success callback does not promise that the
-connection will remain open or that the whole client is ready.
+## What counts as success
 
-The hook applies to initial connections, reconnects, dedicated connections, subscriptions,
-standalone replicas, Cluster nodes, Sentinel discovery, and Sentinel monitoring. Sentinel
-attempts report the effective Sentinel TLS override. Renting an already-open dedicated
-connection and refreshing credentials on an existing connection do not establish a new
-physical connection and do not invoke the hook.
+`Succeeded` means the transport connected and all connection-local setup finished: TLS,
+authentication, RESP negotiation, database selection, client naming, tracking, `READONLY`
+and similar. Work done afterwards by the caller, such as Cluster discovery or replica `ROLE`
+checks, can still fail. Success does not mean the connection will stay open or that the whole
+client is ready.
 
-## Errors, cancellation, and concurrency
+The hook runs for initial connections, reconnects, dedicated connections, subscriptions,
+standalone replicas, Cluster nodes, Sentinel discovery and Sentinel monitoring. Sentinel
+attempts report the effective Sentinel TLS setting. Renting an already-open dedicated
+connection, or refreshing credentials on an existing connection, does not invoke the hook.
 
-The completion callback runs once, including when the first callback rejects or fails.
-If the initiating token was already canceled, the first callback is skipped and completion
-reports `Canceled`. Failure cleanup completes before the completion callback runs. If the
-completion callback throws after success, the connection is rejected and disposed before
-the caller sees that error. Completion is not called a second time. If establishment already
-failed, a completion callback exception is ignored to preserve the original failure.
+## Errors and cancellation
 
-Both callbacks receive the attempt's initiating cancellation token, which can be linked to
-client or pool lifetime. Hooks must cooperate with cancellation. Cancellation is checked after
-each callback so ignoring cancellation cannot publish a newly canceled connection. Transport
-and handshake deadlines retain their existing scope; `ConnectTimeout` does not bound callback
-execution. Use a caller deadline or a bounded callback operation when needed. For audit writes
-that must survive cancellation, use a separate bounded token inside the completion callback.
+- If the initiating token is already cancelled, `OnConnectingAsync` is skipped and completion reports `Canceled`.
+- Failure cleanup finishes before `OnCompletedAsync` runs.
+- If `OnCompletedAsync` throws after a success, the connection is disposed and the caller sees that exception. If the attempt had already failed, the callback's exception is ignored and the original failure is kept.
+- Both callbacks receive the attempt's cancellation token, which may be tied to the client's lifetime. Respire checks it after each callback, so a cancelled attempt never yields a connection.
+- `ConnectTimeout` does not bound hook execution. Bound slow work yourself. For log writes that must survive cancellation, use a separate bounded token inside `OnCompletedAsync`.
+- Hook failures follow the initial-connect and reconnect policies; rejecting a reconnect can use up its attempt budget.
 
-One hook may be called concurrently by several connection attempts. Keep shared state thread
-safe and correlate attempts by context identity. Do not await operations on the client being
-connected: those operations may require the very connection that is waiting for the hook.
-Hook failures follow the existing initial-connect and reconnect policies; rejecting a
-reconnect can consume its attempt budget. Hooks do not wrap commands or select tracing.
+## Concurrency
+
+One hook instance can be called concurrently by several connection attempts. Keep shared state
+thread-safe and correlate callbacks by context identity. Do not call the client being
+connected from inside the hook: the operation may need the connection that is waiting on the
+hook. Connection hooks do not see commands; use [command hooks](./command-hooks) for that.

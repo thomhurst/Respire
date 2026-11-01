@@ -35,14 +35,10 @@ The suffix distinguishes a returned outcome from command inputs such as `Respire
   cursor pages use `Page`. These describe the data, rather than wrapping an operation's
   outcome. Lease/lock acquisition handles use `Attempt` because they also own disposal.
 - StackExchange.Redis types and adapter signatures keep their upstream names.
-  Tests, samples, and build tools are outside the shipped native API rule.
 
-The shipping-assembly naming tests enforce the prefix rule and its explicit exception
-list. Public API baselines record the complete signature changes.
+## Renames from earlier previews
 
-## Pre-2.0 migration
-
-This is an intentional source and binary API change. Rebuild consumers and update type
+If you used a preview from before the naming change, these renames are source- and binary-breaking. Rebuild consumers and update type
 references; no compatibility aliases are provided. Command names, option property names,
 configuration keys, enum values, serialization formats, and Redis commands are unchanged.
 For example, `SubscriptionOverflow` is still the options property/configuration key,

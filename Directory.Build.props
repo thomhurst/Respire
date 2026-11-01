@@ -83,7 +83,7 @@
   <PropertyGroup Condition="'$(IsPackable)' == 'true'">
     <EnablePackageValidation>true</EnablePackageValidation>
     <!-- Set PackageValidationBaselineVersion to 2.0.0 only after that major is on NuGet.
-         Until then, validate compatible assets within each package. See website/docs/contributing.md. -->
+         Until then, validate compatible assets within each package. See CONTRIBUTING.md. -->
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(IsRespirePackageProject)' == 'true' Or '$(MSBuildProjectName)' == 'Respire.Analyzers'">
@@ -151,7 +151,7 @@
   <Target Name="_RespireValidatePublicApiFiles" BeforeTargets="CoreCompile"
           Condition="'$(IsRespirePackageProject)' == 'true' And '$(TargetFramework)' != ''">
     <Error Condition="!Exists('$(MSBuildProjectDirectory)/PublicAPI.Shipped.txt') Or !Exists('$(MSBuildProjectDirectory)/PublicAPI.Unshipped.txt')"
-           Text="$(MSBuildProjectName) requires shipped and unshipped API baselines. See website/docs/packages.md." />
+           Text="$(MSBuildProjectName) requires shipped and unshipped API baselines. See CONTRIBUTING.md." />
   </Target>
 
   <ItemGroup Condition="'$(IsRespirePackageProject)' == 'true'">

@@ -5,7 +5,7 @@ description: How the value codec benchmarks work, how to reproduce them, and rec
 
 # Measuring value codec costs
 
-`ValueCodecBenchmarks` measures what each [value codec](./value-codecs.md) adds over a plain copy:
+`ValueCodecBenchmarks` measures what each [value codec](../website/docs/guides/value-codecs.md) adds over a plain copy:
 framing, checksums, compression, decompression, and scratch-buffer management. Use it to choose a
 codec and threshold, not to predict Redis throughput.
 

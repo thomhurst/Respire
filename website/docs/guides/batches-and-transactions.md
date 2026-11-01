@@ -7,91 +7,6 @@ description: Flush commands together and execute atomic Redis transactions.
 
 Respire pipelines concurrent commands automatically. Use a batch when sequential code should queue several commands and send them in one flush. Use a transaction when they must run atomically.
 
-## Observe or reject explicit executions
-
-Set `RespireOptions.PipelineHook` to audit, time, or reject explicit batches and transaction
-commits. Client views share the hook. The default is `null`: execution allocates no hook state
-and uses the existing async path without a hook wrapper.
-
-`RespireOptions.CommandHook` also applies to each explicit member. If both hooks are set,
-aggregate admission runs first, then member admissions in queue order, all before any send.
-Member completions run after cleanup and before aggregate completion. See
-[aggregate command hooks](command-hooks.md#explicit-aggregate-members-and-watch) for rejection,
-durability and watched-abort outcomes. Both hooks default to `null`.
-
-<!-- doc-test-tail-declaration: split-before=sealed class AuditPipelineHook -->
-```csharp
-using System.Diagnostics;
-
-await using var redis = await RespireClient.ConnectAsync(new RespireOptions
-{
-    Endpoints = [new("localhost", 6379)],
-    PipelineHook = new AuditPipelineHook(),
-});
-
-sealed class AuditPipelineHook : RespirePipelineHook
-{
-    public override object? OnExecuting(RespirePipelineContext context)
-    {
-        if (context.Commands.Any(name => name is "FLUSHDB" or "FLUSHALL"))
-            throw new InvalidOperationException("Flush commands are forbidden in this execution.");
-        return Stopwatch.GetTimestamp();
-    }
-
-    public override void OnCompleted(RespirePipelineContext context, object? state,
-        RespirePipelineOutcome outcome, Exception? error)
-    {
-        var elapsed = state is long started ? Stopwatch.GetElapsedTime(started) : TimeSpan.Zero;
-        Console.WriteLine($"{context.Commands.Count} commands: {outcome} in {elapsed}; {error?.Message}");
-    }
-}
-```
-
-Admission runs synchronously once after lifecycle validation, before connection acquisition or
-submission of any queued command. `Commands` is an immutable ordered snapshot of command names;
-durability batches append `WAIT` or `WAITAOF`. It contains no keys or values. Transaction framing
-(`MULTI`/`EXEC`) is represented by `IsTransaction`, rather than extra list entries. You may retain
-the context after completion.
-
-Throwing from admission rejects the whole execution and faults every pending with that exception.
-`TryExecuteAsync` returns those failures; `ExecuteAsync`, durability methods, and transaction
-commits throw. An empty batch's admission rejection also throws because there is no pending in
-which to return a failure. Rejected executions are consumed and cannot be resubmitted.
-
-Completion runs once with the state returned by admission (or `null` when admission threw):
-
-| Outcome | Meaning |
-| --- | --- |
-| `Succeeded` | All queued results and any acknowledgement succeeded. |
-| `Failed` | Execution failed, or at least one queued result failed, including conversion errors. |
-| `Canceled` | The first execution failure was an `OperationCanceledException`. Timeouts are `Failed`. |
-| `Aborted` | A watched commit returned `false`. |
-| `Rejected` | Admission threw, including if the callback threw cancellation. |
-
-The completion error is the first failure in queue order when several members fail. A transaction
-can commit successfully and still report `Failed` because a member's pending contains a Redis
-error. Completion runs after result publication and execution cleanup. Completion exceptions are
-ignored so they cannot replace the result or leak response resources. Record observer errors
-inside your hook if you need to diagnose them.
-
-Internal retries and redirects are enclosed by the same pair of callbacks. Empty valid executions
-also invoke the hook. Invalid lifecycle calls and failed preflight validation do not. An already
-canceled ordinary execution still reaches admission; durability preflight can reject cancellation
-before admission. A hook sees the caller's token and cannot replace it.
-
-Hooks must be thread-safe: multiple batches and client views may invoke the same instance
-concurrently. Keep callbacks short and nonblocking. A callback may start a separate execution,
-which invokes the hook independently; guard against recursion in your own code. Do not mutate,
-dispose, or resubmit the execution being observed.
-
-This hook covers explicit batches, durability batches, transaction commits, and batches/commits
-created by hash import sessions. `WATCH` and import-session setup occur before this boundary.
-An external transaction retry helper creates a new transaction for each attempt, so each commit
-has its own callbacks. Individually dispatched commands, automatic pipelining, cache hits, hedges,
-subscriptions, and streaming operations outside an explicit batch do not invoke this hook. It is
-**not a client-wide command authorization policy**; logical command interception is tracked
-separately in [#1685](https://github.com/thomhurst/Respire/issues/1685).
-
 ## Batch one flush
 
 ```csharp
@@ -390,19 +305,17 @@ returns a healthy connection to the pool for reuse. An abandoned transaction, ca
 operation, or failed send discards its connection because WATCH state or unread replies
 may remain. Always commit or dispose each attempt promptly.
 
-Even with a warm pool, WATCH needs a round trip before callback reads, each awaited read
-needs its own round trip, and the pipelined MULTI/EXEC commit needs another. A new dedicated
-connection also pays connection and protocol setup costs. Connecting the client opens its
-multiplexed connections; it does not prewarm the dedicated pool. Prefer a Lua script for
-hot read-modify-write paths when the whole operation can run on the server. Pool reuse
-cannot remove WATCH's extra round trips.
+A watched transaction costs a round trip for WATCH, one per awaited read, and one for the
+pipelined MULTI/EXEC commit. A new dedicated connection also pays connection and protocol setup;
+connecting the client does not prewarm the dedicated pool. For hot read-modify-write paths, prefer
+a Lua script when the whole operation can run on the server.
 
 The default `DedicatedPool` retains four idle connections and has no total connection cap.
 A burst of 64 watched transactions can therefore create 64 dedicated connections and close
-60 when they return. Another burst can repeat that setup work. Raising `MaximumIdle`
-retains more connections between bursts; it neither prewarms them nor limits concurrency.
+60 when they return. Raising `MaximumIdle` retains more connections between bursts; it neither
+prewarms them nor limits concurrency.
 
-For a WATCH-heavy workload, start with a bounded pool and retain the same number of idle
+For a WATCH-heavy workload, use a bounded pool that retains the same number of idle
 connections. For example, this allows up to eight dedicated connections per pool and
 reuses them after a burst:
 
@@ -417,12 +330,9 @@ var options = new RespireOptions
 };
 ```
 
-Eight is a starting point, not a throughput guarantee. Measure transaction throughput and
-ordinary command latency with your concurrency, network latency, and server. Increase
-both bounds if acquisition queueing dominates and the server has capacity. Set
-`MaximumIdle` to your measured concurrent demand if retaining a larger warm pool is more
-useful than limiting concurrency. `MinimumSize` only protects existing connections from
-timed idle retirement; it does not prewarm them.
+Tune both bounds to your workload: raise them if transactions queue for a lease and the server
+has capacity. `MinimumSize` only protects existing connections from timed idle retirement; it does
+not prewarm them.
 
 At `MaximumSize`, another WATCH waits for a lease. Pass a cancellation deadline to
 `CreateTransactionAsync` or `RunTransactionWithReadsAsync` to bound that wait. Blocking
@@ -430,10 +340,8 @@ commands and other dedicated operations share pool capacity, so avoid holding ev
 while awaiting another dedicated operation. See [dedicated connection pools](../fundamentals/connections.md#dedicated-connection-pools)
 for limits and lifetime settings.
 
-Ordinary multiplexed reads use separate connections and do not wait for a dedicated lease.
-They still share server and client resources with connection setup and transaction traffic,
-so connection churn can affect their latency. A larger idle pool alone cannot guarantee
-ordinary read latency under load; measure both paths when tuning the total cap.
+Ordinary multiplexed reads use separate connections and never wait for a dedicated lease,
+though heavy connection churn can still affect their latency.
 
 ## Automatic watched transaction retries
 
@@ -538,3 +446,72 @@ A socket failure or timeout after sending is ambiguous and does not throw this e
 - `Functions.Execute` and its typed, string, integer, and span variants queue Redis 7+ `FCALL` or `FCALL_RO`. Results own managed storage, like deferred script results. Keep binary arguments unchanged until execution completes.
 - Load `RespireFunctionLibrary` instances before execution. Deferred calls never reload a missing function or replay a transaction. Successful commands stay applied when another command fails.
 - `Functions.Load`, `List`, `Delete`, `Flush`, `Dump`, `Restore`, and `Stats` run only on their execution node. In a Cluster batch, the keyless administration group can differ from a keyed call's group. Use immediate `redis.Functions.LoadAsync(library)` to load every discovered primary before queuing calls.
+
+## Observe or reject explicit executions
+
+Set `RespireOptions.PipelineHook` to audit, time, or reject explicit batches and transaction
+commits. Client views share the hook. The default is `null`, which adds no overhead.
+
+<!-- doc-test-tail-declaration: split-before=sealed class AuditPipelineHook -->
+```csharp
+using System.Diagnostics;
+
+await using var redis = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = [new("localhost", 6379)],
+    PipelineHook = new AuditPipelineHook(),
+});
+
+sealed class AuditPipelineHook : RespirePipelineHook
+{
+    public override object? OnExecuting(RespirePipelineContext context)
+    {
+        if (context.Commands.Any(name => name is "FLUSHDB" or "FLUSHALL"))
+            throw new InvalidOperationException("Flush commands are forbidden in this execution.");
+        return Stopwatch.GetTimestamp();
+    }
+
+    public override void OnCompleted(RespirePipelineContext context, object? state,
+        RespirePipelineOutcome outcome, Exception? error)
+    {
+        var elapsed = state is long started ? Stopwatch.GetElapsedTime(started) : TimeSpan.Zero;
+        Console.WriteLine($"{context.Commands.Count} commands: {outcome} in {elapsed}; {error?.Message}");
+    }
+}
+```
+
+`OnExecuting` runs synchronously once per execution, before a connection is acquired or anything
+is sent. `Commands` is an ordered snapshot of command names (durability batches append `WAIT` or
+`WAITAOF`), with no keys or values. `IsTransaction` marks `MULTI`/`EXEC` framing. You may keep the
+context after completion.
+
+Throwing from `OnExecuting` rejects the whole execution and faults every pending with that
+exception. `TryExecuteAsync` returns those failures; `ExecuteAsync`, durability methods and
+transaction commits throw, as does a rejected empty batch. A rejected execution cannot be resubmitted.
+
+`OnCompleted` runs once, after results are published, with the state returned by `OnExecuting`
+(or `null` when it threw):
+
+| Outcome | Meaning |
+| --- | --- |
+| `Succeeded` | All queued results and any acknowledgement succeeded. |
+| `Failed` | Execution failed, or at least one queued result failed, including conversion errors. |
+| `Canceled` | The first execution failure was an `OperationCanceledException`. Timeouts are `Failed`. |
+| `Aborted` | A watched commit returned `false`. |
+| `Rejected` | `OnExecuting` threw, including if it threw cancellation. |
+
+- The error is the first failure in queue order. A transaction can commit and still report `Failed` when a member's pending holds a Redis error.
+- Exceptions thrown from `OnCompleted` are ignored; log them inside your hook if you need them.
+- Internal retries and redirects happen between the two callbacks. Empty valid executions invoke the hook; invalid lifecycle calls and failed validation do not.
+- The hook sees the caller's cancellation token and cannot replace it.
+- Hooks must be thread-safe and short. A callback may start another execution, which invokes the hook again; guard against recursion. Do not mutate, dispose or resubmit the observed execution.
+
+The hook covers explicit batches, durability batches, transaction commits, and those created by
+hash import sessions. `WATCH` and import-session setup happen before it. Each attempt of a
+transaction retry helper has its own callbacks. Individual commands, automatic pipelining, cache
+hits, hedges, subscriptions and streaming operations do not invoke it, so it is not a client-wide
+authorization policy.
+
+`RespireOptions.CommandHook` also runs for each member. With both hooks set, pipeline admission runs
+first, then member admissions in queue order, all before anything is sent. Member completions run
+before the pipeline completion. See [command hooks](command-hooks.md#batches-transactions-and-watch) for member outcomes.

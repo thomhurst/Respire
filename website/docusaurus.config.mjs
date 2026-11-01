@@ -113,7 +113,8 @@ const config = {
         logo: {alt: 'Respire logo', src: 'img/logo.svg', srcDark: 'img/logo-dark.svg'},
         items: [
           {type: 'docSidebar', sidebarId: 'docsSidebar', position: 'left', label: 'Docs'},
-          {to: '/docs/guides/blocking-queues', label: 'Guides', position: 'left'},
+          {to: '/docs/quick-start', label: 'Quick start', position: 'left'},
+          {to: '/docs/guides/recipes', label: 'Recipes', position: 'left'},
           {to: '/docs/performance', label: 'Performance', position: 'left'},
           {href: 'https://tomlonghurst.dev/', label: 'More libraries', position: 'right'},
           {href: 'https://www.nuget.org/packages/Respire', label: 'NuGet', position: 'right'},
@@ -127,7 +128,8 @@ const config = {
           {
             title: 'Learn',
             items: [
-              {label: 'Getting started', to: '/docs/getting-started'},
+              {label: 'Quick start', to: '/docs/quick-start'},
+              {label: 'Build an ASP.NET Core app', to: '/docs/getting-started'},
               {label: 'Commands', to: '/docs/commands/strings-and-keys'},
               {label: 'Integrations', to: '/docs/integrations/dependency-injection'},
               {label: 'From StackExchange.Redis', to: '/docs/stackexchange-redis'},
@@ -137,7 +139,7 @@ const config = {
             title: 'Project',
             items: [
               {label: 'GitHub', href: 'https://github.com/thomhurst/Respire'},
-              {label: 'Roadmap', to: '/docs/roadmap'},
+              {label: 'Versioning', to: '/docs/versioning'},
               {label: 'MIT license', href: 'https://github.com/thomhurst/Respire#license'},
             ],
           },

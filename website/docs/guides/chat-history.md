@@ -49,8 +49,8 @@ avoids delimiter collisions; it does not authorize access or encrypt stored mess
 Both names must be nonblank, well-formed UTF-16. Unpaired high or low surrogates throw
 `EncoderFallbackException` (an `ArgumentException`) before Redis is accessed, including
 through the chat middleware and agent provider. Valid surrogate pairs and the replacement
-character U+FFFD are accepted. Well-formed names retain their existing UTF-8/SHA-256 keys;
-names are not Unicode-normalized.
+character U+FFFD are accepted. Names are hashed as UTF-8 with SHA-256 and are not
+Unicode-normalized.
 The caller owns the Redis client. Disposing a chat pipeline disposes its inner provider.
 
 Use the store directly with `AppendAsync`, `ReadAsync`, `TrimAsync`, `ExpireAsync`, and

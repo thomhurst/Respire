@@ -8,7 +8,7 @@ import ComparisonBarChart from '@site/src/components/ComparisonBarChart';
 # Benchmarks
 
 :::info Automated results
-Generated 2026-11-01 03:38 UTC from commit `baeeaeff5c23`. See the [GitHub Actions run](https://github.com/thomhurst/Respire/actions/runs/41267582849) for logs and downloadable artifacts.
+Generated 2026-11-01 03:38 UTC from commit `baeeaeff5c23`. These results are refreshed weekly.
 :::
 
 StackExchange.Redis is the baseline. A ratio below `1.00` means Respire completed the operation faster.
@@ -161,4 +161,4 @@ IterationCount=15  LaunchCount=2  WarmupCount=10
 
 ## Reading the results
 
-Treat shared-runner measurements as directional evidence. Validate important decisions against your payload sizes, concurrency, Redis deployment, and network.
+These runs use a shared Linux runner and a local Redis container, so expect some variation between runs. Before making an important decision, measure with your own payload sizes, concurrency, Redis deployment, and network.

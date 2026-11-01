@@ -195,13 +195,13 @@ jobs:
             --commit "${{ github.sha }}" \
             --generated-at "$(date -u +'%Y-%m-%d %H:%M UTC')" \
             --run-url "$RUN_URL" \
-            --output website/docs/stress-tests.md
+            --output docs/STRESS_TESTS.md
 
       - name: Commit stress-test documentation
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add website/docs/stress-tests.md
+          git add docs/STRESS_TESTS.md
           if git diff --cached --quiet; then
             exit 0
           fi

@@ -80,11 +80,10 @@ var database = connection.GetDatabase();
 await database.HashSetAsync("session", "status", "active");
 ```
 
-The usable surface is the **intersection** of the [adapter's supported members](stackexchange-interop.md)
-and this page's fake command list, including each command's options. Examples include string
-reads and integer increments, supported hash/list/set/sorted-set operations, key expiry,
-supported batches and transactions, and literal-channel pub/sub. Support by either package
-alone is insufficient.
+You can use a call when both the [adapter](stackexchange-interop.md) and the fake (see the command
+list below) support it, including its options. That covers string reads and integer increments,
+common hash, list, set, and sorted-set operations, key expiry, batches and transactions, and
+literal-channel pub/sub.
 
 - Only database zero exists. The helper rejects `GetDatabase(1)` immediately with
   `NotSupportedException`; direct `Create(options)` defers rejection until the fake receives
@@ -95,18 +94,17 @@ alone is insufficient.
   `ScriptEvaluateAsync("return 1")`) throw native `RespireServerException`. A failed command
   does not make later supported commands fail.
 - No authentication, TLS, Cluster, Sentinel, persistence, eviction, modules or realistic
-  network/performance behavior is simulated. The adapter's real-Redis acceptance results for
-  third-party libraries do not imply those libraries run on the fake.
+  network/performance behavior is simulated. Libraries such as Hangfire that run on the adapter
+  against real Redis may need commands the fake does not implement.
 
 The [testing sample](testing-sample.md#stackexchangeredis-fixture-replacement) runs the same
-`IDatabase` assertions with this helper and with a real StackExchange.Redis connection.
-Arbitrary existing StackExchange.Redis suites are not guaranteed to work unchanged.
+`IDatabase` assertions with this helper and with a real StackExchange.Redis connection. An existing
+StackExchange.Redis test suite works unchanged only if it stays within this surface.
 
 ## Supported subset
 
-The fake is a test double, not a Redis implementation or compatibility oracle.
-Unsupported commands and options return a server error that names the command. Each error
-uses one response slot, so later commands still work.
+The fake is a test double, not a full Redis implementation. Unsupported commands and options return
+a server error that names the command. Each error uses one response slot, so later commands still work.
 
 | Area | Supported commands and options |
 | --- | --- |

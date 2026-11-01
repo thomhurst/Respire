@@ -299,15 +299,10 @@ For JSON documents, see [generated JSON mappers](generated-json-mappers.md).
 [Generated Search schemas](generated-search-schemas.md) build on hash models, including binary
 vector properties with field expiry and change tracking.
 
-## Native AOT conformance sample
+## Native AOT sample
 
-The [mapper sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Mappers)
-publishes with trimming and Native AOT for `net8.0` and `net10.0`, and runs over RESP2 and RESP3
-against Redis with JSON and Search modules. It covers scalar/null codecs, field TTL, tracked partial
-updates, hash and JSON partial reads, and generated Search schemas with vector queries. Compiler and
-linker warnings fail publishing, and reflection-based JSON serialization is disabled. See the
-sample README for publishing commands and its codec-only mode.
-
-The [mapper comparison workflow](https://github.com/thomhurst/Respire/blob/main/.github/workflows/benchmark-mapper.yml)
-benchmarks generated hash, JSON, and Search conversion against handwritten code on .NET 10. It does
-not measure Redis network, query, Native AOT, or cold-start performance.
+Generated codecs are reflection-free, so they work with trimming and Native AOT. The
+[mapper sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Mappers)
+publishes warning-free with Native AOT on `net8.0` and `net10.0`, over RESP2 and RESP3. It shows
+scalar and null codecs, field TTLs, tracked partial updates, hash and JSON partial reads, and
+generated Search schemas with vector queries. See its README for publishing commands.

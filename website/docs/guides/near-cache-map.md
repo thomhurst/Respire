@@ -146,6 +146,6 @@ Cache capacity, local expiration, tracking mode, and reconnect behavior come fro
 `ClientSideCache` options. Its prefix filters must cover the map's physical key, including any
 `WithKeyPrefix` prefix. A cache-bypassing client view also bypasses the map's near cache. Map
 reads use the primary read policy. A hash change invalidates all cached fields of that hash.
-Remote invalidations arrive asynchronously; this is the existing client-side cache consistency
-contract, not a synchronous cross-process barrier. Preload obeys the cache's capacity and is
+Remote invalidations arrive asynchronously, as with any client-side cache read, so other
+processes do not see a change at the same instant. Preload obeys the cache's capacity and is
 not an atomic snapshot, so warming a map larger than the cache cannot keep every entry resident.

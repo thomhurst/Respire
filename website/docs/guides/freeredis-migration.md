@@ -12,7 +12,6 @@ Respire targets .NET 8 and .NET 10; applications on .NET Framework must retarget
 
 The FreeRedis column uses the API documented in its
 [upstream README](https://github.com/2881099/FreeRedis/blob/b685beb08c4e547aa49e956aee5bf48c031fc411/README.md).
-The examples below are native Respire code and compile in the documentation snippet harness.
 
 ## Concepts and common calls
 

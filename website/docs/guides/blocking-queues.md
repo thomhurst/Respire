@@ -67,7 +67,7 @@ With this option, Respire records the dedicated connection's Redis client ID fro
 
 Cancellation can race with completion. A reply delivered before cancellation can succeed normally. When cancellation wins, Respire reports `OperationCanceledException` even if Redis already consumed a value; cleanup drains that reply and does not restore the value. This race also exists when closing a connection. For delivery that survives cancellation, use pending-to-processing movement or consumer groups with acknowledgements.
 
-The option defaults to `false` while performance evidence is collected. Use bounded waits when workers also need periodic housekeeping or health updates.
+The option defaults to `false`. Use bounded waits when workers also need periodic housekeeping or health updates.
 
 ## Migrating blocking waits
 

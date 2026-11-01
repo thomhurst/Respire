@@ -419,7 +419,7 @@ This is not unlimited exactly-once delivery. Duration and size limits can evict 
 :::
 
 - Queued `Streams.Add` accepts the same options. Trimming, reference policies, and NOMKSTREAM still combine with it.
-- An idempotent XADD is audited as `WriteChecked`, because a resend returns the original entry instead of appending again.
+- An idempotent XADD has the `WriteChecked` retry category, because a resend returns the original entry instead of appending again.
 - Cancellation after dispatch cannot prove that the write did not run.
 - When a [retry policy](../guides/command-retries.md#idempotent-stream-appends) can resend a possibly executed checked write, typed `Streams.AddAsync` attaches an identity automatically. Set `RespireOptions.StreamProducerId` to choose the producer.
 

@@ -14,7 +14,7 @@ parameter, so one function serves every server.
 
 ## Run it
 
-Fake tests (8 cases, no Docker), from a repository checkout:
+Fake tests (no Docker needed), from a checkout of the repository:
 
 ```sh
 dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --treenode-filter '/*/*/FakeTests/*'
@@ -23,7 +23,7 @@ dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --
 These include three fake-only tests: advancing the expiry clock, pausing a write before its reply,
 and removing a scoped server rejection. Gates and fault boundaries synchronize them without sleeps.
 
-Container tests (4 cases: Redis and Valkey on RESP2 and RESP3) need a local Docker engine with Linux containers:
+Container tests (Redis and Valkey on RESP2 and RESP3) need a local Docker engine with Linux containers:
 
 ```sh
 dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --treenode-filter '/*/*/ContainerTests/*'

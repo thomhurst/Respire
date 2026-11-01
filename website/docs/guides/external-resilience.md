@@ -15,7 +15,8 @@ counts multiply; timeouts and circuit breakers also observe different scopes.
 | Polly v8 | Set `RetryPolicy = null`, or use `Respire.Resilience` | Configure explicit failure predicates and replay-safe callbacks |
 
 Prefer [Respire's command policy](./command-retries) when you need its command
-categories, transport write evidence, primary refresh, or whole-unit retry rules.
+categories, its knowledge of whether a command reached the socket, primary refresh,
+or whole-unit retry rules.
 Keep an outer timeout or circuit breaker if needed, with its scope chosen explicitly.
 
 ## Optional adapter package
@@ -72,23 +73,17 @@ wrapped during topology discovery. Do not use `Handle<Exception>()` or Polly's
 default catch-all predicate for Redis operations.
 
 The adapter executes the **entire callback** on each attempt. It does not inspect
-commands, infer idempotency, use Respire's retry categories, or gain its internal
-transport write evidence. In particular, `READONLY` in an outer predicate does not
+commands, infer idempotency, use Respire's retry categories, or know whether a
+command was written to the socket. In particular, `READONLY` in an outer predicate does not
 perform the primary refresh that Respire's own retry policy performs. Topology
 redirects and connection recovery still belong to Respire; disabling the command
 policy does not disable protocol recovery or guarantee one network exchange per callback.
 
 ## Microsoft DI and telemetry
 
-The [runnable sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Resilience)
-uses `Microsoft.Extensions.Resilience`, `AddResiliencePipeline`,
-`ResiliencePipelineProvider<string>`, and `AddResilienceEnricher`. Its fake server
-rejects two GETs and then succeeds. It asserts three callback attempts even when
-the input options contain a five-attempt Respire policy.
-
-```shell
-dotnet run --project samples/Respire.Samples.Resilience -f net10.0
-```
+The [resilience sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Resilience)
+shows the adapter registered with `Microsoft.Extensions.Resilience`, using
+`AddResiliencePipeline`, `ResiliencePipelineProvider<string>`, and `AddResilienceEnricher`.
 
 Polly owns the retry and pipeline-breaker events (`OnRetry`, `OnCircuitOpened`,
 `OnCircuitHalfOpened`, `OnCircuitClosed`). Configure Polly logging/metrics and

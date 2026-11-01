@@ -13,9 +13,8 @@ import election from '@site/../samples/Respire.Samples.Recipes/LeaderElection.cs
 These recipes use the `Respire` package; leader election also needs `Respire.Coordination`.
 Copy the classes you need from
 [Respire.Samples.Recipes](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Recipes).
-The code blocks below display those source files directly. The existing CI integration jobs
-compile and execute them against Redis 8.4 in both RESP2 and RESP3 through
-`RecipeIntegrationTests`; they are not separate, untested copies of the examples.
+The code blocks below show those source files directly, and they run against Redis 8.4 over
+both RESP2 and RESP3.
 
 | Recipe | Server requirement | Data layout |
 | --- | --- | --- |
@@ -160,20 +159,3 @@ leader's release compares ownership, so it cannot release a replacement's lease.
 counter's monotonicity depends on retaining Redis history: failover or restore can roll
 it back. Use a consensus-backed authority if election must remain exclusive across those
 events. See [coordination and fencing](coordination.md) for the full guarantees.
-
-## Run the same samples locally
-
-Docker is required. From the repository root:
-
-```powershell
-& scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
-    'build', 'tests/Respire.IntegrationTests', '-c', 'Release', '-f', 'net10.0')
-& scripts/Invoke-AgentDotNet.ps1 -DotNetArguments @(
-    'run', '--project', 'tests/Respire.IntegrationTests', '-c', 'Release', '-f', 'net10.0',
-    '--no-build', '--', '--treenode-filter', '/*/*/RecipeIntegrationTests/*',
-    '--minimum-expected-tests', '14')
-```
-
-Testcontainers starts and removes its own Redis 8.4 instance. Tests cover score updates and
-metadata, independent session refresh and expiry, failed outbox publication and recovery,
-competing leaders and release after failure, and both environment variable names.

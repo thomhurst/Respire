@@ -12,8 +12,7 @@ stay on the same server; changing the client does not install server modules.
 
 The source API names below follow the upstream
 [NRedisStack documentation](https://github.com/redis/NRedisStack/blob/d363aa662b567df22e3f1a0c8900903c402d9fb3/README.md).
-They are a manual migration map, not a promise that the StackExchange.Redis adapter or code
-fix supports NRedisStack module wrappers.
+Port module calls by hand: the StackExchange.Redis adapter and code fix do not cover NRedisStack's module wrappers.
 
 ## Concepts and common calls
 

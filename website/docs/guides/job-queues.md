@@ -145,8 +145,8 @@ and an Extend call cannot change an existing FirstSubmissionWins record.
 Acquisition, promotion, retries, cooperative yields and completion never renew the window themselves.
 Concurrent duplicates and worker acquisition are serialized by Redis; renewal does not mutate a
 stream entry or worker ownership. Extend is a sliding suppression window, not debounce or payload
-replacement. For pending payload replacement, use `Replace` below. Active follow-up submissions
-(`KeepLastIfActive`) are tracked in [#1987](https://github.com/thomhurst/Respire/issues/1987).
+replacement. For pending payload replacement, use `Replace` below; to run once more after an
+active job, use [`KeepLastIfActive`](#keep-the-latest-follow-up-while-active).
 
 Upgrade **all producers**, including transactional producers, before enabling Extend. Its
 deduplication record includes the winning mode and duration; older producers understand only
@@ -783,8 +783,7 @@ share the queue's Cluster slot and respect client key prefixes. Use batch-aware 
 throughout the queue before adding batch members. Redis 7.0+ and `GET`, `SET`, `TYPE`,
 `XADD`, `XDEL`, `XACK` (plus `DEL` for removal) permissions are required.
 
-Dashboard batch presentation is tracked separately in
-[#1845](https://github.com/thomhurst/Respire/issues/1845); use `GetBatchStatusAsync` for progress.
+The dashboard does not show batch progress; use `GetBatchStatusAsync`.
 
 ## Delay, priority and expiry
 
@@ -1174,8 +1173,6 @@ Counters commit in the same fenced Lua operation as the terminal event and ackno
 Stale consumers and replay after a lost reply do not increment them again. Enabled and disabled
 metrics add **zero extra per-job commands**; enabling metrics adds server-side work to completion.
 Storage/type/ACL errors leave the delivery pending rather than silently omitting its counter.
-Use the `run-job-metrics-benchmarks` PR label for the focused net10 performance comparison and
-command-count audit.
 
 All enabled workers must agree on retention. To change it, stop the queue's workers and delete
 only its `:metrics` key, or wait for that key to expire, then restart with the new retention.
