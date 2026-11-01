@@ -52,8 +52,9 @@
 #   - skip a named branch with no commits beyond origin/main unless the canonical
 #     pr-<N> path + branch identity of a merged PR proves it
 #   - PRESERVE tracked changes and untracked/ignored files outside known generated output,
-#     except that a closed work item's tracked and untracked changes move to a retained
-#     branch; unknown ignored files (secrets, local settings) always preserve the checkout
+#     except that the tracked and untracked changes of a merged PR or closed work item move
+#     to a retained branch; unknown ignored files (secrets, local settings) always preserve
+#     the checkout
 #   - never delete the local branch of a closed work item, and never drop a stash entry
 #     other than the one created to retain its changes
 #   - worktrees with NO merge evidence are kept and listed; opt in to reaping old
@@ -234,7 +235,7 @@ try {
         # comes back for such a checkout, so removal retains its work instead of the
         # directory: the branch is kept and uncommitted changes and a detached HEAD are
         # saved to retained-worktrees/ branches (Remove-MergedWorktree -RetainWorkName).
-        $retainWorkName = ''
+        $closedItem = $false
         if (-not $why -and $slug) {
             try { $itemNames = @(Get-WorktreeAgentLockNames -Worktree $w.Path) } catch { $itemNames = @() }
             if ($itemNames.Count -gt 0 -and @($itemNames | Where-Object { $_ -cnotmatch '^(pr|issue)-\d+$' }).Count -eq 0) {
@@ -244,11 +245,7 @@ try {
                     $state = gh api "repos/$slug/issues/$($itemName.Substring($itemName.IndexOf('-') + 1))" --jq .state 2>$null
                     if ($LASTEXITCODE -ne 0 -or ($state | Out-String).Trim() -cne 'closed') { $allClosed = $false; break }
                 }
-                if ($allClosed) {
-                    $why = "closed work item $($itemNames -join ', ')"
-                    try { $marker = Get-WorktreeLockMarker -Worktree $w.Path } catch { $marker = $null }
-                    $retainWorkName = if ($marker) { $marker } else { $itemNames[0] }
-                }
+                if ($allClosed) { $why = "closed work item $($itemNames -join ', ')"; $closedItem = $true }
             }
         }
 
@@ -266,13 +263,24 @@ try {
 
         if (-not $why) { $unmatched += $w; continue }
 
+        # A merged PR is a finished work item too: leftover changes of either move to
+        # retained-worktrees/<item-or-dir>-wip-<sha12> instead of keeping the checkout.
+        $retainWorkName = ''
+        # A plain detached snapshot of main proves no work item finished, so it keeps them.
+        if ($closedItem -or $why -like 'merged PR*' -or ($canonicalMerged -and $why -like 'completed snapshot*')) {
+            try { $marker = Get-WorktreeLockMarker -Worktree $w.Path } catch { $marker = $null }
+            try { $itemNames = @(Get-WorktreeAgentLockNames -Worktree $w.Path) } catch { $itemNames = @() }
+            $retainWorkName = if ($marker) { $marker } elseif ($itemNames.Count -gt 0) { $itemNames[0] } else { Split-Path -Path $w.Path -Leaf }
+        }
+
         # Delete the local branch only for merged-PR evidence. It is deleted while the
         # reservation is held, only at the merged head and only when no checkout uses it.
         # A closed item's branch is always kept: it may hold commits that never merged.
-        $branchToDelete = if ($w.Branch -and -not $w.Detached -and -not $retainWorkName -and $why -notlike 'published snapshot*') { $w.Branch } else { '' }
+        # A merged branch is still deleted; a saved stash commit keeps leftover work reachable.
+        $branchToDelete = if ($w.Branch -and -not $w.Detached -and -not $closedItem -and $why -notlike 'published snapshot*') { $w.Branch } else { '' }
         $outcome = @(Invoke-WithWorktreeCleanupLocks -Repo $mainRepo -Worktree $w.Path -LockNames $evidenceLocks -Preview:$WhatIf -Action {
             Remove-MergedWorktree -Repo $mainRepo -Worktree $w.Path -ExpectedHead $sha -LockNames $evidenceLocks `
-                -DeleteBranch $branchToDelete -RetainWorkName $retainWorkName -Label "($why)" -WhatIf:$WhatIf
+                -DeleteBranch $branchToDelete -RetainWorkName $retainWorkName -RetainDetachedHead:$closedItem -Label "($why)" -WhatIf:$WhatIf
         })
         if ($outcome.Count -gt 0 -and ($outcome[-1] -is [bool] -and $outcome[-1] -or $outcome[-1] -eq 'preview')) { $removed++ }
     }

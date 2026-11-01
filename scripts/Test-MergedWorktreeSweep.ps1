@@ -196,12 +196,17 @@ exit 0
     }
     $preserved['second identity held'] = New-MergedCheckout 'pr-203-multiple' 203 -Marker 'issue-203'
     Set-Lock 'pr-203' 'HELD'
-    $preserved['tracked change'] = New-MergedCheckout 'pr-204-dirty' 204
-    Set-Content -LiteralPath (Join-Path $preserved['tracked change'] 'source.txt') -Value dirty
+    # Leftover changes of a merged checkout move to a retained branch.
+    $mergedDirty = New-MergedCheckout 'pr-204-dirty' 204
+    Set-Content -LiteralPath (Join-Path $mergedDirty 'source.txt') -Value dirty
+    $mergedUntracked = New-MergedCheckout 'pr-206-untracked' 206
+    Set-Content -LiteralPath (Join-Path $mergedUntracked 'NewFeature.cs') -Value 'source'
+    # A canonical pr-<N> checkout of a merged PR, already on main, with leftover changes.
+    $canonicalDirty = New-Checkout 'pr-224-canonical'
+    $global:sweepTestMerged += [pscustomobject]@{ number = 224; mergedAt = '2020-01-01T00:00:00Z'; headRefName = 'pr-224-other'; headRefOid = ('1' * 40) }
+    Set-Content -LiteralPath (Join-Path $canonicalDirty 'source.txt') -Value 'canonical leftover'
     $preserved['unknown ignored file'] = New-MergedCheckout 'pr-205-ignored' 205
     Set-Content -LiteralPath (Join-Path $preserved['unknown ignored file'] '.env') -Value 'local settings'
-    $preserved['untracked source'] = New-MergedCheckout 'pr-206-untracked' 206
-    Set-Content -LiteralPath (Join-Path $preserved['untracked source'] 'NewFeature.cs') -Value 'source'
     $preserved['open PR branch'] = New-MergedCheckout 'pr-207-open' 207
     $preserved['open PR tip'] = New-MergedCheckout 'pr-208-open-tip' 208 -Detached
     $openTip = (& $gitExecutable -C $preserved['open PR tip'] rev-parse HEAD).Trim()
@@ -239,7 +244,7 @@ exit 0
 
     # --- -WhatIf reads lock status only and deletes nothing. ---------------------------
     Invoke-Sweep -Preview
-    foreach ($path in @($released, $adHoc, $branchRace, $checkoutRace, $setup, $staleSnapshot, $closedReview, $closedDetached) + @($preserved.Values)) {
+    foreach ($path in @($released, $adHoc, $branchRace, $checkoutRace, $setup, $staleSnapshot, $closedReview, $closedDetached, $mergedDirty, $mergedUntracked, $canonicalDirty) + @($preserved.Values)) {
         Assert (Test-Path -LiteralPath $path) "WhatIf removed $path"
     }
     Assert (Test-Path -LiteralPath (Join-Path $released 'bin/generated.dll')) 'WhatIf cleared generated output.'
@@ -250,6 +255,7 @@ exit 0
     Assert ($script:sweepOutput -match 'WOULD remove \S*pr-500-harness -- \(closed work item pr-500\) \(saving 2 uncommitted') 'WhatIf did not report retained closed-item work.'
     Assert ($script:sweepOutput -match 'WOULD remove \S*issue-501-detached -- \(closed work item issue-501\)') 'WhatIf did not report the closed detached checkout.'
     Assert (Test-Path -LiteralPath (Join-Path $closedReview 'Draft.cs')) 'WhatIf saved or removed closed-item work.'
+    Assert ($script:sweepOutput -match 'WOULD remove \S*pr-204-dirty -- \(merged PR head tip SHA\) \(saving 1 uncommitted') 'WhatIf did not report saving merged leftover work.'
     Assert (@(& $gitExecutable -C $repo for-each-ref 'refs/heads/retained-worktrees/').Count -eq 0) 'WhatIf created a retained branch.'
     Assert (@(& $gitExecutable -C $repo stash list).Count -eq 1) 'WhatIf changed the stash.'
 
@@ -296,7 +302,18 @@ exit 0
     foreach ($entry in $preserved.GetEnumerator()) {
         Assert (Test-Path -LiteralPath $entry.Value) "Unsafe removal ($($entry.Key)): $($entry.Value)"
     }
-    Assert ((Get-Content -LiteralPath (Join-Path $preserved['tracked change'] 'source.txt')) -eq 'dirty') 'A tracked edit was lost.'
+    foreach ($case in @(@{ Name = 'pr-204'; Branch = 'pr-204-dirty'; Path = $mergedDirty; Spec = ':source.txt'; Value = 'dirty' }
+        @{ Name = 'pr-206'; Branch = 'pr-206-untracked'; Path = $mergedUntracked; Spec = '^3:NewFeature.cs'; Value = 'source' }
+        @{ Name = 'pr-224'; Branch = 'pr-224-canonical'; Path = $canonicalDirty; Spec = ':source.txt'; Value = 'canonical leftover' })) {
+        Assert (-not (Test-Path -LiteralPath $case.Path)) "A merged checkout with leftover changes was not removed: $($case.Path)"
+        $saved = @(& $gitExecutable -C $repo for-each-ref --format='%(refname:short)' "refs/heads/retained-worktrees/$($case.Name)-wip-*")
+        Assert ($saved.Count -eq 1) "Leftover changes of $($case.Name) were not saved to a retained branch."
+        Assert ((& $gitExecutable -C $repo show "$($saved[0])$($case.Spec)") -eq $case.Value) "The saved leftover change of $($case.Name) is wrong."
+        Assert (-not (Test-Branch $case.Branch)) "The merged branch of $($case.Name) was not deleted."
+    }
+    Assert (@(& $gitExecutable -C $repo for-each-ref --format='%(refname:short)' 'refs/heads/retained-worktrees/' |
+        Where-Object { $_ -notlike '*-wip-*' -and $_ -ne "retained-worktrees/$closedDetachedHead" }).Count -eq 0) 'A merged checkout retained its HEAD as a branch.'
+    Assert (@(& $gitExecutable -C $repo stash list).Count -eq 1) 'Saving merged leftover work left a stash entry.'
     Assert (Test-Path -LiteralPath (Join-Path $preserved['unknown ignored file'] '.env')) 'An unknown ignored file was lost.'
     Assert (Test-Path -LiteralPath (Join-Path $orphan 'source.txt')) 'Orphan source was lost.'
     Assert ((Get-Lock 'issue-203') -eq 'FREE') 'A partial reservation leaked.'
@@ -356,7 +373,7 @@ exit 0
     Assert (Test-Path -LiteralPath $foreignWorktree) 'Another repository''s checkout was removed.'
     $null = Remove-MergedWorktree -Repo $repo -Worktree $repo -ExpectedHead $main
     Assert (Test-Path -LiteralPath (Join-Path $repo 'source.txt')) 'The main checkout was removed.'
-    Write-Host 'OK merged worktree sweep removes released merged checkouts and closed-item checkouts with their work retained, and preserves owned, dirty, open, fresh, locked and unidentified work.'
+    Write-Host 'OK merged worktree sweep removes released and leftover-dirty merged checkouts and closed-item checkouts with their work retained, and preserves owned, ignored-file, open, fresh, locked and unidentified work.'
 }
 finally {
     if ($holder) { Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue }

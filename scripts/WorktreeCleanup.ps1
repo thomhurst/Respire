@@ -4,8 +4,9 @@
 #
 # Cleanup policy (one place, every caller):
 #   - PRESERVE tracked changes and untracked/ignored files outside known generated paths,
-#     except that a closed work item's tracked and untracked changes are saved to a
-#     retained branch before its checkout is removed (unknown ignored files still preserve it).
+#     except that the sweep saves the tracked and untracked changes of a merged PR or closed
+#     work item to a retained branch before removing its checkout (unknown ignored files
+#     still preserve it).
 #   - CLEAR known build artifacts and root-level workflow output covered by .gitignore.
 #   - REMOVE a merged checkout (Remove-MergedWorktree) only while every Redis identity
 #     that can own it is reserved by the remover, never after a FREE status check.
@@ -580,9 +581,10 @@ function Remove-RemovedWorktreeBranches {
 # checkout and anything inside it, other repositories, Git-locked worktrees, a changed HEAD,
 # tracked changes, and untracked or ignored files outside known generated output. A failed
 # deletion (a busy directory on Windows) leaves a pending record that the next sweep finishes.
-# -RetainWorkName (a closed work item) instead saves tracked and untracked changes to
-# `retained-worktrees/<name>-wip-<sha12>` and a detached HEAD to `retained-worktrees/<SHA>`
-# before removal; unknown ignored files still preserve the checkout.
+# -RetainWorkName (a merged PR or closed work item) instead saves tracked and untracked
+# changes to `retained-worktrees/<name>-wip-<sha12>` before removal; unknown ignored files
+# still preserve the checkout. -RetainDetachedHead (a closed item whose commits may never
+# have merged) also keeps a detached HEAD as `retained-worktrees/<SHA>`.
 # Returns $true when the checkout is gone, 'preview' when -WhatIf would remove it.
 function Remove-MergedWorktree {
     param(
@@ -591,7 +593,8 @@ function Remove-MergedWorktree {
         [Parameter(Mandatory)][string]$ExpectedHead, # tip the caller verified as merged
         [string[]]$LockNames = @(),                # merge-evidence identities for a pending retry
         [string]$DeleteBranch,
-        [string]$RetainWorkName,                  # closed work item whose changes are retained
+        [string]$RetainWorkName,                  # finished work item whose changes are retained
+        [switch]$RetainDetachedHead,
         [string]$Label = '',
         [switch]$WhatIf
     )
@@ -642,7 +645,7 @@ function Remove-MergedWorktree {
     }
 
     if ($RetainWorkName) {
-        # Nothing will come back for a closed item's checkout. Keep everything it holds
+        # Nothing will come back for a finished item's checkout. Keep everything it holds
         # reachable from a branch instead of keeping the directory.
         try {
             if ($work.Count -gt 0) {
@@ -651,7 +654,7 @@ function Remove-MergedWorktree {
                 $blocker = Get-WorktreeStatusBlocker -Worktree $Worktree
                 if ($blocker) { return & $keep "after saving, $blocker" }
             }
-            Save-DetachedWorktreeHead -Repo $Repo -Worktree $Worktree
+            if ($RetainDetachedHead) { Save-DetachedWorktreeHead -Repo $Repo -Worktree $Worktree }
         }
         catch { return & $keep "could not retain its work: $_" }
     }
