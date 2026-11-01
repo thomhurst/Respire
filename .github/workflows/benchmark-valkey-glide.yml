@@ -63,9 +63,11 @@ jobs:
         shell: bash
         run: echo '::warning::Could not load Docker mirror action; pulls go straight to Docker Hub'
 
+      # Label runs measure the pull request head commit, not the merge ref.
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Setup .NET SDK
@@ -92,6 +94,9 @@ jobs:
         run: dotnet build benchmarks/Respire.GlideComparisonBenchmarks -c Release -f net10.0
 
       - name: Record dependency and rig metadata
+        env:
+          BENCH_FILTER: ${{ inputs.filter || '*' }}
+          BENCH_JOB: ${{ inputs.job || 'short' }}
         run: |
           artifacts=benchmarks/Respire.GlideComparisonBenchmarks/BenchmarkDotNet.Artifacts
           mkdir -p "$artifacts"
@@ -100,6 +105,8 @@ jobs:
             echo "Commit: $(git rev-parse HEAD)"
             echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             echo "Runner image: $ImageOS $ImageVersion"
+            echo "BenchmarkDotNet job: $BENCH_JOB (launchCount 2)"
+            echo "BenchmarkDotNet filter: $BENCH_FILTER"
             echo 'Server endpoint: localhost:6379 (Docker port mapping, no TLS)'
             echo "Server image: $VALKEY_IMAGE"
             docker inspect valkey --format 'Server image ID: {{.Image}}'
@@ -128,8 +135,10 @@ jobs:
 
       - name: Publish results to job summary
         if: always()
+        env:
+          BENCH_JOB: ${{ inputs.job || 'short' }}
         run: |
-          echo "## Respire vs Valkey GLIDE (net10.0)" >> $GITHUB_STEP_SUMMARY
+          echo "## Respire vs Valkey GLIDE (net10.0, $BENCH_JOB job)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Baseline is Valkey GLIDE. A Ratio below 1.00 means Respire is faster." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
