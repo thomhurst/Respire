@@ -36,10 +36,27 @@ DURATION_MULTIPLIERS_NS = {
 }
 
 
-def _framework_for(report: Path, results_dir: Path) -> str:
+ARTIFACT_PATTERN = re.compile(r"^(?P<framework>.+?)(?:-round-(?P<round>\d+))?(?:-seredis-.+)?$")
+
+
+def _artifact_suffix(report: Path, results_dir: Path) -> str | None:
     for part in report.relative_to(results_dir).parts:
         if part.startswith(ARTIFACT_PREFIX):
             return part.removeprefix(ARTIFACT_PREFIX)
+    return None
+
+
+def _round_for(report: Path, results_dir: Path) -> int:
+    suffix = _artifact_suffix(report, results_dir)
+    match = ARTIFACT_PATTERN.match(suffix) if suffix else None
+    return int(match.group("round")) if match and match.group("round") else 1
+
+
+def _framework_for(report: Path, results_dir: Path) -> str:
+    suffix = _artifact_suffix(report, results_dir)
+    if suffix:
+        match = ARTIFACT_PATTERN.match(suffix)
+        return match.group("framework") if match else suffix
     # download-artifact extracts a lone matching artifact without its folder, so fall back
     # to the runtime BenchmarkDotNet records in the report header.
     runtime = re.search(r"\.NET (\d+\.\d+)", report.read_text(encoding="utf-8"))
@@ -134,12 +151,99 @@ def _framework_key(framework: str) -> tuple[int, ...]:
     return tuple(int(version) for version in versions)
 
 
-def _summary_charts(grouped: dict[str, list[Path]]) -> list[str]:
-    framework = max(grouped, key=_framework_key)
+def _median_index(values: list[float]) -> int:
+    """Index of the median value; the lower middle value when the count is even."""
+    order = sorted(range(len(values)), key=lambda index: values[index])
+    return order[(len(order) - 1) // 2]
+
+
+def _median_chart_rows(
+    report_name: str, runs: list[tuple[int, Path]]
+) -> list[dict[str, str | float]]:
+    """Chart rows taken from the run whose Respire/StackExchange ratio is the median.
+
+    Each run measures both clients on the same machine, so every published pair is one
+    real measurement rather than numbers mixed from different machines.
+    """
+    per_run = [
+        {row["label"]: row for row in _chart_rows(report_name, path.read_text(encoding="utf-8"))}
+        for _, path in runs
+    ]
+    if not per_run:
+        return []
+
+    labels = list(dict.fromkeys(label for rows in per_run for label in rows))
+    chart_rows: list[dict[str, str | float]] = []
+    for label in labels:
+        candidates = [rows[label] for rows in per_run if label in rows]
+        ratios = [float(row["respire"]) / float(row["other"]) for row in candidates]
+        chart_rows.append(candidates[_median_index(ratios)])
+    return chart_rows
+
+
+def _runner_cpu(report: str) -> str | None:
+    match = re.search(r"^(?:AMD|Intel|Apple|Ampere|ARM|Neoverse)[^\n,]*", report, re.MULTILINE)
+    return match.group(0).strip() if match else None
+
+
+def _ratios(report: str) -> dict[tuple[str, str], float]:
+    rows = _table_rows(report)
+    baselines: dict[str, float] = {}
+    for row in rows:
+        duration = _duration_ns(row.get("Mean", ""))
+        if duration is not None and row.get("Method", "").startswith("StackExchange_"):
+            baselines[row.get("Categories", "")] = duration
+
+    ratios: dict[tuple[str, str], float] = {}
+    for row in rows:
+        method = row.get("Method", "")
+        category = row.get("Categories", "")
+        mean = _duration_ns(row.get("Mean", ""))
+        baseline = baselines.get(category)
+        if method.startswith("Respire_") and mean is not None and baseline:
+            ratios[(method, category)] = mean / baseline
+    return ratios
+
+
+def _ratio_summary(report_name: str, runs: list[tuple[int, Path]]) -> list[str]:
+    per_run = [_ratios(path.read_text(encoding="utf-8")) for _, path in runs]
+    keys = list(dict.fromkeys(key for ratios in per_run for key in ratios))
+    if not keys:
+        return []
+
+    has_categories = any(category for _, category in keys)
+    run_headers = [f"Run {run}" for run, _ in runs]
+    header = ["Method", *(["Categories"] if has_categories else []), *run_headers, "Median"]
+    alignment = ["---"] * (2 if has_categories else 1) + ["---:"] * (len(run_headers) + 1)
+    lines = [
+        f"### {report_name}",
+        "",
+        "| " + " | ".join(header) + " |",
+        "|" + "|".join(alignment) + "|",
+    ]
+    for method, category in keys:
+        values = [ratios.get((method, category)) for ratios in per_run]
+        present = [value for value in values if value is not None]
+        median = present[_median_index(present)]
+        cells = [method, *([category] if has_categories else [])]
+        cells.extend("-" if value is None else f"{value:.2f}" for value in values)
+        cells.append(f"**{median:.2f}**")
+        lines.append("| " + " | ".join(cells) + " |")
+    lines.append("")
+    return lines
+
+
+def _summary_charts(framework: str, by_report: dict[str, list[tuple[int, Path]]]) -> list[str]:
     charts = ["## Visual comparison", ""]
-    for report in sorted(grouped[framework]):
-        report_name = _report_name(report)
-        rows = _chart_rows(report_name, report.read_text(encoding="utf-8"))
+    if any(len(runs) > 1 for runs in by_report.values()):
+        charts.extend(
+            [
+                "Each pair of bars comes from the run whose Respire / StackExchange.Redis ratio is the median of all runs.",
+                "",
+            ]
+        )
+    for report_name in sorted(by_report):
+        rows = _median_chart_rows(report_name, by_report[report_name])
         if not rows:
             continue
 
@@ -179,6 +283,17 @@ def _summary_charts(grouped: dict[str, list[Path]]) -> list[str]:
     return charts if len(charts) > 2 else []
 
 
+def _group(reports: list[Path], results_dir: Path) -> dict[str, dict[str, list[tuple[int, Path]]]]:
+    grouped: dict[str, dict[str, list[tuple[int, Path]]]] = defaultdict(lambda: defaultdict(list))
+    for report in reports:
+        framework = _framework_for(report, results_dir)
+        grouped[framework][_report_name(report)].append((_round_for(report, results_dir), report))
+    for by_report in grouped.values():
+        for runs in by_report.values():
+            runs.sort()
+    return grouped
+
+
 def build_document(
     reports: list[Path],
     results_dir: Path,
@@ -189,9 +304,8 @@ def build_document(
     if not reports:
         raise ValueError(f"No BenchmarkDotNet reports found below {results_dir}")
 
-    grouped: dict[str, list[Path]] = defaultdict(list)
-    for report in reports:
-        grouped[_framework_for(report, results_dir)].append(report)
+    grouped = _group(reports, results_dir)
+    run_count = max(len(runs) for by_report in grouped.values() for runs in by_report.values())
 
     lines = [
         "---",
@@ -214,21 +328,48 @@ def build_document(
         "",
     ]
 
-    lines.extend(_summary_charts(grouped))
+    if run_count > 1:
+        lines.extend(
+            [
+                (
+                    f"Every benchmark ran {run_count} times, each time on a separate machine. "
+                    "Both clients in a run share that machine, so each run gives its own ratio. "
+                    "Read the median ratio: a single run on a shared machine can move by several percent."
+                ),
+                "",
+            ]
+        )
+
+    latest = max(grouped, key=_framework_key)
+    lines.extend(_summary_charts(latest, grouped[latest]))
+
+    if run_count > 1:
+        lines.extend(["## Ratio across runs", ""])
+        first_report = sorted(grouped[latest])[0]
+        for run, path in grouped[latest][first_report]:
+            cpu = _runner_cpu(path.read_text(encoding="utf-8"))
+            lines.append(f"- Run {run}: {cpu or 'unknown CPU'}")
+        lines.append("")
+        for report_name in sorted(grouped[latest]):
+            lines.extend(_ratio_summary(report_name, grouped[latest][report_name]))
 
     for framework in sorted(grouped):
         lines.extend([f"## {framework}", ""])
-        framework_reports = sorted(grouped[framework])
-        for report in framework_reports:
-            if len(framework_reports) > 1:
-                lines.extend([f"### {_report_name(report)}", ""])
-            lines.extend([report.read_text(encoding="utf-8").strip(), ""])
+        by_report = grouped[framework]
+        for report_name in sorted(by_report):
+            runs = by_report[report_name]
+            if len(by_report) > 1:
+                lines.extend([f"### {report_name}", ""])
+            for run, path in runs:
+                if len(runs) > 1:
+                    lines.extend([f"#### Run {run}", ""])
+                lines.extend([path.read_text(encoding="utf-8").strip(), ""])
 
     lines.extend(
         [
             "## Reading the results",
             "",
-            "These runs use a shared Linux runner and a local Redis container, so expect some variation between runs. Before making an important decision, measure with your own payload sizes, concurrency, Redis deployment, and network.",
+            "These runs use shared Linux machines and a local Redis container, so expect some variation between runs. Before making an important decision, measure with your own payload sizes, concurrency, Redis deployment, and network.",
             "",
         ]
     )

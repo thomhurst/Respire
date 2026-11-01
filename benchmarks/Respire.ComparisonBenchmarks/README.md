@@ -21,6 +21,12 @@ dependency versions, and `rig.txt` with the commit, run URL, runner image, CPU, 
 the selected version. Compare Respire with StackExchange.Redis measured in the
 same job; separate hosted runners need not have identical hardware.
 
+Each run repeats the suite on separate runners (`runs`, default `3`); artifact
+names carry `-round-<n>`. One shared runner can move a 1-2 µs single-operation
+ratio by several percent, so the docs page charts the run with the median
+Respire / StackExchange.Redis ratio and lists every run's ratio. Manual
+`runs=1` dispatches never overwrite the weekly docs page.
+
 | Suite | Measurement |
 | --- | --- |
 | `CommonOperationsBenchmarks` | Single operations, 1/10 KB writes, 50 concurrent GETs and 200 pipelined GETs; StackExchange uses the established `IDatabase` Task API in both versions. |
