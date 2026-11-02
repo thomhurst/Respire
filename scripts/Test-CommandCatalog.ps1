@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 $ErrorActionPreference = 'Stop'
 
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('respire-catalog-' + [Guid]::NewGuid().ToString('N'))

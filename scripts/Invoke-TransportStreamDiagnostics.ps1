@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
 Captures two separate allocation diagnostic launches per stream case and metric mode.

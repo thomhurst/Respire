@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
 Evaluates vector-set replacement durability in a disposable Redis container.

@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 param([string]$DiagnosticsDirectory)
 
 # Node action exits are recorded by Runner.Sdk.ProcessInvoker even when the

@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 <#
 Checks the produced nuspecs for every shipping friend of core. Run after packing
 all packages so a missing package or dependency group fails instead of being skipped.

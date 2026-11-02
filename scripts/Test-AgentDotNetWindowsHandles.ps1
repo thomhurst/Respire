@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { Write-Output 'SKIP Windows launcher handle controls.'; exit 0 }
 

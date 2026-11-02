@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 <#
 Builds the getting-started page's exact Program.cs against freshly packed packages.
 No snippet harness or repository build defaults are available to hide missing setup.

@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # Remove-MergedWorktrees.ps1
 # Safety-net sweep: removes merged worktrees that owner release did not remove, for
 # example after a crash or an expired lock TTL. Owner release stays the normal path.

@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # Exercise Enable-AutoMerge.ps1 and Assert-PrGreen.ps1 -ForAutoMerge against isolated
 # GitHub responses: arming must wait for nothing but the review, and must refuse drafts,
 # failures, a missing or running review, a blocking review, and conflicts.

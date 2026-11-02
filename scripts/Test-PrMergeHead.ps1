@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # Exercise the real merge wrapper and gate with isolated GitHub/Git responses.
 $ErrorActionPreference = 'Stop'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) "merge-head-$([guid]::NewGuid().ToString('N'))"

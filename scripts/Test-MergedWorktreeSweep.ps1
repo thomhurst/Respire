@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # Offline regression suite: runs the real sweep in-process against real Git worktrees, with
 # deterministic GitHub responses and a fake canonical lock CLI. No shared Redis key is used.
 $ErrorActionPreference = 'Stop'

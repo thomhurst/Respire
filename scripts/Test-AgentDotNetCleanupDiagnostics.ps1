@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 $ErrorActionPreference = 'Stop'
 
 # Exercise cleanup decisions without terminating any real process. In particular,

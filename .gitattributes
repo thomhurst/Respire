@@ -3,3 +3,4 @@
 scripts/benchmarks/ReadySendStrategy*.patch text eol=lf whitespace=-blank-at-eol
 samples/**/*.sh text eol=lf
 scripts/benchmarks/*.sh text eol=lf
+*.ps1 text eol=lf

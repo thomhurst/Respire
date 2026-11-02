@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # Real Git lifecycle coverage; GitHub and the merge gate are stubbed only inside
 # this disposable fixture. No repository or service outside the fixture is mutated.
 $ErrorActionPreference = 'Stop'

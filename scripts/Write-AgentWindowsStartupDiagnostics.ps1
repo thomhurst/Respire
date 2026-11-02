@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 param([int]$WrapperProcessId, [long]$PeakWorkingSetBytes, [switch]$SnapshotOnly, [switch]$RunnerFailure)
 
 # Run in the surviving guard host: after STATUS_DLL_INIT_FAILED even the

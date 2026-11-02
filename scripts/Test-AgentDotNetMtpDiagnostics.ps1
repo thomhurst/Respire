@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 param([string]$SmokeScript = (Join-Path $PSScriptRoot 'Test-AgentDotNetMtp.ps1'))
 
 $ErrorActionPreference = 'Stop'

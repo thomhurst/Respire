@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 param([string]$SdkVersion, [switch]$RollForwardAcrossMajor, [string]$DiagnosticsDirectory)
 
 $ErrorActionPreference = 'Stop'

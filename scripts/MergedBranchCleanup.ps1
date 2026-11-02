@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # Record remote cleanup before owner release removes the worktree registration.
 function Get-RemoteUrlFingerprint {
     param([Parameter(Mandatory)][string]$RemoteUrl)

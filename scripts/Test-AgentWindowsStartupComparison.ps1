@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 param(
     [ValidateRange(1, 100)][int]$Iterations = 30,
     [ValidateRange(1, 30)][int]$LaunchTimeoutSeconds = 15,

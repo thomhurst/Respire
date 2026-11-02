@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
 Checks diagnostic build provenance and capture safeguards without Redis or allocation tracing.

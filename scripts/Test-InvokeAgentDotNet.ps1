@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 $ErrorActionPreference = 'Stop'
 
 $guardScript = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'

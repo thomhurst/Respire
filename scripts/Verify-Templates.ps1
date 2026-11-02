@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 <#
 Installs the packed template into a private hive, builds a renamed standalone app,
 and checks cache-aside, job processing and dashboard authorization against an owned Redis.

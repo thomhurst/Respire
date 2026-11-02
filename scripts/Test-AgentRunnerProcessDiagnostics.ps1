@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 param([string]$DiagnosticsScript = (Join-Path $PSScriptRoot 'Write-AgentRunnerProcessDiagnostics.ps1'))
 
 $ErrorActionPreference = 'Stop'

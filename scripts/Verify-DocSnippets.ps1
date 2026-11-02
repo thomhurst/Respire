@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 <#
 Verifies package READMEs and icons, and compiles C# fences in package READMEs,
 the root README, website/docs, and docs against the packed packages.

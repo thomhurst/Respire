@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # Posts a PR review thread reply from a body file and optionally resolves the thread.
 # Bodies never pass through PowerShell string expansion: "$reply.Body" expands only $reply
 # and posts "System.Collections.Hashtable.Body" instead of the intended disposition.

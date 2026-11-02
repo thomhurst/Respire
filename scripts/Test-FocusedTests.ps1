@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $guard = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'

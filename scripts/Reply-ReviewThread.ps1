@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
 Replies to a PR review thread from a body file and optionally resolves the thread.

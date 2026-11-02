@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 $ErrorActionPreference = 'Stop'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-arguments-diagnostics-{0}" -f [guid]::NewGuid())
 $originalDirectory = (Get-Location).ProviderPath

@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # Offline regression tests for the agent evidence sweep in WorktreeCleanup.ps1.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'WorktreeCleanup.ps1')

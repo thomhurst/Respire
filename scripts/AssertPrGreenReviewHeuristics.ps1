@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 function Test-ClaudeReviewRequired {
     [CmdletBinding()]
     param([AllowNull()]$Checks, [AllowNull()][string]$AuthorLogin)

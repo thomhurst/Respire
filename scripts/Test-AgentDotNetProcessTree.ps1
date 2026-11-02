@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 $ErrorActionPreference = 'Stop'
 
 # Import only the snapshot helpers, without starting a guard or stopping any

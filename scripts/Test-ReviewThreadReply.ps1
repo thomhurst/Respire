@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # Offline regression suite for ReviewThreadReply.ps1: needs only PowerShell 7.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ReviewThreadReply.ps1')

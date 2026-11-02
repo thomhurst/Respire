@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { Write-Output 'SKIP Windows startup comparison controls.'; exit 0 }
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('startup-comparison-control-' + [guid]::NewGuid())
