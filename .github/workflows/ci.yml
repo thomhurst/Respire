@@ -89,7 +89,7 @@ jobs:
         framework: [net8.0, net10.0]
     services:
       redis:
-        image: mirror.gcr.io/library/redis:8.10-alpine@sha256:1166a1ab81198ff768528df2c9e668c82206aae3ef4af2757efac386376fb79c
+        image: mirror.gcr.io/library/redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports:
           - 6379/tcp
         options: >-
@@ -241,7 +241,7 @@ jobs:
         framework: [net8.0, net10.0]
     services:
       redis:
-        image: mirror.gcr.io/library/redis:8.10-alpine@sha256:1166a1ab81198ff768528df2c9e668c82206aae3ef4af2757efac386376fb79c
+        image: mirror.gcr.io/library/redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports:
           - 6379/tcp
         options: >-
@@ -374,7 +374,7 @@ jobs:
         framework: [net8.0, net10.0]
     services:
       redis:
-        image: mirror.gcr.io/library/redis:8.10-alpine@sha256:1166a1ab81198ff768528df2c9e668c82206aae3ef4af2757efac386376fb79c
+        image: mirror.gcr.io/library/redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports:
           - 6379/tcp
         options: >-
