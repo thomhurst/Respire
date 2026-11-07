@@ -78,6 +78,7 @@
     <PackageVersion Include="Reservoir" Version="1.9.1" />
     <PackageVersion Include="ModularPipelines.GitHub" Version="3.2.8" />
     <PackageVersion Include="StackExchange.Redis" Version="3.4.0" />
+    <PackageVersion Include="Valkey.Glide" Version="1.1.0" />
     <PackageVersion Include="Hangfire.Redis.StackExchange" Version="1.12.0" />
     <PackageVersion Include="Microsoft.Orleans.Clustering.Redis" Version="10.4.2" />
     <PackageVersion Include="Microsoft.Orleans.Persistence.Redis" Version="10.4.2" />
