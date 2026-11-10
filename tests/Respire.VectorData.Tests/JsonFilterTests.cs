@@ -21,7 +21,7 @@ public class JsonFilterTests(ModernRedisTestContainer fixture)
         try
         {
             await collection.EnsureCollectionExistsAsync();
-            await collection.UpsertAsync(new JsonTypedFilterRecord("one", 1, 1, null, true, ["tag"], []));
+            await collection.UpsertAsync(new JsonTypedFilterRecord("one", 1, 1, null, true, ["tag"], []) { Vector = [1, 0] });
             var included = await collection.GetAsync("one", new() { IncludeVectors = true });
             included!.Tags.Should().Equal("tag");
             included.Vector.Should().Equal(1, 0);
@@ -77,9 +77,9 @@ public class JsonFilterTests(ModernRedisTestContainer fixture)
             await collection.EnsureCollectionExistsAsync();
             JsonTypedFilterRecord[] records =
             [
-                new("0", 0.1f, 0.1, null, true, ["", " x ", "a,b"], ["映画😀"]),
-                new("1", 0.2f, 0.2, 9, false, ["x"], []),
-                new("2", 0.3f, 0.3, 10, true, [], ["x"]),
+                new("0", 0.1f, 0.1, null, true, ["", " x ", "a,b"], ["映画😀"]) { Vector = [1, 0] },
+                new("1", 0.2f, 0.2, 9, false, ["x"], []) { Vector = [1, 0] },
+                new("2", 0.3f, 0.3, 10, true, [], ["x"]) { Vector = [1, 0] },
             ];
             await collection.UpsertAsync(records);
             string[] choices = ["", "映画😀"];
@@ -120,7 +120,9 @@ public class JsonFilterTests(ModernRedisTestContainer fixture)
 
 public sealed record JsonTypedFilterRecord(string Id, float Float, double Double, int? Optional, bool Bool, string[] Tags, List<string> List)
 {
-    public float[]? Vector { get; init; } = [1, 0];
+    // No initializer: the .NET 11 System.Text.Json source generator keeps an init property's
+    // initializer when the JSON omits it, which would hide that the vector was left out.
+    public float[]? Vector { get; init; }
     [JsonExtensionData] public Dictionary<string, System.Text.Json.JsonElement>? Extra { get; set; }
 }
 

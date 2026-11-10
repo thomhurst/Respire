@@ -248,15 +248,7 @@ internal static class PrimitiveCodec
                     throw InvalidValue<decimal>();
                 }
 
-                try
-                {
-                    result = Return<T, decimal>(checked((decimal)value));
-                }
-                catch (OverflowException)
-                {
-                    throw InvalidValue<decimal>();
-                }
-
+                result = Return<T, decimal>(DoubleToDecimal(value));
                 return true;
             default:
                 result = default;
@@ -413,6 +405,22 @@ internal static class PrimitiveCodec
         }
 
         throw InvalidValue<double>();
+    }
+
+    // .NET 11 converts double to decimal exactly, so 0.1 would become 0.1000000000000000055511151231.
+    // Earlier runtimes rounded to 15 significant digits; go through that text to keep one result.
+    private static decimal DoubleToDecimal(double value)
+    {
+        // stackalloc-audit[6ace915e29ae171f]: init: TryFormat writes the first written bytes; read: only
+        // text[..written]; failure: a failed format or parse throws invalid data without reading the buffer.
+        Span<byte> text = stackalloc byte[32];
+        if (value.TryFormat(text, out var written, "G15", CultureInfo.InvariantCulture)
+            && decimal.TryParse(text[..written], NumberStyles.Float, CultureInfo.InvariantCulture, out var result))
+        {
+            return result;
+        }
+
+        throw InvalidValue<decimal>();
     }
 
     private static decimal ParseDecimal(ReadOnlySpan<byte> payload)

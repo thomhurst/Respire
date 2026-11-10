@@ -15,7 +15,7 @@ public class JsonFilterValidationTests
     {
         var context = new JsonFilterContext(new JsonSerializerOptions { MaxDepth = 2 });
         var mapper = new JsonTypedFilterMapper(context.JsonTypedFilterRecord);
-        var record = new JsonTypedFilterRecord("one", 1, 1, null, true, [" x ", ""], []);
+        var record = new JsonTypedFilterRecord("one", 1, 1, null, true, [" x ", ""], []) { Vector = [1, 0] };
         var filters = new RespireVectorDataJsonFilters(mapper.JsonTypeInfo, mapper.FilterFields.ToArray());
         var original = mapper.Write(record);
         RespireVectorDataJsonPaths.ValidateVectors(original, mapper.VectorFields.ToArray(), [["Vector"]], 2);
@@ -99,7 +99,7 @@ public class JsonFilterValidationTests
         using var store = new RespireVectorStore(client);
         store.RegisterMapper(new JsonTypedFilterMapper());
         using var collection = store.GetJsonCollection<JsonTypedFilterRecord>("records");
-        var record = new JsonTypedFilterRecord("one", 1, 1, null, true, [null!], []);
+        var record = new JsonTypedFilterRecord("one", 1, 1, null, true, [null!], []) { Vector = [1, 0] };
         Func<Task> upsertNull = () => collection.UpsertAsync(record);
         await upsertNull.Should().ThrowAsync<ArgumentException>().WithMessage("*Null collection elements*");
         var extra = new Dictionary<string, JsonElement> { [RespireVectorDataJsonFilters.RootProperty] = JsonSerializer.SerializeToElement(1, JsonFilterValidationContext.Default.Int32) };

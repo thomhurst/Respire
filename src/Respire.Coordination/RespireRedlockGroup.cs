@@ -139,7 +139,7 @@ internal sealed class RespireRedlockNodes
     private readonly IRespireLockCommands[] _locks;
     private readonly RespireCommandHook[] _hooks;
     private readonly TimeSpan _nodeTimeout;
-    private readonly double _driftFactor;
+    private readonly decimal _driftFactor;
 
     internal RespireRedlockNodes(IRespireClient[] clients, RespireRedlockOptions options, TimeProvider clock)
     {
@@ -150,7 +150,7 @@ internal sealed class RespireRedlockNodes
         _hooks = _locks.Select(static commands => (commands as LockCommands)?.Hook)
             .OfType<RespireCommandHook>().ToArray();
         _nodeTimeout = options.NodeTimeout;
-        _driftFactor = options.DriftFactor;
+        _driftFactor = DriftFactorToDecimal(options.DriftFactor);
         Clock = clock;
         Quorum = clients.Length / 2 + 1;
     }
@@ -239,9 +239,18 @@ internal sealed class RespireRedlockNodes
         return new RespireRedlockLease(duration, validity, validUntil);
     }
 
+    // .NET 11 converts double to decimal exactly (0.01 becomes 0.0100000000000000002...), which would
+    // round every drift up by one tick. Earlier runtimes rounded to 15 significant digits; keep that.
+    internal static decimal DriftFactorToDecimal(double driftFactor)
+        => decimal.Parse(driftFactor.ToString("G15", System.Globalization.CultureInfo.InvariantCulture),
+            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture);
+
     internal static TimeSpan CalculateValidity(TimeSpan duration, TimeSpan elapsed, double driftFactor)
+        => CalculateValidity(duration, elapsed, DriftFactorToDecimal(driftFactor));
+
+    internal static TimeSpan CalculateValidity(TimeSpan duration, TimeSpan elapsed, decimal driftFactor)
     {
-        var driftTicks = decimal.Ceiling((decimal)duration.Ticks * (decimal)driftFactor)
+        var driftTicks = decimal.Ceiling((decimal)duration.Ticks * driftFactor)
             + TimeSpan.TicksPerMillisecond * 2m;
         var remainingTicks = duration.Ticks - (decimal)elapsed.Ticks - driftTicks;
         return remainingTicks > 0 ? TimeSpan.FromTicks((long)remainingTicks) : TimeSpan.Zero;

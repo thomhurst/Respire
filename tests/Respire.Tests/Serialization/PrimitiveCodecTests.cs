@@ -11,6 +11,20 @@ namespace Respire.Tests.Serialization;
 public class PrimitiveCodecTests
 {
     [Test]
+    public async Task DoubleRepliesReadAsDecimalKeepTheirDecimalText()
+    {
+        // .NET 11 converts double to decimal exactly; 0.1 must not become 0.1000000000000000055511151231.
+        var tenth = RespValue.Double(0.1);
+        var third = RespValue.Double(1d / 3);
+        await Assert.That(PrimitiveCodec.TryDeserialize<decimal>(in tenth, out var parsed)).IsTrue();
+        await Assert.That(parsed).IsEqualTo(0.1M);
+        await Assert.That(PrimitiveCodec.TryDeserialize<decimal>(in third, out parsed)).IsTrue();
+        await Assert.That(parsed).IsEqualTo(0.333333333333333M);
+        var overflow = RespValue.Double(1e100);
+        await Assert.That(() => PrimitiveCodec.TryDeserialize<decimal>(in overflow, out _)).Throws<FormatException>();
+    }
+
+    [Test]
     [Arguments("+1")]
     [Arguments("01")]
     [Arguments("-01")]

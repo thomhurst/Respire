@@ -12,14 +12,17 @@ function Test-RecordedProcess([object]$Identity, [switch]$Stop) {
     try {
         $process = [Diagnostics.Process]::GetProcessById($Identity.ProcessId)
         try {
-            $alive = -not $process.HasExited -and $process.StartTime.ToUniversalTime().Ticks -eq $Identity.StartTimeUtcTicks
-            if ($alive) {
+            if ($process.HasExited) { return $false }
+            # PowerShell yields $null when the process exits while its start time is read.
+            # Such a process is already terminating: wait for it instead of dereferencing null.
+            $started = $process.StartTime
+            if ($null -ne $started) {
+                if ($started.ToUniversalTime().Ticks -ne $Identity.StartTimeUtcTicks) { return $false }
                 if ($Stop) { $process.Kill($true) }
-                # OS job/group termination is asynchronous. Wait on this verified
-                # process handle, rather than sleeping or assuming instant disappearance.
-                $alive = -not $process.WaitForExit(5000)
             }
-            return $alive
+            # OS job/group termination is asynchronous. Wait on this process handle,
+            # rather than sleeping or assuming instant disappearance.
+            return -not $process.WaitForExit(5000)
         }
         finally { $process.Dispose() }
     }
