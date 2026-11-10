@@ -21,7 +21,7 @@ public class CommandRouteOwnershipTests
     private static CommandRouteOwnership.Member[] Discover(string source)
         => Discover([("fixture.cs", source)]);
     private static CommandRouteOwnership.Member[] Discover(IEnumerable<(string File, string Source)> files)
-        => CommandRouteOwnership.Discover(files).Where(m => m.Framework == "net8.0").ToArray();
+        => CommandRouteOwnership.Discover(files).Where(m => m.Framework == "net10.0").ToArray();
     private static CommandRouteOwnership.Inventory ControlInventory(params CommandRouteOwnership.Boundary[] boundaries)
         => new([new("Respire.IExampleCommands", "Respire.ExampleCommands", [Route], Contract: "Own validation through cleanup.")], boundaries);
 
@@ -42,7 +42,7 @@ public class CommandRouteOwnershipTests
                 private void Probe() { }
             }
             """)]);
-        foreach (var framework in new[] { "net8.0", "net10.0" })
+        foreach (var framework in new[] { "net10.0", "net11.0" })
         {
             await Assert.That(source.Any(m => m.Framework == framework && m.PublicRoute)).IsEqualTo(expected);
             await Assert.That(CommandRouteOwnership.Validate(source, new([], []))
@@ -64,7 +64,7 @@ public class CommandRouteOwnershipTests
     {
         var source = Discover("public class Routes { public int[] Added(bool all) => all ? [] : [1]; }");
         await Assert.That(CommandRouteOwnership.Validate(source, new([], [])))
-            .Contains("Undeclared public route: Routes.Added(bool):int[] [net8.0]");
+            .Contains("Undeclared public route: Routes.Added(bool):int[] [net10.0]");
     }
 
     [Test]
@@ -76,7 +76,7 @@ public class CommandRouteOwnershipTests
             """)]);
         var inventory = new CommandRouteOwnership.Inventory([
             new("Outer.Commands", "Owner", ["RunAsync():ValueTask"], Contract: "Own calls through completion.")], []);
-        foreach (var framework in new[] { "net8.0", "net10.0" })
+        foreach (var framework in new[] { "net10.0", "net11.0" })
         {
             await Assert.That(CommandRouteOwnership.Validate(source, new([], [])))
                 .Contains("Undeclared public route: Outer.Commands.RunAsync():ValueTask [" + framework + "]");
@@ -97,7 +97,7 @@ public class CommandRouteOwnershipTests
         var source = CommandRouteOwnership.Discover([("fixture.cs", "public interface Outer { interface Middle { "
             + kind + " Commands { " + methodVisibility + " ValueTask RunAsync() => default; } } }")]);
         await Assert.That(source.All(m => m.PublicRoute)).IsTrue();
-        foreach (var framework in new[] { "net8.0", "net10.0" })
+        foreach (var framework in new[] { "net10.0", "net11.0" })
             await Assert.That(CommandRouteOwnership.Validate(source, new([], [])))
                 .Contains("Undeclared public route: Outer.Middle.Commands.RunAsync():ValueTask [" + framework + "]");
         var inventory = new CommandRouteOwnership.Inventory([
@@ -258,7 +258,7 @@ public class CommandRouteOwnershipTests
         var source = CommandRouteOwnership.Discover([
             ("first.cs", "namespace Respire; public partial class Routes { }"),
             ("second.cs", "namespace Respire; partial class Routes { public ValueTask<int> AddedAsync() => default; }")])
-            .Where(m => m.Framework == "net8.0").ToArray();
+            .Where(m => m.Framework == "net10.0").ToArray();
         await Assert.That(source.Single().PublicRoute).IsTrue();
         await Assert.That(CommandRouteOwnership.Validate(source, new([], []))
             .Any(e => e.StartsWith("Undeclared public route:", StringComparison.Ordinal))).IsTrue();
@@ -270,7 +270,7 @@ public class CommandRouteOwnershipTests
         const string source = """
             namespace Respire;
             public class Routes {
-            #if NET8_0
+            #if NET10_0
                 public ValueTask<int> EightAsync() => default;
             #else
                 public ValueTask<int> TenAsync() => default;
@@ -296,6 +296,8 @@ public class CommandRouteOwnershipTests
     [Arguments("NET6_0_OR_GREATER")]
     [Arguments("NET7_0_OR_GREATER")]
     [Arguments("NET8_0_OR_GREATER")]
+    [Arguments("NET9_0_OR_GREATER")]
+    [Arguments("NET10_0_OR_GREATER")]
     public async Task SdkCompatibilitySymbolsCannotHideUndeclaredRoutes(string symbol)
     {
         var source = CommandRouteOwnership.Discover([("fixture.cs", $$"""
@@ -306,18 +308,17 @@ public class CommandRouteOwnershipTests
             }
             """)]);
         var errors = CommandRouteOwnership.Validate(source, new([], []));
-        await Assert.That(errors).Contains("Undeclared public route: Routes.Added():int [net8.0]");
         await Assert.That(errors).Contains("Undeclared public route: Routes.Added():int [net10.0]");
+        await Assert.That(errors).Contains("Undeclared public route: Routes.Added():int [net11.0]");
         var inventory = new CommandRouteOwnership.Inventory([
             new("Routes", "Routes", ["Added():int"], Contract: "Own calls through completion.")], []);
         await Assert.That(CommandRouteOwnership.Validate(source, inventory)).IsEmpty();
     }
 
     [Test]
-    [Arguments("NET8_0", "net8.0")]
     [Arguments("NET10_0", "net10.0")]
-    [Arguments("NET9_0_OR_GREATER", "net10.0")]
-    [Arguments("NET10_0_OR_GREATER", "net10.0")]
+    [Arguments("NET11_0", "net11.0")]
+    [Arguments("NET11_0_OR_GREATER", "net11.0")]
     public async Task SdkTargetSymbolsStayWithinTheirFramework(string symbol, string framework)
     {
         var source = CommandRouteOwnership.Discover([("fixture.cs", $$"""
@@ -349,7 +350,7 @@ public class CommandRouteOwnershipTests
         var inventory = new CommandRouteOwnership.Inventory([], [], [new(source.Single().Id, "Local value comparison; no dispatch.")]);
         await Assert.That(CommandRouteOwnership.Validate(source, inventory)).IsEmpty();
         await Assert.That(CommandRouteOwnership.Validate(source, inventory with { NonRoutes = [new(source.Single().Id, "")] }))
-            .Contains("Missing non-route reason: Value.GetHashCode():int [net8.0]");
+            .Contains("Missing non-route reason: Value.GetHashCode():int [net10.0]");
         await Assert.That(CommandRouteOwnership.Validate([], inventory))
             .Contains("Removed or non-public exclusion: Value.GetHashCode():int");
     }
@@ -426,21 +427,21 @@ public class CommandRouteOwnershipTests
     {
         var source = CommandRouteOwnership.Discover([("fixture.cs", """
             public class Routes {
-            #if NET8_0
+            #if NET10_0
                 public partial int Foo();
             #else
                 private int Foo() => 1;
             #endif
             }
             """)]);
-        var eight = source.Single(m => m.Framework == "net8.0");
         var ten = source.Single(m => m.Framework == "net10.0");
-        await Assert.That(eight.PublicRoute).IsTrue();
-        await Assert.That(eight.HasBody).IsFalse();
-        await Assert.That(ten.PublicRoute).IsFalse();
-        await Assert.That(ten.HasBody).IsTrue();
+        var eleven = source.Single(m => m.Framework == "net11.0");
+        await Assert.That(ten.PublicRoute).IsTrue();
+        await Assert.That(ten.HasBody).IsFalse();
+        await Assert.That(eleven.PublicRoute).IsFalse();
+        await Assert.That(eleven.HasBody).IsTrue();
         await Assert.That(CommandRouteOwnership.Validate(source, new([], [])))
-            .Contains("Undeclared public route: Routes.Foo():int [net8.0]");
+            .Contains("Undeclared public route: Routes.Foo():int [net10.0]");
     }
 
     [Test]
@@ -449,7 +450,7 @@ public class CommandRouteOwnershipTests
         var source = CommandRouteOwnership.Discover([("fixture.cs", """
             namespace Respire;
             public interface IExampleCommands {
-            #if NET8_0
+            #if NET10_0
                 ValueTask<int> GetAsync(int key);
             #else
                 ValueTask<int> GetAsync(int key) => default;
@@ -458,8 +459,8 @@ public class CommandRouteOwnershipTests
             """)]);
         var inventory = ControlInventory() with { Surfaces = [new("Respire.IExampleCommands", "Respire.IExampleCommands", [Route], Contract: "Control")] };
         await Assert.That(CommandRouteOwnership.Validate(source, inventory))
-            .Contains("Missing final owner: Respire.IExampleCommands." + Route + " => Respire.IExampleCommands." + Route + " [net8.0]");
-        await Assert.That(CommandRouteOwnership.Validate(source.Where(m => m.Framework == "net10.0").ToArray(), inventory)).IsEmpty();
+            .Contains("Missing final owner: Respire.IExampleCommands." + Route + " => Respire.IExampleCommands." + Route + " [net10.0]");
+        await Assert.That(CommandRouteOwnership.Validate(source.Where(m => m.Framework == "net11.0").ToArray(), inventory)).IsEmpty();
     }
 
     [Test]
@@ -468,7 +469,7 @@ public class CommandRouteOwnershipTests
         var source = CommandRouteOwnership.Discover([("fixture.cs", """
             namespace Respire;
             public interface IExampleCommands { ValueTask<int> GetAsync(int key); }
-            #if NET10_0
+            #if NET11_0
             internal class ExampleCommands : IExampleCommands {
             #else
             internal class ExampleCommands {
@@ -477,8 +478,8 @@ public class CommandRouteOwnershipTests
             }
             """)]);
         await Assert.That(CommandRouteOwnership.Validate(source, ControlInventory()))
-            .Contains("Owner does not implement public contract: Respire.IExampleCommands." + Route + " => " + Owner + " [net8.0]");
-        await Assert.That(CommandRouteOwnership.Validate(source.Where(m => m.Framework == "net10.0").ToArray(), ControlInventory())).IsEmpty();
+            .Contains("Owner does not implement public contract: Respire.IExampleCommands." + Route + " => " + Owner + " [net10.0]");
+        await Assert.That(CommandRouteOwnership.Validate(source.Where(m => m.Framework == "net11.0").ToArray(), ControlInventory())).IsEmpty();
     }
 
     [Test]
@@ -486,7 +487,7 @@ public class CommandRouteOwnershipTests
     {
         var source = CommandRouteOwnership.Discover([("fixture.cs", """
             public class Routes {
-            #if NET8_0
+            #if NET10_0
                 public int Eight() => 8;
                 private int Ten() => 10;
             #else
@@ -519,7 +520,7 @@ public class CommandRouteOwnershipTests
     {
         var source = CommandRouteOwnership.Discover([("fixture.cs", """
             internal class Routes {
-            #if NET8_0
+            #if NET10_0
                 private void Eight() { }
             #else
                 private void Ten() { }

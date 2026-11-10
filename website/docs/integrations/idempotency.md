@@ -5,7 +5,7 @@ description: Replay bounded ASP.NET Core responses for retries with the same Ide
 
 # HTTP idempotency
 
-`Respire.Idempotency` adds opt-in ASP.NET Core middleware on .NET 8 and .NET 10.
+`Respire.Idempotency` adds opt-in ASP.NET Core middleware on .NET 10 and .NET 11.
 It uses [Redis idempotency claims](../guides/coordination.md#idempotency-claims-and-result-replay)
 to run one matching request while its claim is live and replay its stored response on retries.
 Redis 7+ and RESP2/RESP3 are supported.

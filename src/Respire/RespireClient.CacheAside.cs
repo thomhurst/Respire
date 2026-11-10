@@ -71,6 +71,7 @@ public sealed partial class RespireClient
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -86,6 +87,7 @@ public sealed partial class RespireClient
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -111,6 +113,7 @@ public sealed partial class RespireClient
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]

@@ -6,9 +6,8 @@ description: Connect to Redis and run your first Respire commands in two minutes
 
 # Quick start
 
-Two minutes, one file. You need the [.NET 10 SDK](https://dotnet.microsoft.com/download) and a
-Redis-compatible server. Respire runs on .NET 8 and .NET 10. To target .NET 8, keep
-`net8.0` and build with the .NET 10 SDK, or set `<LangVersion>13</LangVersion>` or later.
+Two minutes, one file. You need the [.NET 10 SDK](https://dotnet.microsoft.com/download) or later and a
+Redis-compatible server. Respire runs on .NET 10 and .NET 11.
 
 ## 1. Start Redis
 

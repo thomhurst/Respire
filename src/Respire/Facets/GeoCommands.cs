@@ -500,6 +500,7 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private static async ValueTask<T> CompletePolygonAsync<T>(ValueTask<T> response)
     {

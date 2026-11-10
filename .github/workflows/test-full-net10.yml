@@ -1,4 +1,4 @@
-name: Full .NET 8 tests
+name: Full .NET 10 tests
 
 on:
   workflow_dispatch:
@@ -16,11 +16,11 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.draft == false && (
-        (github.event.action == 'labeled' && github.event.label.name == 'test-full-net8') ||
-        (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'test-full-net8'))))
-    name: Full test suite (net8.0)
+        (github.event.action == 'labeled' && github.event.label.name == 'test-full-net10') ||
+        (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'test-full-net10'))))
+    name: Full test suite (net10.0)
     concurrency:
-      group: full-net8-${{ github.event.pull_request.number || github.ref }}
+      group: full-net10-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -32,12 +32,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/setup-dotnet
-      # CI's required net8 job is a smoke set. This opt-in job covers every
-      # multi-targeted test project; analyzer, pipeline and packed-package smoke projects are net10-only.
+      # CI's required net10 job is a smoke set. This opt-in job covers every
+      # multi-targeted test project; analyzer, pipeline and packed-package smoke projects are net11-only.
       # One solution-filter build lets MSBuild compile independent projects in parallel.
-      - name: Build every .NET 8 test project
-        run: dotnet build .github/ci/net8-full.slnf -c Release -f net8.0
-      - name: Run every .NET 8 test project
+      - name: Build every .NET 10 test project
+        run: dotnet build .github/ci/net10-full.slnf -c Release -f net10.0
+      - name: Run every .NET 10 test project
         shell: bash
         run: |
           set -euo pipefail
@@ -64,34 +64,34 @@ jobs:
           do
             if [[ "$project" == tests/Respire.Tests ]]; then
               # Core tests own listener state; the HTML reporter adds a process-wide listener.
-              TUNIT_DISABLE_HTML_REPORTER=true dotnet run --project "$project" -c Release -f net8.0 --no-build -- \
+              TUNIT_DISABLE_HTML_REPORTER=true dotnet run --project "$project" -c Release -f net10.0 --no-build -- \
                 --treenode-filter '/*/*/(!MetricSelectionTests)/*' --report-trx \
-                --report-trx-filename Respire.Tests-core-net8.trx
+                --report-trx-filename Respire.Tests-core-net10.trx
             else
-              dotnet run --project "$project" -c Release -f net8.0 --no-build -- --report-trx
+              dotnet run --project "$project" -c Release -f net10.0 --no-build -- --report-trx
             fi
           done
       - name: Run integration tests with RESP2
         env:
           RESPIRE_TEST_PROTOCOL: '2'
         run: >-
-          dotnet run --project tests/Respire.IntegrationTests -c Release -f net8.0 --no-build --
+          dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build --
           --treenode-filter '/*/*/*/*[Category!=ProtocolIndependent]'
       - name: Run telemetry and direct response regressions without tracing
         env:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: |
           # None of the direct-path classes adds an ActivityListener, so they share one process.
-          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
+          dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
             --treenode-filter '/*/*/(HedgedReadTests)|(BytesResponseTests)|(GetStringDirectPathTests)/*'
-          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
+          dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
             --treenode-filter '/*/*/(MetricSelectionTests)|(ErrorMetricsTests)/*' --report-trx \
-            --report-trx-filename Respire.Tests-metric-selection-net8.trx
+            --report-trx-filename Respire.Tests-metric-selection-net10.trx
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: full-net8-test-reports
+          name: full-net10-test-reports
           path: |
             **/TestResults/*-report.html
             **/TestResults/*.trx

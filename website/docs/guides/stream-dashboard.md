@@ -22,7 +22,7 @@ Flow and batch members show `Separate lifecycle` because their own containers go
 Inspection projects only identity and mode from Redis, without transferring payloads.
 
 Install `Respire.Streaming.Dashboard` and `Respire.DependencyInjection` in an ASP.NET Core app.
-The dashboard supports .NET 8 and .NET 10 and requires Redis 7 or later for retry permission
+The dashboard supports .NET 10 and .NET 11 and requires Redis 7 or later for retry permission
 checks. Upgrade it together with the matching `Respire` package version.
 
 ## Map an authorized dashboard

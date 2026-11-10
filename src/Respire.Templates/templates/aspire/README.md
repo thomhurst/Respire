@@ -7,7 +7,7 @@ the shared client, Redis readiness check, and Respire OpenTelemetry traces and m
 
 ## Requirements
 
-- .NET 10 SDK (10.0.401 or later) and runtime.
+- .NET 11 SDK and runtime.
 - [Aspire CLI](https://aspire.dev/get-started/install-cli/) 13.6 or later. The
   AppHost uses Aspire SDK and hosting packages 13.6.1.
 - A running Docker-compatible container runtime; the first start pulls Redis 8.10.

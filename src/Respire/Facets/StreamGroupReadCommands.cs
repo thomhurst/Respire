@@ -35,6 +35,7 @@ internal sealed partial class StreamCommands
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireStreamEntry[]> ReadGroupSingleBorrowedAsync(RespireKey key, string group, string consumer,
         RespireStreamReadOptions options, RespireStreamId? startAt, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation)
@@ -66,6 +67,7 @@ internal sealed partial class StreamCommands
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireStreamReadResult[]> ReadGroupCoreAsync(Commands.StreamReadCommand command,
         string group, bool blocking, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {

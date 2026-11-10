@@ -56,15 +56,15 @@ internal static class TestInspectionSource
     internal static SourceConfiguration[] ReadSourceConfigurations() => Configurations.Value.ToArray();
 
     /// <summary>Selects one SDK-derived framework configuration.</summary>
-    internal static SourceConfiguration Configuration(bool net10)
-        => Configurations.Value.Single(configuration => configuration.Framework == (net10 ? "net10.0" : "net8.0"));
+    internal static SourceConfiguration Configuration(bool net11)
+        => Configurations.Value.Single(configuration => configuration.Framework == (net11 ? "net11.0" : "net10.0"));
 
     /// <summary>Returns the shared parse and compilation of every production tree under one configuration.</summary>
     internal static LibrarySet Library(SourceConfiguration configuration)
         => LibrarySets.GetOrAdd(configuration.Framework, _ => new(() => new LibrarySet(configuration))).Value;
 
     /// <summary>Returns the shared parse and compilation of every production tree under one framework.</summary>
-    internal static LibrarySet Library(bool net10) => Library(Configuration(net10));
+    internal static LibrarySet Library(bool net11) => Library(Configuration(net11));
 
     private static CSharpParseOptions ParseOptionsFor(SourceConfiguration configuration)
         => new(LanguageVersion.Preview, preprocessorSymbols: configuration.Symbols);
@@ -106,7 +106,7 @@ internal static class TestInspectionSource
     }
 
     /// <summary>Selects an SDK-derived framework configuration for self-contained regression controls.</summary>
-    internal static SyntaxNode Parse(string source, bool net10) => Parse(source, Configuration(net10));
+    internal static SyntaxNode Parse(string source, bool net11) => Parse(source, Configuration(net11));
 
     /// <summary>Parses source under the evaluated symbols of one production framework.</summary>
     internal static SyntaxNode Parse(string source, SourceConfiguration configuration)

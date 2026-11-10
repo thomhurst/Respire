@@ -3,7 +3,7 @@
 Start a Redis server, then run:
 
 ```sh
-dotnet run --project samples/Respire.Samples.ChatHistory -f net10.0 -- redis://localhost:6379
+dotnet run --project samples/Respire.Samples.ChatHistory -f net11.0 -- redis://localhost:6379
 ```
 
 The sample stores two turns across separate chat pipelines and verifies that the second

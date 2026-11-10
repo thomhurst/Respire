@@ -1,8 +1,5 @@
 using System.Runtime.CompilerServices;
 using StackExchange.Redis;
-#if !NET9_0_OR_GREATER
-using Lock = System.Object;
-#endif
 
 namespace Respire.StackExchangeCompat;
 

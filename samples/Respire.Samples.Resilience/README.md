@@ -1,7 +1,7 @@
 # One retry layer with Microsoft.Extensions.Resilience
 
 ```shell
-dotnet run --project samples/Respire.Samples.Resilience -f net10.0
+dotnet run --project samples/Respire.Samples.Resilience -f net11.0
 ```
 
 The sample registers a named Polly v8 pipeline through Microsoft DI, enables

@@ -18,16 +18,9 @@ internal static class TestTlsCertificate
         using var ephemeral = request.CreateSelfSigned(
             DateTimeOffset.UtcNow.AddMinutes(-1),
             DateTimeOffset.UtcNow.AddDays(1));
-#if NET10_0_OR_GREATER
         return X509CertificateLoader.LoadPkcs12(
             ephemeral.Export(X509ContentType.Pfx, "test-password"),
             "test-password",
             X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable);
-#else
-        return new X509Certificate2(
-            ephemeral.Export(X509ContentType.Pfx, "test-password"),
-            "test-password",
-            X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable);
-#endif
     }
 }

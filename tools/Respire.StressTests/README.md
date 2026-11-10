@@ -27,13 +27,13 @@ From `tools/Respire.StressTests`:
 
 ```bash
 # Full run: all scenarios, both clients, 5 minutes measured per pass
-dotnet run -c Release -f net10.0 -- --duration 5
+dotnet run -c Release -f net11.0 -- --duration 5
 
 # Quick smoke: every scenario for 5 seconds
-dotnet run -c Release -f net10.0 -- --duration-seconds 5 --warmup 2
+dotnet run -c Release -f net11.0 -- --duration-seconds 5 --warmup 2
 
 # One scenario, one client
-dotnet run -c Release -f net10.0 -- --scenario get --client respire --duration 2
+dotnet run -c Release -f net11.0 -- --scenario get --client respire --duration 2
 ```
 
 - Uses `REDIS_HOST` / `REDIS_PORT` (default port 6379) when set; otherwise starts a
@@ -49,7 +49,7 @@ A separate experiment against its own Redis 7.2 primary and replica (needs
 Docker; ignores `REDIS_HOST`/`REDIS_PORT`). From the repository root:
 
 ```powershell
-& ./scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @('run', '--project', 'tools/Respire.StressTests', '-c', 'Release', '-f', 'net10.0', '--', '--hedged-read-latency', 'results')
+& ./scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @('run', '--project', 'tools/Respire.StressTests', '-c', 'Release', '-f', 'net11.0', '--', '--hedged-read-latency', 'results')
 ```
 
 - It runs baseline, hedged, and baseline passes, each with 20 warmup reads and

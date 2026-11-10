@@ -1,6 +1,6 @@
 # Client comparison benchmarks
 
-The `benchmark-comparison.yml` workflow runs on Linux with .NET 10 and a Redis
+The `benchmark-comparison.yml` workflow runs on Linux with .NET 11 and a Redis
 8.10 Docker service exposed on localhost. The weekly run uses the repository's
 StackExchange.Redis version. Manual runs can select pinned `3.4.5` or
 `4.0.127-alpha` baselines:
@@ -49,8 +49,8 @@ Omit the variable (or set `repository`) to use the normal central dependency.
 
 ```sh
 export STACKEXCHANGE_REDIS_BENCHMARK_VERSION=4.0.127-alpha
-dotnet build benchmarks/Respire.ComparisonBenchmarks -c Release -f net10.0
-dotnet run --project benchmarks/Respire.ComparisonBenchmarks -c Release -f net10.0 --no-build -- \
+dotnet build benchmarks/Respire.ComparisonBenchmarks -c Release -f net11.0
+dotnet run --project benchmarks/Respire.ComparisonBenchmarks -c Release -f net11.0 --no-build -- \
   --filter '*ClientCacheComparisonBenchmarks.*' '*PubSubComparisonBenchmarks.*' --job Dry
 ```
 

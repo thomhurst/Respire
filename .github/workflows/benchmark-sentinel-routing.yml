@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        framework: [net10.0]
+        framework: [net11.0]
         baseline: ${{ fromJSON(needs.select.outputs.modes) }}
     services:
       redis:
@@ -80,7 +80,7 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
-            10.0.x
+            11.0.x
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -152,7 +152,7 @@ jobs:
           cp candidate/benchmarks/Respire.Benchmarks/SentinelReadyRoutingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           if [[ "$PRE_STRATEGY_BASELINE" == true ]]; then
             # Keep dispatch code-generation evidence without the attached disassembler:
-            # the net8 diagnostic run exited 139 after a completed Dry workload in #1074.
+            # the net10 diagnostic run exited 139 after a completed Dry workload in #1074.
             export DOTNET_JitDisasm='Respire.RespireClient:* Respire.RespireClient+*:*'
             export DOTNET_JitDisasmDiffable=1
           fi

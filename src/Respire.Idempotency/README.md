@@ -1,7 +1,7 @@
 # Respire.Idempotency
 
 Opt-in ASP.NET Core `Idempotency-Key` middleware backed by Redis ownership claims.
-Supports .NET 8 and .NET 10, bounded binary response replay, caller/tenant isolation,
+Supports .NET 10 and .NET 11, bounded binary response replay, caller/tenant isolation,
 configurable retention/status codes, and optional request-body fingerprint verification.
 
 Register `AddRespireIdempotency` with a trusted `CallerScope`, add `UseRespireIdempotency`

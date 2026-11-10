@@ -34,7 +34,7 @@ internal static class CommandRouteOwnership
         var rows = reader.ReadToEnd().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Split('|')).ToArray();
         if (rows.Length != 2 || rows.Any(row => row.Length != 3 || string.IsNullOrWhiteSpace(row[1]) || string.IsNullOrWhiteSpace(row[2]))
-            || !rows.Select(row => row[0]).Order().SequenceEqual(new[] { "net10.0", "net8.0" })
+            || !rows.Select(row => row[0]).Order().SequenceEqual(new[] { "net10.0", "net11.0" })
             || rows.Select(row => row[1]).Distinct().Count() != 1)
             throw new InvalidOperationException("Core command route symbols must include both frameworks in the same build configuration.");
         return rows.Select(row => new Configuration(row[0], row[2].Split(',', StringSplitOptions.RemoveEmptyEntries))).ToArray();

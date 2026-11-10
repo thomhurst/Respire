@@ -1,4 +1,11 @@
 <Project>
+  <!-- Runtime Async is opt-in on .NET 11: the compiler emits runtime-async methods instead of
+       state machines. Set here rather than in the props file so single-target projects, which
+       set TargetFramework in the project body, are covered too. -->
+  <PropertyGroup Condition="'$(TargetFramework)' != '' And $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net11.0'))">
+    <Features>$(Features);runtime-async=on</Features>
+  </PropertyGroup>
+
   <!-- NuGet gathers the referenced projects' actual PackageVersion values immediately
        before GenerateNuspec. Pin shipping friends and packages that explicitly opt
        into lockstep versions, leaving other dependencies with their normal ranges. -->

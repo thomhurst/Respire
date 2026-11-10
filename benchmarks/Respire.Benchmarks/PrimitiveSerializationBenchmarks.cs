@@ -2,13 +2,12 @@ using System.Buffers;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Columns;
 using BenchmarkDotNet.Configs;
-using BenchmarkDotNet.Jobs;
 using Respire.Protocol;
 using Respire.Serialization;
 
 namespace Respire.Benchmarks;
 
-[SimpleJob(RuntimeMoniker.Net80, warmupCount: 3, iterationCount: 10)]
+[SimpleJob(warmupCount: 3, iterationCount: 10)]
 [MemoryDiagnoser]
 [GroupBenchmarksBy(BenchmarkLogicalGroupRule.ByCategory)]
 [CategoriesColumn]

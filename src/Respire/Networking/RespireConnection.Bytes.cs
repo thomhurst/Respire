@@ -58,6 +58,7 @@ internal sealed partial class RespireConnection
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<byte[]?> SendBytesSlowAsync<TCommand>(
         TCommand command, BytesPendingResponseSource source, CancellationToken cancellationToken,

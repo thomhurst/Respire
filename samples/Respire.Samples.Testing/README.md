@@ -9,13 +9,13 @@ You need the .NET SDK from `global.json`. Run from the repository root:
 
 ```sh
 # No Docker required. Eight fake cases, including RESP2 and RESP3.
-dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --treenode-filter '/*/*/FakeTests/*'
+dotnet run --project samples/Respire.Samples.Testing -c Release -f net11.0 -- --treenode-filter '/*/*/FakeTests/*'
 
 # Local Docker with Linux containers required. Four Redis/Valkey protocol cases.
-dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --treenode-filter '/*/*/ContainerTests/*'
+dotnet run --project samples/Respire.Samples.Testing -c Release -f net11.0 -- --treenode-filter '/*/*/ContainerTests/*'
 ```
 
-Use `-f net8.0` for .NET 8. Without a filter, all cases run and Docker is
+Use `-f net10.0` for .NET 10. Without a filter, all cases run and Docker is
 required. Missing Docker fails the container tests; they are not skipped.
 
 - `StackExchangeTests.cs` runs one unchanged `IDatabase` scenario suite with either

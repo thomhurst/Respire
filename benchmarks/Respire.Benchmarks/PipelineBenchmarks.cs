@@ -1,5 +1,4 @@
 using BenchmarkDotNet.Attributes;
-using BenchmarkDotNet.Jobs;
 using Respire.Commands;
 using Respire.Networking;
 using Respire.Protocol;
@@ -9,7 +8,7 @@ namespace Respire.Benchmarks;
 /// <summary>
 /// Benchmarks for the wire protocol (parsing, command building) and live client operations.
 /// </summary>
-[SimpleJob(RuntimeMoniker.Net80)]
+[SimpleJob]
 [MemoryDiagnoser]
 [ThreadingDiagnoser]
 public class PipelineBenchmarks
@@ -183,7 +182,7 @@ public class PipelineBenchmarks
 /// <summary>
 /// Throughput benchmarks for measuring operations per second
 /// </summary>
-[SimpleJob(RuntimeMoniker.Net80)]
+[SimpleJob]
 [MemoryDiagnoser]
 public class PipelineThroughputBenchmarks
 {

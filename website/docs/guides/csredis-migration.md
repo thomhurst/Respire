@@ -9,7 +9,7 @@ This guide covers the **CSRedisCore** NuGet package (`CSRedis.CSRedisClient` and
 using the APIs in its [upstream documentation](https://github.com/2881099/csredis/blob/7066ef789b59a358111c80bc0f3c8a961be2aef1/README.md).
 Replace static helper calls with a shared Respire client, preferably injected as `IRespireClient`.
 Use [dependency injection](../integrations/dependency-injection.md) to manage application lifetime.
-Respire targets .NET 8 and .NET 10; retarget .NET Framework applications before replacing the client.
+Respire targets .NET 10 and .NET 11; retarget .NET Framework applications before replacing the client.
 
 ## Concepts and common calls
 

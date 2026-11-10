@@ -235,7 +235,7 @@ public class ProtocolBenchmarks
     [BenchmarkCategory("GET", "Conversion")]
     public string? ReadUnicodeBulkString() => ResponseReader.StringOrNull(in _unicodeBulkValue);
 
-    // ToString uses the span decoder, including net8's pointer-based string.Create path.
+    // ToString uses the span decoder.
     [Benchmark(Description = "Format ASCII bulk string")]
     [BenchmarkCategory("Conversion")]
     public string FormatAsciiBulkString() => _asciiBulkValue.ToString();

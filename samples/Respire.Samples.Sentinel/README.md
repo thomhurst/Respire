@@ -10,16 +10,16 @@ authentication. The short Sentinel timeouts are for the demo, not production.
 
 ## Start and run
 
-You need the SDK from `global.json`, a .NET 8 or .NET 10 runtime, and Docker
+You need the SDK from `global.json`, a .NET 10 or .NET 11 runtime, and Docker
 Compose v2 with Linux containers. Ports 7100–7101 and 27100–27102 must be free.
 From the repository root:
 
 ```sh
 docker compose -p respire-sentinel-sample -f samples/Respire.Samples.Sentinel/compose.yaml up --build -d --wait --wait-timeout 60
-dotnet run --project samples/Respire.Samples.Sentinel -c Release -f net10.0
+dotnet run --project samples/Respire.Samples.Sentinel -c Release -f net11.0
 ```
 
-Use `-f net8.0` for .NET 8. Expected output:
+Use `-f net10.0` for .NET 10. Expected output:
 
 ```text
 PASS 1: primary 127.0.0.1:7100
@@ -34,7 +34,7 @@ expires after two minutes. A single run fails on any error or mismatch.
 1. Start 60 iterations, one second apart:
 
    ```sh
-   dotnet run --project samples/Respire.Samples.Sentinel -c Release -f net10.0 -- 60
+   dotnet run --project samples/Respire.Samples.Sentinel -c Release -f net11.0 -- 60
    ```
 
 2. After the first successful row, request a promotion in a second terminal:

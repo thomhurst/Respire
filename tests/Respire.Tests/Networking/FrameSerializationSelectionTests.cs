@@ -89,7 +89,6 @@ public class FrameSerializationSelectionTests
     {
         var gate = typeof(RespireConnection).GetField("_writeGate", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(connection)!;
-        // The net8.0 polyfill and net10.0 runtime Lock expose the same ownership property.
         var ownership = gate.GetType().GetProperty("IsHeldByCurrentThread")!;
         return () => (bool)ownership.GetValue(gate)!;
     }

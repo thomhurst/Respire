@@ -11,7 +11,7 @@ $captureCount = if ($Kind -eq 'stream') { 24 } else { 16 }
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('respire-diagnostic-test-' + [Guid]::NewGuid())
 $previousMetrics = $env:RESPIRE_BENCH_ERRORS
 try {
-    $cases = @('net10.0', 'net8.0', 'build-failure', 'revision-change', 'source-change', 'dirty-sdk-selector', 'sdk-selector-change', 'missing-assembly')
+    $cases = @('net11.0', 'net10.0', 'build-failure', 'revision-change', 'source-change', 'dirty-sdk-selector', 'sdk-selector-change', 'missing-assembly')
     if ($Kind -eq 'stream') { $cases += @('existing-destination', 'launch-failure', 'conversion-failure') }
     foreach ($case in $cases) {
         $fixture = Join-Path $fixtureRoot $case
@@ -75,7 +75,7 @@ exit 0
         if ($case -eq 'dirty-sdk-selector') {
             Set-Content -LiteralPath (Join-Path $fixture 'global.json') -Value '{"sdk":{"version":"10.0.100"}}'
         }
-        $framework = if ($case -eq 'net8.0') { 'net8.0' } else { 'net10.0' }
+        $framework = if ($case -eq 'net10.0') { 'net10.0' } else { 'net11.0' }
         if ($case -ne 'missing-assembly') {
             $binaryDirectory = Join-Path $source "bin/Release/$framework"
             New-Item -ItemType Directory -Path $binaryDirectory -Force | Out-Null
@@ -95,12 +95,12 @@ exit 0
         }
         catch { $failure = $_.Exception.Message }
         $expected = switch ($case) {
-            'build-failure' { 'Diagnostic rebuild failed: net10.0' }
+            'build-failure' { 'Diagnostic rebuild failed: net11.0' }
             'revision-change' { 'Diagnostic revision changed during the rebuild.' }
             'source-change' { 'Measured source changed during the rebuild.' }
             'dirty-sdk-selector' { 'Commit measured source before capturing revision-stamped evidence.' }
             'sdk-selector-change' { 'Measured source changed during the rebuild.' }
-            'missing-assembly' { 'Diagnostic rebuild did not produce the net10.0 benchmark assembly.' }
+            'missing-assembly' { 'Diagnostic rebuild did not produce the net11.0 benchmark assembly.' }
             'existing-destination' { "Diagnostic destination already exists: $secondDestination" }
             'launch-failure' { "Diagnostic launch failed: $secondDestination" }
             'conversion-failure' { "Trace conversion failed: $secondDestination" }

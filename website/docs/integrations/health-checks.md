@@ -7,7 +7,7 @@ sidebar_position: 4
 # Health checks
 
 `Respire.HealthChecks` adds an ASP.NET Core health check that pings Redis through your existing
-Respire client. It never creates a client of its own. It targets .NET 8 and .NET 10 and does
+Respire client. It never creates a client of its own. It targets .NET 10 and .NET 11 and does
 not depend on StackExchange.Redis.
 
 ```bash

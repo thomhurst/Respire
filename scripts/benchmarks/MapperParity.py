@@ -119,7 +119,7 @@ def summarize(phases, manifest):
         result = verdict(*cases, identity[0])
         accepted &= result == 'PASS'
         lines.append(f"| {' / '.join(identity)} | {' | '.join(times)} | {generated/a:.4f} | {generated/b:.4f} | {100*(b/a-1):+.2f}% | {allocated} | {result} |")
-    lines.extend(['', 'Limitations: warmed, in-process conversion and metadata APIs on .NET 10; '
+    lines.extend(['', 'Limitations: warmed, in-process conversion and metadata APIs on .NET 11; '
                   'three model types, two fixed input shapes, 16-dimensional FLOAT32 vectors. No Redis network, end-to-end query, Native AOT, '
                   'cold-start, retained-memory, other runtimes or hardware claims. Zero bytes in a BDN row is measurement evidence, not a zero-allocation unit assertion.', '',
                   'Runner and source hashes: `mapper-provenance.json`. Raw BDN JSON, measurements, runtime/CPU metadata and phase logs accompany this report.'])

@@ -648,6 +648,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespireConnection> RunStandaloneBatchAsync(RespireConnection connection, CancellationToken cancellationToken,
         CommandDeadline deadline = default)
@@ -1253,6 +1254,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 
 #if NET
         [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+        [RuntimeAsyncMethodGeneration(false)]
 #endif
         public override async ValueTask<(ValueTask<RespValue> Reply, RespireConnection? Connection)> StartOrderedSendAsync(RespireClient client, RespireConnection connection,
             CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, CommandDeadline deadline,
@@ -1289,6 +1291,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 
 #if NET
         [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+        [RuntimeAsyncMethodGeneration(false)]
 #endif
         public override async ValueTask<Exception?> CompleteSendAsync(RespireClient client, ValueTask<RespValue> reply)
         {

@@ -142,4 +142,4 @@ Changing attributes changes generated metadata, not an existing Redis index. `FT
 
 Coordinate document format changes with the application rebuild; never reuse an incompatible index. **Dropping an index with `deleteDocuments: true` also deletes its documents.**
 
-Available on .NET 8 and .NET 10.
+Available on .NET 10 and .NET 11.

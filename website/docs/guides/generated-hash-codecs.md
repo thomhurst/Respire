@@ -303,6 +303,6 @@ vector properties with field expiry and change tracking.
 
 Generated codecs are reflection-free, so they work with trimming and Native AOT. The
 [mapper sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Mappers)
-publishes warning-free with Native AOT on `net8.0` and `net10.0`, over RESP2 and RESP3. It shows
+publishes warning-free with Native AOT on `net10.0` and `net11.0`, over RESP2 and RESP3. It shows
 scalar and null codecs, field TTLs, tracked partial updates, hash and JSON partial reads, and
 generated Search schemas with vector queries. See its README for publishing commands.

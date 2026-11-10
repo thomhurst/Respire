@@ -30,7 +30,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../global.json') -Destination (Join-Path $testRoot 'global.json')
     @'
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net11.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
 </Project>
 '@ | Set-Content -LiteralPath (Join-Path $testRoot 'SdkProbe.csproj')
     @'
@@ -76,7 +76,7 @@ return 0;
     & $guardScript -SingleNode -DotNetArguments @('build', 'SdkProbe.csproj', '--nologo')
     if ($LASTEXITCODE -ne 0) { throw "SDK probe fixture build failed: $LASTEXITCODE" }
     $probeName = if ($IsWindows) { 'SdkProbe.exe' } else { 'SdkProbe' }
-    $probe = Join-Path $testRoot "bin/Debug/net10.0/$probeName"
+    $probe = Join-Path $testRoot "bin/Debug/net11.0/$probeName"
     $env:DOTNET_TEST_RUNNER = 'VSTest'
     $modes = @('descendant', 'timeout', 'memory', 'failure')
     if ($IsWindows) { $modes += 'startup-failure' }

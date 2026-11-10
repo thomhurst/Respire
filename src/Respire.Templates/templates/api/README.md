@@ -1,7 +1,7 @@
 # RespireApi
 
-A .NET 10 minimal API with Respire cache-aside, dependency injection, Redis readiness
-checks, and optional OpenTelemetry export. Requires the .NET 10 SDK and Redis 7+.
+A .NET 11 minimal API with Respire cache-aside, dependency injection, Redis readiness
+checks, and optional OpenTelemetry export. Requires the .NET 11 SDK and Redis 7+.
 
 ```sh
 docker compose up -d --wait

@@ -1,8 +1,3 @@
-#if !NET9_0_OR_GREATER
-// This package cannot access the core library's internal Lock polyfill.
-using Lock = System.Object;
-#endif
-
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 

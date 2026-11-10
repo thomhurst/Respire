@@ -32,11 +32,11 @@ is a pre-close snapshot; successful kill requests do not prove termination.
 
 .EXAMPLE
 & scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
-    'build', 'tests/Respire.Tests/Respire.Tests.csproj', '-c', 'Release', '-f', 'net10.0')
+    'build', 'tests/Respire.Tests/Respire.Tests.csproj', '-c', 'Release', '-f', 'net11.0')
 # After a successful build, run the focused MTP tests without another build:
 & scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
     'test', '--project', 'tests/Respire.Tests/Respire.Tests.csproj', '-c', 'Release',
-    '-f', 'net10.0', '--no-build', '--treenode-filter', '/*/*/RespireConnectionTests/*')
+    '-f', 'net11.0', '--no-build', '--treenode-filter', '/*/*/RespireConnectionTests/*')
 #>
 
 [CmdletBinding(PositionalBinding = $false)]

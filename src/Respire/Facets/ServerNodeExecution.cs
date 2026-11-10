@@ -93,6 +93,7 @@ internal sealed partial class ServerCommands
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<T> ExecuteOnNodeBorrowedAsync<TCommand, T>(
         RespireEndpoint endpoint, string operation, TCommand command,
         ResponseConverter<ServerCommands, T> convert, SemaphoreSlim capacity, CancellationToken cancellationToken,

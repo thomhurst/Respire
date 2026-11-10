@@ -48,7 +48,7 @@ Map hubs with the usual `MapHub<THub>`.
 ## Migrate from Microsoft's Redis backplane
 
 Regular pub/sub is the default and interoperates with
-`Microsoft.AspNetCore.SignalR.StackExchangeRedis` (.NET 8 and .NET 10, in both directions,
+`Microsoft.AspNetCore.SignalR.StackExchangeRedis` (.NET 10 and .NET 11, in both directions,
 including client results). JSON and MessagePack hub protocols work as usual; MessagePack needs
 `AddMessagePackProtocol` on every server.
 
@@ -137,6 +137,6 @@ Pending operations:
 The channel conventions and lifecycle helpers are adapted from the MIT-licensed
 [ASP.NET Core Redis backplane at v8.0.31](https://github.com/dotnet/aspnetcore/tree/v8.0.31/src/SignalR/server/StackExchangeRedis).
 Respire's backplane interoperates with `Microsoft.AspNetCore.SignalR.StackExchangeRedis`
-(8.0.32 on .NET 8 and 10.0.13 on .NET 10).
+(10.0.13 on .NET 10 and 11.0.0 on .NET 11).
 The package includes Microsoft's copyright and license notice in
 `licenses/LICENSE-Microsoft.txt`.

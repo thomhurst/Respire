@@ -1,7 +1,7 @@
 # Running streaming tests
 
 This executable uses Docker/Testcontainers Redis. Run it from the repository root.
-Both `net8.0` and `net10.0` use the same test concurrency policy.
+Both `net10.0` and `net11.0` use the same test concurrency policy.
 
 ## Concurrency policy
 
@@ -21,7 +21,7 @@ without revalidating the affected selection under load.
 
 The policy is compiled into the test executable, so IDE runs, `dotnet test`,
 `dotnet run`, and direct executable launches use it. CI's component jobs in
-`ci.yml`, the full .NET 8 job in `test-full-net8.yml`, and the Redis/Valkey
+`ci.yml`, the full .NET 10 job in `test-full-net10.yml`, and the Redis/Valkey
 selections inherit it without extra command-line flags. CI's `SUITE_MAX_PARALLEL`
 separately bounds the number of test **processes** running on the agent.
 
@@ -33,11 +33,11 @@ guard:
 ```powershell
 & scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
     'build', 'tests/Respire.Streaming.Tests/Respire.Streaming.Tests.csproj',
-    '-c', 'Release', '-f', 'net10.0')
+    '-c', 'Release', '-f', 'net11.0')
 
 & scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
     'test', '--project', 'tests/Respire.Streaming.Tests/Respire.Streaming.Tests.csproj',
-    '-c', 'Release', '-f', 'net10.0', '--no-build', '--treenode-filter',
+    '-c', 'Release', '-f', 'net11.0', '--no-build', '--treenode-filter',
     '/*/*/(JobCheckpointIntegrationTests)|(JobSchedulingIntegrationTests)|(JobQueueIntegrationTests)|(JobGroupControlIntegrationTests)|(StreamWorkerTests)|(StreamWorkerIntegrationTests)|(JobTransactionIntegrationTests)/*')
 ```
 
@@ -45,7 +45,7 @@ guard:
 `JobMetricsIntegrationTests.cs` and `JobQueueEventIntegrationTests.cs`.
 `StreamWorkerTests` likewise includes `StreamWorkerDeadLetterTests.cs`.
 Remove `--treenode-filter` and its value to run the full executable. Substitute
-`net8.0` in both commands for the other supported framework.
+`net10.0` in both commands for the other supported framework.
 For parity with CI's component jobs, set
 `$env:TUNIT_DISABLE_HTML_REPORTER = 'true'` before running the tests.
 

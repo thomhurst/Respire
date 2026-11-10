@@ -4,7 +4,7 @@ The `CI Passed` job in ci.yml is the only required status check, so native auto-
 merges as soon as it passes. Its `needs` cover ci.yml; this gate covers every other
 workflow that a pull request event started for the same head: Modular Pipeline, the
 path-filtered regression workflows, docs, agent guard, the Claude review, and an
-opted-in full .NET 8 run. Without it, a failure in one of them would not stop the merge.
+opted-in full .NET 10 run. Without it, a failure in one of them would not stop the merge.
 
 Per workflow file, the newest run that is not `skipped` decides. A run whose jobs were
 all skipped (a draft, or an unrelated label) neither passes nor hides an earlier result.

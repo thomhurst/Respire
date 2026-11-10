@@ -10,7 +10,7 @@ class SentinelBenchmarkWorkflowTests(unittest.TestCase):
         group = re.search(r'^\s+group: (.+)$', workflow.read_text(), re.MULTILINE).group(1)
         keys = []
         for head, framework, baseline, label in itertools.product(
-                ('older-head', 'current-head'), ('net8.0', 'net10.0'), ('main', 'pre-strategy'),
+                ('older-head', 'current-head'), ('net10.0', 'net11.0'), ('main', 'pre-strategy'),
                 ('run-sentinel-benchmarks', 'run-ready-strategy-benchmarks')):
             context = {
                 'github.workflow': 'Sentinel ready routing benchmarks',

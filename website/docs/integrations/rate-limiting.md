@@ -6,7 +6,7 @@ description: Share named and partitioned HTTP request limits across application 
 # ASP.NET Core rate limiting
 
 `Respire.RateLimiting` connects [Respire's distributed rate limiters](../guides/coordination.md#redis-backed-rate-limits)
-to ASP.NET Core's `AddRateLimiter` middleware on .NET 8 and .NET 10. It lives in a separate package
+to ASP.NET Core's `AddRateLimiter` middleware on .NET 10 and .NET 11. It lives in a separate package
 so applications using `Respire.Coordination` outside ASP.NET Core need no web framework reference.
 
 ## Minimal setup

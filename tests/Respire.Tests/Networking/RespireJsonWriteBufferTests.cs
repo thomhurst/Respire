@@ -215,11 +215,9 @@ public partial class RespireJsonClientTests
             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             MaxDepth = 128,
-#if NET9_0_OR_GREATER
             IndentCharacter = '\t',
             IndentSize = 1,
             NewLine = "\r\n",
-#endif
         };
         var info = new JsonWriteContext(options).TextDocument;
         TextDocument[] values = [new("<one>"), new(new string('x', 16384)), new(new string('y', 98304)), new("last")];

@@ -94,6 +94,7 @@ internal sealed partial class StreamCommands
         => ReadAsync(new RespireStreamReadOptions { Count = count }, streams, cancellationToken);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireStreamEntry[]> ReadSingleAsync(StreamReadCommand command, bool blocking,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
@@ -102,6 +103,7 @@ internal sealed partial class StreamCommands
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireStreamReadResult[]> ReadCoreAsync(StreamReadCommand command, bool blocking,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {

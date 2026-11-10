@@ -62,6 +62,7 @@ internal sealed partial class RespireConnection
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask SendGatheredBufferAsync(WriteBuffer buffer)
     {

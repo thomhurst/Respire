@@ -21,9 +21,9 @@ public class DispatchAdmissionArchitectureTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task NativePublicationRequiresReviewedAdmissionPaths(bool net10)
+    public async Task NativePublicationRequiresReviewedAdmissionPaths(bool net11)
     {
-        var roots = TestInspectionSource.Library(net10).Trees
+        var roots = TestInspectionSource.Library(net11).Trees
             .Where(source => source.Path.StartsWith("LibrarySource/Respire/Networking/RespireConnection", StringComparison.Ordinal))
             .Select(source => source.Tree.GetRoot()).ToArray();
         await Assert.That(InspectNativePublication(roots)).IsEmpty();
@@ -69,10 +69,10 @@ public class DispatchAdmissionArchitectureTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task ReadOnlyDeclarationsStayInAuditedFactories(bool net10)
+    public async Task ReadOnlyDeclarationsStayInAuditedFactories(bool net11)
     {
         var calls = 0;
-        foreach (var source in TestInspectionSource.Library(net10).Trees)
+        foreach (var source in TestInspectionSource.Library(net11).Trees)
         {
             var root = source.Tree.GetRoot();
             foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>()

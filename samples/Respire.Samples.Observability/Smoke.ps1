@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$OutputDirectory = (Join-Path ([System.IO.Path]::GetTempPath()) ('Respire-observability-' + [guid]::NewGuid().ToString('N'))),
-    [ValidateSet('net8.0', 'net10.0')][string]$Framework = 'net10.0'
+    [ValidateSet('net10.0', 'net11.0')][string]$Framework = 'net11.0'
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path

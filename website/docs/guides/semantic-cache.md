@@ -15,7 +15,7 @@ See [RSP0002](../diagnostics/RSP0002.md) for the affected APIs and the exact `No
 Requirements:
 
 - An **unprefixed client on standalone Redis 8 with Query Engine**, or Redis Stack with Search. Redis Cluster and servers without Search are unsupported.
-- .NET 8 or .NET 10, RESP2 or RESP3.
+- .NET 10 or .NET 11, RESP2 or RESP3.
 
 You own the Redis client and embedding generator. Disposing the chat pipeline disposes only its inner chat client.
 

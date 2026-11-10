@@ -64,7 +64,7 @@ def run(workspace):
                   "infrastructure": subprocess.check_output(
                       ["git", "-C", str(infrastructure), "rev-parse", "HEAD"], text=True).strip(),
                   "fixtureSha256": hashlib.sha256(fixture).hexdigest(),
-                  "framework": "net10.0", "operationsPerProcess": OPERATIONS,
+                  "framework": "net11.0", "operationsPerProcess": OPERATIONS,
                   "buildInputs": {name: {str(path): hashlib.sha256((source / path).read_bytes()).hexdigest()
                                          for path in (Path("Directory.Build.props"), Path("Directory.Packages.props"))}
                                   for name, source in sources.items()},
@@ -77,7 +77,7 @@ def run(workspace):
                         ignore=shutil.ignore_patterns("bin", "obj"))
         with (output / f"{name}-build.log").open("w") as log:
             subprocess.run(["dotnet", "--info"], cwd=source, stdout=log, stderr=subprocess.STDOUT, check=True)
-            subprocess.run(["dotnet", "build", str(DRIVER), "-c", "Release", "-f", "net10.0"],
+            subprocess.run(["dotnet", "build", str(DRIVER), "-c", "Release", "-f", "net11.0"],
                            cwd=source, stdout=log, stderr=subprocess.STDOUT, check=True)
 
     manifests = []
@@ -97,7 +97,7 @@ def run(workspace):
                                    DOTNET_JitDisasmDiffable="1",
                                    DOTNET_JitStdOutFile=str(directory / "jit.asm"))
                 with (directory / "exercise.log").open("w") as log:
-                    subprocess.run(["dotnet", str(DRIVER / "bin/Release/net10.0/Respire.CommandRetryJit.dll"),
+                    subprocess.run(["dotnet", str(DRIVER / "bin/Release/net11.0/Respire.CommandRetryJit.dll"),
                                     policy, str(OPERATIONS)],
                                    cwd=source, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
                 completion = f"JIT_EXERCISE_COMPLETE policy={policy} operations={OPERATIONS}"

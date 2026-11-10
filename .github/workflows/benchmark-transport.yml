@@ -63,7 +63,7 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
-            10.0.x
+            11.0.x
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -188,10 +188,10 @@ jobs:
               export RESPIRE_BENCH_FIXTURE_REVISION="$(cat "$GITHUB_WORKSPACE/fixture.commit")"
               export RESPIRE_BENCH_PHASE="$phase"
               export RESPIRE_SELECTION_EVIDENCE="$GITHUB_WORKSPACE/results/$phase/selection"
-              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net11.0 -- \
                 --transport-case-count "$GITHUB_WORKSPACE/$phase.case-count" "$job"
               /usr/bin/time -f '%U %S %P' -o "$GITHUB_WORKSPACE/$phase.cpu" \
-                dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
+                dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net11.0 -- \
                 --filter "$filter" --job "$job" --exporters json markdown --disasm --disasmDepth 3 \
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
@@ -213,7 +213,7 @@ jobs:
               export RESPIRE_BENCH_REVISION="$(git rev-parse HEAD)"
               export RESPIRE_BENCH_PHASE="selection-$phase"
               export RESPIRE_SELECTION_EVIDENCE="$GITHUB_WORKSPACE/results/selection-$phase/selection"
-              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net11.0 -- \
                 --filter '*TransportAcceptanceBenchmarks.SelectConnection*' --exporters json markdown \
                 --artifacts "$GITHUB_WORKSPACE/results/selection-$phase"
             ) > "$GITHUB_WORKSPACE/selection-$phase.log" 2>&1
@@ -353,7 +353,7 @@ jobs:
             (
               cd "$source"
               revision=$(git rev-parse HEAD)
-              binary=benchmarks/Respire.Benchmarks/bin/Release/net10.0/Respire.Benchmarks.dll
+              binary=benchmarks/Respire.Benchmarks/bin/Release/net11.0/Respire.Benchmarks.dll
               for connections in 1 2; do
                 for count in 32 100; do
                   for launch in 1 2; do

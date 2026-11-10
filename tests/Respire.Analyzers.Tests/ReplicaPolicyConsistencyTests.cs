@@ -13,9 +13,9 @@ public class ReplicaPolicyConsistencyTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task CallerAndRouterRecognizeExactlyTheSameReadyReplicaPolicies(bool net10)
+    public async Task CallerAndRouterRecognizeExactlyTheSameReadyReplicaPolicies(bool net11)
     {
-        var library = TestInspectionSource.Library(net10);
+        var library = TestInspectionSource.Library(net11);
         var enumRoot = library.Tree("LibrarySource/Respire/RespireReadFrom.cs").GetRoot();
         foreach (var (path, methodName, variable, excluded) in new[]
         {

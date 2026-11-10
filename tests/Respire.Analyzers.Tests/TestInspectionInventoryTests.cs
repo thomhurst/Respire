@@ -280,13 +280,13 @@ public class TestInspectionInventoryTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task FrameworkConditionalAccessorsAndCallsAreInspected(bool net10)
+    public async Task FrameworkConditionalAccessorsAndCallsAreInspected(bool net11)
     {
         const string source = """
             namespace Respire.Networking;
             partial class RespireConnection
             {
-            #if NET10_0_OR_GREATER
+            #if NET11_0_OR_GREATER
                 internal int BorrowedSlots => 42;
                 private void Coordinate() { connection.InspectForTests(); }
             #else
@@ -295,9 +295,9 @@ public class TestInspectionInventoryTests
             #endif
             }
             """;
-        var root = Parse(source, net10);
+        var root = Parse(source, net11);
         await Assert.That(FindOwnerSurface(root)).IsEquivalentTo([
-            net10 ? "Respire.Networking.RespireConnection | property BorrowedSlots [internal; get] : int"
+            net11 ? "Respire.Networking.RespireConnection | property BorrowedSlots [internal; get] : int"
                 : "Respire.Networking.RespireConnection | property AlternateSlots [internal; get] : string"]);
         await Assert.That(FindFactoryUses(root)).Count().IsEqualTo(1);
     }

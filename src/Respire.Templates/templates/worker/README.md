@@ -1,8 +1,8 @@
 # RespireWorker
 
-A standalone .NET 10 application with a typed Respire job queue, hosted sample
+A standalone .NET 11 application with a typed Respire job queue, hosted sample
 handler, enqueue API, operator dashboard, Redis health check and OpenTelemetry.
-Requires the .NET 10 SDK and Redis 7+ (Docker Compose supplies local Redis).
+Requires the .NET 11 SDK and Redis 7+ (Docker Compose supplies local Redis).
 
 Start Redis, then choose a local operator password in your current shell:
 

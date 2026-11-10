@@ -144,6 +144,7 @@ public sealed partial class RespireClient
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private static async ValueTask<TResult> CompleteObservedMutationAsync<TResult>(
         ValueTask<TResult> response, ClientSideCacheCoordinator cache,
@@ -261,6 +262,7 @@ public sealed partial class RespireClient
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private static async ValueTask<TResult> ReadySendFailureAsync<TResult>(Exception error)
         // Keep the async route's cancellation status and original exception/token,

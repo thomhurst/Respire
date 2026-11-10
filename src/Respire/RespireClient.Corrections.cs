@@ -79,6 +79,7 @@ public sealed partial class RespireClient
             : ExecuteWithCorrectionCoreAsync(execution, ordering, state, correct, onOutcomeUncertain, observation);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<TResult> ExecuteWithCorrectionCoreAsync<TResult, TState>(
         ITrackedCorrectionExecution<TResult> execution,
         CorrectionOrdering ordering,

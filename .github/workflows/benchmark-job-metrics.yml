@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 11.0.x
       - name: Validate then measure both modes
         shell: python
         run: |
@@ -43,7 +43,7 @@ jobs:
               with Path(f'{phase}.log').open('w') as log:
                   subprocess.run(['git', 'rev-parse', 'HEAD'], stdout=log, check=True)
                   subprocess.run(['dotnet', 'run', '--project', 'benchmarks/Respire.Benchmarks',
-                                  '-c', 'Release', '-f', 'net10.0', '--',
+                                  '-c', 'Release', '-f', 'net11.0', '--',
                                   '--filter', '*JobMetricsBenchmarks*', '--job', job,
                                   '--exporters', 'json', 'markdown',
                                   '--artifacts', str(Path('results', phase).resolve())],

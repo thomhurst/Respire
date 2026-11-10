@@ -7,7 +7,7 @@ description: Reflection-free JSON model codecs, key templates, and typed RedisJS
 
 Apply `[RespireJson]` to a partial class or record class to generate `ModelNameJsonMapper`: JSON
 codecs, a key template, and typed RedisJSON operations, with no runtime reflection. Install
-`Respire.Json`; its `Respire` dependency supplies the source generator. Supports .NET 8 and .NET 10,
+`Respire.Json`; its `Respire` dependency supplies the source generator. Supports .NET 10 and .NET 11,
 including Native AOT.
 
 <!-- doc-test-top-level-tail-declaration: split-before=[RespireJson -->
@@ -108,5 +108,5 @@ custom converters, `[JsonIgnore]`, `[JsonInclude]`, extension data, and polymorp
 For hash storage with field TTL and change tracking, see [generated hash codecs](generated-hash-codecs.md);
 for indexes, see [generated Search schemas](generated-search-schemas.md). The
 [Native AOT sample](generated-hash-codecs.md#native-aot-sample) runs
-generated hash, JSON, and Search operations on `net8.0` and `net10.0` with reflection-based JSON
+generated hash, JSON, and Search operations on `net10.0` and `net11.0` with reflection-based JSON
 serialization disabled.

@@ -61,6 +61,7 @@ public sealed partial class RespireClient
     // remains borrowed through setup, routing, the raw response and the caller's cleanup.
     // Direct readers of owned executions or correction boundaries return their observation.
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     internal async ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(
         RespireScript script, RespireKey[] keys, RespireValue[] args, CancellationToken cancellationToken,
         bool requireReliableCorrectionOrdering = false, bool captureSendTimestampOnly = false,
@@ -87,6 +88,7 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     // Setup borrows the caller's failure-only owner. Direct tracked callers transfer their
     // own response source to the execution, which publishes only after response cleanup.
     internal async ValueTask<TrackedLockExecution> StartLockExecutionAsync(
@@ -209,6 +211,7 @@ public sealed partial class RespireClient
     // Cache fallbacks, continuous reads and failover probes borrow their logical owner's error boundary,
     // including reply conversion. The caller decides whether a failure is final or handled.
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     internal async ValueTask<TResult> ConvertUnobservedResponseAsync<TCommand, TState, TResult>(
         string operation, TCommand command, CancellationToken cancellationToken,
         TState state, ResponseConverter<TState, TResult> converter, RespireTelemetry.ErrorObservation observation,
@@ -340,6 +343,7 @@ public sealed partial class RespireClient
             : ExecuteScriptConvertedUnhookedAsync(script, tail, cancellationToken, convert, transferred);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<TResult> ExecuteScriptConvertedUnhookedAsync<TResult>(
         RespireScript script, RespireValue[] tail, CancellationToken cancellationToken,
         Func<RespireResult, TResult> convert, RespireTelemetry.ErrorObservation transferred)

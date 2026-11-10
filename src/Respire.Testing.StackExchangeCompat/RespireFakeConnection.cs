@@ -1,9 +1,3 @@
-#if !NET9_0_OR_GREATER
-// This package cannot access the core library's internal Lock polyfill.
-// The disposal gate uses only lock statements, so net8 can use an object alias.
-using Lock = System.Object;
-#endif
-
 using Respire.StackExchangeCompat;
 using StackExchange.Redis;
 

@@ -18,6 +18,6 @@ await redis.SetAsync("greeting", "hello", expiry: TimeSpan.FromMinutes(5));
 Console.WriteLine(await redis.GetStringAsync("greeting"));
 ```
 
-Requires .NET 8 or .NET 10 and a running RESP server. Share one client across callers and dispose it at shutdown.
+Requires .NET 10 or .NET 11 and a running RESP server. Share one client across callers and dispose it at shutdown.
 
 [Read the guide](https://respire.tomlonghurst.dev/docs/getting-started) for configuration, requirements, and further examples.

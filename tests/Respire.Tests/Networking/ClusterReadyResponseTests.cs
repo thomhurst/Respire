@@ -169,6 +169,7 @@ public class ClusterReadyResponseTests
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private static async ValueTask<string?> AwaitAsync(ValueTask<string?> reply) => await reply.ConfigureAwait(false);
 
     private static async ValueTask<string?> Fail(Harness harness, Exception error, Probe probe)

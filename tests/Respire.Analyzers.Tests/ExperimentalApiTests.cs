@@ -11,8 +11,8 @@ public class ExperimentalApiTests
     // Compile consumer code without the repository's NoWarn opt-in. Test the shipped
     // metadata for both TFMs, including inferred return types and interface entry points.
     [Test]
-    [Arguments("net8.0")]
     [Arguments("net10.0")]
+    [Arguments("net11.0")]
     public async Task ConsumersMustOptInToEachFeature(string framework)
     {
         var references = References(framework);
@@ -52,8 +52,8 @@ public class ExperimentalApiTests
     }
 
     [Test]
-    [Arguments("net8.0")]
     [Arguments("net10.0")]
+    [Arguments("net11.0")]
     public async Task StableClientAndQueueApisNeedNoOptIn(string framework)
     {
         var diagnostics = Compile(References(framework), """
@@ -69,8 +69,8 @@ public class ExperimentalApiTests
     }
 
     [Test]
-    [Arguments("net8.0")]
     [Arguments("net10.0")]
+    [Arguments("net11.0")]
     public async Task OptInIsSpecificToTheSelectedFeature(string framework)
     {
         var diagnostics = Compile(References(framework), """

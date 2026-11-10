@@ -16,7 +16,7 @@ streams, and map `MapRespireStreamingDashboard("/workers", "QueueOperators")` wi
 authorization policy. Use your application's authentication scheme. There is no anonymous
 dashboard mode or automatic Redis key discovery.
 
-Requires ASP.NET Core on .NET 8 or .NET 10 and Redis 7 or later. Dead-letter actions use
+Requires ASP.NET Core on .NET 10 or .NET 11 and Redis 7 or later. Dead-letter actions use
 the envelope written by `Respire.Streaming`. Source and dead-letter keys must resolve to
 different keys in the same Redis Cluster slot, including on standalone servers.
 

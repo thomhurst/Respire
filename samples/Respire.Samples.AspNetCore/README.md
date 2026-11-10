@@ -5,7 +5,7 @@ A minimal API where one DI-owned Respire client serves direct commands,
 OpenTelemetry writes Respire traces and metrics to the console. The sample uses
 project references; your app should reference the NuGet packages.
 
-You need the SDK from `global.json`, the .NET 8 or .NET 10 ASP.NET Core runtime,
+You need the SDK from `global.json`, the .NET 10 or .NET 11 ASP.NET Core runtime,
 PowerShell 7 for the smoke script, and Docker with Linux containers. Run commands
 from the repository root.
 
@@ -23,10 +23,10 @@ After `PONG`, start the API in PowerShell:
 ```powershell
 $env:ConnectionStrings__Redis = 'redis://localhost:6384'
 $env:Sample__KeyPrefix = 'respire:aspnet-sample:'
-dotnet run --project samples/Respire.Samples.AspNetCore -c Release -f net10.0 -- --urls http://localhost:5084
+dotnet run --project samples/Respire.Samples.AspNetCore -c Release -f net11.0 -- --urls http://localhost:5084
 ```
 
-- Use `-f net8.0` for .NET 8. In Bash, `export` the same two variables.
+- Use `-f net10.0` for .NET 10. In Bash, `export` the same two variables.
 - The connection string is required. For authenticated Redis, use your normal
   secret provider.
 - Keep the sample bound to localhost: its write endpoints have no

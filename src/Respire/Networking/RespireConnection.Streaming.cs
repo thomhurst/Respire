@@ -84,6 +84,7 @@ internal sealed partial class RespireConnection
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendStreamedSetAsync(
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
@@ -412,6 +413,7 @@ internal sealed partial class RespireConnection
     /// </summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     internal static async ValueTask WaitForFinalFrameWriteAsync(Task finalWrite, CancellationToken cancellationToken)
     {
