@@ -1,8 +1,5 @@
 using System.Diagnostics;
 using StackExchange.Redis;
-#if !NET9_0_OR_GREATER
-using Lock = System.Object;
-#endif
 
 // IConnectionMultiplexer includes synchronous wait helpers.
 #pragma warning disable SER308

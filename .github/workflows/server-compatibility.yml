@@ -18,7 +18,7 @@ concurrency:
 jobs:
   compatibility:
     if: github.event_name != 'pull_request' || github.event.label.name == 'run-server-compatibility'
-    name: ${{ matrix.server }} (net10.0)
+    name: ${{ matrix.server }} (net11.0)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -46,18 +46,18 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Set up .NET 10
+      - name: Set up .NET 11
         uses: ./.github/actions/setup-dotnet
         with:
-          net8: 'false'
+          net10: 'false'
       - name: Build compatibility tests
-        run: dotnet build tests/Respire.IntegrationTests -c Release -f net10.0
+        run: dotnet build tests/Respire.IntegrationTests -c Release -f net11.0
       - name: Run compatibility tests
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p TestResults/compatibility
-          dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build -- \
+          dotnet run --project tests/Respire.IntegrationTests -c Release -f net11.0 --no-build -- \
             --treenode-filter '/*/*/ServerCompatibilityTests/*' \
             --minimum-expected-tests ${{ matrix.minimum-tests }} \
             --results-directory "$GITHUB_WORKSPACE/TestResults/compatibility" \
@@ -69,7 +69,7 @@ jobs:
         env:
           RESPIRE_TEST_REDIS_IMAGE: valkey/valkey:9.2.0-rc1-alpine
         run: >-
-          dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build --
+          dotnet run --project tests/Respire.IntegrationTests -c Release -f net11.0 --no-build --
           --minimum-expected-tests 100
           --results-directory "$GITHUB_WORKSPACE/TestResults/compatibility"
           --report-trx --report-trx-filename valkey92-full.trx
@@ -79,7 +79,7 @@ jobs:
         env:
           RESPIRE_TEST_REDIS_IMAGE: ghcr.io/microsoft/garnet:2.1.8
         run: >-
-          dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build --
+          dotnet run --project tests/Respire.IntegrationTests -c Release -f net11.0 --no-build --
           --minimum-expected-tests 100
           --results-directory "$GITHUB_WORKSPACE/TestResults/compatibility"
           --report-trx --report-trx-filename garnet-full.trx

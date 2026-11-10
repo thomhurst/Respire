@@ -37,7 +37,7 @@
     <!-- Query the core project after the SDK adds implicit constants. No hand-maintained symbol list. -->
     <Target Name="CollectCommandRouteSymbols" BeforeTargets="PrepareForBuild" Condition="'$(TargetFramework)' != ''">
         <ItemGroup>
-            <_CommandRouteFramework Include="net8.0;net10.0" />
+            <_CommandRouteFramework Include="net10.0;net11.0" />
         </ItemGroup>
         <MSBuild Projects="../../src/Respire/Respire.csproj"
                  Targets="GetCommandRouteSymbols"

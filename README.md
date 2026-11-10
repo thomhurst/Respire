@@ -3,7 +3,7 @@
 **Redis for .NET, without the ceremony.** Plain C# types in, plain C# types out, and the hard
 parts of Redis (caching, locks, queues, rate limits) are one call each.
 
-Works with Redis, Valkey, KeyDB, and other RESP-compatible servers, on .NET 8 and .NET 10.
+Works with Redis, Valkey, KeyDB, and other RESP-compatible servers, on .NET 10 and .NET 11.
 
 [Documentation](https://respire.tomlonghurst.dev/) ·
 [Quick start](https://respire.tomlonghurst.dev/docs/quick-start) ·

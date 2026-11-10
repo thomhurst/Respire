@@ -34,8 +34,8 @@ finally { $archive.Dispose() }
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('Respire-template-' + [guid]::NewGuid().ToString('N'))
 $evidence = Join-Path $repositoryRoot ('artifacts/template-tests/' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch, $evidence | Out-Null
-# Pin only the toolchain, not build defaults. Otherwise a workstation's .NET 11
-# preview could hide a template that does not build with the required .NET 10 SDK.
+# Pin only the toolchain, not build defaults, so the templates build with the SDK
+# the repository requires rather than whichever one the workstation resolves.
 $sdk = (Get-Content (Join-Path $repositoryRoot 'global.json') -Raw | ConvertFrom-Json).sdk
 @{ sdk = $sdk } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $scratch 'global.json')
 $hive = Join-Path $scratch 'hive'
@@ -119,7 +119,7 @@ function Start-App([string]$Environment = 'Development') {
     $port = $listener.LocalEndpoint.Port
     $listener.Stop()
     $url = "http://127.0.0.1:$port"
-    $arguments = @((Join-Path $generated "bin/Release/net10.0/$appName.dll"), '--urls', $url)
+    $arguments = @((Join-Path $generated "bin/Release/net11.0/$appName.dll"), '--urls', $url)
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.WorkingDirectory = $generated
     $start.UseShellExecute = $false

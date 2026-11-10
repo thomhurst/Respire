@@ -27,9 +27,9 @@ public class PooledRouterConsumptionTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task EveryProductionPooledRouterCallSatisfiesCa2012(bool net10)
+    public async Task EveryProductionPooledRouterCallSatisfiesCa2012(bool net11)
     {
-        var trees = TestInspectionSource.Library(net10).Trees
+        var trees = TestInspectionSource.Library(net11).Trees
             .Where(source => source.Path.StartsWith("LibrarySource/Respire/", StringComparison.Ordinal))
             .Select(source => source.Tree)
             .Append(CSharpSyntaxTree.ParseText("global using System; global using System.Collections.Generic; global using System.Linq; global using System.Threading; global using System.Threading.Tasks;",

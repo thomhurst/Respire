@@ -16,6 +16,7 @@ internal sealed partial class RespireConnection
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> ObserveScriptingReplyAsync(ValueTask<RespValue> reply, string commandName,
         string? expectedEngine, CancellationToken cancellationToken, CommandDeadline deadline)

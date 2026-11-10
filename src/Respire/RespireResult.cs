@@ -40,6 +40,7 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     /// <summary>Copies a completed lease and releases it before publishing the owned result.</summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     internal static async ValueTask<RespireResult> MaterializeAsync(ValueTask<RespireResult> response)
     {

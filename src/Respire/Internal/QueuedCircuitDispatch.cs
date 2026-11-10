@@ -11,6 +11,7 @@ internal static class QueuedCircuitDispatch
 {
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     internal static async ValueTask<RespValue> SendAsync<TCommand>(StandaloneCircuitRegistry circuits,
         RespireConnection connection, TCommand command, string operation, CancellationToken cancellationToken,
@@ -52,6 +53,7 @@ internal static class QueuedCircuitDispatch
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     internal static async ValueTask<ValueTask<RespValue>> EnqueueAsync<TCommand>(StandaloneCircuitRegistry circuits,
         RespireConnection connection, TCommand command, string operation, CancellationToken cancellationToken,
@@ -62,6 +64,7 @@ internal static class QueuedCircuitDispatch
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     internal static async ValueTask<(ValueTask<RespValue> Reply, RespireConnection Connection)> EnqueueWithConnectionAsync<TCommand>(
         StandaloneCircuitRegistry circuits, RespireConnection connection, TCommand command, string operation,
@@ -106,6 +109,7 @@ internal static class QueuedCircuitDispatch
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private static async ValueTask<RespValue> ObserveAsync(ValueTask<RespValue> reply,
         CircuitAdmission admission, CancellationToken cancellationToken)

@@ -830,6 +830,7 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireTtlResult> ExpiryBorrowedAsync(
         RespireKey key, RespireKey field, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => await client.SingleTtlArrayAsync(

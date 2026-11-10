@@ -112,5 +112,5 @@ The StackExchange.Redis comparison lives in `benchmarks/Respire.ComparisonBenchm
 `REDIS_HOST`/`REDIS_PORT` when set, otherwise it starts a throwaway Redis container:
 
 ```bash
-dotnet run -c Release -f net10.0 --project benchmarks/Respire.ComparisonBenchmarks -- --filter '*'
+dotnet run -c Release -f net11.0 --project benchmarks/Respire.ComparisonBenchmarks -- --filter '*'
 ```

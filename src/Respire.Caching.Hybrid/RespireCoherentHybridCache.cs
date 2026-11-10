@@ -5,9 +5,6 @@ using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-#if !NET9_0_OR_GREATER
-using Lock = System.Object;
-#endif
 
 namespace Respire.Caching.Hybrid;
 
@@ -371,11 +368,7 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     {
         // Subscribe/Stopped registration can invoke a callback synchronously during Acquire.
         // The outer gate owner drains after publishing all handles and releasing the gate.
-#if NET9_0_OR_GREATER
         if (_gate.IsHeldByCurrentThread) return null;
-#else
-        if (Monitor.IsEntered(_gate)) return null;
-#endif
         Exception? failure = null;
         while (true)
         {

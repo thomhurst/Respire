@@ -40,6 +40,8 @@ try {
         $configuration.sdk.rollForward = 'disable'
     }
     if ($RollForwardAcrossMajor) {
+        # Start from an SDK without runner overrides so resolution has to cross to one that has them.
+        $configuration.sdk.version = '10.0.100'
         $configuration.sdk.rollForward = 'latestMajor'
         $configuration.sdk | Add-Member -NotePropertyName allowPrerelease -NotePropertyValue $true -Force
     }
@@ -53,7 +55,7 @@ try {
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
@@ -84,7 +86,7 @@ public class GuardMtpTests
     Write-MtpPhase "fixture build returned; exit=$LASTEXITCODE"
     if ($LASTEXITCODE -ne 0) { throw "MTP fixture build failed: $LASTEXITCODE" }
 
-    $baseArguments = @('test', '--project', $project, '-c', 'Release', '-f', 'net10.0', '--no-build')
+    $baseArguments = @('test', '--project', $project, '-c', 'Release', '-f', 'net11.0', '--no-build')
     # Child console output bypasses PowerShell streams in the guard. Capture a host
     # process whose script still invokes the guard in-process, preserving its limits.
     $captureScript = Join-Path $testRoot 'Capture-Guard.ps1'

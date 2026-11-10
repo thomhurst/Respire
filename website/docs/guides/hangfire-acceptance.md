@@ -7,7 +7,7 @@ description: Run Hangfire.Redis.StackExchange on Respire through the StackExchan
 
 `Hangfire.Redis.StackExchange` runs on Respire unchanged. Pass the
 [StackExchange.Redis adapter](stackexchange-interop.md) to `RedisStorage` and Hangfire uses Respire
-for every storage operation. Tested with version **1.12.0** on .NET 8 and .NET 10, over RESP2 and RESP3.
+for every storage operation. Tested with version **1.12.0** on .NET 10 and .NET 11, over RESP2 and RESP3.
 
 ```bash
 dotnet add package Respire.StackExchangeCompat

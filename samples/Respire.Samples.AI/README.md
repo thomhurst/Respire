@@ -1,6 +1,6 @@
 # Embedding cache sample
 
-Run `dotnet run --project samples/Respire.Samples.AI -f net10.0` against Redis at
+Run `dotnet run --project samples/Respire.Samples.AI -f net11.0` against Redis at
 `redis://localhost:6379`, or set `REDIS_CONNECTION_STRING` to your server URI.
 The deterministic demo generator makes this sample runnable without API keys.
 Replace it with your embedding provider in an application.

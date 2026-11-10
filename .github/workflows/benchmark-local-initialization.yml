@@ -18,7 +18,7 @@ concurrency:
 jobs:
   compare:
     if: github.event.label.name == 'run-local-initialization-benchmarks'
-    name: Attribute-only single operations (net10.0, PGO ${{ matrix.tiered-pgo }})
+    name: Attribute-only single operations (net11.0, PGO ${{ matrix.tiered-pgo }})
     runs-on: ubuntu-latest
     timeout-minutes: 75
     strategy:
@@ -28,13 +28,13 @@ jobs:
         # profile and block-layout differences. It never gates, and it is not acceptance evidence.
         tiered-pgo: [enabled, disabled]
     env:
-      FRAMEWORK: net10.0
+      FRAMEWORK: net11.0
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
-            10.0.x
+            11.0.x
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}

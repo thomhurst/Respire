@@ -247,6 +247,7 @@ public sealed partial class RespireClient
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendReplicaRedirectAttemptAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,

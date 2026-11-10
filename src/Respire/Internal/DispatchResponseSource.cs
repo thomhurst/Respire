@@ -42,6 +42,7 @@ internal static class DispatchResponseSource
             static (state, observation) => Await(state.Send(state.State, observation))));
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     internal static async ValueTask<bool> Await(ValueTask response)
     {
         await response.ConfigureAwait(false);
@@ -49,6 +50,7 @@ internal static class DispatchResponseSource
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
     internal static async ValueTask Complete(ValueTask<bool> response)
         => _ = await response.ConfigureAwait(false);
 }

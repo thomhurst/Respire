@@ -36,6 +36,7 @@ internal static class LogicalCommandRetry
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     internal static async ValueTask<TResult> RunAsync<TState, TResult>(
         CommandRetryPolicy policy,

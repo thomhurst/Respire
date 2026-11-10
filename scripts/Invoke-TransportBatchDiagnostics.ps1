@@ -10,7 +10,7 @@ limits, runtime tiering policy, or transport limits are overridden.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$OutputDirectory,
-    [ValidateSet('net8.0', 'net10.0')][string]$Framework = 'net10.0',
+    [ValidateSet('net10.0', 'net11.0')][string]$Framework = 'net11.0',
     [ValidateRange(128, 4096)][int]$Iterations = 1024
 )
 $ErrorActionPreference = 'Stop'

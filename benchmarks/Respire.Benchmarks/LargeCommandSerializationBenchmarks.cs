@@ -86,6 +86,7 @@ public class LargeCommandSerializationBenchmarks
     // Preserve the public reply check without allocating a fixture state machine per SET.
     // The comparison workflow copies this fixture unchanged to both pinned revisions.
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<bool> SetChecked(RespireValue value)
     {
         if (!await _client.Strings.SetAsync(_key, value)) throw new InvalidOperationException("SET failed.");

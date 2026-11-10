@@ -66,7 +66,7 @@ try {
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 </Project>
@@ -97,7 +97,7 @@ return 0;
     Invoke-ArgumentGuard -Phase 'fixture-build' -TimeoutSeconds 60 -Arguments @('build', $project, '/m:1', '--nologo')
     if ($argumentGuardExitCode -ne 0) { throw 'Argument probe build failed.' }
     $probeName = if ($IsWindows) { 'ArgumentProbe.exe' } else { 'ArgumentProbe' }
-    $probe = Join-Path $testRoot "bin/Debug/net10.0/$probeName"
+    $probe = Join-Path $testRoot "bin/Debug/net11.0/$probeName"
     $env:RESPIRE_GUARD_TEST_CAPTURE = Join-Path $testRoot 'arguments.json'
     $env:RESPIRE_GUARD_TEST_DIRECTORY = Join-Path $testRoot 'directory.txt'
     $directoryMarkerName = "guard-location-$([guid]::NewGuid()).txt"

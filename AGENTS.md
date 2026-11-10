@@ -22,7 +22,7 @@ Zero-allocation assertions must use `AllocationMeasurement.WithoutConcurrentGc` 
 
 ## Benchmark workflows
 
-Benchmark workflows (`.github/workflows/benchmark-*.yml`) run on net10.0 only, to save runner minutes. Do not add a net8.0 matrix leg or an `8.0.x` SDK install to a benchmark workflow, and do not write net8.0-only benchmark gates. net8.0 correctness coverage belongs in `ci.yml`, `test-full-net8.yml` and `stress-tests.yml`.
+Benchmark workflows (`.github/workflows/benchmark-*.yml`) run on net11.0 only, to save runner minutes. Do not add a net10.0 matrix leg or a `10.0.x` SDK install to a benchmark workflow, and do not write net10.0-only benchmark gates. net10.0 correctness coverage belongs in `ci.yml`, `test-full-net10.yml` and `stress-tests.yml`.
 
 ## Running benchmarks
 

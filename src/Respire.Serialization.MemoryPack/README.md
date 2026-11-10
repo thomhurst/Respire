@@ -1,6 +1,6 @@
 # Respire.Serialization.MemoryPack
 
-MemoryPack implementation of `IRespireSerializer` for .NET 8 and .NET 10.
+MemoryPack implementation of `IRespireSerializer` for .NET 10 and .NET 11.
 
 Set `RespireOptions.Serializer = new RespireMemoryPackSerializer()`, or register
 `services.AddRespireMemoryPackSerializer()` and resolve `IRespireSerializer` in your

@@ -1,7 +1,7 @@
 # Automated Cluster and Sentinel smoke checks
 
 The **Topology sample smoke** workflow runs the Cluster and Sentinel samples on
-.NET 8 and .NET 10 against their Docker Compose projects. It runs on request and
+.NET 10 and .NET 11 against their Docker Compose projects. It runs on request and
 on pull requests that change these samples, the controller, or the workflow.
 
 Start it from GitHub Actions (**Topology sample smoke** > **Run workflow**) or with
@@ -33,15 +33,15 @@ Run the commands one at a time from the repository root; they share build output
 and host ports:
 
 ```sh
-python3 scripts/smoke_topology_samples.py --sample Cluster --framework net8.0 --artifacts artifacts/cluster-net8
 python3 scripts/smoke_topology_samples.py --sample Cluster --framework net10.0 --artifacts artifacts/cluster-net10
-python3 scripts/smoke_topology_samples.py --sample Sentinel --framework net8.0 --artifacts artifacts/sentinel-net8
+python3 scripts/smoke_topology_samples.py --sample Cluster --framework net11.0 --artifacts artifacts/cluster-net11
 python3 scripts/smoke_topology_samples.py --sample Sentinel --framework net10.0 --artifacts artifacts/sentinel-net10
+python3 scripts/smoke_topology_samples.py --sample Sentinel --framework net11.0 --artifacts artifacts/sentinel-net11
 python3 -m unittest discover -s scripts -p test_topology_sample_smoke.py -v
 ```
 
 A passing run ends with `PASS: <sample> <framework> smoke`, for example
-`PASS: Cluster net10.0 smoke`. Logs go to the `--artifacts` directory.
+`PASS: Cluster net11.0 smoke`. Logs go to the `--artifacts` directory.
 
 ## What passes
 

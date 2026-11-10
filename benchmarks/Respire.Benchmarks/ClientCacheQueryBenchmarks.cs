@@ -31,7 +31,7 @@ public class ClientCacheQueryBenchmarks
     [GlobalSetup]
     public async Task Setup()
     {
-        if (s_lockContentions is null) throw new NotSupportedException("Query contention diagnostics require the pinned net10 runtime lock counter.");
+        if (s_lockContentions is null) throw new NotSupportedException("Query contention diagnostics require the runtime lock counter.");
         ReportMemory("before-connect");
         try
         {
@@ -254,8 +254,8 @@ public class ClientCacheQueryBenchmarks
         {
             var gate = cache.GetType().GetField("_queryLock", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(cache)
                 ?? throw new InvalidOperationException("Query publication gate is missing.");
-            var enter = gate.GetType().GetMethod("Enter") ?? throw new NotSupportedException("Query diagnostics require net10 Lock.Enter.");
-            var exit = gate.GetType().GetMethod("Exit") ?? throw new NotSupportedException("Query diagnostics require net10 Lock.Exit.");
+            var enter = gate.GetType().GetMethod("Enter") ?? throw new NotSupportedException("Query diagnostics require Lock.Enter.");
+            var exit = gate.GetType().GetMethod("Exit") ?? throw new NotSupportedException("Query diagnostics require Lock.Exit.");
             var lockId = gate.GetType().GetProperty("LockIdForEvents", BindingFlags.Instance | BindingFlags.NonPublic)
                 ?? throw new NotSupportedException("Pinned runtime lock identity is missing.");
             var listener = new QueryGateContentionProbe();

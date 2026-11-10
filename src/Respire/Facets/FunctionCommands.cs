@@ -161,6 +161,7 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<TResult> ExecuteConvertedBorrowedAsync<TResult>(RespireFunction function,
         RespireKey[]? keys, RespireValue[]? args, CancellationToken cancellationToken,
@@ -247,6 +248,7 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespireResult> ExecuteWithLibraryAsync(RespireFunction function, BatchScriptCommand command,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
@@ -489,6 +491,7 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<T> MutateUnhookedAsync<TCommand, T>(string operation, TCommand command,
         ResponseConverter<FunctionCommands, T> convert, CancellationToken cancellationToken,
@@ -516,6 +519,7 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
     }
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<T> SendAndConvertAsync<TCommand, T>(RespireConnection connection, string operation,
         TCommand command, ResponseConverter<FunctionCommands, T> convert, CancellationToken cancellationToken,

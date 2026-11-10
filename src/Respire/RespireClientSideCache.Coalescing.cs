@@ -69,6 +69,7 @@ internal sealed partial class ClientSideCacheCoordinator
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private static async ValueTask<TResult> ConvertGetReadAsync<TState, TResult>(
         ValueTask<GetReadResult> read, TState state, GetReadConverter<TState, TResult> converter)
     {
@@ -184,6 +185,7 @@ internal sealed partial class ClientSideCacheCoordinator
     // Consume and convert each waiter's owned bytes here. Only TResult crosses the
     // caller's async boundary; the larger publication result stays with its producer.
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<TResult> WaitForSharedGetReadAsync<TState, TResult>(
         SharedRead<GetReadResult> shared, CancellationToken cancellationToken,
         TState state, GetReadConverter<TState, TResult> converter,

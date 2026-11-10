@@ -32,8 +32,8 @@ class PrWorkflowGateTests(unittest.TestCase):
         self.assertEqual(len(evaluate([older_failure, newer_success, newest_failure], OWN)[1]), 1)
 
     def test_skipped_label_run_does_not_hide_an_earlier_failure(self):
-        runs = [run("test-full-net8.yml", "failure", created="2026-01-01T00:00:00Z", run_id=1),
-                run("test-full-net8.yml", "skipped", created="2026-01-01T01:00:00Z", run_id=2)]
+        runs = [run("test-full-net10.yml", "failure", created="2026-01-01T00:00:00Z", run_id=1),
+                run("test-full-net10.yml", "skipped", created="2026-01-01T01:00:00Z", run_id=2)]
         self.assertEqual(len(evaluate(runs, OWN)[1]), 1)
 
     def test_skipped_draft_run_does_not_pass_for_the_ready_run(self):

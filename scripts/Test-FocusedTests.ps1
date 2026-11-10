@@ -5,7 +5,7 @@ $guard = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'
 $project = Join-Path $repo 'tests/Respire.Tests/Respire.Tests.csproj'
 
 function Invoke-Inspection([string[]]$ExtraArguments, [switch]$ExpectFailure) {
-    $arguments = @('msbuild', $project, '-nologo', '-p:TargetFramework=net10.0',
+    $arguments = @('msbuild', $project, '-nologo', '-p:TargetFramework=net11.0',
         '-p:ContinuousIntegrationBuild=false') + $ExtraArguments
     # A child PowerShell captures the guard's inherited native stdout as well as its
     # own output. The dotnet command itself still runs inside the normal guard.

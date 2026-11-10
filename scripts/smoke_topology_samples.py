@@ -230,7 +230,7 @@ class Smoke:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sample", choices=("Cluster", "Sentinel"), required=True)
-    parser.add_argument("--framework", choices=("net8.0", "net10.0"), required=True)
+    parser.add_argument("--framework", choices=("net10.0", "net11.0"), required=True)
     parser.add_argument("--project", default="respire-smoke-" + uuid.uuid4().hex)
     parser.add_argument("--artifacts", type=Path, required=True)
     args = parser.parse_args()

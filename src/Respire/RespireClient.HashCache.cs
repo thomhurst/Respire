@@ -68,6 +68,7 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespValue> FetchHashFieldsAndCacheAsync(
         RespireKey key, RespireValue[] fields, int[] missingIndexes, RespValue[] result,
         ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
@@ -90,6 +91,7 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespValue> FetchHashFieldsForCurrentGenerationAsync(
         RespireKey key, RespireValue[] fields, ClientSideCacheCoordinator cache,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
@@ -104,6 +106,7 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespValue> FetchHashFieldsAsync(
         RespireKey key, RespireValue[] fields, ClientSideCacheCoordinator cache,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)

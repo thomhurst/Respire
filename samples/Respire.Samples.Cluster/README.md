@@ -10,15 +10,15 @@ endpoints and MOVED redirects.
 
 ## Start and run
 
-You need the SDK from `global.json`, a .NET 8 or .NET 10 runtime, and Docker
+You need the SDK from `global.json`, a .NET 10 or .NET 11 runtime, and Docker
 Compose v2 with Linux containers. Ports 7000–7002 must be free. From the repo root:
 
 ```sh
 docker compose -p respire-cluster-sample -f samples/Respire.Samples.Cluster/compose.yaml up --build -d --wait --wait-timeout 60
-dotnet run --project samples/Respire.Samples.Cluster -c Release -f net10.0
+dotnet run --project samples/Respire.Samples.Cluster -c Release -f net11.0
 ```
 
-Use `-f net8.0` for .NET 8. Expected output:
+Use `-f net10.0` for .NET 10. Expected output:
 
 ```text
 Discovered 3 shards from one seed.

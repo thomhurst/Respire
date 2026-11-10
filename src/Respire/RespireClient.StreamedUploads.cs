@@ -58,6 +58,7 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespValue> SendStreamedUploadCoreAsync<TCommand>(
         string operation,
         TCommand command,
@@ -192,6 +193,7 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespValue> SendStreamedUploadClusterAsync<TCommand>(
         string operation,
         ClusterRouter cluster,

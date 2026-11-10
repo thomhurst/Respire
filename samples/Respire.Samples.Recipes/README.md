@@ -9,9 +9,9 @@ Redis 8.4 with RESP2 and RESP3. With Docker running, from the repository root:
 
 ```powershell
 & scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
-    'build', 'tests/Respire.IntegrationTests', '-c', 'Release', '-f', 'net10.0')
+    'build', 'tests/Respire.IntegrationTests', '-c', 'Release', '-f', 'net11.0')
 & scripts/Invoke-AgentDotNet.ps1 -DotNetArguments @(
-    'run', '--project', 'tests/Respire.IntegrationTests', '-c', 'Release', '-f', 'net10.0',
+    'run', '--project', 'tests/Respire.IntegrationTests', '-c', 'Release', '-f', 'net11.0',
     '--no-build', '--', '--treenode-filter', '/*/*/RecipeIntegrationTests/*',
     '--minimum-expected-tests', '14')
 ```

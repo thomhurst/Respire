@@ -58,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        framework: [net10.0]
+        framework: [net11.0]
         # Each run gets its own runner VM. A single shared runner can shift a ratio by several
         # percent, so the docs publish the median ratio across runs instead of one run.
         round: ${{ fromJSON(inputs.runs == '1' && '[1]' || inputs.runs == '5' && '[1,2,3,4,5]' || '[1,2,3]') }}
@@ -100,7 +100,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
-            10.0.x
+            11.0.x
 
       - name: Build benchmarks
         run: dotnet build benchmarks/Respire.ComparisonBenchmarks -c Release -f ${{ matrix.framework }}

@@ -1,6 +1,6 @@
 # Respire.Serialization.MessagePack
 
-MessagePack implementation of `IRespireSerializer` for .NET 8 and .NET 10.
+MessagePack implementation of `IRespireSerializer` for .NET 10 and .NET 11.
 
 Set `RespireOptions.Serializer = new RespireMessagePackSerializer()`, or register
 `services.AddRespireMessagePackSerializer()` and resolve `IRespireSerializer` in your

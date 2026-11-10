@@ -727,6 +727,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespireResult> ExecuteCatalogAsync(
         RespireCommand command,
@@ -801,6 +802,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask ExecuteCatalogFireAndForgetAsync(
         RespireCommand command,
@@ -842,6 +844,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespireResult> ExecuteRawAsync(
         string command,
@@ -916,6 +919,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask ExecuteRawFireAndForgetAsync(
         string command,
@@ -1004,6 +1008,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespireResult> ExecuteInterpolatedAsync(
         RespireCommandInterpolatedStringHandler command,
@@ -1077,6 +1082,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask ExecuteInterpolatedFireAndForgetAsync(
         RespireCommandInterpolatedStringHandler command,
@@ -2023,6 +2029,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private static async ValueTask<T?> CastBytesAsync<T>(ValueTask<byte[]?> response)
         => (T?)(object?)await response.ConfigureAwait(false);
@@ -2325,6 +2332,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<TResult> FetchGetCacheReadCoreAsync<TState, TResult>(
         RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
@@ -2432,6 +2440,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     /// <summary>Coalesces matching MGET misses while preserving the original validated slot and each caller's result array.</summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<TResult[]> GetManySharedAndCacheAsync<TResult>(
         RespireKey[] missingKeys, TResult[] result, int[] missingIndexes, int missingCount,
@@ -2459,6 +2468,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     /// <summary>Tracks cache misses, sends them using their validated slot, and converts or transfers the owned reply.</summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<TResult> FetchManyAndCacheAsync<TState, TResult>(
         RespireKey[] missingKeys, int missingCount, ClientSideCacheCoordinator cache,
@@ -2545,6 +2555,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     internal async ValueTask<RespValue> SendTrackedAsync<TCommand>(
         string operation,
@@ -2616,6 +2627,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendTrackedClusterAsync<TCommand>(
         string operation,
@@ -2790,6 +2802,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendTrackedOnConnectionInstrumentedAsync<TCommand>(
         string operation,
@@ -2976,6 +2989,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     // Callers consume the pooled result once by awaiting or forwarding it.
     private async ValueTask<RespValue> SendReadFromAsync<TCommand>(
@@ -3068,6 +3082,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> CachedRawGetManyAsync(
         ClientCacheCommandKey query, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
@@ -3101,6 +3116,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> FetchQueryAndCacheAsync<TCommand>(
         string operation,
@@ -3189,6 +3205,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private static async ValueTask<TResult> CompleteMutationAsync<TResult>(
         ValueTask<TResult> response,
@@ -3210,6 +3227,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private static async ValueTask CompleteMutationAsync(
         ValueTask response,
@@ -3230,6 +3248,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendAfterConnectAsync<TCommand>(
         string operation,
@@ -3249,6 +3268,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendStoredProcedureAsync<TCommand>(
         string operation,
@@ -3356,6 +3376,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendClusterAsync<TCommand>(
         string operation,
@@ -3636,6 +3657,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendClusterWideAsync<TCommand>(
         string operation,
@@ -3800,6 +3822,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask SendFencedFireAndForgetAsync<TCommand>(
         string operation,
@@ -3867,6 +3890,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask SendFireAndForgetOnConnectionInstrumentedAsync<TCommand>(
         string operation,
@@ -3964,6 +3988,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask SendFireAndForgetClusterAsync<TCommand>(
         string operation,
@@ -4236,6 +4261,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     // Callers consume the pooled result once by awaiting or forwarding it.
     private async ValueTask<Stream?> SendBulkStreamViaReadRouterAsync<TCommand>(
@@ -4258,6 +4284,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<Stream?> SendBulkStreamAfterConnectAsync<TCommand>(
         string operation,
@@ -4272,6 +4299,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<Stream?> SendClusterBulkStreamAsync<TCommand>(
         string operation,
@@ -4398,6 +4426,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<Stream?> SendBulkStreamOnConnectionInstrumentedAsync<TCommand>(
         string operation,
@@ -4599,6 +4628,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendOnConnectionInstrumentedAsync<TCommand>(
         string operation,
@@ -5395,6 +5425,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespireResult> ExecuteScriptCoreAsync(
         RespireScript script,
@@ -5729,6 +5760,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespireResult> ExecuteTrackedClusterScriptAsync(
         TrackedScriptExecution execution,
@@ -5770,6 +5802,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespireResult> ExecuteTrackedClusterCommandAsync(
         TrackedScriptExecution execution,
@@ -5846,6 +5879,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespireResult> ExecuteScriptOnConnectionAsync(
         RespireConnection connection,
@@ -5889,6 +5923,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespireResult> ExecuteScriptOnConnectionCoreAsync(
         RespireConnection connection,
@@ -6118,6 +6153,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             : UnlinkGuardedCoreAsync(key, cancellationToken, observation);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask UnlinkGuardedCoreAsync(RespireKey key, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation)
     {
@@ -6516,6 +6552,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     internal async ValueTask OkAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand

@@ -227,7 +227,7 @@ public class MultiItemCancellationOverloadTests
 
     /// <summary>
     /// Never executed. Each call must bind to the cancellation overload rather than fold the
-    /// token into the params collection, on both net8.0 and net10.0.
+    /// token into the params collection, on both net10.0 and net11.0.
     /// </summary>
     private static void CompileCoverage(IRespireClient client, CancellationToken token)
     {

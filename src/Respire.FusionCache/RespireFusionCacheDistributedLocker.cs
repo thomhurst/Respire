@@ -4,9 +4,6 @@ using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
 using Respire.Coordination;
 using ZiggyCreatures.Caching.Fusion.Locking.Distributed;
-#if !NET9_0_OR_GREATER
-using Lock = System.Object;
-#endif
 
 namespace Respire.FusionCache;
 

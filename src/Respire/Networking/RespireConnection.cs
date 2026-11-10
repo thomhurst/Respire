@@ -669,13 +669,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             RemoteCertificateValidationCallback = configured.RemoteCertificateValidationCallback,
             TargetHost = host,
         };
-#if NET10_0_OR_GREATER
         if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows())
         {
             copy.AllowRsaPkcs1Padding = configured.AllowRsaPkcs1Padding;
             copy.AllowRsaPssPadding = configured.AllowRsaPssPadding;
         }
-#endif
         return copy;
     }
 
@@ -1133,8 +1131,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             RespireTelemetry.ErrorObservation observation, bool deferFlush, CommandDeadline deadline);
     }
 
-    // A default Lock.Scope is not disposable on the net8.0 polyfill. Own only gates
-    // entered here; batch admission already holds its outer gate on this thread.
+    // Own only gates entered here; batch admission already holds its outer gate on this thread.
     private readonly struct WriteGateScope : IDisposable
     {
         private readonly Lock? _ownedGate;
@@ -1192,6 +1189,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// Exclusive pipelines use this boundary to retain order across capacity and credential-renewal waits.</summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     internal async ValueTask<ValueTask<RespValue>> EnqueuePinnedAsync<TCommand>(
         TCommand command, CancellationToken cancellationToken, string commandName,
@@ -1416,6 +1414,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private static async ValueTask<TResult> ConvertBorrowedScriptingReplyAsync<TState, TResult>(
         ValueTask<RespValue> responseTask, TState state, ResponseConverter<TState, TResult> converter,
@@ -1621,6 +1620,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<Stream?> SendBulkStreamSlowAsync<TCommand>(
         TCommand command,
@@ -1658,6 +1658,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<string?> SendStringSlowAsync<TCommand>(
         TCommand command, StringPendingResponseSource source, CancellationToken cancellationToken,
@@ -1981,6 +1982,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendStreamingCoreAsync<TCommand>(
         TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline, bool pinToConnection,
@@ -2457,6 +2459,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendSlowAsync<TCommand>(
         TCommand command,
@@ -2496,6 +2499,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendMultiReplySlowAsync<TCommand>(
         TCommand command,
@@ -2561,6 +2565,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<TResult> SendConvertedSlowAsync<TCommand, TState, TResult>(
         TCommand command,
@@ -2602,6 +2607,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask SendFireAndForgetSlowAsync<TCommand>(TCommand command, CancellationToken cancellationToken,
         string? commandName, CommandDeadline capacityDeadline, string? preferredZone,
@@ -2654,6 +2660,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<bool> WaitForInflightCapacityAsync<TCommand>(
         TCommand command,
@@ -2797,6 +2804,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// command into an empty buffer runs this loop on its own thread up to the first true
     /// suspension, so the send syscall starts without a thread-pool hop.
     /// </summary>
+    // Runtime async reuses a continuation only while the loop keeps suspending at the same await.
+    // This loop alternates between the flush signal and the forced yield, which would allocate on
+    // the signaling thread; one state machine for the connection's lifetime does not.
+    [RuntimeAsyncMethodGeneration(false)]
     private async Task FlushLoopAsync()
     {
         WriteBuffer? sending = null;
@@ -3247,6 +3258,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// <summary>Receives a top-level GET bulk payload through a bounded caller pipe.</summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<(int Start, int End)> ReceiveBulkStreamAsync(
         ReceiveBuffer receiveBuffer,
@@ -3399,6 +3411,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<bool> AwaitBulkStreamBackpressureAsync(ValueTask<FlushResult> flush)
     {
@@ -3424,6 +3437,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<(int Start, int End, RespValue Value)> ReceiveLargeBulkAsync(
         ReceiveBuffer receiveBuffer, int start, int end, RespireDataType type, int payloadLength,

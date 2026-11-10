@@ -8,12 +8,12 @@ From the repository root, with PowerShell 7, Docker, and the repository .NET SDK
 
 ```powershell
 pwsh samples/Respire.Samples.Observability/Smoke.ps1 -OutputDirectory ./observability-evidence
-pwsh samples/Respire.Samples.Observability/Smoke.ps1 -Framework net8.0 -OutputDirectory ./observability-evidence-net8
+pwsh samples/Respire.Samples.Observability/Smoke.ps1 -Framework net10.0 -OutputDirectory ./observability-evidence-net10
 ```
 
 | Parameter | Default |
 | --- | --- |
-| `-Framework` | `net10.0` |
+| `-Framework` | `net11.0` |
 | `-OutputDirectory` | A new temp folder, printed as `Evidence: <path>` |
 
 - Agents must choose an output directory outside the worktree.

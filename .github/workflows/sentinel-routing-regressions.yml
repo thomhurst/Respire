@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        framework: [net8.0, net10.0]
+        framework: [net10.0, net11.0]
     env:
       # TUnit's HTML reporter listens to every ActivitySource. Exercise the direct
       # reply sources here; the ordinary full test matrix covers instrumented routing.
@@ -38,13 +38,13 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
-            8.0.x
             10.0.x
-      # CI's net10.0 networking shard already runs these classes in Release without the HTML
-      # reporter, so only net8.0 runs them here. Both legs keep the real-Sentinel step below, which
+            11.0.x
+      # CI's net11.0 networking shard already runs these classes in Release without the HTML
+      # reporter, so only net10.0 runs them here. Both legs keep the real-Sentinel step below, which
       # CI runs only with the HTML reporter's listener.
       - name: Verify Sentinel routing, retirement, and cancellation
-        if: matrix.framework != 'net10.0'
+        if: matrix.framework != 'net11.0'
         env:
           FRAMEWORK: ${{ matrix.framework }}
         run: >-

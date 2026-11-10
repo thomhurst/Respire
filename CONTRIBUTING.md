@@ -7,7 +7,7 @@ the API and deprecation policy.
 ## Public API review and deprecation
 
 Every shipping library package has a checked-in public API baseline in
-`src/<package>/PublicAPI.Shipped.txt` and `PublicAPI.Unshipped.txt`. Both net8.0 and net10.0
+`src/<package>/PublicAPI.Shipped.txt` and `PublicAPI.Unshipped.txt`. Both net10.0 and net11.0
 check the same baseline: the packages expose the same public surface on both frameworks.
 These baselines were seeded from the pre-2.0 API; the filename does not declare a stable release.
 The PublicApiAnalyzers package checks signatures, including nullable annotations, during normal
@@ -29,7 +29,7 @@ For contributors:
 Deprecations are allowed, including after 2.0. An `[Obsolete]` attribute must provide a nonempty
 `DiagnosticId` and an HTTPS `UrlFormat` containing `{0}` (the diagnostic ID), pointing to a published
 migration note. The note should explain the replacement and migration steps. CI runs
-`Respire.PublicApi.Tests` on net8.0 and net10.0 to check exported public types and members in every
+`Respire.PublicApi.Tests` on net10.0 and net11.0 to check exported public types and members in every
 shipping assembly. Its project references and expected assembly manifest come from
 `RespirePackageProjects` in `Directory.Build.props`, plus `Respire.Analyzers`, which ships inside
 the core package rather than as its own package; a missing assembly fails validation.
@@ -47,18 +47,18 @@ to select source files **before compilation**, then select tests at execution ti
 
 ```powershell
 & scripts/Invoke-AgentDotNet.ps1 -Verbose -SingleNode -DotNetArguments @(
-    'build', 'tests/Respire.Tests/Respire.Tests.csproj', '-c', 'Release', '-f', 'net10.0',
+    'build', 'tests/Respire.Tests/Respire.Tests.csproj', '-c', 'Release', '-f', 'net11.0',
     '-p:RespireTestFilter=TimeSeries*.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Focused build failed' }
 
 & scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
     'run', '--project', 'tests/Respire.Tests/Respire.Tests.csproj',
-    '-c', 'Release', '-f', 'net10.0', '--no-build',
+    '-c', 'Release', '-f', 'net11.0', '--no-build',
     '-p:RespireTestFilter=TimeSeries*.cs', '--',
     '--treenode-filter', '/*/*/TimeSeries*/*')
 ```
 
-Use `net8.0` for the other supported framework. Patterns are relative to
+Use `net10.0` for the other supported framework. Patterns are relative to
 `tests/Respire.Tests`; join multiple patterns with `|`, for example
 `-p:RespireTestFilter=Networking/BlockingCancellationTests.cs|Networking/FakeRespServerTests.cs`.
 Include all partial-class files and any other test classes the selected tests depend on.
@@ -96,7 +96,7 @@ dotnet pack src/Respire/Respire.csproj -c Release
 ```
 
 Pack all target frameworks together; overriding `TargetFrameworks` would hide discrepancies
-between the net8.0 and net10.0 assets. Tests, samples, benchmarks, and the bundled analyzer
+between the net10.0 and net11.0 assets. Tests, samples, benchmarks, and the bundled analyzer
 project are not independently packable.
 
 Before the first supported major release, validation checks compatible assets within each

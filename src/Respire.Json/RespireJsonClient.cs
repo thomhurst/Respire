@@ -63,6 +63,7 @@ public sealed class RespireJsonClient
             : MergeUnhookedAsync(key, patch, jsonTypeInfo, path, cancellationToken);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask MergeUnhookedAsync<T>(
         RespireKey key,
         T patch,
@@ -209,6 +210,7 @@ public sealed class RespireJsonClient
             : SetUnhookedAsync(key, value, jsonTypeInfo, path, condition, cancellationToken, floatingPointType);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<bool> SetUnhookedAsync<T>(
         RespireKey key,
         T value,
@@ -385,6 +387,7 @@ public sealed class RespireJsonClient
             : MultiSetUnhookedAsync(entries, jsonTypeInfo, cancellationToken);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask MultiSetUnhookedAsync<T>(
         IReadOnlyList<RespireJsonSetEntry<T>> entries,
         JsonTypeInfo<T> jsonTypeInfo,
@@ -485,11 +488,9 @@ public sealed class RespireJsonClient
             MaxDepth = options.MaxDepth == 0 ? DefaultMaxDepth : options.MaxDepth,
             // JsonSerializer controls the complete token sequence, so writer validation is redundant.
             SkipValidation = true,
-#if NET9_0_OR_GREATER
             IndentCharacter = options.IndentCharacter,
             IndentSize = options.IndentSize,
             NewLine = options.NewLine,
-#endif
         });
 
     /// <summary>Deletes a document or path and returns the number of deleted values.</summary>

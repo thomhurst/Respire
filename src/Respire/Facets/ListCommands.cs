@@ -457,6 +457,7 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<string?> PopBlockingAsync(
         RespireKey key, TimeSpan wait, Verb blocking, string blockingName, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
@@ -575,6 +576,7 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -622,6 +624,7 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<string?> MoveBlockingAsync(
         RespireKey source, RespireKey destination, RespireValue fromSide, RespireValue toSide, TimeSpan wait,

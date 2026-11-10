@@ -1,7 +1,6 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Columns;
 using BenchmarkDotNet.Configs;
-using BenchmarkDotNet.Jobs;
 using DotNet.Testcontainers.Containers;
 using StackExchange.Redis;
 using Testcontainers.Redis;
@@ -9,7 +8,7 @@ using Testcontainers.Redis;
 namespace Respire.Benchmarks;
 
 [MemoryDiagnoser]
-[SimpleJob(RuntimeMoniker.Net80, warmupCount: 1, iterationCount: 3)]
+[SimpleJob(warmupCount: 1, iterationCount: 3)]
 [Config(typeof(Config))]
 public class RedisContainerBenchmarks
 {

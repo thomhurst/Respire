@@ -12,8 +12,8 @@ namespace Respire.Analyzers.Tests;
 public class CommonMisuseAnalyzerTests
 {
     [Test]
-    [Arguments("net8.0")]
     [Arguments("net10.0")]
+    [Arguments("net11.0")]
     public Task ClientOwnership(string framework) => Verify(framework, new ShortLivedClientAnalyzer(), """
         class Consumer
         {
@@ -42,8 +42,8 @@ public class CommonMisuseAnalyzerTests
         """);
 
     [Test]
-    [Arguments("net8.0")]
     [Arguments("net10.0")]
+    [Arguments("net11.0")]
     public Task SubsequentLocalOwnership(string framework) => Verify(framework, new ShortLivedClientAnalyzer(), """
         class Consumer
         {
@@ -81,8 +81,8 @@ public class CommonMisuseAnalyzerTests
         """);
 
     [Test]
-    [Arguments("net8.0")]
     [Arguments("net10.0")]
+    [Arguments("net11.0")]
     public Task ConfiguredSubsequentLocalOwnership(string framework) => Verify(framework, new ShortLivedClientAnalyzer(), """
         class Consumer
         {
@@ -125,7 +125,7 @@ public class CommonMisuseAnalyzerTests
         """);
 
     [Test]
-    public Task EntryPointOwnsApplicationLifetime() => Verify("net10.0", new ShortLivedClientAnalyzer(), """
+    public Task EntryPointOwnsApplicationLifetime() => Verify("net11.0", new ShortLivedClientAnalyzer(), """
         class Program
         {
             static async Task Main()
@@ -144,7 +144,7 @@ public class CommonMisuseAnalyzerTests
         """, OutputKind.ConsoleApplication);
 
     [Test]
-    public Task TopLevelOwnsApplicationLifetime() => Verify("net10.0", new ShortLivedClientAnalyzer(), """
+    public Task TopLevelOwnsApplicationLifetime() => Verify("net11.0", new ShortLivedClientAnalyzer(), """
         await using var client = await RespireClient.ConnectAsync("localhost");
         Func<Task> endpoint = async () =>
         {
@@ -157,10 +157,10 @@ public class CommonMisuseAnalyzerTests
         """, OutputKind.ConsoleApplication);
 
     [Test]
-    [Arguments("net8.0", "Respire.Testing")]
     [Arguments("net10.0", "Respire.Testing")]
-    [Arguments("net8.0", "Respire.Testing.Containers")]
+    [Arguments("net11.0", "Respire.Testing")]
     [Arguments("net10.0", "Respire.Testing.Containers")]
+    [Arguments("net11.0", "Respire.Testing.Containers")]
     public Task TestingPackageOwnsClientLifetime(string framework, string package)
     {
         var source = package == "Respire.Testing" ? """
@@ -200,7 +200,7 @@ public class CommonMisuseAnalyzerTests
     {
         // Reuse the analyzer to ensure a test compilation does not disable later production checks.
         var analyzer = new ShortLivedClientAnalyzer();
-        await Verify("net10.0", analyzer, """
+        await Verify("net11.0", analyzer, """
             class Tests
             {
                 async Task IsolatedClients()
@@ -215,7 +215,7 @@ public class CommonMisuseAnalyzerTests
                 }
             }
             """, additionalReferences: [AssemblyReference(assemblyName)]);
-        await Verify("net10.0", analyzer, """
+        await Verify("net11.0", analyzer, """
             class Consumer
             {
                 async Task Request() { await using var client = {|RESP010:RespireClient.Create("localhost")|}; }
@@ -228,7 +228,7 @@ public class CommonMisuseAnalyzerTests
     [Arguments("TUnit.Core.Helpers")]
     [Arguments("xunit.runner.visualstudio")]
     [Arguments("Respire.Testing.Lookalike")]
-    public Task UnrelatedAssemblyDoesNotDisableClientOwnership(string assemblyName) => Verify("net10.0",
+    public Task UnrelatedAssemblyDoesNotDisableClientOwnership(string assemblyName) => Verify("net11.0",
         new ShortLivedClientAnalyzer(), """
         class Consumer
         {
@@ -247,8 +247,8 @@ public class CommonMisuseAnalyzerTests
     }
 
     [Test]
-    [Arguments("net8.0")]
     [Arguments("net10.0")]
+    [Arguments("net11.0")]
     public Task TypedUnboundedReads(string framework) => Verify(framework, new UnboundedReadAnalyzer(), """
         class Consumer
         {
@@ -281,8 +281,8 @@ public class CommonMisuseAnalyzerTests
         """);
 
     [Test]
-    [Arguments("net8.0")]
     [Arguments("net10.0")]
+    [Arguments("net11.0")]
     public Task QueuedSetAndHashReadsHaveNoScanAlternative(string framework) => Verify(framework, new UnboundedReadAnalyzer(), """
         class Consumer
         {
@@ -307,8 +307,8 @@ public class CommonMisuseAnalyzerTests
         """);
 
     [Test]
-    [Arguments("net8.0")]
     [Arguments("net10.0")]
+    [Arguments("net11.0")]
     public Task UnboundedSortedSetRanges(string framework) => Verify(framework, new UnboundedReadAnalyzer(), """
         class Consumer
         {
@@ -347,8 +347,8 @@ public class CommonMisuseAnalyzerTests
         """);
 
     [Test]
-    [Arguments("net8.0")]
     [Arguments("net10.0")]
+    [Arguments("net11.0")]
     public Task BlockingMessageConsumer(string framework) => Verify(framework, new BlockingSubscriptionHandlerAnalyzer(), """
         class Consumer
         {
@@ -378,8 +378,8 @@ public class CommonMisuseAnalyzerTests
         """);
 
     [Test]
-    [Arguments("net8.0")]
     [Arguments("net10.0")]
+    [Arguments("net11.0")]
     public Task NestedMessageLoopCollections(string framework) => Verify(framework, new BlockingSubscriptionHandlerAnalyzer(), """
         class Consumer
         {
@@ -409,8 +409,8 @@ public class CommonMisuseAnalyzerTests
         """);
 
     [Test]
-    [Arguments("net8.0")]
     [Arguments("net10.0")]
+    [Arguments("net11.0")]
     public Task MessageStreamImplementations(string framework) => Verify(framework, new BlockingSubscriptionHandlerAnalyzer(), """
         interface IMessageStream : IAsyncEnumerable<RespireMessage> { }
         class MessageStream : IMessageStream
@@ -435,8 +435,8 @@ public class CommonMisuseAnalyzerTests
         """);
 
     [Test]
-    [Arguments("net8.0")]
     [Arguments("net10.0")]
+    [Arguments("net11.0")]
     public Task ZeroTimeoutWaits(string framework) => Verify(framework, new BlockingSubscriptionHandlerAnalyzer(), """
         class Consumer
         {
@@ -480,7 +480,7 @@ public class CommonMisuseAnalyzerTests
         """);
 
     [Test]
-    public Task GapHandlers() => Verify("net10.0", new BlockingSubscriptionHandlerAnalyzer(), """
+    public Task GapHandlers() => Verify("net11.0", new BlockingSubscriptionHandlerAnalyzer(), """
         class Consumer
         {
             void Register(RespireSubscription subscription)
@@ -519,13 +519,13 @@ public class CommonMisuseAnalyzerTests
                 }
             }
             """;
-        await Verify("net10.0", new ShortLivedClientAnalyzer(), source);
-        await Verify("net10.0", new UnboundedReadAnalyzer(), source);
-        await Verify("net10.0", new BlockingSubscriptionHandlerAnalyzer(), source);
+        await Verify("net11.0", new ShortLivedClientAnalyzer(), source);
+        await Verify("net11.0", new UnboundedReadAnalyzer(), source);
+        await Verify("net11.0", new BlockingSubscriptionHandlerAnalyzer(), source);
     }
 
     [Test]
-    public Task GeneratedCodeIsIgnored() => Verify("net10.0", new UnboundedReadAnalyzer(), """
+    public Task GeneratedCodeIsIgnored() => Verify("net11.0", new UnboundedReadAnalyzer(), """
         class Consumer
         {
             void Read(IRespireSetCommands sets) { _ = sets.MembersAsync("key"); }

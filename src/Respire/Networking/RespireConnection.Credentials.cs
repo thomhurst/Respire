@@ -16,6 +16,7 @@ internal sealed partial class RespireConnection
     // hold it across a multi-frame protocol sequence without admitting AUTH midway.
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     internal async ValueTask<CredentialSequenceLease> AcquireCredentialSequenceAsync(CancellationToken cancellationToken)
     {

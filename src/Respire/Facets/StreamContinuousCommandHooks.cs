@@ -57,6 +57,7 @@ internal sealed partial class StreamCommands
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireStreamReadResult[]> ReadHookPageAsync(ContinuousHookPage page)
     {
         // Resolve $ once per stream, inside the first XREAD page. Resolution failures

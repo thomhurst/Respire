@@ -379,6 +379,7 @@ internal static partial class RespireTelemetry
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     internal static async ValueTask<Stream?> ObserveStreamError(ValueTask<Stream?> response, ErrorObservation observation)
     {
         try
@@ -396,6 +397,7 @@ internal static partial class RespireTelemetry
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
     private static async ValueTask AwaitFinalError(ValueTask response, ErrorObservation observation)
     {
         try { await response.ConfigureAwait(false); }
@@ -409,6 +411,7 @@ internal static partial class RespireTelemetry
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private static async ValueTask<T> AwaitFinalError<T>(ValueTask<T> response, ErrorObservation observation)
     {
         try { return await response.ConfigureAwait(false); }

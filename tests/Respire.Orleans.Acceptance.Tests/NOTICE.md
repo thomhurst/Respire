@@ -90,7 +90,7 @@ the existing `RespireContainerFixture` with Redis 7.0.15:
 Every deployment is owned by Testcontainers and disposed even on failure. The
 administrative fault/fence connection does not execute any provider operations.
 The suite now has **28 cases per framework/protocol combination**: 18 provider
-cases and ten real-host cases. CI runs all cases on net8.0/net10.0 and RESP2/RESP3.
+cases and ten real-host cases. CI runs all cases on net10.0/net11.0 and RESP2/RESP3.
 
 Recovery hosts run in a child process while the parent owns Redis. Each host stop
 and disposal has an enforced 30-second wait; logs identify the operation and role.

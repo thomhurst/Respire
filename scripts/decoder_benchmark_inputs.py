@@ -7,7 +7,7 @@ FIXTURE = "benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs"
 # new import, generator, SDK setting, or benchmark configuration fails closed.
 MAINTENANCE = {
     ".github/workflows/benchmark-utf8-decoder.yml",
-    ".github/workflows/test-full-net8.yml",
+    ".github/workflows/test-full-net10.yml",
     "scripts/assert_decoder_benchmarks.py",
     "scripts/decoder_benchmark_inputs.py",
     "scripts/tests/test_assert_decoder_benchmarks.py",

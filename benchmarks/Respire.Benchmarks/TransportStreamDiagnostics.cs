@@ -150,6 +150,7 @@ internal static class TransportStreamDiagnostics
         ? new DelayedSource(new byte[PayloadLength]) : new MemoryStream(new byte[PayloadLength]);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
     private static async ValueTask DirectAsync(TransportAcceptanceBenchmarks fixture, string streamCase,
         MemoryStream source, byte[] buffer)
     {

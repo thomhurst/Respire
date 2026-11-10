@@ -445,6 +445,7 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
             : ExistsClusterUnhookedAsync(cluster, command, cancellationToken, observation);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<bool[]> ExistsClusterUnhookedAsync(
         ClusterRouter cluster, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
@@ -474,6 +475,7 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
             : FlushClusterUnhookedAsync(cluster, command, cancellationToken, observation);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<bool> FlushClusterUnhookedAsync(
         ClusterRouter cluster, Cmd command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
@@ -513,6 +515,7 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
             : LoadClusterUnhookedAsync(cluster, script, cancellationToken, observation);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<string> LoadClusterUnhookedAsync(
         ClusterRouter cluster,
         RespireScript script,
@@ -530,6 +533,7 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<TResult[]> SendToPrimariesAsync<TCommand, TResult>(
         ClusterRouter cluster, string operation, TCommand command,
         ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
@@ -556,6 +560,7 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<TResult> SendAndConvertAsync<TCommand, TResult>(
         string operation, RespireConnection connection, TCommand command,
         ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)

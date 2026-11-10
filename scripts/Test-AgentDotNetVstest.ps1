@@ -42,7 +42,7 @@ try {
     $env:DOTNET_TEST_RUNNER = if ($supportsOverride) { 'vStEsT' } else { 'Microsoft.Testing.Platform' }
     $env:RESPIRE_VSTEST_GUARD_TEST_MARKER = Join-Path $testRoot 'executed.txt'
     Write-VstestPhase "fixture creation started; SDK pin=$($configuration.sdk.version); runner=$env:DOTNET_TEST_RUNNER"
-    & $guardScript -TimeoutSeconds $smokeTimeoutSeconds -DotNetArguments @('new', 'xunit', '--name', 'GuardVstest', '--output', 'fixture', '--framework', 'net10.0', '--no-restore')
+    & $guardScript -TimeoutSeconds $smokeTimeoutSeconds -DotNetArguments @('new', 'xunit', '--name', 'GuardVstest', '--output', 'fixture', '--framework', 'net11.0', '--no-restore')
     Write-VstestPhase "fixture creation returned; exit=$LASTEXITCODE"
     if ($LASTEXITCODE -ne 0) { throw "VSTest fixture creation failed: $LASTEXITCODE" }
     @'
@@ -62,7 +62,7 @@ public class GuardVstestTests
     & $guardScript -TimeoutSeconds $buildTimeoutSeconds -SingleNode -DotNetArguments @('build', $project, '-c', 'Release', '--nologo')
     Write-VstestPhase "fixture build returned; exit=$LASTEXITCODE"
     if ($LASTEXITCODE -ne 0) { throw "VSTest fixture build failed: $LASTEXITCODE" }
-    $baseArguments = @('test', $project, '-c', 'Release', '-f', 'net10.0', '--no-build')
+    $baseArguments = @('test', $project, '-c', 'Release', '-f', 'net11.0', '--no-build')
     $filter = 'FullyQualifiedName=GuardVstestTests.SelectedTestExecutes'
     $captureScript = Join-Path $testRoot 'Capture-Guard.ps1'
     @'

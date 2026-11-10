@@ -278,11 +278,11 @@ The sample runs every mapping path with reflection serialization disabled, on RE
 Publish and run the sample:
 
 ```bash
-dotnet publish samples/Respire.Samples.VectorData -c Release -f net10.0 -r linux-x64 -o artifacts/vector-data
+dotnet publish samples/Respire.Samples.VectorData -c Release -f net11.0 -r linux-x64 -o artifacts/vector-data
 ./artifacts/vector-data/Respire.Samples.VectorData redis://localhost:6379
 ```
 
-The sample also targets .NET 8. Passing a runtime identifier enables NativeAOT on the executable only. Do not pass a global `PublishAot` property: it would also apply to the repository's netstandard analyzer project. See [Microsoft's NativeAOT guide](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/) for platform prerequisites.
+The sample also targets .NET 10. Passing a runtime identifier enables NativeAOT on the executable only. Do not pass a global `PublishAot` property: it would also apply to the repository's netstandard analyzer project. See [Microsoft's NativeAOT guide](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/) for platform prerequisites.
 
 ## Vector-set backend decision
 

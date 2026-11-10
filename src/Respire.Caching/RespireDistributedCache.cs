@@ -239,6 +239,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 : state.Cache.GetCoreAsync(state.Key, state.Token, owner)).ConfigureAwait(false);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<byte[]?> GetCoreAsync(string key, CancellationToken token,
         RespireTelemetry.ErrorObservation observation)
     {
@@ -276,6 +277,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 : state.Cache.TryGetCoreAsync(state.Key, state.Destination, state.Token, owner));
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<bool> TryGetCoreAsync(string key, IBufferWriter<byte> destination,
         CancellationToken token, RespireTelemetry.ErrorObservation observation)
     {
@@ -359,6 +361,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         => SetCoreAsync(key, value.IsSingleSegment ? value.First : value.ToArray(), options, token, observation);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask SetCoreAsync(string key, ReadOnlyMemory<byte> value, DistributedCacheEntryOptions options,
         CancellationToken token, RespireTelemetry.ErrorObservation observation)
     {
@@ -669,6 +672,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 : state.Cache.RefreshCoreAsync(state.Key, state.Token, owner))).ConfigureAwait(false);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<bool> RefreshCoreAsync(string key, CancellationToken token,
         RespireTelemetry.ErrorObservation observation)
     {
@@ -692,6 +696,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 : state.Cache.RemoveCoreAsync(state.Key, state.Token, owner)).ConfigureAwait(false);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask RemoveCoreAsync(string key, CancellationToken token,
         RespireTelemetry.ErrorObservation observation)
     {
@@ -899,6 +904,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // A bounded removal wait can leave its command running. Retain the independent owner
     // until that command finishes, then report its failure internally if foreground ended.
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private static async ValueTask<TResult> ExecuteWrappedCommandAsync<TState, TResult>(
         TState state, CorrectionErrors errors, Func<TState, ValueTask<TResult>> send)
     {
@@ -910,6 +916,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token,
         RespireTelemetry.ErrorObservation observation)
     {

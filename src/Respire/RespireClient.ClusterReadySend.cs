@@ -89,6 +89,7 @@ public sealed partial class RespireClient
     // ClassifyReadyClusterFailure and ResumeReadyClusterSendAsync.
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<TResult> SendOnReadyClusterSlowAsync<TCommand, TResult, TSend>(
         string operation, ClusterRouter cluster, TCommand command, CancellationToken cancellationToken, TSend sender,

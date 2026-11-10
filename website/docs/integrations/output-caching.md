@@ -7,7 +7,7 @@ description: Store ASP.NET Core output-cache responses in Redis, with Microsoft 
 
 `Respire.OutputCaching` stores ASP.NET Core output-cache responses in Redis, so several
 application instances share cached responses and evict them by tag. It implements
-`IOutputCacheStore` and `IOutputCacheBufferStore` on .NET 8 and .NET 10.
+`IOutputCacheStore` and `IOutputCacheBufferStore` on .NET 10 and .NET 11.
 
 The default format matches Microsoft's `Microsoft.AspNetCore.OutputCaching.StackExchangeRedis`
 store, so you can switch without flushing. An optional generation-aware mode protects

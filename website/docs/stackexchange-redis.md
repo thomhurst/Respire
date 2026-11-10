@@ -47,7 +47,7 @@ for Respire's own compatibility guarantees.
 
 | Capability | StackExchange.Redis 3.x (3.4.5) | StackExchange.Redis 4.0.127-alpha | Respire |
 | --- | --- | --- | --- |
-| Target frameworks | .NET Framework 4.6.1/4.7.2, `netstandard2.0`, .NET 8/10 | Same targets | .NET 8 and .NET 10 |
+| Target frameworks | .NET Framework 4.6.1/4.7.2, `netstandard2.0`, .NET 8/10 | Same targets | .NET 10 and .NET 11 |
 | API style | Sync methods and async `Task` methods | New command groups return `ValueTask`; legacy sync/`Task` methods remain supported | Asynchronous only (`ValueTask`) |
 | Command surface | Flat methods on `IDatabase` (`StringGetAsync`) | Groups on the database (`db.Strings.GetAsync`), alongside the flat API | Facets per data type (`redis.Strings.GetStringAsync`) |
 | Values | `RedisValue` union | `RedisValue` for ordinary string results; groups also expose pooled `ReadOnlyLease<T>` results | Typed results; `RespireValue` for arguments and pooled result APIs |

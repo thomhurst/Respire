@@ -7,8 +7,8 @@ uses unique keys and indexes, deletes its data, and exits with an error on any
 failure.
 
 You need the .NET SDK from `global.json`, Docker with Linux containers, and your
-platform's native compiler for Native AOT. The sample targets `net8.0` and
-`net10.0`. Run commands from the repository root.
+platform's native compiler for Native AOT. The sample targets `net10.0` and
+`net11.0`. Run commands from the repository root.
 
 Start Redis 8.10 (it bundles JSON and Search):
 
@@ -21,10 +21,10 @@ Publish and run. Replace `linux-x64` with your runtime identifier (for example
 `127.0.0.1:6379`).
 
 ```sh
-dotnet publish samples/Respire.Samples.Mappers -c Release -f net8.0 -r linux-x64 -o artifacts/mapper-net8
-artifacts/mapper-net8/Respire.Samples.Mappers redis://127.0.0.1:6379
 dotnet publish samples/Respire.Samples.Mappers -c Release -f net10.0 -r linux-x64 -o artifacts/mapper-net10
 artifacts/mapper-net10/Respire.Samples.Mappers redis://127.0.0.1:6379
+dotnet publish samples/Respire.Samples.Mappers -c Release -f net11.0 -r linux-x64 -o artifacts/mapper-net11
+artifacts/mapper-net11/Respire.Samples.Mappers redis://127.0.0.1:6379
 ```
 
 A successful run prints:

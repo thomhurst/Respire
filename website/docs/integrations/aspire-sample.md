@@ -16,8 +16,8 @@ The sample uses project references, so you can run it before the `Respire.Aspire
 
 ## Requirements and build
 
-- The .NET 10 SDK from `global.json` (10.0.402 or a later compatible band) and runtime. The
-  sample targets `net10.0` only; the integration itself also supports .NET 8.
+- The .NET 11 SDK from `global.json` (11.0.100 or a later compatible band) and runtime. The
+  sample targets `net11.0` only; the integration itself also supports .NET 10.
 - [Aspire CLI](https://aspire.dev/get-started/install-cli/) 13.6 (the repository uses Aspire 13.6.2
   hosting packages).
 - A running Docker-compatible runtime. The first start downloads the Redis 8.10 and Valkey 9 images.
@@ -28,14 +28,14 @@ From the repository root:
 
 ```powershell
 dotnet dev-certs https --trust
-dotnet build samples/Respire.Samples.Aspire.AppHost -c Release -f net10.0
+dotnet build samples/Respire.Samples.Aspire.AppHost -c Release -f net11.0
 ```
 
 Building the AppHost also builds the HTTP service.
 
 The AppHost sets `AspireUseCliBundle=true`, so orchestration (DCP) and the dashboard come from
 the Aspire CLI bundle. The SDK can prepare the bundle during the first build; without a compatible
-CLI on `PATH`, it uses the SDK-paired CLI package through .NET 10's `dnx`. That first build needs
+CLI on `PATH`, it uses the SDK-paired CLI package through .NET 11's `dnx`. That first build needs
 network access.
 
 ## Start, readiness, and dashboard

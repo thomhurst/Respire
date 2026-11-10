@@ -22,6 +22,7 @@ public sealed partial class RespireClient
 
 #if NET
         [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+        [RuntimeAsyncMethodGeneration(false)]
 #endif
         internal readonly async ValueTask<(RespValue Response, Task<RespValue> Winner)> ResolveAsync(
             RespireTelemetry.ErrorObservation observation, int callerAttempts)

@@ -87,6 +87,7 @@ public sealed partial class RespireClient
             : SendImmediateRetryWithoutRedirectsAsync(operation, command, state, callerToken, deadline, observation, track, backlogConnection);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespValue> SendImmediateRetryWithoutRedirectsAsync<TCommand>(string operation, TCommand command,
         ImmediateRetryState state, CancellationToken callerToken, CommandDeadline deadline,
         RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection) where TCommand : struct, IRespCommand
@@ -191,6 +192,7 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespValue> SendImmediateRedirectRetryCoreAsync<TCommand>(string operation, ImmediateRetryCommand<TCommand> command,
         ImmediateRetryState state, CancellationToken callerToken, CommandDeadline deadline,
         RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection,
@@ -445,6 +447,7 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespValue> SendClusterRetryCoreAsync<TCommand>(string operation, ClusterRouter cluster,
         TCommand command, ImmediateRetryState state, CancellationToken cancellationToken, bool noRedirect,
         bool observeErrors, RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
@@ -488,6 +491,7 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespValue> SendClusterAfterRouteReplacementAsync<TCommand>(ValueTask wait, string operation,
         ClusterRouter cluster, TCommand command, bool noRedirect, LogicalCommandRetry.Attempt attempt,
         RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
@@ -511,6 +515,7 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespValue> SendTrackedClusterRetryCoreAsync<TCommand>(string operation, ClusterRouter cluster,
         TCommand command, ImmediateRetryState state, CancellationToken cancellationToken, Action? onRedirect, bool track,
         RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
@@ -528,6 +533,7 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespValue> SendTrackedClusterRetryAttemptAsync<TCommand>(string operation, ClusterRouter cluster,
         TCommand command, Action? onRedirect, bool track, LogicalCommandRetry.Attempt attempt,
         RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
@@ -564,6 +570,7 @@ public sealed partial class RespireClient
         => _core.Cluster is null ? PrepareDeclaredStandaloneResendAsync(attempt.Token, observation) : default;
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask PrepareDeclaredStandaloneResendAsync(CancellationToken token,
         RespireTelemetry.ErrorObservation observation)
     {

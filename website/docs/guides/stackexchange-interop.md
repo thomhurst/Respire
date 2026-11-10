@@ -14,7 +14,7 @@ See [RSP0006](../diagnostics/RSP0006.md) for the affected APIs and the exact `No
 `RedisValue`, `RedisResult`, `IConnectionMultiplexer`) run on Respire. Use it during migration or at
 library boundaries; use Respire's native typed APIs everywhere else.
 
-The package targets .NET 8 and .NET 10 and depends on StackExchange.Redis 3.4.0 or later.
+The package targets .NET 10 and .NET 11 and depends on StackExchange.Redis 3.4.0 or later.
 
 ```bash
 dotnet add package Respire.StackExchangeCompat

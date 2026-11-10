@@ -104,6 +104,7 @@ public sealed partial class RespireClient
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendCircuitBlockingAsync<TCommand>(
         DedicatedConnectionPool pool, RespireConnection connection, TCommand command, CancellationToken cancellationToken, int errorAttempts,
@@ -129,6 +130,7 @@ public sealed partial class RespireClient
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendCircuitResponseAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
@@ -199,6 +201,7 @@ public sealed partial class RespireClient
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<TResult> SendCircuitReadyAsync<TCommand, TResult, TSend>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
@@ -288,6 +291,7 @@ public sealed partial class RespireClient
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendCircuitTrackedAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
@@ -341,6 +345,7 @@ public sealed partial class RespireClient
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask SendCircuitFireAndForgetAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,

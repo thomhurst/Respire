@@ -7,7 +7,7 @@ description: Build a small ASP.NET Core API with typed values, pub/sub, and a ba
 # Build an ASP.NET Core app
 
 In five minutes you'll build a small API that stores a user, publishes updates, and reads
-two values in one round trip. You need the **.NET 10 SDK** and a Redis-compatible server.
+two values in one round trip. You need the **.NET 11 SDK** and a Redis-compatible server.
 Docker is enough.
 
 :::tip Just want to try a command?
@@ -19,7 +19,7 @@ The [quick start](./quick-start) is a two-minute console app.
 ## 1. Create the app
 
 ```bash
-dotnet new web -n RespireQuickstart -f net10.0
+dotnet new web -n RespireQuickstart -f net11.0
 cd RespireQuickstart
 dotnet add package Respire.DependencyInjection
 ```
@@ -36,7 +36,7 @@ docker run --name respire-quickstart-redis --rm -d -p 127.0.0.1:6379:6379 redis:
 
 Copy this entire file. `AddRespire` gives every endpoint the same client and disposes it at shutdown. It connects on the first command.
 
-<!-- doc-test-ignore: The complete Program.cs is compiled without harness variables by scripts/Verify-GettingStarted.ps1 in CI on net8.0 and net10.0. -->
+<!-- doc-test-ignore: The complete Program.cs is compiled without harness variables by scripts/Verify-GettingStarted.ps1 in CI on net10.0 and net11.0. -->
 ```csharp title="Program.cs"
 using System.Text.Json.Serialization;
 using Respire;
@@ -153,7 +153,7 @@ Prefer a working project to copy from? `Respire.Templates` includes three starte
 
 ### Cache-aside API
 
-Install the templates with the **.NET 10 SDK**. Replace `<exact-version>` with the version
+Install the templates with the **.NET 11 SDK**. Replace `<exact-version>` with the version
 from the [latest GitHub release](https://github.com/thomhurst/Respire/releases):
 
 ```bash
@@ -227,7 +227,7 @@ use that same version. To remove the templates, run
 
 ### Job worker and dashboard
 
-The same package includes `respire-worker`, a standalone .NET 10 app with a typed
+The same package includes `respire-worker`, a standalone .NET 11 app with a typed
 job queue, sample handler, enqueue API and [operator dashboard](guides/stream-dashboard.md):
 
 ```bash

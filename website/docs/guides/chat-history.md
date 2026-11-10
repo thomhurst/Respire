@@ -11,7 +11,7 @@ See [RSP0002](../diagnostics/RSP0002.md).
 :::
 
 `RespireChatHistoryStore` persists `Microsoft.Extensions.AI.ChatMessage` values in Redis
-lists. It works with RESP2 and RESP3 on .NET 8 and .NET 10 and does not require Redis Search.
+lists. It works with RESP2 and RESP3 on .NET 10 and .NET 11 and does not require Redis Search.
 Each operation addresses one key, including when routing through Redis Cluster.
 
 ## Conversation store

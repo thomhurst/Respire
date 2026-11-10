@@ -21,6 +21,7 @@ internal sealed partial class RespireConnection
     /// </remarks>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     internal async ValueTask<CommandAttemptResult> SendAttemptAsync<TCommand>(
         TCommand command, CancellationToken cancellationToken = default, string? commandName = null,
@@ -74,6 +75,7 @@ internal sealed partial class RespireConnection
     /// <summary>Observes an ASKING prelude and its streamed SET as one logical attempt.</summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     internal async ValueTask<CommandAttemptResult> SendAskingStreamAttemptAsync(
         ProtocolCommand<RawCommand> asking, StreamedSetCommand command, CancellationToken cancellationToken,

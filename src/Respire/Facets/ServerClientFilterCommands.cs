@@ -78,6 +78,7 @@ public sealed partial class RespireServerClientConnection
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireServerClientInfo[]> ReadClientsAsync(CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
         => await ConvertAsync("CLIENT LIST", command, cancellationToken,
             static (RespireServerClientConnection _, in RespValue reply) => ServerCommands.ParseClientList(in reply), observation: observation).ConfigureAwait(false);
@@ -98,6 +99,7 @@ public sealed partial class RespireServerClientConnection
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<long> KillClientsCoreAsync(CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
         => await ConvertAsync("CLIENT KILL", command, cancellationToken,
             static (RespireServerClientConnection _, in RespValue reply) => reply.AsInteger(), observation: observation).ConfigureAwait(false);

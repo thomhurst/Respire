@@ -6,7 +6,7 @@ description: Register Respire clients from Aspire connection strings, with confi
 # .NET Aspire
 
 `Respire.Aspire` registers Respire clients from Aspire connection strings, with health checks,
-OpenTelemetry, and logging. Use it in a .NET 8 or .NET 10 service that an AppHost starts with a
+OpenTelemetry, and logging. Use it in a .NET 10 or .NET 11 service that an AppHost starts with a
 Redis, Valkey, or Azure Managed Redis reference. For a runnable AppHost, see the
 [.NET Aspire sample](aspire-sample.md).
 

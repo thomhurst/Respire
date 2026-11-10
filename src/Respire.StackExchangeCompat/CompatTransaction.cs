@@ -1,7 +1,4 @@
 using StackExchange.Redis;
-#if !NET9_0_OR_GREATER
-using Lock = System.Object;
-#endif
 
 // These waits implement ITransaction's synchronous Execute contract.
 #pragma warning disable SER308

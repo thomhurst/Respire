@@ -152,7 +152,11 @@ public static class RespireSearchQueryBuilder
         foreach (var rune in value.EnumerateRunes())
         {
             if (!Rune.IsLetterOrDigit(rune) && rune.Value != '_') escaped.Append('\\');
+#if NET11_0_OR_GREATER
+            escaped.Append(rune);
+#else
             escaped.Append(rune.ToString());
+#endif
         }
 
         return escaped.ToString();

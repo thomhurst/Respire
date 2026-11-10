@@ -112,3 +112,7 @@ exit $LASTEXITCODE
     if (-not $root.StartsWith($temp, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe fixture cleanup path.' }
     if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
 }
+
+# The last fixture run exits non-zero by design. The Actions pwsh shell exits with
+# $LASTEXITCODE after the script, so report success explicitly.
+exit 0

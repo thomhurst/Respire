@@ -26,7 +26,7 @@
       "enabled": false
     },
     {
-      "description": "Keep .NET 8 ASP.NET Core dependencies on their compatible 8.x train.",
+      "description": "Keep .NET 10 ASP.NET Core dependencies on their compatible 10.x train.",
       "matchManagers": ["nuget"],
       "matchFileNames": ["Directory.Packages.props"],
       "matchPackageNames": [
@@ -37,8 +37,8 @@
         "Microsoft.AspNetCore.SignalR.StackExchangeRedis",
         "Microsoft.AspNetCore.OutputCaching.StackExchangeRedis"
       ],
-      "matchCurrentValue": "/^8\\./",
-      "allowedVersions": "/^8\\./"
+      "matchCurrentValue": "/^10\\./",
+      "allowedVersions": "/^10\\./"
     }
   ]
 }

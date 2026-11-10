@@ -193,6 +193,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     /// <remarks>The pooled ValueTask must be consumed exactly once, including asynchronous fallback.</remarks>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
 #endif
     internal async ValueTask<RespireConnection> GetConnectionAsync(
         RespireReadFrom readFrom, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,

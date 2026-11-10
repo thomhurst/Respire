@@ -8,7 +8,7 @@
 # must return a failing status itself.
 #
 #   source .github/ci/parallel-suites.sh
-#   suite caching dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build
+#   suite caching dotnet run --project tests/Respire.Caching.Tests -c Release -f net11.0 --no-build
 #   suite signalr TUNIT_DISABLE_HTML_REPORTER=true dotnet run --project tests/Respire.SignalR.Tests ...
 #   finish_suites
 #

@@ -48,7 +48,7 @@ jobs:
         run: echo '::warning::Could not load Docker mirror action; pulls go straight to Docker Hub'
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 11.0.x
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -93,7 +93,7 @@ jobs:
               with Path(f'{phase}.log').open('w') as log:
                   subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=source, stdout=log, check=True)
                   subprocess.run(['dotnet', 'run', '--project', 'benchmarks/Respire.Benchmarks',
-                                  '-c', 'Release', '-f', 'net10.0', '--',
+                                  '-c', 'Release', '-f', 'net11.0', '--',
                                   '--filter', '*JobQueueBenchmarks*', '--job', job,
                                   '--exporters', 'json', 'markdown',
                                   '--artifacts', str(workspace / 'results' / phase)],

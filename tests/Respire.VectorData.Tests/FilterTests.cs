@@ -96,9 +96,7 @@ public class FilterTests(ModernRedisTestContainer fixture)
             ("Contains_over_captured_string_array", r => strings.Contains(r.String)),
             ("Contains_with_Enumerable_Contains", r => Enumerable.Contains(r.StringArray, "x")),
             ("Contains_with_MemoryExtensions_Contains", r => MemoryExtensions.Contains(r.StringArray, "x")),
-#if NET10_0_OR_GREATER
             ("Contains_with_MemoryExtensions_Contains_with_null_comparer", r => MemoryExtensions.Contains(r.StringArray, "x", comparer: null)),
-#endif
             ("Any_with_Contains_over_inline_string_array", r => r.StringArray.Any(s => new[] { "x", "z", "nonexistent" }.Contains(s))),
             ("Any_with_Contains_over_captured_string_list", r => r.StringArray.Any(s => tags.Contains(s))),
             ("Any_over_List", r => r.StringList.Any(s => tags.Contains(s))),

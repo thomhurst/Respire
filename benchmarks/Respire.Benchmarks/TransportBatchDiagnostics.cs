@@ -187,6 +187,7 @@ internal static class TransportBatchDiagnostics
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private static async ValueTask<long> ValueTaskFixtureAsync(RespireClient client, int count)
     {
         using var batch = Create(client, count, out var first);

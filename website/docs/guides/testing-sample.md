@@ -17,7 +17,7 @@ parameter, so one function serves every server.
 Fake tests (no Docker needed), from a checkout of the repository:
 
 ```sh
-dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --treenode-filter '/*/*/FakeTests/*'
+dotnet run --project samples/Respire.Samples.Testing -c Release -f net11.0 -- --treenode-filter '/*/*/FakeTests/*'
 ```
 
 These include three fake-only tests: advancing the expiry clock, pausing a write before its reply,
@@ -26,10 +26,10 @@ and removing a scoped server rejection. Gates and fault boundaries synchronize t
 Container tests (Redis and Valkey on RESP2 and RESP3) need a local Docker engine with Linux containers:
 
 ```sh
-dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --treenode-filter '/*/*/ContainerTests/*'
+dotnet run --project samples/Respire.Samples.Testing -c Release -f net11.0 -- --treenode-filter '/*/*/ContainerTests/*'
 ```
 
-- Use `-f net8.0` for .NET 8.
+- Use `-f net10.0` for .NET 10.
 - Omit the filter to run all cases, including the StackExchange.Redis examples below (requires Docker).
 - Container startup errors fail the run; they are not skipped.
 
@@ -44,7 +44,7 @@ connected to Redis or Valkey. The scenario body is identical; only connection se
 Run the compatibility fake sample without Docker or a TCP listener:
 
 ```sh
-dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --treenode-filter '/*/*/StackExchangeFakeTests/*'
+dotnet run --project samples/Respire.Samples.Testing -c Release -f net11.0 -- --treenode-filter '/*/*/StackExchangeFakeTests/*'
 ```
 
 Use the filter `/*/*/StackExchangeContainerTests/*` to run its two real-server counterparts.

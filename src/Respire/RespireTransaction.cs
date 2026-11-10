@@ -316,6 +316,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<bool> CommitWithoutHookAsync(CancellationToken cancellationToken, bool validateEmptyWatch,
         PipelineHookScope? hook = null, bool admitted = false)
     {
@@ -598,6 +599,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         }
 
         [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+        [RuntimeAsyncMethodGeneration(false)]
         async ValueTask<RespValue> SendAsync()
         {
             var slot = _hasClusterSlot ? _clusterSlot : (int?)null;
@@ -1228,6 +1230,7 @@ public sealed class RespireTransaction : RespireTransactionBase
     /// errors fault only that command's pending.
     /// </summary>
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [RuntimeAsyncMethodGeneration(false)]
     public async ValueTask CommitAsync(CancellationToken cancellationToken = default)
     {
         _ = await CommitCoreAsync(cancellationToken).ConfigureAwait(false);

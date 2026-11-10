@@ -8,7 +8,7 @@ description: Map FreeRedis connections, commands, pipelines, subscriptions, and 
 Move `FreeRedis.RedisClient` callers to a long-lived `RespireClient` and await commands throughout
 the call chain. Respire has no synchronous command API. Keep the same Redis keys and wire values
 during a gradual rollout; compare serialization and expiry behavior before switching writers.
-Respire targets .NET 8 and .NET 10; applications on .NET Framework must retarget before migrating.
+Respire targets .NET 10 and .NET 11; applications on .NET Framework must retarget before migrating.
 
 The FreeRedis column uses the API documented in its
 [upstream README](https://github.com/2881099/FreeRedis/blob/b685beb08c4e547aa49e956aee5bf48c031fc411/README.md).

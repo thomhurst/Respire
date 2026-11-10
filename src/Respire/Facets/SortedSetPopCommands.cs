@@ -120,6 +120,7 @@ internal sealed partial class SortedSetCommands
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireSortedSetPopManyResult?> PopManyBlockingAsync(
         string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
@@ -129,6 +130,7 @@ internal sealed partial class SortedSetCommands
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireSortedSetPopResult?> PopOneBlockingAsync(
         string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
@@ -199,6 +201,7 @@ internal sealed partial class SortedSetCommands
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireSortedSetPopManyResult<T>?> PopManyBlockingAsync<T>(
         string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
@@ -210,6 +213,7 @@ internal sealed partial class SortedSetCommands
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireSortedSetPopResult<T>?> PopOneBlockingAsync<T>(
         string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {

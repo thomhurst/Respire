@@ -90,7 +90,7 @@ def run(workspace):
         "baseline": BASELINE, "candidate": CANDIDATE, "head": HEAD,
         "infrastructure": subprocess.check_output(
             ["git", "-C", str(infrastructure), "rev-parse", "HEAD"], text=True).strip(),
-        "fixtureSha256": FIXTURE_HASH, "framework": "net10.0", "operationsPerProcess": 512,
+        "fixtureSha256": FIXTURE_HASH, "framework": "net11.0", "operationsPerProcess": 512,
         "purpose": "Synchronization diagnostics only; no timing/allocation/performance acceptance",
     }, indent=2) + "\n")
     (output / "strace-version.txt").write_text(subprocess.check_output(["strace", "--version"], text=True))
@@ -100,12 +100,12 @@ def run(workspace):
                         ignore=shutil.ignore_patterns("bin", "obj"))
         with (output / f"{name}-build.log").open("w") as log:
             subprocess.run(["dotnet", "--info"], cwd=source, stdout=log, stderr=subprocess.STDOUT, check=True)
-            subprocess.run(["dotnet", "build", str(DRIVER), "-c", "Release", "-f", "net10.0"],
+            subprocess.run(["dotnet", "build", str(DRIVER), "-c", "Release", "-f", "net11.0"],
                            cwd=source, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=240)
     manifests = []
     for phase in ("baseline-a", "candidate", "baseline-b"):
         source = sources["candidate" if phase == "candidate" else "baseline"]
-        dll = source / DRIVER / "bin/Release/net10.0/Respire.CommandRetrySynchronization.dll"
+        dll = source / DRIVER / "bin/Release/net11.0/Respire.CommandRetrySynchronization.dll"
         for policy in POLICIES:
             directory = output / phase / policy
             directory.mkdir(parents=True)

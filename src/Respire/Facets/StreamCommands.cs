@@ -686,6 +686,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
             : AddIdempotentCoreAsync(key, arguments, idempotencyOffset, idempotencyArgumentCount, cancellationToken, observation);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireStreamId> AddRequiredIdempotentCoreAsync(RespireValue key, RespireValue[] arguments,
         int idempotencyOffset, int idempotencyArgumentCount, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => await AddIdempotentCoreAsync(key, arguments, idempotencyOffset, idempotencyArgumentCount, cancellationToken, observation).ConfigureAwait(false)
@@ -693,6 +694,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
 
     // The key and arguments are snapshots, so the fallback can rebuild ordinary XADD after an await.
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireStreamId?> AddIdempotentCoreAsync(RespireValue key, RespireValue[] arguments,
         int idempotencyOffset, int idempotencyArgumentCount, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
@@ -723,6 +725,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<string?> AddWithinDeadlineAsync(Cmd1N command, CommandDeadline deadline,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
@@ -800,6 +803,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
             : AddOptionalCoreAsync(command, cancellationToken);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireStreamId> AddRequiredCoreAsync(Cmd1N command, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -807,6 +811,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireStreamId?> AddOptionalCoreAsync(Cmd1N command, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -883,6 +888,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     public async ValueTask<bool> CreateGroupAsync(
         RespireKey key, string group, RespireStreamId? startAt = null, bool createStream = true,
         CancellationToken cancellationToken = default)
@@ -927,6 +933,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
             static (s, observation) => s.Owner.CreateGroupUnhookedAsync(s.Command, s.Token, observation));
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<bool> CreateGroupUnhookedAsync<TCommand>(TCommand command, CancellationToken token,
         RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
     {

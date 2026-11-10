@@ -1,6 +1,6 @@
 # Respire.Templates
 
-Standalone .NET 10 project templates using Respire and Redis.
+Standalone .NET 11 project templates using Respire and Redis.
 
 Choose the exact template version from its
 [GitHub release](https://github.com/thomhurst/Respire/releases), including the
@@ -17,7 +17,7 @@ dotnet run
 
 The `respire-api` template includes a cache-aside endpoint, shared DI client,
 readiness check, and optional OpenTelemetry OTLP export. See the generated README
-for endpoints, configuration, and cleanup. Requires the .NET 10 SDK and Docker
+for endpoints, configuration, and cleanup. Requires the .NET 11 SDK and Docker
 (or an existing Redis 7+ server).
 
 For an Aspire AppHost and minimal API with Redis, health checks and dashboard telemetry:
@@ -37,7 +37,7 @@ cd MyRedisApp.AppHost
 aspire start --non-interactive
 ```
 
-The `respire-aspire` starter requires .NET SDK 10.0.401+, Aspire CLI 13.6+, a running
+The `respire-aspire` starter requires .NET SDK 11.0.100+, Aspire CLI 13.6+, a running
 Docker-compatible runtime, and a trusted development certificate
 (`dotnet dev-certs https --trust`). Aspire supplies Redis credentials and dynamic
 endpoints. Use `aspire describe --non-interactive` to find the API URL and
