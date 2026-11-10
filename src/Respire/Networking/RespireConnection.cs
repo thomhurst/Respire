@@ -2940,6 +2940,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
     }
 
+    // This method is invoked once per connection. Under runtime async it only leaves unoptimized
+    // Tier0 code through on-stack replacement, and Tier0 code boxes the struct awaiters below on
+    // every reply (40 B). A state machine's MoveNext is re-entered per reply and tiers up normally.
+    [RuntimeAsyncMethodGeneration(false)]
     private async Task ReceiveLoopAsync()
     {
         // Leave the constructor's thread before doing any work, as Task.Run did.

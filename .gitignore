@@ -49,3 +49,6 @@ __pycache__/
 
 # Local SDK installs (dotnet-install.ps1 -InstallDir .dotnet)
 /.dotnet/
+
+# BenchmarkDotNet 0.16 generates its harness project beside the benchmark project.
+.bdn/
