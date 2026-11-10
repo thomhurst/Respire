@@ -411,7 +411,13 @@ internal static class PrimitiveCodec
     // Earlier runtimes rounded to 15 significant digits; go through that text to keep one result.
     private static decimal DoubleToDecimal(double value)
     {
-        // stackalloc-audit[6ace915e29ae171f]: init: TryFormat writes the first written bytes; read: only
+        // Rounding to 15 digits could pull a value at or beyond 2^96 back inside the decimal range.
+        if (Math.Abs(value) >= 79228162514264337593543950336d)
+        {
+            throw InvalidValue<decimal>();
+        }
+
+        // stackalloc-audit[fac1cdf44afd8c1a]: init: TryFormat writes the first written bytes; read: only
         // text[..written]; failure: a failed format or parse throws invalid data without reading the buffer.
         Span<byte> text = stackalloc byte[32];
         if (value.TryFormat(text, out var written, "G15", CultureInfo.InvariantCulture)

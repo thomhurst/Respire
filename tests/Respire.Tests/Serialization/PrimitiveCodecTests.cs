@@ -20,8 +20,15 @@ public class PrimitiveCodecTests
         await Assert.That(parsed).IsEqualTo(0.1M);
         await Assert.That(PrimitiveCodec.TryDeserialize<decimal>(in third, out parsed)).IsTrue();
         await Assert.That(parsed).IsEqualTo(0.333333333333333M);
-        var overflow = RespValue.Double(1e100);
-        await Assert.That(() => PrimitiveCodec.TryDeserialize<decimal>(in overflow, out _)).Throws<FormatException>();
+        // 2^96 is one past decimal.MaxValue; rounding to 15 digits must not bring it back in range.
+        foreach (var beyond in new[] { 1e100, 79228162514264337593543950336d, -79228162514264337593543950336d })
+        {
+            var overflow = RespValue.Double(beyond);
+            await Assert.That(() => PrimitiveCodec.TryDeserialize<decimal>(in overflow, out _)).Throws<FormatException>();
+        }
+        var largest = RespValue.Double(Math.BitDecrement(79228162514264337593543950336d));
+        await Assert.That(PrimitiveCodec.TryDeserialize<decimal>(in largest, out parsed)).IsTrue();
+        await Assert.That(parsed).IsEqualTo(79228162514264300000000000000M);
     }
 
     [Test]
