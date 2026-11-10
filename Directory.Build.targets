@@ -1,8 +1,16 @@
 <Project>
   <!-- Runtime Async is opt-in on .NET 11: the compiler emits runtime-async methods instead of
        state machines. Set here rather than in the props file so single-target projects, which
-       set TargetFramework in the project body, are covered too. -->
-  <PropertyGroup Condition="'$(TargetFramework)' != '' And $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net11.0'))">
+       set TargetFramework in the project body, are covered too.
+       Benchmark projects and the harness BenchmarkDotNet generates beside them stay on state
+       machines: the harness loop alternates between two awaits, which under runtime async
+       allocates a continuation per operation and would be reported as the library's allocation.
+       Pass -p:RespireRuntimeAsync=false to turn it off everywhere. -->
+  <PropertyGroup Condition="'$(RespireRuntimeAsync)' == ''">
+    <RespireRuntimeAsync>true</RespireRuntimeAsync>
+    <RespireRuntimeAsync Condition="$(MSBuildProjectDirectory.StartsWith('$(MSBuildThisFileDirectory)benchmarks'))">false</RespireRuntimeAsync>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RespireRuntimeAsync)' == 'true' And '$(TargetFramework)' != '' And $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net11.0'))">
     <Features>$(Features);runtime-async=on</Features>
   </PropertyGroup>
 
