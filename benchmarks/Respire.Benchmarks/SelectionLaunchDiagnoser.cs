@@ -25,18 +25,24 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
     public BenchmarkDotNet.Diagnosers.RunMode GetRunMode(BenchmarkCase benchmarkCase)
         => BenchmarkDotNet.Diagnosers.RunMode.None;
 
-    public void Handle(HostSignal signal, DiagnoserActionParameters parameters)
+    public ValueTask HandleAsync(HostSignal signal, DiagnoserActionParameters parameters, CancellationToken cancellationToken)
+    {
+        Handle(signal, parameters);
+        return default;
+    }
+
+    private void Handle(HostSignal signal, DiagnoserActionParameters parameters)
     {
         if (signal == HostSignal.BeforeProcessStart)
         {
             Directory.CreateDirectory(directory);
             _prefix = Path.Combine(Path.GetFullPath(directory), Guid.NewGuid().ToString("N"));
-            var environment = parameters.Process.StartInfo.Environment;
-            // BenchmarkDotNet 0.15.8 sends this signal before Process.Start(). Its
+            var environment = parameters.Process!.StartInfo.Environment;
+            // BenchmarkDotNet sends this signal before Process.Start(). Its
             // later WithAffinity call pins only the main Linux task, after runtime startup.
             if (OperatingSystem.IsLinux() && parameters.BenchmarkCase.Job.Id == "selection-pinned")
             {
-                var startInfo = parameters.Process.StartInfo;
+                var startInfo = parameters.Process!.StartInfo;
                 var mask = parameters.BenchmarkCase.Job.Environment.Affinity.ToInt64();
                 if (mask <= 0 || (mask & (mask - 1)) != 0)
                     throw new ArgumentException("Selection affinity must contain exactly one CPU.");
@@ -64,7 +70,7 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
 
         if (signal == HostSignal.AfterProcessStart)
         {
-            _pid = parameters.Process.Id;
+            _pid = parameters.Process!.Id;
             return;
         }
         if (signal == HostSignal.AfterProcessExit)
@@ -87,7 +93,7 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
         }
 
         if (signal is not (HostSignal.BeforeActualRun or HostSignal.AfterActualRun)) return;
-        var process = parameters.Process;
+        var process = parameters.Process!;
         process.Refresh();
         var files = new Dictionary<string, string?>();
         if (OperatingSystem.IsLinux())
@@ -149,5 +155,6 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
 
     public IEnumerable<Metric> ProcessResults(DiagnoserResults results) => [];
     public void DisplayResults(ILogger logger) { }
-    public IEnumerable<ValidationError> Validate(ValidationParameters validationParameters) => [];
+    public IAsyncEnumerable<ValidationError> ValidateAsync(ValidationParameters validationParameters)
+        => AsyncEnumerable.Empty<ValidationError>();
 }

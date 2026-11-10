@@ -23,8 +23,8 @@ MAX_CV = 0.10
 # allocate fresh objects and remain subject to the original relative criteria.
 SMALL_METHODS = {'HashKey', 'JsonKey', 'HashValidate', 'JsonValidate'}
 ABSOLUTE_FLOOR_NS = 1.0
-# BenchmarkDotNet 0.15.8 serializes LegacyConfidenceLevel.L999 as enum value 12.
-# See src/BenchmarkDotNet/Mathematics/LegacyConfidenceInterval.cs in that tag.
+# BenchmarkDotNet serializes LegacyConfidenceLevel.L999 as enum value 12 (checked on
+# 0.15.8 and 0.16.0-preview.2). See src/BenchmarkDotNet/Mathematics/LegacyConfidenceInterval.cs.
 CONFIDENCE_LEVEL_999 = 12
 
 

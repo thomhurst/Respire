@@ -276,7 +276,7 @@ jobs:
           path: ${{ runner.temp }}/agent-guard-vstest
           if-no-files-found: ignore
           retention-days: 7
-      - name: Resolve a supporting SDK through roll-forward from the .NET 11 pin
+      - name: Resolve a supporting SDK through roll-forward from a .NET 10 pin
         shell: pwsh
         run: ./scripts/Test-AgentDotNetMtp.ps1 -RollForwardAcrossMajor -DiagnosticsDirectory '${{ runner.temp }}/agent-guard-mtp'
       - name: Retain MTP diagnostics

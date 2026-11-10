@@ -40,6 +40,8 @@ try {
         $configuration.sdk.rollForward = 'disable'
     }
     if ($RollForwardAcrossMajor) {
+        # Start from an SDK without runner overrides so resolution has to cross to one that has them.
+        $configuration.sdk.version = '10.0.100'
         $configuration.sdk.rollForward = 'latestMajor'
         $configuration.sdk | Add-Member -NotePropertyName allowPrerelease -NotePropertyValue $true -Force
     }

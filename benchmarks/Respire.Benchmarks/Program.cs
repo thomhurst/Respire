@@ -55,10 +55,8 @@ if (Environment.GetEnvironmentVariable("RESPIRE_SELECTION_EVIDENCE") is { Length
 {
     var toolchain = Environment.Version.Major switch
     {
-        10 => BenchmarkDotNet.Toolchains.CsProj.CsProjCoreToolchain.NetCoreApp10_0,
-        // BenchmarkDotNet 0.15.8 has no built-in .NET 11 toolchain.
-        11 => BenchmarkDotNet.Toolchains.CsProj.CsProjCoreToolchain.From(
-            new BenchmarkDotNet.Toolchains.DotNetCli.NetCoreAppSettings("net11.0", null, ".NET 11.0")),
+        10 => BenchmarkDotNet.Toolchains.NetCoreApp.CsProjCoreToolchain.NetCoreApp10_0,
+        11 => BenchmarkDotNet.Toolchains.NetCoreApp.CsProjCoreToolchain.NetCoreApp11_0,
         _ => throw new ArgumentException("Selection evidence supports net10.0/net11.0 only."),
     };
     config = config.AddJob(Job.Default.WithToolchain(
