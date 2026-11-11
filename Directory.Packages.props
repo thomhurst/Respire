@@ -82,7 +82,7 @@
     <PackageVersion Include="Microsoft.Orleans.Persistence.Redis" Version="10.4.2" />
     <PackageVersion Include="Microsoft.Orleans.Reminders.Redis" Version="10.4.2" />
     <PackageVersion Include="Moq" Version="4.21.0" />
-    <PackageVersion Include="System.IO.Hashing" Version="10.0.13" />
+    <PackageVersion Include="System.IO.Hashing" Version="11.0.0" />
     <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="11.0.0" />
     <PackageVersion Include="System.Threading.RateLimiting" Version="11.0.0" />
     <PackageVersion Include="Testcontainers" Version="4.16.0" />
