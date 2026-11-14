@@ -1,8 +1,6 @@
 using System.Reflection;
-using ModularPipelines.Context;
-using ModularPipelines.Logging;
-using ModularPipelines.Models;
-using ModularPipelines.Modules;
+using Microsoft.Extensions.Logging;
+using ModularPipelines;
 using Moq;
 using Respire.Pipeline.Modules;
 using Respire.Pipeline.Modules.LocalMachine;
@@ -103,7 +101,7 @@ public class LocalPackageUploadTests
         var context = new Mock<IModuleContext>(MockBehavior.Strict);
         context.Setup(x => x.GetModule<PackagePathsParserModule>()).Returns(parser);
         context.Setup(x => x.GetModule<CreateLocalNugetFolderModule>()).Returns(folder);
-        context.SetupGet(x => x.Logger).Returns(Mock.Of<IModuleLogger>());
+        context.SetupGet(x => x.Logger).Returns(Mock.Of<ILogger>());
         return new TestLocalPackageUploadModule().RunAsync(context.Object);
     }
 
@@ -111,15 +109,15 @@ public class LocalPackageUploadTests
     {
         // The framework exposes awaitable modules but keeps their completion source internal.
         // Supply dependency results without running packing or touching the user's NuGet configuration.
-        var completion = (TaskCompletionSource<ModuleResult<T?>>)typeof(Module<T>)
+        var completion = (TaskCompletionSource<ModuleResult<T>>)typeof(Module<T>)
             .GetProperty("CompletionSource", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(module)!;
-        completion.SetResult(new ModuleResult<T?>.Success(value)
+        completion.SetResult(new ModuleResult<T>.Success(value)
         {
-            ModuleName = module.GetType().Name,
-            ModuleDuration = TimeSpan.Zero,
-            ModuleStart = DateTimeOffset.UnixEpoch,
-            ModuleEnd = DateTimeOffset.UnixEpoch,
-            ModuleStatus = ModularPipelines.Enums.Status.Successful,
+            Name = module.GetType().Name,
+            Duration = TimeSpan.Zero,
+            StartTime = DateTimeOffset.UnixEpoch,
+            EndTime = DateTimeOffset.UnixEpoch,
+            Status = ModuleStatus.Succeeded,
         });
     }
 }
