@@ -1,14 +1,9 @@
 using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using ModularPipelines.Attributes;
-using ModularPipelines.Configuration;
 using ModularPipelines.Context;
 using ModularPipelines.GitHub;
-using ModularPipelines.GitHub.Extensions;
 using ModularPipelines.GitHub.Options;
-using ModularPipelines.Models;
-using ModularPipelines.Modules;
 using Octokit;
 using Respire.Pipeline.Settings;
 
@@ -30,8 +25,8 @@ public class CreateGitHubReleaseModule : Module<string>
         _gitHubSettings = gitHubSettings;
     }
 
-    protected override ModuleConfiguration Configure() => ModuleConfiguration.Create()
-        .WithSkipWhen(async context =>
+    protected override void Configure(ModuleConfigurationBuilder module) => module
+        .WithSkipWhen(async (context, _) =>
         {
             if (context.GetModuleIfRegistered<UploadPackagesToNugetModule>() is not { } uploadToNuGetModule)
             {
@@ -39,7 +34,7 @@ public class CreateGitHubReleaseModule : Module<string>
             }
 
             var result = await uploadToNuGetModule;
-            if (result.IsSkipped)
+            if (result.SkipDecisionOrDefault is not null)
             {
                 return SkipDecision.Skip("UploadPackagesToNugetModule was skipped");
             }
@@ -47,12 +42,11 @@ public class CreateGitHubReleaseModule : Module<string>
             return result.ValueOrDefault is { Length: > 0 }
                 ? SkipDecision.DoNotSkip
                 : SkipDecision.Skip("No packages were uploaded to NuGet");
-        })
-        .Build();
+        });
 
-    protected override async Task<string?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+    protected override async Task<string> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
-        var gitHub = context.GitHub();
+        var gitHub = context.Tools.GitHub;
         if (string.IsNullOrWhiteSpace(_gitHubOptions.Value.AccessToken)
             && string.IsNullOrWhiteSpace(gitHub.EnvironmentVariables.Token))
         {

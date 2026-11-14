@@ -1,7 +1,7 @@
 using System.IO.Compression;
 using System.Reflection;
 using System.Xml.Linq;
-using PipelineAttributes = ModularPipelines.Attributes;
+using PipelineAttributes = ModularPipelines;
 using Respire.Pipeline.Modules;
 using Respire.Pipeline.Modules.LocalMachine;
 using TUnit.Assertions;

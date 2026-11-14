@@ -1,11 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using ModularPipelines.Attributes;
 using ModularPipelines.Context;
-using ModularPipelines.DotNet.Extensions;
 using ModularPipelines.DotNet.Options;
-using ModularPipelines.Models;
-using ModularPipelines.Modules;
 using Respire.Pipeline.Settings;
 
 namespace Respire.Pipeline.Modules;
@@ -21,7 +17,7 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
         _nugetSettings = nugetSettings;
     }
 
-    protected override async Task<CommandResult[]?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+    protected override async Task<CommandResult[]> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         var packageFiles = await context.GetModule<PackagePathsParserModule>();
         var packages = packageFiles.ValueOrDefault ?? Array.Empty<FileInfo>();
@@ -46,9 +42,8 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
         {
             context.Logger.LogInformation("Uploading {PackageName}...", packageFile.Name);
             
-            var result = await context.DotNet().Nuget.Push(new DotNetNugetPushOptions
+            var result = await context.Tools.DotNet.NuGet.PushAsync(new DotNetNuGetPushOptions([packageFile.FullName])
             {
-                Path = packageFile.FullName,
                 Source = "https://api.nuget.org/v3/index.json",
                 ApiKey = _nugetSettings.Value.ApiKey,
                 SkipDuplicate = true

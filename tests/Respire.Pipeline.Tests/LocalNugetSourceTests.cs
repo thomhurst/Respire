@@ -1,5 +1,5 @@
 using System.Xml.Linq;
-using PipelineAttributes = ModularPipelines.Attributes;
+using PipelineAttributes = ModularPipelines;
 using Respire.Pipeline.Modules.LocalMachine;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
