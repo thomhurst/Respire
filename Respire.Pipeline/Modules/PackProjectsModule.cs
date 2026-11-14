@@ -1,11 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using ModularPipelines.Attributes;
 using ModularPipelines.Context;
-using ModularPipelines.DotNet.Extensions;
 using ModularPipelines.DotNet.Options;
-using ModularPipelines.Models;
-using ModularPipelines.Modules;
 
 namespace Respire.Pipeline.Modules;
 
@@ -19,7 +15,7 @@ public class PackProjectsModule : Module<CommandResult[]>
         _configuration = configuration;
     }
 
-    protected override async Task<CommandResult[]?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+    protected override async Task<CommandResult[]> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Packing NuGet packages...");
 
@@ -34,7 +30,7 @@ public class PackProjectsModule : Module<CommandResult[]>
         
         foreach (var project in packageProjects)
         {
-            var result = await context.DotNet().Pack(new DotNetPackOptions
+            var result = await context.Tools.DotNet.PackAsync(new DotNetPackOptions
             {
                 ProjectSolution = project,
                 Configuration = "Release",

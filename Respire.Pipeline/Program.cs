@@ -2,8 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModularPipelines;
-using ModularPipelines.Extensions;
-using ModularPipelines.GitHub.Options;
+using ModularPipelines.GitHub;
 using Respire.Pipeline.Modules;
 using Respire.Pipeline.Modules.LocalMachine;
 using Respire.Pipeline.Settings;
@@ -34,13 +33,13 @@ public class Program
 
         if (builder.Environment.IsDevelopment())
         {
-            builder.Services.AddModule<CreateLocalNugetFolderModule>()
+            builder.AddModule<CreateLocalNugetFolderModule>()
                 .AddModule<AddLocalNugetSourceModule>()
                 .AddModule<UploadPackagesToLocalNuGetModule>();
         }
         else
         {
-            builder.Services.AddModule<UploadPackagesToNugetModule>()
+            builder.AddModule<UploadPackagesToNugetModule>()
                 .AddModule<CreateGitHubReleaseModule>();
         }
 
@@ -52,6 +51,6 @@ public class Program
             .AddModule<VerifyCoreInternalsDependenciesModule>()
             .AddModule<PackageFilesRemovalModule>()
             .AddModule<PackagePathsParserModule>()
-            .ExecutePipelineAsync();
+            .RunAsync();
     }
 }

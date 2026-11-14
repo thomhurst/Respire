@@ -15,4 +15,9 @@
     <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- ModularPipelines' global using collides with TUnit's NotInParallel. -->
+    <Using Remove="ModularPipelines" />
+  </ItemGroup>
+
 </Project>

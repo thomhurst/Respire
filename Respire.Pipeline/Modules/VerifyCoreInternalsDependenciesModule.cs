@@ -1,15 +1,13 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
-using ModularPipelines.Attributes;
 using ModularPipelines.Context;
-using ModularPipelines.Modules;
 
 namespace Respire.Pipeline.Modules;
 
 [DependsOn<PackProjectsModule>]
 public class VerifyCoreInternalsDependenciesModule : Module<string>
 {
-    protected override async Task<string?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+    protected override async Task<string> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         var output = await VerifyAsync(Path.GetFullPath(".."), Path.GetFullPath("../artifacts/packages"),
             NugetVersionGeneratorModule.GetGeneratedVersion(), cancellationToken);

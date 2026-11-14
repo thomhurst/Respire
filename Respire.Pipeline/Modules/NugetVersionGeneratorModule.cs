@@ -3,8 +3,6 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ModularPipelines.Context;
-using ModularPipelines.Models;
-using ModularPipelines.Modules;
 using Respire.Pipeline.Settings;
 
 namespace Respire.Pipeline.Modules;
@@ -25,7 +23,7 @@ public class NugetVersionGeneratorModule : Module<string>
         _settings = settings;
     }
 
-    protected override async Task<string?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+    protected override async Task<string> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Generating version number...");
 

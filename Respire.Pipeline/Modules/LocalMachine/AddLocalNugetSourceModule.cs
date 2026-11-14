@@ -1,14 +1,12 @@
 using Microsoft.Extensions.Logging;
-using ModularPipelines.Attributes;
 using ModularPipelines.Context;
-using ModularPipelines.Modules;
 
 namespace Respire.Pipeline.Modules.LocalMachine;
 
 [DependsOn<CreateLocalNugetFolderModule>]
 public class AddLocalNugetSourceModule : Module<string>
 {
-    protected override async Task<string?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+    protected override async Task<string> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         var folder = await context.GetModule<CreateLocalNugetFolderModule>();
         var directory = folder.ValueOrDefault
