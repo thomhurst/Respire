@@ -98,7 +98,7 @@ jobs:
 
       - name: Run Claude Code Review
         id: claude-review
-        uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1
+        uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1
         env:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
           GH_REPO: ${{ github.repository }}
@@ -143,4 +143,4 @@ jobs:
               no suggestions, and every earlier finding is addressed), otherwise
               `<!-- REVIEW_VERDICT: BLOCKING -->`. The merge gate reads this marker.
           claude_args: |
-            --add-dir pr-head --allowedTools "Read,Glob,Grep,Bash(.github/scripts/pr-review-comment.sh:*),Bash(gh pr view:*),Bash(gh pr diff:*)"
+            --permission-mode default --add-dir pr-head --allowedTools "Read,Glob,Grep,Bash(.github/scripts/pr-review-comment.sh:*),Bash(gh pr view:*),Bash(gh pr diff:*)"
