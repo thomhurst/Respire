@@ -9,7 +9,7 @@ The official Orleans Redis providers run on Respire unchanged. Hand them the `Re
 adapter instead of a StackExchange.Redis multiplexer, and you keep the official providers, their
 configuration, and their Redis storage format. No separate Respire-specific provider is needed.
 
-Supported providers, tested at version **10.4.2**:
+Supported providers, tested at version **10.2.2**:
 
 | Package | Feature |
 | --- | --- |
@@ -96,7 +96,7 @@ Combining Cluster and Sentinel in one adapter is not supported.
 
 ## Limitations
 
-- Tested with Orleans 10.4.2. Check other versions before upgrading.
+- Tested with Orleans 10.2.2. Check other versions before upgrading.
 - Grain directory, streaming, and journaling providers are not covered.
 - Membership transactions are never replayed after Redis may have accepted them. If a topology change
   races a transaction, that membership operation fails rather than risk a duplicate write.
