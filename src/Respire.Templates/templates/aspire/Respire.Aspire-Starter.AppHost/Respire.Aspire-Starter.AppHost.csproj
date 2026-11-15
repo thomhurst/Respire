@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Maintainers: keep SDK and hosting packages aligned with Directory.Packages.props. -->
-  <Sdk Name="Aspire.AppHost.Sdk" Version="13.6.2" />
+  <Sdk Name="Aspire.AppHost.Sdk" Version="13.6.5" />
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net11.0</TargetFramework>
@@ -10,9 +10,9 @@
     <AspireUseCliBundle>true</AspireUseCliBundle>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.2" />
-    <PackageReference Include="Aspire.Hosting.Redis" Version="13.6.2" />
-    <!-- Override Aspire.Hosting 13.6.1's transitive 2.5.302 with the patched version used by this repository.
+    <PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.5" />
+    <PackageReference Include="Aspire.Hosting.Redis" Version="13.6.5" />
+    <!-- Override Aspire.Hosting's transitive 2.5.302 with the patched version used by this repository.
          Verify-Templates.ps1 builds and runs the generated AppHost to check compatibility. -->
     <PackageReference Include="MessagePack" Version="3.1.12" />
     <!-- A stable metadata name also supports project names containing dots or hyphens. -->

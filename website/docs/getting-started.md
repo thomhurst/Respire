@@ -200,7 +200,7 @@ aspire describe --non-interactive
 
 You need .NET SDK **10.0.401 or later**, [Aspire CLI](https://aspire.dev/get-started/install-cli/)
 **13.6 or later**, a running Docker-compatible runtime, and a trusted development
-certificate (`dotnet dev-certs https --trust`). The starter uses Aspire 13.6.1
+certificate (`dotnet dev-certs https --trust`). The starter uses Aspire 13.6.5
 hosting packages and Redis 8.10. Add `--isolated` to `aspire start` when running
 multiple copies.
 
