@@ -28,6 +28,11 @@ internal static class ContainerPortCollision
             // Moby's port allocator and Linux bindTCPOrUDP error formats.
             if (message.EndsWith($"Bind for {address} failed: port is already allocated", StringComparison.Ordinal))
                 return true;
+            // Some engines report the allocator's wildcard address even for a loopback binding.
+            // Accept it only with the full networking prefix, so a bare 0.0.0.0 message stays non-retryable.
+            if (networkingFailure
+                && message.EndsWith($"): Bind for 0.0.0.0:{port.ToString(CultureInfo.InvariantCulture)} failed: port is already allocated", StringComparison.Ordinal))
+                return true;
             if (message.Contains($"failed to bind host port for {address}:", StringComparison.Ordinal)
                 && message.EndsWith("/tcp: address already in use", StringComparison.Ordinal))
                 return true;

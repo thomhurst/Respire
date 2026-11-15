@@ -714,13 +714,20 @@ public class SemaphoreWireTests
             Connections = 1,
             CommandTimeout = null,
         });
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        using var cancellation = new CancellationTokenSource();
         var semaphore = new RespireSemaphore(client, "{retry}:bounded", capacity: 1);
 
-        await Assert.That(async () => await semaphore.TryAcquireAsync(cancellationToken: cancellation.Token)
-                .AsTask().WaitAsync(TimeSpan.FromSeconds(3)))
+        var acquire = semaphore.TryAcquireAsync(cancellationToken: cancellation.Token).AsTask();
+        // Cancel only once the acquisition is on the wire. A fixed timer can fire before a slow
+        // runner connects, and then nothing was sent and there is no uncertain acquisition to clean up.
+        // Wait for the EVALSHA itself: connection preflight (CLIENT ID, the CLIENT KILL probe) comes first.
+        using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
+            while (EvalCommands(server).Length < 1) await Task.Delay(10, sent.Token);
+        cancellation.Cancel();
+
+        await Assert.That(async () => await acquire.WaitAsync(TimeSpan.FromSeconds(3)))
             .Throws<OperationCanceledException>();
-        await Assert.That(server.CommandsSeen).IsGreaterThanOrEqualTo(2);
+        await Assert.That(EvalCommands(server).Length).IsGreaterThanOrEqualTo(2);
     }
 
     [Test]
