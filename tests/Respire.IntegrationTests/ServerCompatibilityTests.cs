@@ -100,7 +100,7 @@ public sealed class CompatibleServer : IAsyncInitializer, IAsyncDisposable
         var (image, command) = Name switch
         {
             "garnet" => (GarnetImage, new[]
-                { "--lua", "--memory", "128m", "--page", "4m", "--segment", "16m", "--index", "8m" }
+                { "--lua", "--lua-transaction-mode", "--memory", "128m", "--page", "4m", "--segment", "16m", "--index", "8m" }
                 .Concat(cluster ? ["--cluster"] : Array.Empty<string>()).ToArray()),
             "dragonfly" => ("docker.dragonflydb.io/dragonflydb/dragonfly:v2.0.0", new[]
                 { "--proactor_threads=1", "--maxmemory=256mb", "--logtostderr" }
