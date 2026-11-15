@@ -143,4 +143,4 @@ jobs:
               no suggestions, and every earlier finding is addressed), otherwise
               `<!-- REVIEW_VERDICT: BLOCKING -->`. The merge gate reads this marker.
           claude_args: |
-            --add-dir pr-head --allowedTools "Read,Glob,Grep,Bash(.github/scripts/pr-review-comment.sh:*),Bash(gh pr view:*),Bash(gh pr diff:*)"
+            --permission-mode default --add-dir pr-head --allowedTools "Read,Glob,Grep,Bash(.github/scripts/pr-review-comment.sh:*),Bash(gh pr view:*),Bash(gh pr diff:*)"

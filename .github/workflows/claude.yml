@@ -80,4 +80,6 @@ jobs:
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
           # claude_args: '--allowed-tools Bash(gh pr *)'
+          # Keep the earlier acceptEdits mode; newer action versions default to auto.
+          claude_args: --permission-mode acceptEdits
 
