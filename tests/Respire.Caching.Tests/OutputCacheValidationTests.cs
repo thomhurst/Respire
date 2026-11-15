@@ -23,14 +23,14 @@ public class OutputCacheValidationTests
             services.AddRespireOutputCache(options =>
             { options.InstanceName = prefix; options.TaggingMode = RespireOutputCacheTaggingMode.GenerationAware; });
             await using var provider = services.BuildServiceProvider();
-            await Assert.That(() => provider.GetRequiredService<IStartupValidator>().Validate()).ThrowsExactly<OptionsValidationException>();
+            await Assert.That(async () => await provider.GetRequiredService<IAsyncStartupValidator>().ValidateAsync(CancellationToken.None)).ThrowsExactly<OptionsValidationException>();
         }
         await Assert.That(() => new RespireOutputCacheStore(client, new() { TaggingMode = (RespireOutputCacheTaggingMode)999 }))
             .ThrowsExactly<ArgumentOutOfRangeException>();
         var invalidModeServices = new ServiceCollection();
         invalidModeServices.AddRespireOutputCache(options => options.TaggingMode = (RespireOutputCacheTaggingMode)999);
         await using var invalidModeProvider = invalidModeServices.BuildServiceProvider();
-        await Assert.That(() => invalidModeProvider.GetRequiredService<IStartupValidator>().Validate()).ThrowsExactly<OptionsValidationException>();
+        await Assert.That(async () => await invalidModeProvider.GetRequiredService<IAsyncStartupValidator>().ValidateAsync(CancellationToken.None)).ThrowsExactly<OptionsValidationException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
     }
 
@@ -121,7 +121,7 @@ public class OutputCacheValidationTests
         var services = new ServiceCollection();
         services.AddRespireOutputCache(options => options.CleanupInterval = TimeSpan.FromMilliseconds(milliseconds));
         await using var provider = services.BuildServiceProvider();
-        await Assert.That(() => provider.GetRequiredService<IStartupValidator>().Validate())
+        await Assert.That(async () => await provider.GetRequiredService<IAsyncStartupValidator>().ValidateAsync(CancellationToken.None))
             .ThrowsExactly<OptionsValidationException>();
     }
 
@@ -131,7 +131,7 @@ public class OutputCacheValidationTests
         var services = new ServiceCollection();
         services.AddRespireOutputCache(options => options.TimeProvider = null!);
         await using var provider = services.BuildServiceProvider();
-        await Assert.That(() => provider.GetRequiredService<IStartupValidator>().Validate())
+        await Assert.That(async () => await provider.GetRequiredService<IAsyncStartupValidator>().ValidateAsync(CancellationToken.None))
             .ThrowsExactly<OptionsValidationException>();
     }
 
