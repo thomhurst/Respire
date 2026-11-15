@@ -28,7 +28,7 @@ gh workflow run benchmark-valkey-glide.yml -f job=medium -f filter='*'
 ```
 
 To measure a later push, remove the label and add it again. Results go to the
-job summary. The `valkey-glide-benchmarks-net10.0` artifact holds the
+job summary. The `valkey-glide-benchmarks-net11.0` artifact holds the
 BenchmarkDotNet reports, `project.assets.json` with resolved dependency
 versions, and `rig.txt` with the commit, runner, CPU and server identity.
 
@@ -38,7 +38,7 @@ Without `REDIS_HOST`, setup starts a throwaway `valkey/valkey:9.0` container
 with Testcontainers, so Docker must be running:
 
 ```sh
-dotnet run -c Release -f net10.0 --project benchmarks/Respire.GlideComparisonBenchmarks -- --filter '*' --job short
+dotnet run -c Release -f net11.0 --project benchmarks/Respire.GlideComparisonBenchmarks -- --filter '*' --job short
 ```
 
 Set `REDIS_HOST` and `REDIS_PORT` to use an existing server instead. Use an

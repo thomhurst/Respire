@@ -39,7 +39,7 @@ concurrency:
 jobs:
   glide-comparison:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-valkey-glide-benchmarks'
-    name: Benchmark (net10.0)
+    name: Benchmark (net11.0)
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -74,7 +74,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
-            10.0.x
+            11.0.x
 
       # Started after the mirror is configured, so the pull goes through mirror.gcr.io.
       - name: Start Valkey
@@ -91,7 +91,7 @@ jobs:
           exit 1
 
       - name: Build benchmarks
-        run: dotnet build benchmarks/Respire.GlideComparisonBenchmarks -c Release -f net10.0
+        run: dotnet build benchmarks/Respire.GlideComparisonBenchmarks -c Release -f net11.0
 
       - name: Record dependency and rig metadata
         env:
@@ -125,7 +125,7 @@ jobs:
           BENCH_FILTER: ${{ inputs.filter || '*' }}
           BENCH_JOB: ${{ inputs.job || 'short' }}
         run: |
-          dotnet run -c Release -f net10.0 --no-build -- \
+          dotnet run -c Release -f net11.0 --no-build -- \
             --filter "$BENCH_FILTER" \
             --job "$BENCH_JOB" \
             --launchCount 2 \
@@ -138,7 +138,7 @@ jobs:
         env:
           BENCH_JOB: ${{ inputs.job || 'short' }}
         run: |
-          echo "## Respire vs Valkey GLIDE (net10.0, $BENCH_JOB job)" >> $GITHUB_STEP_SUMMARY
+          echo "## Respire vs Valkey GLIDE (net11.0, $BENCH_JOB job)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Baseline is Valkey GLIDE. A Ratio below 1.00 means Respire is faster." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -163,6 +163,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: valkey-glide-benchmarks-net10.0
+          name: valkey-glide-benchmarks-net11.0
           path: benchmarks/Respire.GlideComparisonBenchmarks/BenchmarkDotNet.Artifacts/
           retention-days: 90
