@@ -1,7 +1,6 @@
 using System.IO.Compression;
 using System.Reflection;
 using System.Xml.Linq;
-using PipelineAttributes = ModularPipelines;
 using Respire.Pipeline.Modules;
 using Respire.Pipeline.Modules.LocalMachine;
 using TUnit.Assertions;
@@ -16,11 +15,11 @@ public class CoreInternalsValidationTests
     public async Task UploadsRequireSuccessfulValidationAfterPacking()
     {
         await Assert.That(typeof(UploadPackagesToNugetModule)
-            .IsDefined(typeof(PipelineAttributes.DependsOnAttribute<VerifyCoreInternalsDependenciesModule>))).IsTrue();
+            .IsDefined(typeof(ModularPipelines.DependsOnAttribute<VerifyCoreInternalsDependenciesModule>))).IsTrue();
         await Assert.That(typeof(UploadPackagesToLocalNuGetModule)
-            .IsDefined(typeof(PipelineAttributes.DependsOnAttribute<VerifyCoreInternalsDependenciesModule>))).IsTrue();
+            .IsDefined(typeof(ModularPipelines.DependsOnAttribute<VerifyCoreInternalsDependenciesModule>))).IsTrue();
         await Assert.That(typeof(VerifyCoreInternalsDependenciesModule)
-            .IsDefined(typeof(PipelineAttributes.DependsOnAttribute<PackProjectsModule>))).IsTrue();
+            .IsDefined(typeof(ModularPipelines.DependsOnAttribute<PackProjectsModule>))).IsTrue();
     }
 
     [Test]

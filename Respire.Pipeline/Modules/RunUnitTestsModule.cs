@@ -17,7 +17,7 @@ public class RunUnitTestsModule : Module<CommandResult[]>
         _configuration = configuration;
     }
 
-    // Preserve ModularPipelines 3.2.8's 30-minute default explicitly so the diagnostic
+    // Set the 30-minute ModularPipelines default explicitly so the diagnostic
     // threshold can be checked against the deadline actually supplied to the engine.
     protected override void Configure(ModuleConfigurationBuilder module) => module
         .WithTimeout(TimeSpan.FromMinutes(30));

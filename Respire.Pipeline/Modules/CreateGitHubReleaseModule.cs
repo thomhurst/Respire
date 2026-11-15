@@ -33,16 +33,15 @@ public class CreateGitHubReleaseModule : Module<string>
                 return SkipDecision.Skip("UploadPackagesToNugetModule not registered");
             }
 
-            var result = await uploadToNuGetModule;
-            if (result.SkipDecisionOrDefault is not null)
-            {
-                return SkipDecision.Skip("UploadPackagesToNugetModule was skipped");
-            }
-
-            return result.ValueOrDefault is { Length: > 0 }
-                ? SkipDecision.DoNotSkip
-                : SkipDecision.Skip("No packages were uploaded to NuGet");
+            return GetSkipDecision(await uploadToNuGetModule);
         });
+
+    internal static SkipDecision GetSkipDecision(ModuleResult<CommandResult[]> uploadResult) => uploadResult switch
+    {
+        ModuleResult<CommandResult[]>.Skipped => SkipDecision.Skip("UploadPackagesToNugetModule was skipped"),
+        { ValueOrDefault.Length: > 0 } => SkipDecision.DoNotSkip,
+        _ => SkipDecision.Skip("No packages were uploaded to NuGet")
+    };
 
     protected override async Task<string> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
