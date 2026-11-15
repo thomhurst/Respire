@@ -1,5 +1,4 @@
 using System.Xml.Linq;
-using PipelineAttributes = ModularPipelines.Attributes;
 using Respire.Pipeline.Modules.LocalMachine;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -93,7 +92,7 @@ public class LocalNugetSourceTests
             })).Throws<InvalidOperationException>().WithMessageContaining($"dotnet nuget {failingCommand} failed with exit code");
 
         await Assert.That(typeof(UploadPackagesToLocalNuGetModule)
-            .IsDefined(typeof(PipelineAttributes.DependsOnAttribute<AddLocalNugetSourceModule>), inherit: true)).IsTrue();
+            .IsDefined(typeof(ModularPipelines.DependsOnAttribute<AddLocalNugetSourceModule>), inherit: true)).IsTrue();
     }
 
     private static XElement Source(string name, string value)

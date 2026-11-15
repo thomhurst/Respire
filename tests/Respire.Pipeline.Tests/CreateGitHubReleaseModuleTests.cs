@@ -1,3 +1,4 @@
+using ModularPipelines;
 using Respire.Pipeline.Modules;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -60,4 +61,50 @@ public class CreateGitHubReleaseModuleTests
         await Assert.That(releaseBody).Contains("dotnet add package Respire --version 1.2.3");
         await Assert.That(releaseBody).Contains("dotnet add package Respire.Caching --version 1.2.3");
     }
+
+    [Test]
+    public async Task GetSkipDecision_RunsWhenPackagesWereUploaded()
+    {
+        var decision = CreateGitHubReleaseModule.GetSkipDecision(
+            Succeeded([CommandResult.Ok()]));
+
+        await Assert.That(decision.ShouldSkip).IsFalse();
+    }
+
+    [Test]
+    public async Task GetSkipDecision_SkipsWhenUploadWasSkipped()
+    {
+        var decision = CreateGitHubReleaseModule.GetSkipDecision(
+            new ModuleResult<CommandResult[]>.Skipped(SkipDecision.Skip("not a release build"))
+            {
+                Name = nameof(UploadPackagesToNugetModule),
+                Duration = TimeSpan.Zero,
+                StartTime = DateTimeOffset.UnixEpoch,
+                EndTime = DateTimeOffset.UnixEpoch,
+                Status = ModuleStatus.Skipped
+            });
+
+        await Assert.That(decision.ShouldSkip).IsTrue();
+        await Assert.That(decision.Reason).IsEqualTo("UploadPackagesToNugetModule was skipped");
+    }
+
+    [Test]
+    public async Task GetSkipDecision_SkipsWhenNoPackagesWereUploaded()
+    {
+        var decision = CreateGitHubReleaseModule.GetSkipDecision(
+            Succeeded([]));
+
+        await Assert.That(decision.ShouldSkip).IsTrue();
+        await Assert.That(decision.Reason).IsEqualTo("No packages were uploaded to NuGet");
+    }
+
+    private static ModuleResult<CommandResult[]> Succeeded(CommandResult[] value) =>
+        new ModuleResult<CommandResult[]>.Success(value)
+        {
+            Name = nameof(UploadPackagesToNugetModule),
+            Duration = TimeSpan.Zero,
+            StartTime = DateTimeOffset.UnixEpoch,
+            EndTime = DateTimeOffset.UnixEpoch,
+            Status = ModuleStatus.Succeeded
+        };
 }
