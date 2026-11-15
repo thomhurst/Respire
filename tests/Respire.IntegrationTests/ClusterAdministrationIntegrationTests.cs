@@ -48,6 +48,10 @@ public class ClusterAdministrationIntegrationTests
         epoch.Epoch.Should().BeGreaterThan(0);
         await primary.ClusterSaveConfigAsync();
         await Until(async () => (await first.Server.ClusterInfoAsync()).State == "ok");
+        // Replicate only once the replica itself sees the primary as a connected slot owner.
+        await Until(async () => (await second.Server.ClusterNodesAsync()).Any(node => node.Id == firstId
+                && node.Flags.Contains("master") && node.Slots.Length > 0 && node.LinkState == "connected")
+            && (await second.Server.ClusterInfoAsync()).State == "ok");
         await replica.ClusterReplicateAsync(firstId);
         await Until(async () => (await primary.ClusterReplicasAsync(firstId)).Any(node => node.Id == secondId)
             && (await Command(container, cli, 7001, "INFO", "replication")).Contains("master_link_status:up", StringComparison.Ordinal));
@@ -89,6 +93,8 @@ public class ClusterAdministrationIntegrationTests
             Endpoints = [Endpoint(port)], Connections = 1, AllowAdmin = true,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            // A loaded CI runner has stalled the CLUSTER REPLICATE reply past the default 10 s.
+            CommandTimeout = TimeSpan.FromSeconds(30),
         });
     }
 
