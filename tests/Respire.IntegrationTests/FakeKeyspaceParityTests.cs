@@ -14,6 +14,7 @@ public class FakeKeyspaceParityTests(RedisTestContainer fixture)
     [Arguments(true, 3)]
     public async Task EmptyKeyGlobMatchingPreservesCatchAllSpecialCase(bool useFake, int protocol)
     {
+        Skip.When(RedisTestContainer.GarnetSelected && !useFake, "Garnet 2.2.12 matches the empty key with the patterns '**' and '***'.");
         await using var fake = useFake ? new RespireFakeServer() : null;
         await using var client = await RespireClient.ConnectAsync(
             (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString)) with { Protocol = (RespireProtocol)protocol });

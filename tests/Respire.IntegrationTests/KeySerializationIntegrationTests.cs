@@ -18,7 +18,7 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, Mode.Immediate)]
     [Arguments(3, Mode.Batch)]
     [Arguments(3, Mode.Transaction)]
-    [SkipOnGarnet("Garnet 2.1.8 closes the connection during this DUMP and RESTORE round trip.")]
+    [SkipOnGarnet("Garnet 2.2.12 closes the connection during this DUMP and RESTORE round trip.")]
     public async Task BinaryAndListRoundTripsPreserveOwnedPayloads(int protocol, Mode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
@@ -51,7 +51,7 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, Mode.Immediate)]
     [Arguments(3, Mode.Batch)]
     [Arguments(3, Mode.Transaction)]
-    [SkipOnGarnet("Garnet 2.1.8 RESTORE does not accept REPLACE, ABSTTL, IDLETIME or FREQ.")]
+    [SkipOnGarnet("Garnet 2.2.12 RESTORE does not accept REPLACE, ABSTTL, IDLETIME or FREQ.")]
     public async Task ExpiryAndReplacementPreserveExplicitSemantics(int protocol, Mode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
@@ -87,7 +87,7 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, Mode.Immediate)]
     [Arguments(3, Mode.Batch)]
     [Arguments(3, Mode.Transaction)]
-    [SkipOnGarnet("Garnet 2.1.8 RESTORE does not accept REPLACE, ABSTTL, IDLETIME or FREQ.")]
+    [SkipOnGarnet("Garnet 2.2.12 RESTORE does not accept REPLACE, ABSTTL, IDLETIME or FREQ.")]
     public async Task IdleTimeAndServerErrorsArePreserved(int protocol, Mode mode)
     {
         await using var client = await RespireClient.ConnectAsync(

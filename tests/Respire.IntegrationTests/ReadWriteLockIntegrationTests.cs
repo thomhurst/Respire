@@ -8,6 +8,7 @@ namespace Respire.IntegrationTests;
 public class ReadWriteLockIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
+    [SkipOnGarnet("Garnet 2.2.12 rejects PEXPIREAT times after the year 9999.")]
     public async Task MaximumDurationUsesValidRedisExpiryArgument()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);

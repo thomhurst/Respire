@@ -11,7 +11,7 @@ every week. Other versions usually behave the same, but compatibility depends on
 
 ## Compatibility matrix
 
-| Feature | Garnet 2.1.8 | Dragonfly 2.0.0 | KeyDB 6.3.4 | Valkey 9.2 RC1 | KiviDB 1.1.2 (Lua) |
+| Feature | Garnet 2.2.12 | Dragonfly 2.0.0 | KeyDB 6.3.4 | Valkey 9.2 RC1 | KiviDB 1.1.2 (Lua) |
 | --- | --- | --- | --- | --- | --- |
 | RESP2 connection | Yes | Yes | Yes | Yes | Yes |
 | RESP3 and automatic negotiation | Yes | Yes | Yes | Yes | Yes |
@@ -34,11 +34,14 @@ for its new commands.
 
 - **Garnet**
   - Start Garnet with `--lua` to use scripting.
-  - Garnet 2.1.8 does not support `CLIENT TRACKING`, so leave `ClientSideCache` disabled.
-  - Garnet 2.1.8 has no native compare-and-delete or `SET ... IFEQ`, so `client.Locks` uses its Lua
+  - Garnet 2.2.12 does not support `CLIENT TRACKING`, so leave `ClientSideCache` disabled.
+  - Garnet 2.2.12 has no native compare-and-delete or `SET ... IFEQ`, so `client.Locks` uses its Lua
     scripts there. Start Garnet with `--lua` to use locks.
-  - Other gaps in 2.1.8: streams, `SORT`, `COPY`, `TOUCH`, `FUNCTION`, `SET` with `EXAT` or `PXAT`,
-    `RESTORE` options, sharded pub/sub outside Cluster mode, and multi-key sorted-set pops.
+  - Other gaps in 2.2.12: streams, `SORT`, `COPY`, `FUNCTION`, `SET` with `EXAT` or `PXAT`,
+    `RESTORE` options, sharded pub/sub outside Cluster mode, and expiry times after the year 9999,
+    such as a lock held for `TimeSpan.MaxValue`.
+  - On RESP3, Garnet 2.2.12 closes the connection when `ZMPOP` pops a member whose score
+    is infinite. Use RESP2 for multi-key sorted-set pops that can return such scores.
   - Garnet allows at most 256 logical databases.
   - In Cluster mode, Garnet requires the advertised port to match the listening port.
 - **Dragonfly:** for Cluster, use emulated Cluster mode and set `cluster_announce_ip` and

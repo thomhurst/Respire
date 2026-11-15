@@ -4,7 +4,6 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-[SkipOnGarnet("Garnet 2.1.8 multi-key sorted-set pops are unreliable: repeated runs return nil for non-empty keys and close RESP3 connections.")]
 public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
 {
     public enum PopMode { Immediate, Batch, Transaction, Blocking }
@@ -122,6 +121,7 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, PopMode.Blocking, true)]
     public async Task TypedPops_PreserveMembersScoresAndNull(int protocol, PopMode mode, bool descending)
     {
+        Skip.When(RedisTestContainer.GarnetSelected && protocol == 3, "Garnet 2.2.12 closes RESP3 connections when ZMPOP pops an infinite score (microsoft/garnet#2327).");
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix("typed:");

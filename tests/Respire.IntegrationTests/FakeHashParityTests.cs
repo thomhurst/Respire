@@ -12,7 +12,7 @@ public class FakeHashParityTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
-    [SkipOnGarnet("Garnet 2.1.8 diverges from the Redis error, atomicity and reply-shape semantics this parity test pins.")]
+    [SkipOnGarnet("Garnet 2.2.12 diverges from the Redis error, atomicity and reply-shape semantics this parity test pins.")]
     public async Task HashCommandsPreserveBinaryFieldsCountsAndReplyShapes(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
@@ -78,7 +78,7 @@ public class FakeHashParityTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
-    [SkipOnGarnet("Garnet 2.1.8 diverges from the Redis error, atomicity and reply-shape semantics this parity test pins.")]
+    [SkipOnGarnet("Garnet 2.2.12 diverges from the Redis error, atomicity and reply-shape semantics this parity test pins.")]
     public async Task WrongTypeErrorsPreserveHashAndStringState(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
@@ -132,7 +132,7 @@ public class FakeHashParityTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
-    [SkipOnGarnet("Garnet 2.1.8 diverges from the Redis error, atomicity and reply-shape semantics this parity test pins.")]
+    [SkipOnGarnet("Garnet 2.2.12 diverges from the Redis error, atomicity and reply-shape semantics this parity test pins.")]
     public async Task IntegerAndArityFailuresAreAtomic(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
