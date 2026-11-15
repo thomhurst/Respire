@@ -311,10 +311,11 @@ public sealed partial class RespireClient
                     try { return !reply.IsNull; }
                     finally { reply.Dispose(); }
                 }
-                catch (RespireServerException error) when (error.Message == "ERR syntax error")
+                catch (RespireServerException error) when (error.Message == "ERR syntax error" || IsBareUnknownCommand(error))
                 {
-                    // All other SET arguments were validated before sending. This reply means
-                    // IFEQ was rejected before execution, so trying the Lua equivalent is safe.
+                    // All other SET arguments were validated before sending. These replies mean
+                    // IFEQ was rejected before execution (Garnet answers a bare "ERR unknown command"),
+                    // so trying the Lua equivalent is safe.
                     capabilities.Reject(LockCapability.ConditionalSet);
                     observation.Handled(error);
                 }
@@ -384,6 +385,11 @@ public sealed partial class RespireClient
     }
 
     private static bool IsUnknownLockCommand(RespireServerException error, string command)
-        => error.Code == "ERR"
-            && error.Message.StartsWith($"ERR unknown command '{command}',", StringComparison.OrdinalIgnoreCase);
+        => IsBareUnknownCommand(error)
+            || (error.Code == "ERR"
+                && error.Message.StartsWith($"ERR unknown command '{command}',", StringComparison.OrdinalIgnoreCase));
+
+    // Garnet rejects unsupported commands and options before execution with this exact reply.
+    private static bool IsBareUnknownCommand(RespireServerException error)
+        => error.Message == "ERR unknown command";
 }

@@ -136,6 +136,28 @@ public class NativeLockCommandTests
     }
 
     [Test]
+    public async Task GarnetBareUnknownCommandFallsBackToLua()
+    {
+        var unknown = "-ERR unknown command\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(unknown, One, unknown, unknown, One, One, One);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        for (var i = 0; i < 2; i++)
+        {
+            await Assert.That(await client.Locks.ResetExpiryAsync("lock", "owner", TimeSpan.FromSeconds(5))).IsTrue();
+            await Assert.That(await client.Locks.ReleaseAsync("lock", "owner")).IsTrue();
+        }
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            "SET lock owner IFEQ owner PX 5000",
+            $"EVALSHA {LockCommands.ExtendScript.Sha1} 1 lock owner 5000",
+            "DELEX lock IFEQ owner", "DELIFEQ lock owner",
+            $"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 lock owner",
+            $"EVALSHA {LockCommands.ExtendScript.Sha1} 1 lock owner 5000",
+            $"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 lock owner",
+        });
+    }
+
+    [Test]
     public async Task ValkeyDeletionSkipsUnsupportedRedisCommandAfterFirstAttempt()
     {
         await using var server = new FakeRespServer(UnknownDelex, One, ":0\r\n"u8.ToArray());
@@ -154,6 +176,8 @@ public class NativeLockCommandTests
     [Arguments(false, "ERR syntax error")]
     [Arguments(false, "ERR unknown command 'another', with args beginning with:")]
     [Arguments(false, "ERR unknown command 'DELEX'")]
+    [Arguments(false, "ERR unknown command, with args beginning with:")]
+    [Arguments(true, "ERR unknown command, with args beginning with:")]
     [Arguments(true, "WRONGTYPE key has wrong type")]
     [Arguments(true, "ERR arbitrary server failure")]
     [Arguments(true, "ERR proxy reported syntax error after forwarding")]

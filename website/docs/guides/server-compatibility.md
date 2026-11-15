@@ -35,7 +35,8 @@ for its new commands.
 - **Garnet**
   - Start Garnet with `--lua` to use scripting.
   - Garnet 2.1.8 does not support `CLIENT TRACKING`, so leave `ClientSideCache` disabled.
-  - `client.Locks` fails on Garnet 2.1.8: it rejects the conditional-delete commands the lock API uses.
+  - Garnet 2.1.8 has no native compare-and-delete or `SET ... IFEQ`, so `client.Locks` uses its Lua
+    scripts there. Start Garnet with `--lua` to use locks.
   - Other gaps in 2.1.8: streams, `SORT`, `COPY`, `TOUCH`, `FUNCTION`, `SET` with `EXAT` or `PXAT`,
     `RESTORE` options, sharded pub/sub outside Cluster mode, and multi-key sorted-set pops.
   - Garnet allows at most 256 logical databases.
