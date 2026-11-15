@@ -19,11 +19,13 @@ public class StableVersionTagTests
         await donor.CommitAsync("objects held only in the alternate store");
         var head = await donor.Git("rev-parse", "HEAD");
         var objects = await donor.Git("rev-parse", "--path-format=absolute", "--git-path", "objects");
+        // Git reports resolved paths; macOS temp directories sit behind the /var -> /private/var symlink.
+        var root = await repository.Git("rev-parse", "--show-toplevel");
         var previous = Environment.GetEnvironmentVariable("GIT_ALTERNATE_OBJECT_DIRECTORIES");
         try
         {
             Environment.SetEnvironmentVariable("GIT_ALTERNATE_OBJECT_DIRECTORIES",
-                System.IO.Path.GetRelativePath(repository.Path, objects));
+                System.IO.Path.GetRelativePath(root, objects));
             await repository.Git("update-ref", "HEAD", head);
             await repository.Git("tag", "v1.2.3");
             await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");

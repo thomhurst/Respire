@@ -10,6 +10,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- ModularPipelines 4 adds a global using whose NotInParallel attribute clashes with TUnit's. -->
+    <Using Remove="ModularPipelines" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="TUnit" />
     <PackageReference Include="Moq" />
     <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />

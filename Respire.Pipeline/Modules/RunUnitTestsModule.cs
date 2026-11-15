@@ -1,12 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using ModularPipelines.Attributes;
-using ModularPipelines.Configuration;
 using ModularPipelines.Context;
-using ModularPipelines.DotNet.Extensions;
 using ModularPipelines.DotNet.Options;
-using ModularPipelines.Models;
-using ModularPipelines.Modules;
 
 namespace Respire.Pipeline.Modules;
 
@@ -24,16 +19,15 @@ public class RunUnitTestsModule : Module<CommandResult[]>
 
     // Preserve ModularPipelines 3.2.8's 30-minute default explicitly so the diagnostic
     // threshold can be checked against the deadline actually supplied to the engine.
-    protected override ModuleConfiguration Configure() => ModuleConfiguration.Create()
-        .WithTimeout(TimeSpan.FromMinutes(30))
-        .Build();
+    protected override void Configure(ModuleConfigurationBuilder module) => module
+        .WithTimeout(TimeSpan.FromMinutes(30));
 
     internal static string[] CreateDiagnosticsArguments() =>
         // Suspended async waits live on the managed heap. Mini dumps can name the running
         // test but omit the state machines needed to inspect its outstanding operations.
         ["--hangdump", "--hangdump-timeout", HangDumpInactivityTimeout, "--hangdump-type", "Heap", "--report-trx"];
 
-    protected override async Task<CommandResult[]?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+    protected override async Task<CommandResult[]> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Running unit tests...");
 
@@ -51,7 +45,7 @@ public class RunUnitTestsModule : Module<CommandResult[]>
         {
             var projectResultsDirectory = Path.Combine(resultsDirectory, Path.GetFileNameWithoutExtension(project));
             Directory.CreateDirectory(projectResultsDirectory);
-            var result = await context.DotNet().Test(new DotNetTestOptions
+            var result = await context.Tools.DotNet.TestAsync(new DotNetTestOptions
             {
                 Project = project,
                 Configuration = "Release",

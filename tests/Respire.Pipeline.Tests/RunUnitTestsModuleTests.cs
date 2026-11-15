@@ -1,6 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.Configuration;
-using ModularPipelines.Modules;
+using ModularPipelines;
 using Respire.Pipeline.Modules;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;

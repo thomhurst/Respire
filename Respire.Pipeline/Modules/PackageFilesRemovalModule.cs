@@ -1,12 +1,11 @@
 using Microsoft.Extensions.Logging;
 using ModularPipelines.Context;
-using ModularPipelines.Modules;
 
 namespace Respire.Pipeline.Modules;
 
 public class PackageFilesRemovalModule : Module
 {
-    protected override Task ExecuteModuleAsync(IModuleContext context, CancellationToken cancellationToken)
+    protected override Task ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Cleaning up old package files...");
         
