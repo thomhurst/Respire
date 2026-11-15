@@ -122,7 +122,7 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
         // A failed start is removed by the retry helper, which also replaces it after a host-port bind collision.
         _container = IsGarnet
             ? await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image)
-                .WithCommand("--max-databases", databases, "--lua",
+                .WithCommand("--max-databases", databases, "--lua", "--lua-transaction-mode",
                     "--memory", "256m", "--page", "4m", "--segment", "16m", "--index", "8m")
                 .WithPortBinding(RedisPort, true)
                 .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(RedisPort))

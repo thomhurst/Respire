@@ -18,7 +18,7 @@ every week. Other versions usually behave the same, but compatibility depends on
 | Strings, hashes, lists, sets, sorted sets | Yes | Yes | Yes | Yes | Yes |
 | `CLIENT SETINFO` metadata | Yes | Yes | No | Yes | Yes |
 | Pub/sub | Yes | Yes | Yes | Yes | Yes |
-| Lua `EVAL` | Yes, with `--lua` | Yes | Yes | Yes | Yes |
+| Lua `EVAL` | Yes, with `--lua --lua-transaction-mode` | Yes | Yes | Yes | Yes |
 | `MULTI`/`EXEC` transactions | Yes | Yes | Yes | Yes | Yes |
 | Client-side caching | No | Yes | Yes | Yes | Yes |
 | Cluster discovery and routing | Single primary | Emulated Cluster mode | Single primary | Single primary | Single primary |
@@ -33,10 +33,13 @@ for its new commands.
 ## Known differences
 
 - **Garnet**
-  - Start Garnet with `--lua` to use scripting.
+  - Start Garnet with `--lua --lua-transaction-mode` to use scripting. Without
+    `--lua-transaction-mode`, Garnet does not run a script atomically: two scripts on the same keys
+    can interleave. Respire's locks and cache-aside leases rely on atomic scripts; without the flag,
+    for example, a `GetOrSetAsync` factory can run twice for one expiry.
   - Garnet 2.2.12 does not support `CLIENT TRACKING`, so leave `ClientSideCache` disabled.
   - Garnet 2.2.12 has no native compare-and-delete or `SET ... IFEQ`, so `client.Locks` uses its Lua
-    scripts there. Start Garnet with `--lua` to use locks.
+    scripts there. Start Garnet with `--lua --lua-transaction-mode` to use locks.
   - Other gaps in 2.2.12: streams, `SORT`, `COPY`, `FUNCTION`, `SET` with `EXAT` or `PXAT`,
     `RESTORE` options, sharded pub/sub outside Cluster mode, and expiry times after the year 9999,
     such as a lock held for `TimeSpan.MaxValue`.

@@ -14,7 +14,6 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     private static readonly RespireCacheAsideOptions Options = new() { WaitTimeout = TimeSpan.FromSeconds(10) };
 
     [Test]
-    [SkipOnGarnet("Garnet 2.2.12 occasionally runs the factory twice for one expiry under concurrent load (1 in 23 local runs).")]
     public async Task ManyIndependentClientsRecomputeOncePerExpiry()
     {
         var clients = new List<RespireClient>();
