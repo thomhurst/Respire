@@ -26,10 +26,10 @@ The adapter implements the members these libraries call. It is not a full StackE
 
 | Library | Tested version | Status | Native replacement |
 | --- | --- | --- | --- |
-| `Microsoft.Extensions.Caching.StackExchangeRedis` | 10.0.13 | Supported | `Respire.Caching` via `AddRespireDistributedCache` |
-| `Microsoft.AspNetCore.DataProtection.StackExchangeRedis` | 10.0.13 | Supported | `Respire.DataProtection` via `PersistKeysToRespire` |
+| `Microsoft.Extensions.Caching.StackExchangeRedis` | 11.0.0 | Supported | `Respire.Caching` via `AddRespireDistributedCache` |
+| `Microsoft.AspNetCore.DataProtection.StackExchangeRedis` | 11.0.0 | Supported | `Respire.DataProtection` via `PersistKeysToRespire` |
 | `Hangfire.Redis.StackExchange` | 1.12.0 | Supported; see [Use Respire with Hangfire](./hangfire-acceptance) | Keep the adapter at the Hangfire boundary |
-| Orleans Redis providers | 10.2.2 | Supported; see [Use Respire with Orleans](./orleans-compatibility) | Keep the adapter at the Orleans boundary |
+| Orleans Redis providers | 10.4.2 | Supported; see [Use Respire with Orleans](./orleans-compatibility) | Keep the adapter at the Orleans boundary |
 | `Microsoft.AspNetCore.SignalR.StackExchangeRedis` | | **Not supported** | `Respire.SignalR` via `AddRespire` |
 
 SignalR's backplane needs `ChannelMessageQueue` subscriptions, which depend on StackExchange.Redis

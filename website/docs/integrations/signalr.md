@@ -137,6 +137,6 @@ Pending operations:
 The channel conventions and lifecycle helpers are adapted from the MIT-licensed
 [ASP.NET Core Redis backplane at v8.0.31](https://github.com/dotnet/aspnetcore/tree/v8.0.31/src/SignalR/server/StackExchangeRedis).
 Respire's backplane interoperates with `Microsoft.AspNetCore.SignalR.StackExchangeRedis`
-(10.0.13 on .NET 10 and 11.0.0 on .NET 11).
+(10.0.15 on .NET 10 and 11.0.0 on .NET 11).
 The package includes Microsoft's copyright and license notice in
 `licenses/LICENSE-Microsoft.txt`.
