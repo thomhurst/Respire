@@ -86,6 +86,10 @@ public partial class ErrorMetricsTests
             : connection.SendCheckedAsync(in command, cancellation.Token, commandName: "SET", observation: observation);
         var pending = RespireTelemetry.ObserveFinalError(response, observation).AsTask();
         await received.Task.WaitAsync(deadline.Token);
+        // The server can parse the whole frame before the client observes its final write. A
+        // cancellation in that window correctly aborts the connection to protect RESP framing,
+        // so cancel only once the upload has released the write path.
+        while (connection.IsStreamingWriteActive) await Task.Delay(1, deadline.Token);
         cancellation.Cancel();
         var error = await Assert.That(async () => { using var reply = await pending.WaitAsync(deadline.Token); })
             .Throws<OperationCanceledException>();
@@ -93,6 +97,7 @@ public partial class ErrorMetricsTests
         // A different logical owner must not alter the metadata on the canceled reply.
         using var unrelated = RespireTelemetry.ErrorObservation.Rent(force: true);
         unrelated.SetAttempts(7);
+        await Assert.That(connection.IsConnected).IsTrue();
         await server.SendRawAsync("-NOPERM private-key\r\n"u8.ToArray());
         await recorded.Task.WaitAsync(deadline.Token);
         var items = capture.Items.ToArray();
