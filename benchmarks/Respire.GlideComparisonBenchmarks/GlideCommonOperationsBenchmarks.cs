@@ -59,7 +59,7 @@ public class GlideCommonOperationsBenchmarks
                 .WithWaitStrategy(Wait.ForUnixContainer().UntilCommandIsCompleted("valkey-cli", "ping"))
                 .Build();
             await _container.StartAsync();
-            host = "localhost";
+            host = _container.Hostname;
             port = _container.GetMappedPublicPort(6379);
         }
         else

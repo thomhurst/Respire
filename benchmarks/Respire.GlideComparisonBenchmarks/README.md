@@ -16,7 +16,7 @@ before it measures anything.
 
 ## Run on GitHub Actions
 
-The `benchmark-valkey-glide.yml` workflow runs on Linux with .NET 10 and a
+The `benchmark-valkey-glide.yml` workflow runs on Linux with .NET 11 and a
 `valkey/valkey:9.0` container on localhost. Start it in one of two ways:
 
 ```sh
