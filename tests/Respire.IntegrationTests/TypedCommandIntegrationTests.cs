@@ -77,7 +77,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [SkipOnGarnet("Garnet 2.1.8 has no stream commands; XADD and the rest return ERR unknown command.")]
+    [SkipOnGarnet("Garnet 2.2.12 has no stream commands; XADD and the rest return ERR unknown command.")]
     public async Task StreamAddOptionsAndDescendingRange_RoundTripAgainstRedis()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
@@ -107,7 +107,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [SkipOnGarnet("Garnet 2.1.8 has no stream commands; XADD and the rest return ERR unknown command.")]
+    [SkipOnGarnet("Garnet 2.2.12 has no stream commands; XADD and the rest return ERR unknown command.")]
     public async Task StreamConsumerRecovery_RoundTripsClaimsAndPendingReplay()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
@@ -157,7 +157,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [SkipOnGarnet("Garnet 2.1.8 has no COPY command.")]
+    [SkipOnGarnet("Garnet 2.2.12 has no COPY command.")]
     public async Task KeyCommands_RoundTripConditionalCopyAndTypedScan()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);

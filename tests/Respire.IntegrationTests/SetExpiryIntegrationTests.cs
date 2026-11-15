@@ -27,7 +27,7 @@ public class SetExpiryIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [SkipOnGarnet("Garnet 2.1.8 rejects SET with EXAT or PXAT as a syntax error.")]
+    [SkipOnGarnet("Garnet 2.2.12 rejects SET with EXAT or PXAT as a syntax error.")]
     public async Task Set_WithAbsoluteTtl_LeavesATimeToLiveEndingAtThatInstant()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
@@ -43,7 +43,7 @@ public class SetExpiryIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [SkipOnGarnet("Garnet 2.1.8 rejects SET with EXAT or PXAT as a syntax error.")]
+    [SkipOnGarnet("Garnet 2.2.12 rejects SET with EXAT or PXAT as a syntax error.")]
     public async Task Set_WithAbsoluteTtlInTheNearFuture_ExpiresTheKey()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
@@ -118,7 +118,7 @@ public class SetExpiryIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [SkipOnGarnet("Garnet 2.1.8 rejects SET with EXAT or PXAT as a syntax error.")]
+    [SkipOnGarnet("Garnet 2.2.12 rejects SET with EXAT or PXAT as a syntax error.")]
     public async Task Batch_SetWithExpiryUnion_AppliesEachForm()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);

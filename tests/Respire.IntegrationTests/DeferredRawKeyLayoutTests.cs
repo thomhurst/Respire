@@ -9,7 +9,7 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
-    [SkipOnGarnet("Garnet 2.1.8 COMMAND entries omit the key-specification field this test compares against.")]
+    [SkipOnGarnet("Garnet 2.2.12 COMMAND GETKEYS finds no keys for subcommands such as MEMORY USAGE, and COMMAND lists nil entries.")]
     public async Task SupportedLayoutsMatchRedisKeyDiscovery(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(

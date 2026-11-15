@@ -20,7 +20,7 @@ public sealed class ServerCompatibilityOnlyAttribute() : SkipAttribute(
 
 public sealed class CompatibleServer : IAsyncInitializer, IAsyncDisposable
 {
-    private const string GarnetImage = "ghcr.io/microsoft/garnet:2.1.8";
+    private const string GarnetImage = "ghcr.io/microsoft/garnet:2.2.12";
     private const string KiviDbImage = "kividb/kividb:v1.1.2-lua";
     // Overriding the image command also replaces its protected-mode opt-out.
     private static readonly string[] KiviDbCommand =
@@ -245,7 +245,7 @@ public class ServerCompatibilityTests(CompatibleServer server)
     [Test]
     public async Task ClientSideCacheInvalidation()
     {
-        Skip.When(CompatibleServer.Name == "garnet", "Garnet 2.1.8 rejects CLIENT TRACKING with ERR unknown subcommand 'TRACKING'.");
+        Skip.When(CompatibleServer.Name == "garnet", "Garnet 2.2.12 rejects CLIENT TRACKING with ERR unknown subcommand 'TRACKING'.");
         var options = server.Options(RespireProtocol.Resp3);
         await using var writer = await RespireClient.ConnectAsync(options);
         await using var cached = await RespireClient.ConnectAsync(options with { ClientSideCache = new() });
