@@ -81,9 +81,9 @@ function Test-AspireTemplate {
     }
     $appHost = Join-Path $aspireApp 'Renamed.Aspire-Store.AppHost/Renamed.Aspire-Store.AppHost.csproj'
     [xml]$hostProject = Get-Content -LiteralPath $appHost -Raw
-    $aspireVersion = $hostProject.SelectSingleNode('/Project/Sdk[@Name="Aspire.AppHost.Sdk"]').Version
+    $aspireVersion = $hostProject.SelectSingleNode('/Project/ItemGroup/PackageReference[@Include="Aspire.Hosting.AppHost"]').Version
     foreach ($reference in $hostProject.SelectNodes('/Project/ItemGroup/PackageReference[starts-with(@Include, "Aspire.Hosting.")]')) {
-        if ($reference.Version -cne $aspireVersion) { throw 'Aspire hosting SDK and package versions differ.' }
+        if ($reference.Version -cne $aspireVersion) { throw 'Aspire hosting package versions differ.' }
     }
     $restore = @("-p:RestoreAdditionalProjectSources=$packages", "-p:RestorePackagesPath=$scratch/packages")
     Invoke-DotNet (@('build', (Join-Path $aspireApp 'Renamed.Aspire-Store.slnx'), '-c', 'Release', '-warnaserror') + $restore)

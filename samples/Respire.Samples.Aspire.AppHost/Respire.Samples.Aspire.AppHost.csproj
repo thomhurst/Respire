@@ -1,5 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <Sdk Name="Aspire.AppHost.Sdk" Version="17.0.0" />
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFrameworks />
@@ -9,10 +8,10 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.AppHost" />
+    <PackageReference Include="Aspire.Hosting.Dotnet" />
     <PackageReference Include="Aspire.Hosting.Redis" />
     <PackageReference Include="Aspire.Hosting.Valkey" />
     <!-- Select the centrally managed security patch instead of Aspire's transitive minimum. -->
     <PackageReference Include="MessagePack" />
-    <ProjectReference Include="../Respire.Samples.Aspire.Api/Respire.Samples.Aspire.Api.csproj" />
   </ItemGroup>
 </Project>

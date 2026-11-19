@@ -1,5 +1,8 @@
 {
   "appHost": {
     "path": "Respire.Samples.Aspire.AppHost.csproj"
+  },
+  "sdk": {
+    "version": "17.0.0"
   }
 }
