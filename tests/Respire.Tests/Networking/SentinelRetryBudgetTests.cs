@@ -14,12 +14,14 @@ public class SentinelRetryBudgetTests
     {
         var budget = new SentinelRetryBudget(new() { MaxAttempts = maximum });
         await Assert.That(budget.Attempts).IsEqualTo(0);
+
         for (var attempt = 1; attempt <= maximum; attempt++)
         {
             await Assert.That(budget.IsExhausted).IsFalse();
             await Assert.That(budget.TryStartRetry()).IsTrue();
             await Assert.That(budget.Attempts).IsEqualTo(attempt);
         }
+
         await Assert.That(budget.IsExhausted).IsTrue();
         await Assert.That(budget.TryStartRetry()).IsFalse();
         await Assert.That(budget.Attempts).IsEqualTo(maximum);
@@ -30,6 +32,7 @@ public class SentinelRetryBudgetTests
     {
         var budget = new SentinelRetryBudget(null);
         int[] seconds = [1, 2, 4, 8, 16, 30, 30, 30];
+
         foreach (var expected in seconds)
         {
             await Assert.That(budget.TryStartRetry()).IsTrue();
@@ -43,15 +46,19 @@ public class SentinelRetryBudgetTests
     {
         var budget = new SentinelRetryBudget(new()
         {
-            InitialDelay = TimeSpan.FromMilliseconds(20), MaxDelay = TimeSpan.FromMilliseconds(50),
-            BackoffMultiplier = 2, JitterRatio = 0,
+            InitialDelay = TimeSpan.FromMilliseconds(20),
+            MaxDelay = TimeSpan.FromMilliseconds(50),
+            BackoffMultiplier = 2,
+            JitterRatio = 0,
         });
         int[] milliseconds = [20, 40, 50, 50];
+
         foreach (var expected in milliseconds)
         {
             await Assert.That(budget.TryStartRetry()).IsTrue();
             await Assert.That(budget.GetDelay()).IsEqualTo(TimeSpan.FromMilliseconds(expected));
         }
+
         budget.MarkSubscriptionExhausted();
         await Assert.That(budget.Attempts).IsEqualTo(4);
         await Assert.That(budget.IsExhausted).IsFalse();

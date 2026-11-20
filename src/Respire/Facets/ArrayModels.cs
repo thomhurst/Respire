@@ -16,27 +16,47 @@ public readonly record struct RespireArrayBound
 {
     private readonly byte _kind;
     private readonly ulong _index;
-    private RespireArrayBound(byte kind, ulong index = 0) { _kind = kind; _index = index; }
+
+    private RespireArrayBound(byte kind, ulong index = 0)
+    {
+        _kind = kind;
+        _index = index;
+    }
+
     /// <summary>The first logical position, written as '-'.</summary>
     public static RespireArrayBound First => new(1);
+
     /// <summary>The last logical position, written as '+'.</summary>
     public static RespireArrayBound Last => new(2);
+
     /// <summary>A numeric position; UInt64.MaxValue is reserved by Redis.</summary>
     public static implicit operator RespireArrayBound(ulong index) => new(0, index);
+
     internal RespireValue Argument
     {
         get
         {
-            if (_kind == 1) return "-";
-            if (_kind == 2) return "+";
+            if (_kind == 1)
+            {
+                return "-";
+            }
+
+            if (_kind == 2)
+            {
+                return "+";
+            }
+
             ArrayCommandArguments.ValidateIndex(_index);
             return _index;
         }
     }
+
     /// <inheritdoc/>
     public override string ToString() => _kind switch
     {
-        1 => "-", 2 => "+", _ => _index.ToString(CultureInfo.InvariantCulture),
+        1 => "-",
+        2 => "+",
+        _ => _index.ToString(CultureInfo.InvariantCulture),
     };
 }
 
@@ -60,11 +80,22 @@ public readonly record struct RespireArrayPredicate(RespireArrayPredicateKind Ki
 public readonly record struct RespireArrayGrepOptions
 {
     /// <summary>Require all predicates instead of the default OR combination.</summary>
-    public bool MatchAll { get; init; }
+    public bool MatchAll
+    {
+        get; init;
+    }
+
     /// <summary>Use Redis NOCASE matching.</summary>
-    public bool IgnoreCase { get; init; }
+    public bool IgnoreCase
+    {
+        get; init;
+    }
+
     /// <summary>A positive maximum number of matching slots; null has no limit.</summary>
-    public long? Limit { get; init; }
+    public long? Limit
+    {
+        get; init;
+    }
 }
 
 /// <summary>An AROP operation over existing slots in an inclusive range.</summary>
@@ -103,27 +134,74 @@ public readonly record struct RespireArrayAggregateResult(string? NumericText, l
 public sealed class RespireArrayInfo
 {
     /// <summary>Number of populated slots.</summary>
-    public ulong Count { get; internal set; }
+    public ulong Count
+    {
+        get; internal set;
+    }
+
     /// <summary>Highest populated index plus one.</summary>
-    public ulong Length { get; internal set; }
+    public ulong Length
+    {
+        get; internal set;
+    }
+
     /// <summary>Reported insertion position. ARINFO reports zero for an exhausted cursor; use ARNEXT to distinguish exhaustion.</summary>
-    public ulong NextInsertIndex { get; internal set; }
+    public ulong NextInsertIndex
+    {
+        get; internal set;
+    }
+
     /// <summary>Allocated slices.</summary>
-    public ulong Slices { get; internal set; }
+    public ulong Slices
+    {
+        get; internal set;
+    }
+
     /// <summary>Allocated directory capacity.</summary>
-    public ulong DirectorySize { get; internal set; }
+    public ulong DirectorySize
+    {
+        get; internal set;
+    }
+
     /// <summary>Super-directory entries, or zero without a super-directory.</summary>
-    public ulong SuperDirectoryEntries { get; internal set; }
+    public ulong SuperDirectoryEntries
+    {
+        get; internal set;
+    }
+
     /// <summary>Positions per slice.</summary>
-    public ulong SliceSize { get; internal set; }
+    public ulong SliceSize
+    {
+        get; internal set;
+    }
+
     /// <summary>Dense slice count with FULL.</summary>
-    public ulong? DenseSlices { get; internal set; }
+    public ulong? DenseSlices
+    {
+        get; internal set;
+    }
+
     /// <summary>Sparse slice count with FULL.</summary>
-    public ulong? SparseSlices { get; internal set; }
+    public ulong? SparseSlices
+    {
+        get; internal set;
+    }
+
     /// <summary>Average dense window size with FULL.</summary>
-    public double? AverageDenseSize { get; internal set; }
+    public double? AverageDenseSize
+    {
+        get; internal set;
+    }
+
     /// <summary>Average dense fill ratio with FULL.</summary>
-    public double? AverageDenseFill { get; internal set; }
+    public double? AverageDenseFill
+    {
+        get; internal set;
+    }
+
     /// <summary>Average sparse capacity with FULL.</summary>
-    public double? AverageSparseSize { get; internal set; }
+    public double? AverageSparseSize
+    {
+        get; internal set;
+    }
 }

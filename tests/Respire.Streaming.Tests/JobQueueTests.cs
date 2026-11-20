@@ -44,6 +44,7 @@ public class JobQueueTests
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
         var queue = new RespireJobQueue<string>(client, "queue", _ => throw new InvalidOperationException());
+
         foreach (var id in new[] { "", " ", "\t\r\n" })
         {
             await Assert.That(async () => await queue.CreateBatchAsync(batchId: id)).Throws<ArgumentException>();
@@ -54,6 +55,7 @@ public class JobQueueTests
             await Assert.That(async () => await queue.GetBatchStatusAsync(id)).Throws<ArgumentException>();
             await Assert.That(async () => await queue.RemoveBatchAsync(id)).Throws<ArgumentException>();
         }
+
         await Assert.That(async () => await queue.CreateBatchAsync(batchId: "\ud800")).Throws<EncoderFallbackException>();
         await Assert.That(async () => await queue.AddBatchJobAsync("batch", "\ud800", "payload"))
             .Throws<EncoderFallbackException>();
@@ -108,12 +110,18 @@ public class JobQueueTests
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
         var queue = new RespireJobQueue<string>(client, "queue", _ => throw new InvalidOperationException());
+
         foreach (var group in new[] { "", " ", "\t\r\n" })
+        {
             await Assert.That(async () => await queue.EnqueueScheduledAsync("id", "payload", new() { Group = group }))
                 .Throws<ArgumentException>();
+        }
+
         foreach (var group in new[] { "\ud800", "\udc00" })
+        {
             await Assert.That(async () => await queue.EnqueueScheduledAsync("id", "payload", new() { Group = group }))
                 .Throws<EncoderFallbackException>();
+        }
     }
 
     [Test]
@@ -279,9 +287,13 @@ public class JobQueueTests
             new() { TimeToLive = TimeSpan.Zero },
             new() { DeduplicationWindow = TimeSpan.Zero },
         ];
+
         foreach (var options in invalid)
+        {
             await Assert.That(async () => await queue.EnqueueScheduledAsync("id", "payload", options))
                 .Throws<ArgumentOutOfRangeException>();
+        }
+
         await Assert.That(async () => await queue.EnqueueScheduledAsync("id", "payload", new(), new(true)))
             .Throws<OperationCanceledException>();
         var services = new ServiceCollection();
@@ -292,12 +304,14 @@ public class JobQueueTests
             new() { RetryBackoff = TimeSpan.FromSeconds(2), MaximumRetryBackoff = TimeSpan.FromSeconds(1) },
             new() { RetryBackoff = TimeSpan.FromTicks(-1) },
         ];
+
         foreach (var policy in policies)
         {
             await Assert.That(() => services.AddRespireJobQueue<Handler, string>("queue", Encoding.UTF8.GetBytes,
                 Encoding.UTF8.GetString, null, policy)).Throws<ArgumentOutOfRangeException>();
             await Assert.That(services.Count).IsEqualTo(0);
         }
+
         var job = new RespireJob<string>("id", "payload", "1-0");
         await Assert.That(() => job.RetryAfter(TimeSpan.FromTicks(-1))).Throws<ArgumentOutOfRangeException>();
         await Assert.That(job.RetryAfter(TimeSpan.Zero)).IsEqualTo(RespireStreamWorkerResult.Nack);

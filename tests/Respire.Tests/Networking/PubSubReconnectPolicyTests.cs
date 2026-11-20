@@ -15,23 +15,38 @@ public class PubSubReconnectPolicyTests
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
     private static readonly byte[] Confirmation = "*3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n"u8.ToArray();
     private static readonly byte[] Rejection = "-ERR subscription denied\r\n"u8.ToArray();
+
     private static RespireReconnectPolicy Policy(int milliseconds = 25, int attempts = 2) => new()
     {
-        InitialDelay = TimeSpan.FromMilliseconds(milliseconds), MaxDelay = TimeSpan.FromMilliseconds(milliseconds * 2),
-        JitterRatio = 0, MaxAttempts = attempts,
+        InitialDelay = TimeSpan.FromMilliseconds(milliseconds),
+        MaxDelay = TimeSpan.FromMilliseconds(milliseconds * 2),
+        JitterRatio = 0,
+        MaxAttempts = attempts,
     };
+
     private static RespireOptions Options(int port, RespireReconnectPolicy? policy, int database = 0) => new()
     {
         Protocol = RespireProtocol.Resp2,
-        Endpoints = { new RespireEndpoint("127.0.0.1", port) }, Connections = 1, Database = database,
+        Endpoints = { new RespireEndpoint("127.0.0.1", port) },
+        Connections = 1,
+        Database = database,
         ReconnectPolicy = policy,
     };
+
     private static async Task WaitForCommandsAsync(FakeRespServer server, int count, CancellationToken token)
     {
-        while (server.CommandsSeen < count) await Task.Delay(5, token);
+        while (server.CommandsSeen < count)
+        {
+            await Task.Delay(5, token);
+        }
     }
 
-    public enum RecoveryDiagnostic { ConfiguredAttempt, ReplacementCleanup, UnconfiguredRetry }
+    public enum RecoveryDiagnostic
+    {
+        ConfiguredAttempt,
+        ReplacementCleanup,
+        UnconfiguredRetry
+    }
 
     [Test]
     [Arguments(RecoveryDiagnostic.ConfiguredAttempt, false)]
@@ -48,7 +63,12 @@ public class PubSubReconnectPolicyTests
         await using var server = new FakeRespServer(3, Confirmation)
         {
             ReplyOverride = (_, command) => command == "SUBSCRIBE ch"
-                ? Interlocked.Increment(ref subscribed) switch { 1 => Confirmation, 2 => Rejection, _ => delivered }
+                ? Interlocked.Increment(ref subscribed) switch
+                {
+                    1 => Confirmation,
+                    2 => Rejection,
+                    _ => delivered
+                }
                 : null,
         };
         var policy = diagnostic == RecoveryDiagnostic.UnconfiguredRetry ? null : Policy();
@@ -62,8 +82,12 @@ public class PubSubReconnectPolicyTests
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
+            if (change.State == RespireConnectionState.Connected)
+            {
+                recovered.TrySetResult();
+            }
         };
+
         try
         {
             server.CloseConnection(server.ReceivedConnectionIds[0]);
@@ -83,27 +107,50 @@ public class PubSubReconnectPolicyTests
     {
         private int _cleanups;
         internal int TargetCalls;
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
             var template = ((IEnumerable<KeyValuePair<string, object?>>)state!).Last().Value as string;
+
             if (diagnostic == RecoveryDiagnostic.ReplacementCleanup && template == "Disconnected from {Host}:{Port}"
                 && Interlocked.Increment(ref _cleanups) == 2)
+            {
                 throw new IOException("Injected replacement cleanup failure.");
+            }
+
             var target = diagnostic switch
             {
                 RecoveryDiagnostic.ConfiguredAttempt => "Pub/sub recovery attempt {Attempt} failed",
                 RecoveryDiagnostic.ReplacementCleanup => "Failed to clean up a pub/sub replacement",
                 _ => "Pub/sub reconnect failed; retrying in {Delay}",
             };
-            if (template != target) return;
+
+            if (template != target)
+            {
+                return;
+            }
+
             Interlocked.Increment(ref TargetCalls);
-            if (throwProvider) throw new InvalidOperationException("Injected recovery diagnostic failure.");
+
+            if (throwProvider)
+            {
+                throw new InvalidOperationException("Injected recovery diagnostic failure.");
+            }
         }
     }
 
@@ -147,8 +194,16 @@ public class PubSubReconnectPolicyTests
         client.ConnectionStateChanged += change =>
         {
             changes.Enqueue(change);
-            if (change.NextReconnectDelay is not null) attempted.TrySetResult();
-            if (change.ReconnectExhausted) exhausted.TrySetResult();
+
+            if (change.NextReconnectDelay is not null)
+            {
+                attempted.TrySetResult();
+            }
+
+            if (change.ReconnectExhausted)
+            {
+                exhausted.TrySetResult();
+            }
         };
 
         server.SuppressReply = _ => true;
@@ -176,17 +231,24 @@ public class PubSubReconnectPolicyTests
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name is
                 "respire.connection.reconnect.attempt" or "respire.connection.reconnect.exhausted")
+            {
                 current.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             bool host = false, port = false;
+
             foreach (var tag in tags)
             {
                 host |= tag.Key == "server.address" && Equals(tag.Value, endpoint.Host);
                 port |= tag.Key == "server.port" && Equals(tag.Value, endpoint.Port);
             }
-            if (host && port) throw failure;
+
+            if (host && port)
+            {
+                throw failure;
+            }
         });
         listener.Start();
         return listener;
@@ -195,15 +257,29 @@ public class PubSubReconnectPolicyTests
     private sealed class ThrowingTelemetryLogger(Exception failure) : ILoggerFactory, ILogger
     {
         internal int Failures;
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (!ReferenceEquals(exception, failure)) return;
+            if (!ReferenceEquals(exception, failure))
+            {
+                return;
+            }
+
             Interlocked.Increment(ref Failures);
             throw new InvalidOperationException("Injected logger failure.");
         }
@@ -239,8 +315,15 @@ public class PubSubReconnectPolicyTests
         {
             ReconnectEpisodeStarted = () =>
             {
-                if (Interlocked.Increment(ref episodes) == 2) secondEpisode.TrySetResult();
-                if (throwingObserver) throw new InvalidOperationException("Injected episode observer failure.");
+                if (Interlocked.Increment(ref episodes) == 2)
+                {
+                    secondEpisode.TrySetResult();
+                }
+
+                if (throwingObserver)
+                {
+                    throw new InvalidOperationException("Injected episode observer failure.");
+                }
             },
         });
 #pragma warning restore RESP010
@@ -262,9 +345,13 @@ public class PubSubReconnectPolicyTests
                 // The callback must retain the reentrant state gate while sending confirmation to force this promotion race.
 #pragma warning disable RESP009
                 server.SendRawAsync(Confirmation, server.ReceivedConnectionIds[^1]).GetAwaiter().GetResult();
+
 #pragma warning restore RESP009
                 if (!SpinWait.SpinUntil(() => recovery.IsControlIdle, Deadline))
+                {
                     throw new TimeoutException("Recovery did not reach the promotion boundary.");
+                }
+
                 cleanup = recovery.CloseCurrentConnection();
             }
         }, deadline.Token);
@@ -297,9 +384,11 @@ public class PubSubReconnectPolicyTests
         using var deadline = new CancellationTokenSource(Deadline);
         server.SuppressReply = _ => true;
         server.CloseConnection(server.ReceivedConnectionIds[0]);
+
         for (var count = 2; count <= 3; count++)
         {
             await WaitForCommandsAsync(server, count, deadline.Token);
+
             if (count == 2)
             {
                 // Publication during recovery grants the budget before replacement sockets
@@ -307,8 +396,10 @@ public class PubSubReconnectPolicyTests
                 publication.TrySetResult();
                 publication = new(TaskCreationOptions.RunContinuationsAsynchronously);
             }
+
             server.CloseConnection(server.ReceivedConnectionIds[^1]);
         }
+
         await Assert.That(await subscription.Completion.WaitAsync(deadline.Token))
             .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
         await Assert.That(Volatile.Read(ref episodes)).IsEqualTo(1);
@@ -332,35 +423,55 @@ public class PubSubReconnectPolicyTests
         client.ConnectionStateChanged += change =>
         {
             changes.Enqueue(change);
-            if (change.ReconnectExhausted) terminal.TrySetResult();
+
+            if (change.ReconnectExhausted)
+            {
+                terminal.TrySetResult();
+            }
         };
         long exhaustions = 0;
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, current) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.connection.reconnect.exhausted")
+            {
                 current.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
             var endpoint = false;
             var pubsub = false;
+
             foreach (var tag in tags)
             {
-                if (tag.Key == "server.port" && Equals(tag.Value, server.Port)) endpoint = true;
-                if (tag.Key == "respire.connection.source" && Equals(tag.Value, "pubsub")) pubsub = true;
+                if (tag.Key == "server.port" && Equals(tag.Value, server.Port))
+                {
+                    endpoint = true;
+                }
+
+                if (tag.Key == "respire.connection.source" && Equals(tag.Value, "pubsub"))
+                {
+                    pubsub = true;
+                }
             }
-            if (endpoint && pubsub) Interlocked.Add(ref exhaustions, value);
+
+            if (endpoint && pubsub)
+            {
+                Interlocked.Add(ref exhaustions, value);
+            }
         });
         listener.Start();
         server.SuppressReply = _ => true;
         await Assert.That(async () => await client.SubscribeAsync("lost", cancellationToken: deadline.Token))
             .Throws<RespireConnectionException>();
+
         for (var count = 3; count <= 4; count++)
         {
             await WaitForCommandsAsync(server, count, deadline.Token);
             await server.SendRawAsync(Rejection, server.ReceivedConnectionIds[^1]);
         }
+
         await terminal.Task.WaitAsync(deadline.Token);
         await Assert.That(await subscription.Completion.WaitAsync(deadline.Token)).IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
         await Assert.That(await pendingRead.WaitAsync(deadline.Token)).IsFalse();
@@ -404,9 +515,17 @@ public class PubSubReconnectPolicyTests
         var recovered = new SemaphoreSlim(0);
         client.ConnectionStateChanged += change =>
         {
-            if (change.NextReconnectDelay is not null) attempts.Enqueue(change.ReconnectAttempt);
-            if (change.State == RespireConnectionState.Connected) recovered.Release();
+            if (change.NextReconnectDelay is not null)
+            {
+                attempts.Enqueue(change.ReconnectAttempt);
+            }
+
+            if (change.State == RespireConnectionState.Connected)
+            {
+                recovered.Release();
+            }
         };
+
         for (var episode = 0; episode < 2; episode++)
         {
             server.CloseConnectionAfterCommand = 2 + episode * 2;
@@ -419,6 +538,7 @@ public class PubSubReconnectPolicyTests
             await Assert.That(await reader.MoveNextAsync()).IsTrue();
             await Assert.That(reader.Current.Text).IsEqualTo("hello");
         }
+
         await Assert.That(attempts.ToArray()).IsEquivalentTo(new[] { 1, 1 });
         await Assert.That(Volatile.Read(ref episodes)).IsEqualTo(2);
         await Assert.That(server.CommandsSeen).IsEqualTo(5);
@@ -438,17 +558,27 @@ public class PubSubReconnectPolicyTests
         var clock = new GatedRecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
         using var deadline = new CancellationTokenSource(Deadline);
+
         ValueTask<RespireSubscription> Subscribe(string name)
             => hub.SubscribeAsync(RespireSubscriptionKind.Channel, [name], new(), deadline.Token);
+
         await using var retained = await Subscribe("ch");
         await using var removed = await Subscribe("ch");
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.NextReconnectDelay is not null) waiting.TrySetResult();
-            if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
+            if (change.NextReconnectDelay is not null)
+            {
+                waiting.TrySetResult();
+            }
+
+            if (change.State == RespireConnectionState.Connected)
+            {
+                recovered.TrySetResult();
+            }
         };
+
         try
         {
             await Assert.That(async () => await Subscribe("lost")).Throws<RespireConnectionException>();
@@ -488,17 +618,29 @@ public class PubSubReconnectPolicyTests
         var attempts = new ConcurrentQueue<int>();
         client.ConnectionStateChanged += change =>
         {
-            if (change.NextReconnectDelay is not null) attempts.Enqueue(change.ReconnectAttempt);
-            if (change.SourceState == RespireConnectionState.Connected) recovered.TrySetResult();
+            if (change.NextReconnectDelay is not null)
+            {
+                attempts.Enqueue(change.ReconnectAttempt);
+            }
+
+            if (change.SourceState == RespireConnectionState.Connected)
+            {
+                recovered.TrySetResult();
+            }
         };
         var subscribers = Enumerable.Range(0, 32).Select(async _ =>
         {
             await start.Task;
-            try { await client.SubscribeAsync("ch", cancellationToken: deadline.Token); }
+
+            try
+            {
+                await client.SubscribeAsync("ch", cancellationToken: deadline.Token);
+            }
             catch (RespireConnectionException) { }
             // A command already on the failed socket receives the injected protocol error.
             catch (RespireProtocolException) { }
         }).ToArray();
+
         try
         {
             start.SetResult();
@@ -523,7 +665,7 @@ public class PubSubReconnectPolicyTests
     public async Task DisposalCancelsBackoffOrReplacementHandshake(bool handshake)
     {
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply, Confirmation)
-            { CloseConnectionAfterCommand = 3 };
+        { CloseConnectionAfterCommand = 3 };
         // A test-owned client isolates the subscription recovery budget and lifecycle observers.
 #pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server.Port, Policy(milliseconds: handshake ? 1 : 30_000), database: 1));
@@ -531,11 +673,22 @@ public class PubSubReconnectPolicyTests
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        client.ConnectionStateChanged += change => { if (change.NextReconnectDelay is not null) waiting.TrySetResult(); };
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.NextReconnectDelay is not null)
+            {
+                waiting.TrySetResult();
+            }
+        };
         server.SuppressReply = command => command == "SELECT 1";
         await Assert.That(async () => await client.SubscribeAsync("lost", cancellationToken: deadline.Token)).Throws<RespireConnectionException>();
         await waiting.Task.WaitAsync(deadline.Token);
-        if (handshake) await WaitForCommandsAsync(server, 4, deadline.Token);
+
+        if (handshake)
+        {
+            await WaitForCommandsAsync(server, 4, deadline.Token);
+        }
+
         await client.DisposeAsync().AsTask().WaitAsync(deadline.Token);
         await Assert.That(await subscription.Completion).IsEqualTo(RespireSubscriptionEndReason.ClientDisposed);
         await Assert.That(server.CommandsSeen).IsEqualTo(handshake ? 4 : 3);
@@ -559,8 +712,15 @@ public class PubSubReconnectPolicyTests
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.NextReconnectDelay is { } delay) scheduled.TrySetResult(delay);
-            if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
+            if (change.NextReconnectDelay is { } delay)
+            {
+                scheduled.TrySetResult(delay);
+            }
+
+            if (change.State == RespireConnectionState.Connected)
+            {
+                recovered.TrySetResult();
+            }
         };
         var pending = client.SubscribeAsync("stalled", cancellationToken: caller.Token).AsTask();
         await WaitForCommandsAsync(server, 2, deadline.Token);
@@ -588,16 +748,19 @@ public class PubSubReconnectPolicyTests
 #pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
+
         try
         {
             server.SuppressReply = _ => true;
             await Assert.That(async () => await client.SubscribeAsync("lost", cancellationToken: deadline.Token)).Throws<RespireConnectionException>();
             await logger.FirstCleanup.Task.WaitAsync(deadline.Token);
+
             for (var count = 3; count <= 4; count++)
             {
                 await WaitForCommandsAsync(server, count, deadline.Token);
                 await server.SendRawAsync(Rejection, server.ReceivedConnectionIds[^1]);
             }
+
             await Assert.That(await subscription.Completion.WaitAsync(deadline.Token))
                 .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
             await Assert.That(logger.LoggedErrors.Contains(cleanupError)).IsTrue();
@@ -615,7 +778,11 @@ public class PubSubReconnectPolicyTests
         using var logger = new CleanupLogger(() =>
         {
             cleaning.TrySetResult();
-            if (!releaseCleanup.Wait(Deadline)) throw new TimeoutException("Test did not release replacement cleanup.");
+
+            if (!releaseCleanup.Wait(Deadline))
+            {
+                throw new TimeoutException("Test did not release replacement cleanup.");
+            }
         });
         await using var server = new FakeRespServer(2, Confirmation) { CloseConnectionAfterCommand = 2 };
         // A test-owned client isolates the subscription recovery budget and lifecycle observers.
@@ -624,6 +791,7 @@ public class PubSubReconnectPolicyTests
 #pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
+
         try
         {
             server.SuppressReply = _ => true;
@@ -661,8 +829,12 @@ public class PubSubReconnectPolicyTests
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
+            if (change.State == RespireConnectionState.Connected)
+            {
+                recovered.TrySetResult();
+            }
         };
+
         try
         {
             // Fail the receive loop without an outstanding control command detaching the old connection.
@@ -681,24 +853,51 @@ public class PubSubReconnectPolicyTests
         }
         finally { await client.DisposeAsync(); }
     }
+
     private sealed class CleanupLogger(Action onCleanup, int cleanupNumber = 2) : ILoggerFactory, ILogger
     {
         private int _cleanups;
         internal readonly TaskCompletionSource FirstCleanup = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly ConcurrentQueue<Exception> LoggedErrors = new();
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (exception is not null) LoggedErrors.Enqueue(exception);
-            if (!formatter(state, exception).StartsWith("Disconnected from ", StringComparison.Ordinal)) return;
+            if (exception is not null)
+            {
+                LoggedErrors.Enqueue(exception);
+            }
+
+            if (!formatter(state, exception).StartsWith("Disconnected from ", StringComparison.Ordinal))
+            {
+                return;
+            }
+
             var count = Interlocked.Increment(ref _cleanups);
-            if (count == 1) FirstCleanup.TrySetResult();
-            if (count == cleanupNumber) onCleanup();
+
+            if (count == 1)
+            {
+                FirstCleanup.TrySetResult();
+            }
+
+            if (count == cleanupNumber)
+            {
+                onCleanup();
+            }
         }
     }
 
@@ -724,11 +923,18 @@ public class PubSubReconnectPolicyTests
         var lifecycleEvents = new ConcurrentQueue<RespireConnectionStateChange>();
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource == RespireReconnectSource.PubSub) lifecycleEvents.Enqueue(change);
+            if (change.ReconnectSource == RespireReconnectSource.PubSub)
+            {
+                lifecycleEvents.Enqueue(change);
+            }
             else if (holdClientDisposal && change.State == RespireConnectionState.Disconnected)
             {
                 disposalStarted.TrySetResult();
-                if (!releaseDisposal.Wait(Deadline)) throw new TimeoutException("Test did not release client disposal.");
+
+                if (!releaseDisposal.Wait(Deadline))
+                {
+                    throw new TimeoutException("Test did not release client disposal.");
+                }
             }
         };
         using var listener = new MeterListener();
@@ -736,27 +942,49 @@ public class PubSubReconnectPolicyTests
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name is
                 "respire.connection.reconnect.attempt" or "respire.connection.reconnect.exhausted")
+            {
                 current.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((instrument, _, tags, _) =>
         {
             var endpoint = false;
             var pubsub = false;
+
             foreach (var tag in tags)
             {
-                if (tag.Key == "server.port" && Equals(tag.Value, server.Port)) endpoint = true;
-                if (tag.Key == "respire.connection.source" && Equals(tag.Value, "pubsub")) pubsub = true;
+                if (tag.Key == "server.port" && Equals(tag.Value, server.Port))
+                {
+                    endpoint = true;
+                }
+
+                if (tag.Key == "respire.connection.source" && Equals(tag.Value, "pubsub"))
+                {
+                    pubsub = true;
+                }
             }
-            if (!endpoint || !pubsub) return;
+
+            if (!endpoint || !pubsub)
+            {
+                return;
+            }
+
             if (instrument.Name == "respire.connection.reconnect.exhausted")
+            {
                 observedExhaustion.TrySetResult();
+            }
             else
             {
                 observingAttempt.TrySetResult();
-                if (!releaseObserver.Wait(Deadline)) throw new TimeoutException("Test did not release the metric observer.");
+
+                if (!releaseObserver.Wait(Deadline))
+                {
+                    throw new TimeoutException("Test did not release the metric observer.");
+                }
             }
         });
         listener.Start();
+
         try
         {
             server.SuppressReply = _ => true;
@@ -768,6 +996,7 @@ public class PubSubReconnectPolicyTests
                 .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
             // The first measurement holds the dispatcher, so terminal telemetry is still queued.
             disposal = Task.Run(async () => await client.DisposeAsync());
+
             if (holdClientDisposal)
             {
                 // The terminal client callback precedes hub disposal. Keep that interval open
@@ -775,18 +1004,31 @@ public class PubSubReconnectPolicyTests
                 await disposalStarted.Task.WaitAsync(deadline.Token);
                 await Assert.That(client.Core.Disposed).IsTrue();
             }
-            else await disposal.WaitAsync(deadline.Token);
+            else
+            {
+                await disposal.WaitAsync(deadline.Token);
+            }
+
             releaseObserver.Set();
             await observedExhaustion.Task.WaitAsync(deadline.Token);
             var gate = (Lock)hub.GetType().GetField("_reconnectStateGate",
                 BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(hub)!;
             var publishing = hub.GetType().GetField("_publishingReconnectState",
                 BindingFlags.Instance | BindingFlags.NonPublic)!;
+
             while (true)
             {
-                lock (gate) { if (!(bool)publishing.GetValue(hub)!) break; }
+                lock (gate)
+                {
+                    if (!(bool)publishing.GetValue(hub)!)
+                    {
+                        break;
+                    }
+                }
+
                 await Task.Delay(1, deadline.Token);
             }
+
             releaseDisposal.Set();
             await disposal.WaitAsync(deadline.Token);
             await Assert.That(lifecycleEvents.IsEmpty).IsTrue();
@@ -795,7 +1037,12 @@ public class PubSubReconnectPolicyTests
         {
             releaseObserver.Set();
             releaseDisposal.Set();
-            if (disposal is not null) await disposal.WaitAsync(Deadline);
+
+            if (disposal is not null)
+            {
+                await disposal.WaitAsync(Deadline);
+            }
+
             await client.DisposeAsync();
         }
     }
@@ -815,9 +1062,18 @@ public class PubSubReconnectPolicyTests
         client.ConnectionStateChanged += change =>
         {
             changes.Enqueue(change);
-            if (change.ReconnectAttempt != 1) return;
+
+            if (change.ReconnectAttempt != 1)
+            {
+                return;
+            }
+
             observing.TrySetResult();
-            if (!releaseObserver.Wait(Deadline)) throw new TimeoutException("Test did not release the lifecycle observer.");
+
+            if (!releaseObserver.Wait(Deadline))
+            {
+                throw new TimeoutException("Test did not release the lifecycle observer.");
+            }
         };
         var first = new RespireConnectionStateChange(new RespireEndpoint("127.0.0.1", 6379),
             RespireConnectionState.Reconnecting, null)
@@ -827,6 +1083,7 @@ public class PubSubReconnectPolicyTests
             ReconnectAttempt = 1,
         };
         var publisher = Task.Run(() => client.Core.NotifySubscriptionStateChanged(first));
+
         try
         {
             await observing.Task.WaitAsync(Deadline);
@@ -859,7 +1116,10 @@ public class PubSubReconnectPolicyTests
         var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.NextReconnectDelay is null) return;
+            if (change.NextReconnectDelay is null)
+            {
+                return;
+            }
             // The lifecycle observer must synchronously dispose to exercise reentrant pub/sub recovery cleanup.
 #pragma warning disable RESP009
             client.DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -870,9 +1130,13 @@ public class PubSubReconnectPolicyTests
         await disposed.Task.WaitAsync(Deadline);
         await Assert.That(await subscription.Completion).IsEqualTo(RespireSubscriptionEndReason.ClientDisposed);
     }
+
     private sealed class GatedRecoveryClock : TimeProvider
     {
-        internal TaskCompletionSource<GatedTimer> Created { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource<GatedTimer> Created
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
@@ -885,14 +1149,29 @@ public class PubSubReconnectPolicyTests
     private sealed class GatedTimer(TimerCallback callback, object? state, TimeSpan dueTime) : ITimer
     {
         private int _finished;
-        internal TimeSpan DueTime { get; } = dueTime;
+
+        internal TimeSpan DueTime
+        {
+            get;
+        } = dueTime;
+
         internal void Fire()
         {
-            if (Interlocked.Exchange(ref _finished, 1) == 0) callback(state);
+            if (Interlocked.Exchange(ref _finished, 1) == 0)
+            {
+                callback(state);
+            }
         }
+
         public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _finished) == 0;
+
         public void Dispose() => Interlocked.Exchange(ref _finished, 1);
-        public ValueTask DisposeAsync() { Dispose(); return default; }
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return default;
+        }
     }
 
 }

@@ -3,16 +3,15 @@ using System;
 // See ../NOTICE.md and ../License.md for upstream copyright and LGPLv3 terms.
 using System.Threading;
 
-namespace Hangfire.Redis.Tests.Utils
+namespace Hangfire.Redis.Tests.Utils;
+
+public static class StaticFakeJobs
 {
-    public static class StaticFakeJobs
+    public static string Work(int identifier, int waitTime)
     {
-        public static string Work(int identifier, int waitTime)
-        {
-            Thread.Sleep(waitTime);
-            var jobResult = String.Format("{0} - {1} Job done after waiting {2} ms", DateTime.Now.ToString("hh:mm:ss fff"), identifier, waitTime);
-            Console.WriteLine(jobResult);
-            return jobResult;
-        }
+        Thread.Sleep(waitTime);
+        var jobResult = String.Format("{0} - {1} Job done after waiting {2} ms", DateTime.Now.ToString("hh:mm:ss fff"), identifier, waitTime);
+        Console.WriteLine(jobResult);
+        return jobResult;
     }
 }

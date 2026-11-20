@@ -19,15 +19,28 @@ public class ServerDiagnosticsIntegrationTests
         // Latency configuration, histograms, and slow logs are server-global: own this instance.
         string[] command = [image.StartsWith("valkey/", StringComparison.Ordinal) ? "valkey-server" : "redis-server",
             "--latency-monitor-threshold", "1", "--slowlog-log-slower-than", "0", "--slowlog-max-len", "128"];
-        if (histogramSupported) command = [.. command, "--enable-debug-command", "yes"];
+
+        if (histogramSupported)
+        {
+            command = [.. command, "--enable-debug-command", "yes"];
+        }
+
         await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image).WithCommand(command).WithPortBinding(6379, true)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
         var address = $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}";
         await using var client = await RespireClient.ConnectAsync(address + "&allowAdmin=true");
         var server = client.WithKeyPrefix("ignored:").Server;
         (await server.LatencyHistoryAsync("not-an-event")).Should().BeEmpty();
-        if (histogramSupported) await server.SetConfigAsync("latency-tracking", "yes");
-        using (var slept = await client.ExecuteAsync(RespireCommands.Server.DEBUG, "SLEEP", "0.02")) { }
+
+        if (histogramSupported)
+        {
+            await server.SetConfigAsync("latency-tracking", "yes");
+        }
+
+        using (var slept = await client.ExecuteAsync(RespireCommands.Server.DEBUG, "SLEEP", "0.02"))
+        {
+        }
+
         var history = await server.LatencyHistoryAsync("command");
         history.Should().NotBeEmpty();
         history.Should().Contain(sample => sample.Latency >= TimeSpan.FromMilliseconds(10));
@@ -39,10 +52,12 @@ public class ServerDiagnosticsIntegrationTests
         (await client.GetStringAsync("key")).Should().Be("value");
 
         RespireLatencyHistogram[] histograms = [];
+
         if (histogramSupported)
         {
             histograms = await server.LatencyHistogramsAsync(["get", "get", "not-a-command"]);
             histograms.Should().HaveCount(2); // Redis preserves repeated requested names in its map-shaped reply.
+
             foreach (var histogram in histograms)
             {
                 histogram.Command.Should().Be("get");
@@ -51,6 +66,7 @@ public class ServerDiagnosticsIntegrationTests
                 histogram.Buckets[^1].CumulativeCount.Should().Be(histogram.Calls);
                 histogram.Buckets.Select(bucket => bucket.UpperBoundMicroseconds).Should().BeInAscendingOrder();
             }
+
             (await server.LatencyHistogramsAsync(["not-a-command"])).Should().BeEmpty();
             (await server.LatencyHistogramsAsync()).Should().NotBeEmpty();
             (await server.LatencyHistogramsOnAllNodesAsync(["get"])).Single().Value.Should().ContainSingle();
@@ -88,6 +104,10 @@ public class ServerDiagnosticsIntegrationTests
         await purgeAll.Should().ThrowAsync<NotSupportedException>();
         await client.DisposeAsync();
         history[0].Latency.Should().BeGreaterThanOrEqualTo(TimeSpan.Zero);
-        if (histogramSupported) histograms[0].Buckets.Should().NotBeEmpty();
+
+        if (histogramSupported)
+        {
+            histograms[0].Buckets.Should().NotBeEmpty();
+        }
     }
 }

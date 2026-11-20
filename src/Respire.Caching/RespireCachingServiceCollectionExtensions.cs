@@ -30,6 +30,7 @@ public static class RespireCachingServiceCollectionExtensions
         {
             var options = provider.GetRequiredService<IOptions<RespireCacheRegistrationOptions>>().Value;
             RespireOptions? clientOptions = null;
+
             if (options.ClientOptions is { } configureClient)
             {
                 clientOptions = configureClient(provider) ?? throw new RespireConfigurationException(

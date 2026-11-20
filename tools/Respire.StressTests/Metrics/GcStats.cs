@@ -27,9 +27,28 @@ internal sealed class GcStats
 
 internal sealed class GcSnapshot
 {
-    public required int Gen0Collections { get; init; }
-    public required int Gen1Collections { get; init; }
-    public required int Gen2Collections { get; init; }
-    public required long AllocatedBytes { get; init; }
-    public required double PauseMs { get; init; }
+    public required int Gen0Collections
+    {
+        get; init;
+    }
+
+    public required int Gen1Collections
+    {
+        get; init;
+    }
+
+    public required int Gen2Collections
+    {
+        get; init;
+    }
+
+    public required long AllocatedBytes
+    {
+        get; init;
+    }
+
+    public required double PauseMs
+    {
+        get; init;
+    }
 }

@@ -18,38 +18,62 @@ internal sealed partial class SubscriptionHub
     // Test seams for the route bookkeeping invariants.
     internal int ClusterNotificationNodeCount
     {
-        get { lock (_gate) return _clusterNotifications.Nodes.Count; }
+        get
+        {
+            lock (_gate)
+            {
+                return _clusterNotifications.Nodes.Count;
+            }
+        }
     }
 
     internal int ClusterNotificationCoverageCount
     {
-        get { lock (_gate) return _clusterNotifications.Subscriptions.Count; }
+        get
+        {
+            lock (_gate)
+            {
+                return _clusterNotifications.Subscriptions.Count;
+            }
+        }
     }
 
     internal bool HasClusterNotificationReconciliationState(RespireSubscription subscription)
     {
         lock (_gate)
+        {
             return _clusterNotifications.Subscriptions.TryGetValue(subscription, out var state) && state.FailedAttempts != 0;
+        }
     }
 
     internal bool IsClusterNotificationEndpointRetrying(RespireEndpoint endpoint)
     {
-        lock (_gate) return _clusterNotifications.RetryingEndpoints.Contains(endpoint);
+        lock (_gate)
+        {
+            return _clusterNotifications.RetryingEndpoints.Contains(endpoint);
+        }
     }
 
     // Test seam: expire a command only after the fixture has observed its wire admission.
     internal bool ExpireClusterNotificationCommandForTesting(RespireEndpoint endpoint)
     {
         RespireConnection? connection;
+
         lock (_gate)
+        {
             connection = _clusterNotifications.Nodes.TryGetValue(endpoint, out var node) ? node.Connection : null;
+        }
+
         return connection?.ExpireOldestCommandForTesting() == true;
     }
 
     // Test seam: marks an endpoint as waiting for a failed reconciliation route.
     internal void MarkClusterNotificationEndpointRetrying(RespireEndpoint endpoint)
     {
-        lock (_gate) _clusterNotifications.RetryingEndpoints.Add(endpoint);
+        lock (_gate)
+        {
+            _clusterNotifications.RetryingEndpoints.Add(endpoint);
+        }
     }
 
     // Test seam: routes one channel frame through the endpoint's current node, as its receive
@@ -58,10 +82,15 @@ internal sealed partial class SubscriptionHub
         RespireEndpoint endpoint, ReadOnlySpan<byte> channel, ReadOnlySpan<byte> payload)
     {
         ClusterNotificationNode? node;
+
         lock (_gate)
         {
-            if (!_clusterNotifications.Nodes.TryGetValue(endpoint, out node)) return false;
+            if (!_clusterNotifications.Nodes.TryGetValue(endpoint, out node))
+            {
+                return false;
+            }
         }
+
         DeliverNotification(node, Volatile.Read(ref node.Epoch), RespireSubscriptionKind.Channel,
             channel, channel, false, payload);
         return true;
@@ -72,10 +101,16 @@ internal sealed partial class SubscriptionHub
         RespireTelemetry.ErrorObservation observation)
     {
         long observedTopologyVersion;
-        lock (_gate) observedTopologyVersion = _clusterNotifications.TopologyVersion;
+
+        lock (_gate)
+        {
+            observedTopologyVersion = _clusterNotifications.TopologyVersion;
+        }
+
         var desired = await GetNotificationCoverageAsync(subscription, cancellationToken).ConfigureAwait(false);
         var touched = new HashSet<RespireEndpoint>();
         var uncertain = new HashSet<RespireEndpoint>();
+
         try
         {
             foreach (var (endpoint, names) in desired)
@@ -85,6 +120,7 @@ internal sealed partial class SubscriptionHub
                 var node = await EnsureNotificationNodeAsync(endpoint, cancellationToken, retryExhausted: true)
                     .ConfigureAwait(false);
                 touched.Add(endpoint);
+
                 foreach (var name in names)
                 {
                     try
@@ -94,11 +130,16 @@ internal sealed partial class SubscriptionHub
                     }
                     catch (Exception error)
                     {
-                        if (!ContainsServerRejection(error)) uncertain.Add(endpoint);
+                        if (!ContainsServerRejection(error))
+                        {
+                            uncertain.Add(endpoint);
+                        }
+
                         throw;
                     }
                 }
             }
+
             cancellationToken.ThrowIfCancellationRequested();
 
             // A topology change published while these routes were acknowledged is reconciled
@@ -108,22 +149,33 @@ internal sealed partial class SubscriptionHub
             {
                 NotificationTopology? latest;
                 Task topologyChanged;
+
                 lock (_gate)
                 {
                     latest = _clusterNotifications.LatestTopology;
                     topologyChanged = _clusterNotifications.TopologyChanged.Task;
                 }
-                if (latest is null || latest.Version <= observedTopologyVersion) break;
+
+                if (latest is null || latest.Version <= observedTopologyVersion)
+                {
+                    break;
+                }
                 // Use the caller's token too, so a stalled new primary cannot outlive cancellation.
                 using var activation = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken, _lifetimeCancellation.Token);
+
                 if (await ReconcileNotificationSubscriptionAsync(subscription, latest.Version, latest.Endpoints,
                         latest.Authoritative, new StrongBox<RespireEndpoint?>(), activation.Token, observation).ConfigureAwait(false))
+                {
                     observedTopologyVersion = latest.Version;
+                }
                 else
+                {
                     // The router can publish before its callback reaches this hub. A rejected
                     // catch-up is unfinished; wait for that callback before retrying it.
                     await topologyChanged.WaitAsync(activation.Token).ConfigureAwait(false);
+                }
+
                 cancellationToken.ThrowIfCancellationRequested();
             }
         }
@@ -134,12 +186,25 @@ internal sealed partial class SubscriptionHub
             // UNSUBSCRIBE uses the command timeout and uncertain sockets are closed, not awaited.
             lock (_gate)
             {
-                if (_clusterNotifications.Subscriptions.TryGetValue(subscription, out var state)) touched.UnionWith(state.Coverage);
+                if (_clusterNotifications.Subscriptions.TryGetValue(subscription, out var state))
+                {
+                    touched.UnionWith(state.Coverage);
+                }
             }
+
             await RollbackNotificationActivationAsync(subscription, touched, uncertain).ConfigureAwait(false);
             RespireEndpoint? recoveredEndpoint;
-            lock (_gate) recoveredEndpoint = EndNotificationSubscriptionLocked(subscription);
-            if (recoveredEndpoint is { } endpoint) core.ClearClusterSubscriptionState(endpoint);
+
+            lock (_gate)
+            {
+                recoveredEndpoint = EndNotificationSubscriptionLocked(subscription);
+            }
+
+            if (recoveredEndpoint is { } endpoint)
+            {
+                core.ClearClusterSubscriptionState(endpoint);
+            }
+
             throw;
         }
     }
@@ -157,11 +222,20 @@ internal sealed partial class SubscriptionHub
             || !_clusterNotifications.RetryingEndpoints.Remove(endpoint)
             || _clusterNotifications.DisconnectedEndpoints.Contains(endpoint)
             || _clusterNotifications.ExhaustedEndpoints.Contains(endpoint))
+        {
             return null;
+        }
 
         if (_clusterNotifications.Nodes.TryGetValue(endpoint, out var node))
+        {
             lock (node.Gate)
-                if (node.InterruptedAt is not null) return null;
+            {
+                if (node.InterruptedAt is not null)
+                {
+                    return null;
+                }
+            }
+        }
 
         return endpoint;
     }
@@ -197,29 +271,47 @@ internal sealed partial class SubscriptionHub
     {
         bool subscribe;
         RespireConnection? connection;
+
         lock (_gate)
         {
             subscribe = AddNotificationRouteLocked(node, subscription, name);
+
             if (trackCoverage)
             {
                 if (!_clusterNotifications.Subscriptions.TryGetValue(subscription, out var state))
+                {
                     _clusterNotifications.Subscriptions.Add(subscription, state = new NotificationSubscriptionState());
+                }
+
                 state.Coverage.Add(node.Endpoint);
             }
+
             connection = node.Connection;
         }
-        if (!subscribe) return;
+
+        if (!subscribe)
+        {
+            return;
+        }
+
         try
         {
             if (connection is null)
+            {
                 throw new RespireConnectionException($"Cluster notification connection to {node.Endpoint} is unavailable.");
+            }
+
             await SendControlAsync(connection, SubscribeVerb(subscription.Kind),
                 SubscribeOperation(subscription.Kind), name, cancellationToken, instrument: true, observation: observation)
                 .ConfigureAwait(false);
         }
         catch (Exception error) when (ContainsServerRejection(error))
         {
-            lock (_gate) RemoveNotificationRouteLocked(node, subscription.Kind, subscription, name);
+            lock (_gate)
+            {
+                RemoveNotificationRouteLocked(node, subscription.Kind, subscription, name);
+            }
+
             throw;
         }
     }
@@ -230,7 +322,11 @@ internal sealed partial class SubscriptionHub
     {
         foreach (var endpoint in touched)
         {
-            if (TryGetNotificationNode(endpoint) is not { } node) continue;
+            if (TryGetNotificationNode(endpoint) is not { } node)
+            {
+                continue;
+            }
+
             if (uncertain?.Contains(endpoint) != true)
             {
                 await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false);
@@ -244,20 +340,35 @@ internal sealed partial class SubscriptionHub
             // publishing a reconnect gap to the subscriptions that share it.
             RespireConnection? connectionToClose;
             bool retired;
+
             lock (_gate)
             {
                 foreach (var name in subscription.Names)
+                {
                     RemoveNotificationRouteLocked(node, subscription.Kind, subscription, name);
-                if (_clusterNotifications.Subscriptions.TryGetValue(subscription, out var state)) state.Coverage.Remove(endpoint);
+                }
+
+                if (_clusterNotifications.Subscriptions.TryGetValue(subscription, out var state))
+                {
+                    state.Coverage.Remove(endpoint);
+                }
+
                 retired = node.IsEmpty && TryRetireNotificationNodeLocked(node);
                 connectionToClose = node.Connection;
             }
             // A watcher may already have reported this endpoint as reconnecting. It exits once
             // the node retires, so forget that state here.
-            if (retired) core.ClearClusterSubscriptionState(endpoint);
+            if (retired)
+            {
+                core.ClearClusterSubscriptionState(endpoint);
+            }
+
             if (connectionToClose is not null)
             {
-                try { await connectionToClose.DisposeAsync().ConfigureAwait(false); }
+                try
+                {
+                    await connectionToClose.DisposeAsync().ConfigureAwait(false);
+                }
                 catch (Exception error) { TryLog(error, static (logger, state) => logger.NotificationRollbackCloseFailed(state)); }
             }
         }
@@ -269,12 +380,17 @@ internal sealed partial class SubscriptionHub
     {
         var cluster = core.Cluster ?? throw new InvalidOperationException("Cluster notification routing requires Redis Cluster.");
         var allPrimaries = subscription.Names.Any(static name => name.RoutingScope == RespireChannelRoutingScope.AllPrimaries);
+
         if (allPrimaries && refreshPrimaries)
+        {
             await cluster.GetPrimaryEndpointsAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var snapshot = cluster.RoutingSnapshot;
+
             if (allPrimaries && refreshPrimaries && !snapshot.IsComplete)
             {
                 // Activation has no existing routes to preserve. A partial publication
@@ -289,6 +405,7 @@ internal sealed partial class SubscriptionHub
                     .Select(static node => new RespireEndpoint(node.Host, node.Port)).Distinct().ToArray()
                 : [];
             Dictionary<RespireEndpoint, List<RespireChannel>> desired = [];
+
             foreach (var name in subscription.Names)
             {
                 IEnumerable<RespireEndpoint> endpoints = name.RoutingScope switch
@@ -298,15 +415,26 @@ internal sealed partial class SubscriptionHub
                         => [await cluster.GetSlotOwnerEndpointAsync(slot, cancellationToken).ConfigureAwait(false)],
                     _ => throw new ArgumentException("Cluster notification descriptor has no valid routing scope.", nameof(subscription)),
                 };
+
                 foreach (var endpoint in endpoints)
                 {
-                    if (!desired.TryGetValue(endpoint, out var names)) desired.Add(endpoint, names = []);
-                    if (!names.Contains(name)) names.Add(name);
+                    if (!desired.TryGetValue(endpoint, out var names))
+                    {
+                        desired.Add(endpoint, names = []);
+                    }
+
+                    if (!names.Contains(name))
+                    {
+                        names.Add(name);
+                    }
                 }
             }
             // Resolving an owner can await connection or discovery. Never reconcile a set
             // assembled across publications: it can remove a route before its replacement is added.
-            if (ReferenceEquals(snapshot, cluster.RoutingSnapshot)) return desired;
+            if (ReferenceEquals(snapshot, cluster.RoutingSnapshot))
+            {
+                return desired;
+            }
         }
     }
 
@@ -316,15 +444,26 @@ internal sealed partial class SubscriptionHub
         RespireEndpoint endpoint, CancellationToken cancellationToken, bool retryExhausted = false)
     {
         ClusterNotificationNode? existing;
+
         lock (_gate)
         {
             if (!retryExhausted && _clusterNotifications.ExhaustedEndpoints.Contains(endpoint))
+            {
                 throw new RespireConnectionException(
                     $"Cluster notification recovery is exhausted for {endpoint}; subscribe again or recreate the client to retry.");
+            }
+
             _clusterNotifications.Nodes.TryGetValue(endpoint, out existing);
-            if (existing?.Connection is { IsConnected: true }) return existing;
+
+            if (existing?.Connection is { IsConnected: true })
+            {
+                return existing;
+            }
+
             if (existing?.Connection is { IsConnected: false } && existing.InterruptedAt is null)
+            {
                 existing.InterruptedAt = DateTimeOffset.UtcNow;
+            }
         }
         // Nodes in _clusterNotifications.Nodes are never retired, so an existing node is reused as is.
         var node = existing ?? new ClusterNotificationNode(endpoint);
@@ -352,7 +491,9 @@ internal sealed partial class SubscriptionHub
         var options = core.CreateConnectionOptions(
             (in RespValue value) => OnNotificationPush(node, epoch, in value)) with
         {
-            SubscriptionConfirmationHandler = (in RespValue _) => { },
+            SubscriptionConfirmationHandler = (in RespValue _) =>
+            {
+            },
         };
         using var connectCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken, _lifetimeCancellation.Token);
@@ -360,6 +501,7 @@ internal sealed partial class SubscriptionHub
             core.Logger, connectCancellation.Token).ConfigureAwait(false);
         Volatile.Write(ref node.PendingEpoch, epoch);
         List<(RespireSubscriptionKind Kind, RespireChannel Name)>? rejected = null;
+
         try
         {
             foreach (var (kind, name) in SnapshotNotificationRoutes(node))
@@ -373,8 +515,7 @@ internal sealed partial class SubscriptionHub
                 {
                     // A rejection (for example NOPERM after an ACL change) is specific to this
                     // route and leaves the socket healthy. Keep replaying the others.
-                    TryLog((error, name, endpoint), static (logger, state)
-                        => logger.NotificationRouteRejected(state.name, state.endpoint.Host, state.endpoint.Port, state.error));
+                    TryLog((error, name, endpoint), static (logger, state) => logger.NotificationRouteRejected(state.name, state.endpoint.Host, state.endpoint.Port, state.error));
                     (rejected ??= []).Add((kind, name));
                 }
             }
@@ -382,10 +523,16 @@ internal sealed partial class SubscriptionHub
         catch
         {
             Volatile.Write(ref node.PendingEpoch, 0);
-            try { await connection.DisposeAsync().ConfigureAwait(false); }
+
+            try
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
             catch (Exception error) { TryLog(error, static (logger, state) => logger.NotificationReplacementCloseFailed(state)); }
+
             throw;
         }
+
         return (connection, rejected);
     }
 
@@ -399,9 +546,11 @@ internal sealed partial class SubscriptionHub
     {
         bool retiredDuringReplay;
         RespireConnection? supersededConnection = null;
+
         lock (_gate)
         {
             retiredDuringReplay = node.Retired;
+
             if (!retiredDuringReplay)
             {
                 Interlocked.Exchange(ref node.Epoch, epoch);
@@ -410,46 +559,77 @@ internal sealed partial class SubscriptionHub
                 _clusterNotifications.RegisterNode(node);
                 _clusterNotifications.ExhaustedEndpoints.Remove(node.Endpoint);
             }
+
             Volatile.Write(ref node.PendingEpoch, 0);
         }
+
         if (retiredDuringReplay)
         {
             // Unreachable while every retirement holds _controlGate, as its callers and this
             // method's do. Kept as a release-build guard, because reviving a retired node would
             // leak its socket and deliver to subscriptions that already ended.
             Debug.Fail("A cluster notification node was retired while its replacement replayed.");
-            try { await connection.DisposeAsync().ConfigureAwait(false); }
+
+            try
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
             catch (Exception error) { TryLog(error, static (logger, state) => logger.NotificationRetiredReplacementCloseFailed(state)); }
+
             throw new RespireConnectionException($"Cluster notification routes for {node.Endpoint} were removed during recovery.");
         }
+
         if (supersededConnection is not null)
         {
-            try { await supersededConnection.DisposeAsync().ConfigureAwait(false); }
+            try
+            {
+                await supersededConnection.DisposeAsync().ConfigureAwait(false);
+            }
             catch (Exception error) { TryLog(error, static (logger, state) => logger.NotificationSupersededCloseFailed(state)); }
         }
-        if (rejected is null) return;
+
+        if (rejected is null)
+        {
+            return;
+        }
+
         lock (_gate)
         {
             var interruptedAt = node.InterruptedAt ?? DateTimeOffset.UtcNow;
+
             foreach (var (kind, name) in rejected)
             {
                 List<RespireSubscription> consumers;
+
                 lock (node.Gate)
                 {
                     var routes = node.Routes[(int)kind];
-                    if (!routes.TryGetValue(name, out var found)) continue;
+
+                    if (!routes.TryGetValue(name, out var found))
+                    {
+                        continue;
+                    }
+
                     consumers = found;
                     routes.Remove(name);
                 }
+
                 foreach (var subscription in consumers)
                 {
                     // A consumer without state has already ended; nothing will retry it.
-                    if (!_clusterNotifications.Subscriptions.TryGetValue(subscription, out var state)) continue;
+                    if (!_clusterNotifications.Subscriptions.TryGetValue(subscription, out var state))
+                    {
+                        continue;
+                    }
+
                     if (state.ReplayRejectedAt is not { } started || interruptedAt < started)
+                    {
                         state.ReplayRejectedAt = interruptedAt;
+                    }
                 }
             }
         }
+
         ScheduleNotificationReconciliation();
     }
 
@@ -459,6 +639,7 @@ internal sealed partial class SubscriptionHub
     {
         bool recovered;
         bool reconciliationPending;
+
         lock (_gate)
         {
             var wasInterrupted = node.InterruptedAt is not null;
@@ -470,22 +651,40 @@ internal sealed partial class SubscriptionHub
             // ClearNotificationReconciliationRetries reports the recovery then.
             reconciliationPending = _clusterNotifications.RetryingEndpoints.Contains(node.Endpoint);
         }
+
         PublishNotificationReconnectGaps(node);
+
         if (recovered && !reconciliationPending)
+        {
             core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
                 node.Endpoint, RespireConnectionState.Connected, null));
+        }
     }
 
     private void OnNotificationPush(ClusterNotificationNode node, long epoch, in RespValue value)
     {
-        if (!IsCurrentNotificationEpoch(node, epoch)) return;
+        if (!IsCurrentNotificationEpoch(node, epoch))
+        {
+            return;
+        }
+
         var elements = value.AsArray();
-        if (elements.Length < 3) return;
+
+        if (elements.Length < 3)
+        {
+            return;
+        }
+
         var frame = elements[0].AsSpan();
+
         if (frame.SequenceEqual("message"u8))
+        {
             DeliverNotification(node, epoch, RespireSubscriptionKind.Channel, elements[1].AsSpan(), elements[1].AsSpan(), false, elements[2].AsSpan());
+        }
         else if (frame.SequenceEqual("pmessage"u8) && elements.Length >= 4)
+        {
             DeliverNotification(node, epoch, RespireSubscriptionKind.Pattern, elements[1].AsSpan(), elements[2].AsSpan(), true, elements[3].AsSpan());
+        }
     }
 
     private void DeliverNotification(ClusterNotificationNode node, long epoch, RespireSubscriptionKind kind,
@@ -498,7 +697,10 @@ internal sealed partial class SubscriptionHub
         lock (node.Gate)
         {
             if (_disposed || !IsCurrentNotificationEpoch(node, epoch) || node.Retired
-                || !node.Routes[(int)kind].TryGetValue(routeName, out var cachedName, out var targets)) return;
+                || !node.Routes[(int)kind].TryGetValue(routeName, out var cachedName, out var targets))
+            {
+                return;
+            }
             // Copy only after a route matched, so a frame for a route that was just removed
             // allocates nothing. Only this node's receive loop and rare route writers contend
             // for this gate, so the copy does not hold up other primaries.
@@ -507,9 +709,16 @@ internal sealed partial class SubscriptionHub
                 pattern ? cachedName : (RespireChannel?)null,
                 payload, ref drops);
         }
+
         RespireTelemetry.RecordReceivedMessage(sharded: false);
+
         if (drops is not null)
-            foreach (var (subscription, gap) in drops) subscription.NotifyDrop(gap);
+        {
+            foreach (var (subscription, gap) in drops)
+            {
+                subscription.NotifyDrop(gap);
+            }
+        }
     }
 
     private static bool IsCurrentNotificationEpoch(ClusterNotificationNode node, long epoch)
@@ -528,8 +737,7 @@ internal sealed partial class SubscriptionHub
         catch (ObjectDisposedException) when (_disposed) { }
         catch (Exception error)
         {
-            TryLog((error, node.Endpoint), static (logger, state)
-                => logger.NotificationRecoveryStopped(state.Endpoint.Host, state.Endpoint.Port, state.error));
+            TryLog((error, node.Endpoint), static (logger, state) => logger.NotificationRecoveryStopped(state.Endpoint.Host, state.Endpoint.Port, state.error));
         }
     }
 
@@ -540,10 +748,18 @@ internal sealed partial class SubscriptionHub
         var attempt = 1;
         var nextDelay = NotificationReconnectDelay(attempt);
         var lastError = connection.CloseError;
+
         lock (_gate)
         {
-            if (_disposed || node.Retired || Volatile.Read(ref node.Epoch) != epoch || node.IsEmpty) return;
-            if (node.InterruptedAt is null) node.InterruptedAt = DateTimeOffset.UtcNow;
+            if (_disposed || node.Retired || Volatile.Read(ref node.Epoch) != epoch || node.IsEmpty)
+            {
+                return;
+            }
+
+            if (node.InterruptedAt is null)
+            {
+                node.InterruptedAt = DateTimeOffset.UtcNow;
+            }
             // Publish the first attempt under _gate, so a concurrent release cannot retire the
             // node and clear its state between this check and the event.
             core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
@@ -553,6 +769,7 @@ internal sealed partial class SubscriptionHub
                 NextReconnectDelay = nextDelay,
             });
         }
+
         while (!_disposed && !node.Retired)
         {
             try
@@ -564,20 +781,29 @@ internal sealed partial class SubscriptionHub
             {
                 TryLog(telemetryError, static (logger, state) => logger.NotificationReconnectTelemetryFailed(state));
             }
+
             if (attempt > 1)
+            {
                 core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
                     node.Endpoint, RespireConnectionState.Reconnecting, lastError)
                 {
                     ReconnectAttempt = attempt,
                     NextReconnectDelay = nextDelay,
                 });
+            }
+
             try
             {
                 await Task.Delay(nextDelay, _recoveryClock, _lifetimeCancellation.Token).ConfigureAwait(false);
                 await _controlGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+
                 try
                 {
-                    if (_disposed || node.Retired || Volatile.Read(ref node.Epoch) != epoch) return;
+                    if (_disposed || node.Retired || Volatile.Read(ref node.Epoch) != epoch)
+                    {
+                        return;
+                    }
+
                     _ = await EnsureNotificationNodeAsync(node.Endpoint, _lifetimeCancellation.Token).ConfigureAwait(false);
                     return;
                 }
@@ -587,15 +813,20 @@ internal sealed partial class SubscriptionHub
             catch (Exception error)
             {
                 lastError = error;
+
                 if (core.Options.ReconnectPolicy?.IsExhausted(attempt) == true)
                 {
                     await ExhaustNotificationNodeAsync(node, epoch, error, attempt).ConfigureAwait(false);
                     return;
                 }
-                if (attempt < int.MaxValue) attempt++;
+
+                if (attempt < int.MaxValue)
+                {
+                    attempt++;
+                }
+
                 nextDelay = NotificationReconnectDelay(attempt);
-                TryLog((error, node.Endpoint, nextDelay), static (logger, state)
-                    => logger.NotificationReconnectRetry(state.Endpoint.Host, state.Endpoint.Port, state.nextDelay, state.error));
+                TryLog((error, node.Endpoint, nextDelay), static (logger, state) => logger.NotificationReconnectRetry(state.Endpoint.Host, state.Endpoint.Port, state.nextDelay, state.error));
             }
         }
     }
@@ -608,17 +839,24 @@ internal sealed partial class SubscriptionHub
         List<(ClusterNotificationNode Node, RespireConnection Connection, RespireSubscriptionKind Kind, RespireChannel Name)> unsubscribe = [];
         List<RespireEndpoint> collateralEndpoints = [];
         List<RespireEndpoint> recoveredEndpoints = [];
-        List<(ClusterNotificationNode Node, RespireConnection Connection, RespireSubscriptionKind Kind, RespireChannel Name,
-            CancellationTokenSource Timeout, Task Ack)> cleanupAcks = [];
+        List<(ClusterNotificationNode Node, RespireConnection Connection, RespireSubscriptionKind Kind, RespireChannel Name, CancellationTokenSource Timeout, Task Ack)> cleanupAcks = [];
         await _controlGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+
         try
         {
             lock (_gate)
             {
-                if (node.Retired || Volatile.Read(ref node.Epoch) != expectedEpoch) return;
+                if (node.Retired || Volatile.Read(ref node.Epoch) != expectedEpoch)
+                {
+                    return;
+                }
+
                 lock (node.Gate)
+                {
                     subscriptions = node.Routes.SelectMany(static routes => routes.Values)
                         .SelectMany(static consumers => consumers).Distinct().ToArray();
+                }
+
                 TryRetireNotificationNodeLocked(node);
                 _clusterNotifications.DisconnectedEndpoints.Add(node.Endpoint);
                 _clusterNotifications.ExhaustedEndpoints.Add(node.Endpoint);
@@ -628,26 +866,37 @@ internal sealed partial class SubscriptionHub
                 // A subscription is ended as a whole: a cluster-wide one without this primary
                 // would silently miss its events. Its routes on other nodes are released too.
                 var otherNodes = _clusterNotifications.Nodes.Values.ToArray();
+
                 foreach (var subscription in subscriptions)
                 {
                     if (EndNotificationSubscriptionLocked(subscription) is { } recoveredEndpoint)
+                    {
                         recoveredEndpoints.Add(recoveredEndpoint);
+                    }
+
                     foreach (var other in otherNodes)
                     {
                         foreach (var name in subscription.Names)
                         {
                             if (RemoveNotificationRouteLocked(other, subscription.Kind, subscription, name)
                                 && other.Connection is { IsConnected: true } otherConnection)
+                            {
                                 unsubscribe.Add((other, otherConnection, subscription.Kind, name));
+                            }
                         }
                     }
                 }
+
                 foreach (var other in otherNodes)
                 {
                     if (other.IsEmpty && TryRetireNotificationNodeLocked(other))
                     {
                         collateralEndpoints.Add(other.Endpoint);
-                        if (other.Connection is { } otherConnection) close.Add(otherConnection);
+
+                        if (other.Connection is { } otherConnection)
+                        {
+                            close.Add(otherConnection);
+                        }
                     }
                 }
             }
@@ -662,7 +911,11 @@ internal sealed partial class SubscriptionHub
                     timeout.Token, instrument: true, observeDeadlineCancellation: true).AsTask();
                 cleanupAcks.Add((other, connection, kind, name, timeout, ack));
             }
-            if (node.Connection is { } nodeConnection) close.Add(nodeConnection);
+
+            if (node.Connection is { } nodeConnection)
+            {
+                close.Add(nodeConnection);
+            }
         }
         finally { _controlGate.Release(); }
 
@@ -672,15 +925,31 @@ internal sealed partial class SubscriptionHub
             ReconnectAttempt = attempt,
             ReconnectExhausted = true,
         });
-        foreach (var endpoint in recoveredEndpoints) core.ClearClusterSubscriptionState(endpoint);
-        foreach (var endpoint in collateralEndpoints) core.ClearClusterSubscriptionState(endpoint);
-        try { RespireTelemetry.RecordReconnectExhaustion(
-            node.Endpoint.Host, node.Endpoint.Port, RespireReconnectSource.PubSub); }
+
+        foreach (var endpoint in recoveredEndpoints)
+        {
+            core.ClearClusterSubscriptionState(endpoint);
+        }
+
+        foreach (var endpoint in collateralEndpoints)
+        {
+            core.ClearClusterSubscriptionState(endpoint);
+        }
+
+        try
+        {
+            RespireTelemetry.RecordReconnectExhaustion(
+            node.Endpoint.Host, node.Endpoint.Port, RespireReconnectSource.PubSub);
+        }
         catch (Exception telemetryError)
         {
             TryLog(telemetryError, static (logger, state) => logger.NotificationReconnectExhaustionTelemetryFailed(state));
         }
-        foreach (var subscription in subscriptions) subscription.CompleteFromReconnectExhaustion();
+
+        foreach (var subscription in subscriptions)
+        {
+            subscription.CompleteFromReconnectExhaustion();
+        }
 
         foreach (var (other, connection, kind, name, timeout, ack) in cleanupAcks)
         {
@@ -693,9 +962,16 @@ internal sealed partial class SubscriptionHub
                 lock (_gate)
                 {
                     bool live;
-                    lock (other.Gate) live = other.Routes[(int)kind].TryGetValue(name, out _);
+
+                    lock (other.Gate)
+                    {
+                        live = other.Routes[(int)kind].TryGetValue(name, out _);
+                    }
+
                     if (!other.Retired && ReferenceEquals(other.Connection, connection) && live)
+                    {
                         close.Add(connection);
+                    }
                 }
             }
             catch (Exception cleanupError)
@@ -710,7 +986,10 @@ internal sealed partial class SubscriptionHub
 
         foreach (var connection in close.Distinct())
         {
-            try { await connection.DisposeAsync().ConfigureAwait(false); }
+            try
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
             catch (Exception closeError) { TryLog(closeError, static (logger, state) => logger.NotificationExhaustionCloseFailed(state)); }
         }
     }
@@ -718,30 +997,53 @@ internal sealed partial class SubscriptionHub
     private void PublishNotificationReconnectGaps(ClusterNotificationNode node)
     {
         List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)> gaps = [];
+
         lock (_gate)
         {
-            if (node.InterruptedAt is not { } started) return;
+            if (node.InterruptedAt is not { } started)
+            {
+                return;
+            }
+
             var ended = DateTimeOffset.UtcNow;
-            if (ended < started) ended = started;
+
+            if (ended < started)
+            {
+                ended = started;
+            }
             // Write gaps under the node gate so they are ordered with this node's deliveries.
             lock (node.Gate)
             {
                 HashSet<RespireSubscription> subscriptions = [];
+
                 foreach (var routes in node.Routes)
+                {
                     foreach (var targets in routes.Values)
+                    {
                         subscriptions.UnionWith(targets);
+                    }
+                }
                 // Every subscription with a replayed route learns about the outage now, even
                 // when another of its routes was rejected and is still being retried. That
                 // rejected route reports its own, longer gap once reconciliation restores it.
                 foreach (var subscription in subscriptions)
                 {
                     var gap = new RespireSubscriptionGap(RespireSubscriptionGapReason.Reconnect, started, ended);
-                    if (subscription.Buffer.WriteGap(gap)) gaps.Add((subscription, gap));
+
+                    if (subscription.Buffer.WriteGap(gap))
+                    {
+                        gaps.Add((subscription, gap));
+                    }
                 }
             }
+
             node.InterruptedAt = null;
         }
-        foreach (var (subscription, gap) in gaps) subscription.NotifyGap(gap);
+
+        foreach (var (subscription, gap) in gaps)
+        {
+            subscription.NotifyGap(gap);
+        }
     }
 
     private (RespireSubscriptionKind Kind, RespireChannel Name)[] SnapshotNotificationRoutes(ClusterNotificationNode node)
@@ -749,8 +1051,15 @@ internal sealed partial class SubscriptionHub
         lock (_gate)
         {
             var snapshot = new List<(RespireSubscriptionKind, RespireChannel)>();
+
             for (var i = 0; i < node.Routes.Length; i++)
-                foreach (var name in node.Routes[i].Names) snapshot.Add(((RespireSubscriptionKind)i, name));
+            {
+                foreach (var name in node.Routes[i].Names)
+                {
+                    snapshot.Add(((RespireSubscriptionKind)i, name));
+                }
+            }
+
             return [.. snapshot];
         }
     }
@@ -761,70 +1070,114 @@ internal sealed partial class SubscriptionHub
     {
         List<RespireChannel> released = [];
         RespireConnection? connection;
+
         lock (_gate)
         {
             connection = node.Connection;
+
             foreach (var name in names ?? subscription.Names)
-                if (RemoveNotificationRouteLocked(node, subscription.Kind, subscription, name)) released.Add(name);
+            {
+                if (RemoveNotificationRouteLocked(node, subscription.Kind, subscription, name))
+                {
+                    released.Add(name);
+                }
+            }
             // Only the subscription's end removes its state entry; see EndNotificationSubscriptionLocked.
             if (removeCoverage && _clusterNotifications.Subscriptions.TryGetValue(subscription, out var state))
+            {
                 state.Coverage.Remove(node.Endpoint);
+            }
         }
+
         if (connection is { IsConnected: true } && released.Count != 0)
         {
             // Pipeline the removals under one deadline instead of one round trip each.
             using var timeout = new CancellationTokenSource(core.Options.CommandTimeout ?? core.Options.ConnectTimeout);
             var acks = new Task[released.Count];
+
             for (var index = 0; index < released.Count; index++)
+            {
                 acks[index] = SendControlAsync(connection, UnsubscribeVerb(subscription.Kind),
                     UnsubscribeOperation(subscription.Kind), released[index], timeout.Token, instrument: true,
                     observeDeadlineCancellation: true).AsTask();
-            try { await Task.WhenAll(acks).ConfigureAwait(false); }
+            }
+
+            try
+            {
+                await Task.WhenAll(acks).ConfigureAwait(false);
+            }
             catch (Exception error) when (error is RespireException or OperationCanceledException)
             {
                 // The server may still hold a route this node no longer tracks. Closing the
                 // socket clears it; a shared node reconnects and replays only its live routes.
                 TryLog(error, static (logger, state) => logger.NotificationUnsubscribeFailed(state));
-                try { await connection.DisposeAsync().ConfigureAwait(false); }
+
+                try
+                {
+                    await connection.DisposeAsync().ConfigureAwait(false);
+                }
                 catch (Exception closeError) { TryLog(closeError, static (logger, state) => logger.NotificationUncertainCloseFailed(state)); }
             }
         }
+
         RespireConnection? connectionToDispose = null;
+
         lock (_gate)
         {
             if (removeCoverage && node.IsEmpty && TryRetireNotificationNodeLocked(node))
+            {
                 connectionToDispose = node.Connection;
+            }
         }
+
         if (connectionToDispose is not null)
         {
             core.ClearClusterSubscriptionState(node.Endpoint);
             // Route state is already committed; a failed close must not abort callers that
             // still have to complete or unsubscribe other routes.
-            try { await connectionToDispose.DisposeAsync().ConfigureAwait(false); }
+            try
+            {
+                await connectionToDispose.DisposeAsync().ConfigureAwait(false);
+            }
             catch (Exception error) { TryLog(error, static (logger, state) => logger.NotificationRetiredCloseFailed(state)); }
         }
     }
 
     internal void NotifyTopologyChanged(long version, RespireEndpoint[] endpoints, bool authoritative)
     {
-        if (_disposed) return;
+        if (_disposed)
+        {
+            return;
+        }
         // Publish the version and its snapshot together so activation never observes a newer
         // version without the endpoints that belong to it.
         lock (_gate)
         {
-            if (version <= _clusterNotifications.TopologyVersion) return;
+            if (version <= _clusterNotifications.TopologyVersion)
+            {
+                return;
+            }
+
             _clusterNotifications.LatestTopology = new NotificationTopology(version, endpoints, authoritative);
             Volatile.Write(ref _clusterNotifications.TopologyVersion, version);
             _clusterNotifications.TopologyChanged.TrySetResult();
             _clusterNotifications.TopologyChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
             if (authoritative)
             {
                 // An endpoint absent from a complete map has left the cluster. Forget its terminal
                 // state so a primary later started at that address is treated as a new node.
                 List<RespireEndpoint> departed = [];
                 _clusterNotifications.ExhaustedEndpoints.RemoveWhere(endpoint => Array.IndexOf(endpoints, endpoint) < 0);
+
                 foreach (var endpoint in _clusterNotifications.DisconnectedEndpoints.Union(_clusterNotifications.RetryingEndpoints))
-                    if (Array.IndexOf(endpoints, endpoint) < 0) departed.Add(endpoint);
+                {
+                    if (Array.IndexOf(endpoints, endpoint) < 0)
+                    {
+                        departed.Add(endpoint);
+                    }
+                }
+
                 foreach (var endpoint in departed)
                 {
                     _clusterNotifications.DisconnectedEndpoints.Remove(endpoint);
@@ -833,6 +1186,7 @@ internal sealed partial class SubscriptionHub
                 }
             }
         }
+
         _ = ReconcileNotificationsAsync(version, endpoints, authoritative);
     }
 
@@ -843,25 +1197,38 @@ internal sealed partial class SubscriptionHub
     {
         var retryFullPass = false;
         List<(RespireSubscription Subscription, TimeSpan Delay)>? subscriptionRetries = null;
+
         try
         {
             // Held across network awaits on purpose: reconciliation must not interleave with
             // activation, recovery or removal of the same routes.
             await _controlGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+
             try
             {
-                if (_disposed || version != Volatile.Read(ref _clusterNotifications.TopologyVersion)) return;
+                if (_disposed || version != Volatile.Read(ref _clusterNotifications.TopologyVersion))
+                {
+                    return;
+                }
+
                 RespireSubscription[] subscriptions;
+
                 lock (_gate)
                 {
                     if (selectedSubscriptions is { } selected)
+                    {
                         subscriptions = selected.Where(subscription =>
                             _clusterNotifications.Subscriptions.TryGetValue(subscription, out var state)
                             && (!skipSubscriptionsWithPendingRetry || state.FailedAttempts == 0)).ToArray();
+                    }
                     else
+                    {
                         subscriptions = [.. _clusterNotifications.Subscriptions.Keys];
+                    }
                 }
+
                 List<(RespireSubscription Subscription, RespireEndpoint? Endpoint, Exception Error, int Attempt)>? failures = null;
+
                 foreach (var subscription in subscriptions)
                 {
                     // Reconcile each subscription independently so one failing endpoint cannot
@@ -869,13 +1236,18 @@ internal sealed partial class SubscriptionHub
                     var owner = DispatchResponseSource<bool>.Start();
                     var observation = owner.Observation;
                     StrongBox<RespireEndpoint?>? failingEndpoint = null;
+
                     try
                     {
                         failingEndpoint = new();
+
                         if (!await ReconcileNotificationSubscriptionAsync(
                                 subscription, version, endpoints, authoritative, failingEndpoint,
                                 _lifetimeCancellation.Token, observation).ConfigureAwait(false))
+                        {
                             return;
+                        }
+
                         lock (_gate)
                         {
                             if (_clusterNotifications.Subscriptions.TryGetValue(subscription, out var reconciled))
@@ -890,39 +1262,59 @@ internal sealed partial class SubscriptionHub
                     catch (Exception error)
                     {
                         if (ShouldObserveHandled())
+                        {
                             observation.Handled(error);
+                        }
+
                         TryLog(error, static (logger, state) => logger.NotificationTopologyReconciliationFailed(state));
                         // Each failing endpoint gets the policy's full attempt budget. A failure
                         // against a different endpoint, such as a newer topology replacing an
                         // unreachable primary, starts a new count, so a topology that flaps
                         // between endpoints never exhausts a subscription it can still serve.
                         int subscriptionAttempt;
+
                         lock (_gate)
                         {
                             // Every path that ends a subscription holds _controlGate, as this
                             // pass does, so the state is still present. Guard it anyway.
-                            if (!_clusterNotifications.Subscriptions.TryGetValue(subscription, out var state)) continue;
+                            if (!_clusterNotifications.Subscriptions.TryGetValue(subscription, out var state))
+                            {
+                                continue;
+                            }
+
                             subscriptionAttempt = state.FailedAttempts != 0
                                 && state.FailingEndpoint == failingEndpoint?.Value ? state.FailedAttempts + 1 : 1;
                             state.FailedAttempts = subscriptionAttempt;
                             state.FailingEndpoint = failingEndpoint?.Value;
                             state.RetryingOutage = !ContainsServerRejection(error);
                         }
+
                         (failures ??= []).Add((subscription, failingEndpoint?.Value, error, subscriptionAttempt));
                     }
                     finally
                     {
                         owner.CompleteInternal();
+
                         lock (_gate)
+                        {
                             if (version == _clusterNotifications.TopologyVersion)
+                            {
                                 _clusterNotifications.ReconciliationHasExaminedSubscriptions = true;
+                            }
+                        }
                     }
                 }
+
                 if (failures is not null)
                 {
                     var policy = core.Options.ReconnectPolicy;
                     HashSet<RespireEndpoint> exhaustedEndpoints;
-                    lock (_gate) exhaustedEndpoints = [.. _clusterNotifications.ExhaustedEndpoints];
+
+                    lock (_gate)
+                    {
+                        exhaustedEndpoints = [.. _clusterNotifications.ExhaustedEndpoints];
+                    }
+
                     foreach (var (subscription, endpoint, error, subscriptionAttempt) in failures)
                     {
                         if (policy?.IsExhausted(subscriptionAttempt) == true
@@ -930,11 +1322,16 @@ internal sealed partial class SubscriptionHub
                         {
                             await ExhaustNotificationSubscriptionAsync(subscription, endpoint, error, subscriptionAttempt)
                                 .ConfigureAwait(false);
+
                             if (endpoint is { } exhaustedEndpoint && !ContainsServerRejection(error))
                             {
                                 lock (_gate)
+                                {
                                     if (_clusterNotifications.ExhaustedEndpoints.Contains(exhaustedEndpoint))
+                                    {
                                         exhaustedEndpoints.Add(exhaustedEndpoint);
+                                    }
+                                }
                             }
                         }
                         else
@@ -945,11 +1342,15 @@ internal sealed partial class SubscriptionHub
                         }
                     }
                 }
+
                 HashSet<RespireEndpoint> stillRetrying;
+
                 lock (_gate)
+                {
                     stillRetrying = _clusterNotifications.Subscriptions.Values
                         .Where(static state => state.RetryingOutage && state.FailingEndpoint is not null)
                         .Select(static state => state.FailingEndpoint!.Value).ToHashSet();
+                }
                 // Endpoint state stays retrying while any subscription still needs that route.
                 ClearNotificationReconciliationRetries(stillRetrying);
             }
@@ -961,15 +1362,21 @@ internal sealed partial class SubscriptionHub
             TryLog(error, static (logger, state) => logger.NotificationTopologyReconciliationFailed(state));
             retryFullPass = true;
         }
+
         if (!_disposed && version == Volatile.Read(ref _clusterNotifications.TopologyVersion)
             && subscriptionRetries is { } retries)
         {
             foreach (var (subscription, delay) in retries)
+            {
                 _ = RetryNotificationReconciliationAsync(version, endpoints, authoritative, delay, subscription);
+            }
         }
+
         if (retryFullPass && !_disposed && version == Volatile.Read(ref _clusterNotifications.TopologyVersion))
+        {
             _ = RetryNotificationReconciliationAsync(version, endpoints, authoritative,
                 NotificationReconnectDelay(attempt + 1), onlySubscription: null, attempt: attempt + 1);
+        }
     }
 
     // Shared by node recovery and topology reconciliation: the reconnect policy's delay, or a
@@ -983,14 +1390,25 @@ internal sealed partial class SubscriptionHub
     {
         NotificationTopology? latest;
         long version;
+
         lock (_gate)
         {
             latest = _clusterNotifications.LatestTopology;
             version = _clusterNotifications.TopologyVersion;
+
             foreach (var (subscription, state) in _clusterNotifications.Subscriptions)
+            {
                 if (state.ReplayRejectedAt is not null && state.FailedAttempts == 0)
+                {
                     _clusterNotifications.ScheduledReconciliationSubscriptions.Add(subscription);
-            if (_clusterNotifications.ScheduledReconciliationSubscriptions.Count == 0) return;
+                }
+            }
+
+            if (_clusterNotifications.ScheduledReconciliationSubscriptions.Count == 0)
+            {
+                return;
+            }
+
             if (_clusterNotifications.ReconciliationScheduled)
             {
                 if (version != _clusterNotifications.ScheduledReconciliationVersion
@@ -999,12 +1417,15 @@ internal sealed partial class SubscriptionHub
                     _clusterNotifications.ReconciliationScheduledAgain = true;
                     _clusterNotifications.ScheduledReconciliationVersion = version;
                 }
+
                 return;
             }
+
             _clusterNotifications.ReconciliationScheduled = true;
             _clusterNotifications.ReconciliationHasExaminedSubscriptions = false;
             _clusterNotifications.ScheduledReconciliationVersion = version;
         }
+
         _ = RunScheduledNotificationReconciliationAsync(version, latest);
     }
 
@@ -1014,15 +1435,18 @@ internal sealed partial class SubscriptionHub
         while (true)
         {
             RespireSubscription[] subscriptions;
+
             lock (_gate)
             {
                 _clusterNotifications.ReconciliationHasExaminedSubscriptions = false;
                 subscriptions = [.. _clusterNotifications.ScheduledReconciliationSubscriptions];
                 _clusterNotifications.ScheduledReconciliationSubscriptions.Clear();
             }
+
             await ReconcileNotificationsAsync(version, topology?.Endpoints, topology?.Authoritative ?? false,
                     selectedSubscriptions: subscriptions, skipSubscriptionsWithPendingRetry: true)
                 .ConfigureAwait(false);
+
             lock (_gate)
             {
                 if (!_clusterNotifications.ReconciliationScheduledAgain
@@ -1031,6 +1455,7 @@ internal sealed partial class SubscriptionHub
                     _clusterNotifications.ReconciliationScheduled = false;
                     return;
                 }
+
                 _clusterNotifications.ReconciliationScheduledAgain = false;
                 version = _clusterNotifications.ScheduledReconciliationVersion;
                 topology = _clusterNotifications.LatestTopology;
@@ -1043,15 +1468,28 @@ internal sealed partial class SubscriptionHub
         StrongBox<RespireEndpoint?> failingEndpoint, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation = default)
     {
-        if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion)) return false;
+        if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion))
+        {
+            return false;
+        }
+
         var desired = await GetNotificationCoverageAsync(subscription, cancellationToken, refreshPrimaries: endpoints is null).ConfigureAwait(false);
-        if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion)) return false;
+
+        if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion))
+        {
+            return false;
+        }
         // The router publishes before delivering its callback. An older authoritative
         // event must not lend removal authority to a newer partial endpoint set.
         if (endpoints is not null
             && subscription.Names.Any(static name => name.RoutingScope == RespireChannelRoutingScope.AllPrimaries)
-            && !new HashSet<RespireEndpoint>(endpoints).SetEquals(desired.Keys)) return false;
+            && !new HashSet<RespireEndpoint>(endpoints).SetEquals(desired.Keys))
+        {
+            return false;
+        }
+
         HashSet<RespireEndpoint> current;
+
         lock (_gate)
         {
             var coverage = _clusterNotifications.Subscriptions.TryGetValue(subscription, out var state) ? state.Coverage : null;
@@ -1070,13 +1508,24 @@ internal sealed partial class SubscriptionHub
         // Subscribe every new route before removing any old route, so an owner swap never
         // leaves a key unobserved while its new owner is still being subscribed.
         List<(ClusterNotificationNode Node, RespireChannel[] Names)> removals = [];
+
         foreach (var endpoint in desired.Keys.Intersect(current))
         {
-            if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion)) return false;
+            if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion))
+            {
+                return false;
+            }
+
             failingEndpoint.Value = endpoint;
-            if (TryGetNotificationNode(endpoint) is not { } node) continue;
+
+            if (TryGetNotificationNode(endpoint) is not { } node)
+            {
+                continue;
+            }
+
             var desiredNames = desired[endpoint];
             RespireChannel[] currentNames;
+
             lock (_gate)
             {
                 lock (node.Gate)
@@ -1086,6 +1535,7 @@ internal sealed partial class SubscriptionHub
                         && consumers.Contains(subscription)).ToArray();
                 }
             }
+
             foreach (var name in desiredNames.Where(name => !currentNames.Contains(name)))
             {
                 try
@@ -1097,6 +1547,7 @@ internal sealed partial class SubscriptionHub
                 {
                     RespireConnection? connection;
                     bool emptied;
+
                     lock (_gate)
                     {
                         // A rejected route is already gone; an uncertain one is dropped here
@@ -1104,12 +1555,15 @@ internal sealed partial class SubscriptionHub
                         RemoveNotificationRouteLocked(node, subscription.Kind, subscription, name);
                         connection = node.Connection;
                         emptied = node.IsEmpty;
+
                         if (emptied)
                         {
                             TryRetireNotificationNodeLocked(node);
                             // Keep the subscription itself discoverable so a later pass retries it.
                             if (_clusterNotifications.Subscriptions.TryGetValue(subscription, out var state))
+                            {
                                 state.Coverage.Remove(endpoint);
+                            }
                         }
                     }
                     // The command may have reached Redis before its reply timed out. Retire this
@@ -1118,30 +1572,43 @@ internal sealed partial class SubscriptionHub
                     // leaves a shared socket consistent, so only an emptied node closes it then.
                     if (connection is not null && (emptied || !ContainsServerRejection(error)))
                     {
-                        try { await connection.DisposeAsync().ConfigureAwait(false); }
+                        try
+                        {
+                            await connection.DisposeAsync().ConfigureAwait(false);
+                        }
                         catch (Exception disposeError)
                         {
                             TryLog(disposeError, static (logger, state) => logger.NotificationSubscribeFailureCloseFailed(state));
                         }
                     }
+
                     throw;
                 }
             }
+
             var removedNames = currentNames.Where(name => !desiredNames.Contains(name) && Removable(name)).ToArray();
-            if (removedNames.Length != 0) removals.Add((node, removedNames));
+
+            if (removedNames.Length != 0)
+            {
+                removals.Add((node, removedNames));
+            }
         }
+
         foreach (var endpoint in desired.Keys.Except(current))
         {
             failingEndpoint.Value = endpoint;
             HashSet<RespireEndpoint> uncertain = [];
+
             try
             {
                 var node = await EnsureNotificationNodeAsync(endpoint, cancellationToken).ConfigureAwait(false);
+
                 if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion))
                 {
                     await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false);
                     return false;
                 }
+
                 foreach (var name in desired[endpoint])
                 {
                     try
@@ -1151,7 +1618,11 @@ internal sealed partial class SubscriptionHub
                     }
                     catch (Exception error)
                     {
-                        if (!ContainsServerRejection(error)) uncertain.Add(endpoint);
+                        if (!ContainsServerRejection(error))
+                        {
+                            uncertain.Add(endpoint);
+                        }
+
                         throw;
                     }
                 }
@@ -1163,21 +1634,41 @@ internal sealed partial class SubscriptionHub
                 throw;
             }
         }
+
         failingEndpoint.Value = null;
+
         foreach (var (node, names) in removals)
         {
-            if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion)) return false;
+            if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion))
+            {
+                return false;
+            }
+
             await ReleaseNotificationRoutesAsync(node, subscription, names, removeCoverage: false).ConfigureAwait(false);
         }
+
         foreach (var endpoint in current.Except(desired.Keys).ToArray())
         {
-            if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion)) return false;
-            if (TryGetNotificationNode(endpoint) is not { } node) continue;
+            if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion))
+            {
+                return false;
+            }
+
+            if (TryGetNotificationNode(endpoint) is not { } node)
+            {
+                continue;
+            }
+
             if (subscription.Names.All(Removable))
+            {
                 await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false);
+            }
             else if (subscription.Names.Where(Removable).ToArray() is { Length: > 0 } names)
+            {
                 await ReleaseNotificationRoutesAsync(node, subscription, names, removeCoverage: false).ConfigureAwait(false);
+            }
         }
+
         PublishRejectedReplayGap(subscription);
         return true;
     }
@@ -1185,17 +1676,35 @@ internal sealed partial class SubscriptionHub
     private void PublishRejectedReplayGap(RespireSubscription subscription)
     {
         RespireSubscriptionGap? gap = null;
+
         lock (_gate)
         {
             if (!_clusterNotifications.Subscriptions.TryGetValue(subscription, out var state)
-                || state.ReplayRejectedAt is not { } started) return;
+                || state.ReplayRejectedAt is not { } started)
+            {
+                return;
+            }
+
             state.ReplayRejectedAt = null;
             var ended = DateTimeOffset.UtcNow;
-            if (ended < started) ended = started;
+
+            if (ended < started)
+            {
+                ended = started;
+            }
+
             var candidate = new RespireSubscriptionGap(RespireSubscriptionGapReason.Reconnect, started, ended);
-            if (subscription.Buffer.WriteGap(candidate)) gap = candidate;
+
+            if (subscription.Buffer.WriteGap(candidate))
+            {
+                gap = candidate;
+            }
         }
-        if (gap is { } published) subscription.NotifyGap(published);
+
+        if (gap is { } published)
+        {
+            subscription.NotifyGap(published);
+        }
     }
 
     // Topology reconciliation reached the reconnect policy's limit for a subscription. End
@@ -1204,26 +1713,43 @@ internal sealed partial class SubscriptionHub
         RespireSubscription subscription, RespireEndpoint? endpoint, Exception error, int attempt)
     {
         RespireEndpoint[] covered;
-        lock (_gate) covered = _clusterNotifications.Subscriptions.TryGetValue(subscription, out var state) ? [.. state.Coverage] : [];
+
+        lock (_gate)
+        {
+            covered = _clusterNotifications.Subscriptions.TryGetValue(subscription, out var state) ? [.. state.Coverage] : [];
+        }
+
         foreach (var coveredEndpoint in covered)
         {
-            if (TryGetNotificationNode(coveredEndpoint) is not { } node) continue;
+            if (TryGetNotificationNode(coveredEndpoint) is not { } node)
+            {
+                continue;
+            }
             // Release can remove coverage before it fails. The subscription must still reach its
             // terminal state, because no later reconciliation pass can rediscover it.
-            try { await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false); }
+            try
+            {
+                await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false);
+            }
             catch (Exception releaseError)
             {
                 TryLog(releaseError, static (logger, state) => logger.NotificationExhaustedSubscriptionReleaseFailed(state));
             }
         }
+
         var disconnected = false;
         var wasRetrying = false;
         var watcherOwnsRecovery = false;
         RespireEndpoint? recoveredEndpoint;
+
         lock (_gate)
         {
             recoveredEndpoint = EndNotificationSubscriptionLocked(subscription);
-            if (endpoint is { } retrying) wasRetrying = _clusterNotifications.RetryingEndpoints.Remove(retrying);
+
+            if (endpoint is { } retrying)
+            {
+                wasRetrying = _clusterNotifications.RetryingEndpoints.Remove(retrying);
+            }
             // Report the endpoint as exhausted only when no notification node remains for it. A
             // rejected SUBSCRIBE is not a connection outage, and a node still serving other
             // subscriptions owns its endpoint's health: its watcher reconnects a socket this
@@ -1239,20 +1765,29 @@ internal sealed partial class SubscriptionHub
             else if (endpoint is { } surviving
                 && _clusterNotifications.Nodes.TryGetValue(surviving, out var node))
             {
-                lock (node.Gate) watcherOwnsRecovery = node.InterruptedAt is not null;
+                lock (node.Gate)
+                {
+                    watcherOwnsRecovery = node.InterruptedAt is not null;
+                }
             }
         }
+
         if (endpoint is { } exhaustedEndpoint)
         {
             if (disconnected)
+            {
                 core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
                     exhaustedEndpoint, RespireConnectionState.Disconnected, error)
                 {
                     ReconnectAttempt = attempt,
                     ReconnectExhausted = true,
                 });
+            }
             else if (wasRetrying && !watcherOwnsRecovery)
+            {
                 core.ClearClusterSubscriptionState(exhaustedEndpoint);
+            }
+
             try
             {
                 RespireTelemetry.RecordReconnectExhaustion(
@@ -1263,7 +1798,12 @@ internal sealed partial class SubscriptionHub
                 TryLog(telemetryError, static (logger, state) => logger.NotificationReconnectExhaustionTelemetryFailed(state));
             }
         }
-        if (recoveredEndpoint is { } recovered) core.ClearClusterSubscriptionState(recovered);
+
+        if (recoveredEndpoint is { } recovered)
+        {
+            core.ClearClusterSubscriptionState(recovered);
+        }
+
         subscription.CompleteFromReconnectExhaustion();
     }
 
@@ -1271,12 +1811,18 @@ internal sealed partial class SubscriptionHub
         long version, RespireEndpoint[]? endpoints, bool authoritative, TimeSpan delay,
         RespireSubscription? onlySubscription, int attempt = 0)
     {
-        try { await Task.Delay(delay, _recoveryClock, _lifetimeCancellation.Token).ConfigureAwait(false); }
+        try
+        {
+            await Task.Delay(delay, _recoveryClock, _lifetimeCancellation.Token).ConfigureAwait(false);
+        }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested) { return; }
+
         if (!_disposed && version == Volatile.Read(ref _clusterNotifications.TopologyVersion))
+        {
             await ReconcileNotificationsAsync(version, endpoints, authoritative, attempt,
                     selectedSubscriptions: onlySubscription is { } selected ? [selected] : null)
                 .ConfigureAwait(false);
+        }
     }
 
     // Marks an endpoint whose topology route failed with an outage (not a server rejection) as
@@ -1288,17 +1834,31 @@ internal sealed partial class SubscriptionHub
     private void ReportNotificationReconciliationRetry(
         RespireEndpoint? endpoint, Exception error, int attempt, TimeSpan nextDelay)
     {
-        if (endpoint is not { } failed || ContainsServerRejection(error)) return;
+        if (endpoint is not { } failed || ContainsServerRejection(error))
+        {
+            return;
+        }
+
         bool watcherOwnsRecovery = false;
+
         lock (_gate)
         {
             _clusterNotifications.RetryingEndpoints.Add(failed);
+
             if (_clusterNotifications.Nodes.TryGetValue(failed, out var node))
             {
-                lock (node.Gate) watcherOwnsRecovery = node.InterruptedAt is not null;
+                lock (node.Gate)
+                {
+                    watcherOwnsRecovery = node.InterruptedAt is not null;
+                }
             }
         }
-        if (watcherOwnsRecovery) return;
+
+        if (watcherOwnsRecovery)
+        {
+            return;
+        }
+
         try
         {
             RespireTelemetry.RecordReconnectAttempt(failed.Host, failed.Port, attempt, nextDelay,
@@ -1308,6 +1868,7 @@ internal sealed partial class SubscriptionHub
         {
             TryLog(telemetryError, static (logger, state) => logger.NotificationReconnectTelemetryFailed(state));
         }
+
         core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
             failed, RespireConnectionState.Reconnecting, error)
         {
@@ -1319,30 +1880,51 @@ internal sealed partial class SubscriptionHub
     private void ClearNotificationReconciliationRetries(HashSet<RespireEndpoint> stillRetrying)
     {
         List<RespireEndpoint> recovered = [];
+
         lock (_gate)
         {
-            if (_clusterNotifications.RetryingEndpoints.Count == 0) return;
+            if (_clusterNotifications.RetryingEndpoints.Count == 0)
+            {
+                return;
+            }
+
             foreach (var endpoint in _clusterNotifications.RetryingEndpoints.Where(endpoint => !stillRetrying.Contains(endpoint)).ToArray())
             {
                 _clusterNotifications.RetryingEndpoints.Remove(endpoint);
                 // An exhausted endpoint stays Disconnected until a new route reaches it.
                 if (_clusterNotifications.ExhaustedEndpoints.Contains(endpoint)
-                    || _clusterNotifications.DisconnectedEndpoints.Contains(endpoint)) continue;
+                    || _clusterNotifications.DisconnectedEndpoints.Contains(endpoint))
+                {
+                    continue;
+                }
                 // A node that is still reconnecting owns its endpoint state; its watcher reports
                 // the recovery once the socket is back.
-                if (_clusterNotifications.Nodes.TryGetValue(endpoint, out var node) && node.InterruptedAt is not null) continue;
+                if (_clusterNotifications.Nodes.TryGetValue(endpoint, out var node) && node.InterruptedAt is not null)
+                {
+                    continue;
+                }
+
                 recovered.Add(endpoint);
             }
         }
+
         foreach (var endpoint in recovered)
+        {
             core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
                 endpoint, RespireConnectionState.Connected, null));
+        }
     }
 
     private static bool ContainsServerRejection(Exception error)
     {
         for (Exception? current = error; current is not null; current = current.InnerException)
-            if (current is RespireServerException) return true;
+        {
+            if (current is RespireServerException)
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 }

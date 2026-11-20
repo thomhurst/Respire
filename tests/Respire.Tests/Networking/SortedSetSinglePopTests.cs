@@ -146,6 +146,7 @@ public class SortedSetSinglePopTests
                 RespValue.Array(RespValue.BulkString("7"), RespValue.Double(1.5)),
                 RespValue.Array(RespValue.BulkString("9"), RespValue.Double(2.5))),
         ];
+
         foreach (var reply in malformed)
         {
             await Assert.That(() => SortedSetCommands.ParseEntry(in reply)).Throws<RespireProtocolException>();

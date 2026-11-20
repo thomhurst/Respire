@@ -6,8 +6,13 @@ namespace Respire.Internal;
 // source, not interchangeable owners. In particular, overlapping DNS sets do not prove identity.
 internal readonly record struct SentinelSwitchSource
 {
-    internal SentinelAddressEvidence Evidence { get; }
+    internal SentinelAddressEvidence Evidence
+    {
+        get;
+    }
+
     internal RespireEndpoint Endpoint => Evidence.Endpoint;
+
     internal ImmutableArray<string> Addresses => Evidence.Addresses;
 
     internal SentinelSwitchSource(RespireEndpoint endpoint, string[]? addresses)
@@ -20,6 +25,7 @@ internal readonly record struct SentinelSwitchSource
 
     internal static SentinelSwitchSource FromEvidence(SentinelAddressEvidence evidence) => new(evidence);
 }
+
 internal readonly record struct SentinelDownReport(RespireEndpoint Primary, RespireEndpoint Reporter,
     SentinelValidatedPrimary? OwnerAtObservation = null);
 
@@ -30,18 +36,38 @@ internal readonly record struct SentinelHint(
 {
     // Positive only for first-subscription gaps. Mixing any independent event clears
     // this marker so an earlier successful discovery can never swallow real evidence.
-    internal long StartupSubscriptionVersion { get; init; }
+    internal long StartupSubscriptionVersion
+    {
+        get; init;
+    }
+
     // Reporter-only reconciliation has no demotion evidence. Without a newer epoch it may
     // confirm this owner, but must not let a stale reporter undo the successful recovery.
-    internal SentinelValidatedPrimary? ReconciliationPrimary { get; init; }
+    internal SentinelValidatedPrimary? ReconciliationPrimary
+    {
+        get; init;
+    }
+
     // One reported outage, independent of reporter and changing quorum counts. Null means
     // mixed or non-down evidence, which cannot be classified as another report of this outage.
-    internal SentinelHintKey? DownKey { get; init; }
-    internal SentinelReporterLedger Ledger { get; init; }
+    internal SentinelHintKey? DownKey
+    {
+        get; init;
+    }
+
+    internal SentinelReporterLedger Ledger
+    {
+        get; init;
+    }
+
     // Nonempty only when all merged evidence consists of parsed master-down reports.
     // Keep reporter association: a current-owner outage cannot release a stale reporter's fence.
     internal ImmutableArray<SentinelDownReport> DownReports => Ledger.IsDownOnly ? Ledger.DownReports : [];
-    internal SentinelValidatedPrimary? DownReportPrimary { get; init; }
+
+    internal SentinelValidatedPrimary? DownReportPrimary
+    {
+        get; init;
+    }
 
     internal SentinelHint BindDownReportsToCurrentPrimary(SentinelValidatedPrimary current)
         => DownReports.Length == 0 ? this : this with { DownReportPrimary = current };
@@ -77,10 +103,14 @@ internal readonly record struct SentinelHint(
     {
         var captured = Ledger.CaptureContext(owner, epoch);
         var downKey = DownKey;
+
         if (downKey is { Primary: { } primary, Peer: null } key
             && !System.Net.IPAddress.TryParse(primary.Host, out _)
             && captured.Observations is [var observed] && observed.OwnerAtObservation?.Peer is { } peer)
+        {
             downKey = key with { Peer = peer };
+        }
+
         return this with { Ledger = captured, DownKey = downKey };
     }
 
@@ -90,19 +120,39 @@ internal readonly record struct SentinelHint(
         get
         {
             RespireEndpoint? result = null;
+
             foreach (var target in Targets)
             {
                 var isSource = false;
+
                 foreach (var source in Sources)
-                    if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, target)) { isSource = true; break; }
-                if (isSource) continue;
-                if (result is not null) return null;
+                {
+                    if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, target))
+                    {
+                        isSource = true;
+                        break;
+                    }
+                }
+
+                if (isSource)
+                {
+                    continue;
+                }
+
+                if (result is not null)
+                {
+                    return null;
+                }
+
                 result = target;
             }
+
             return result;
         }
     }
+
     internal RespireEndpoint? OldPrimary => Sources.Length == 0 ? (RespireEndpoint?)null : Sources[0].Endpoint;
+
     internal RespireEndpoint? ReportingSentinel => Reporters.Length == 0 ? (RespireEndpoint?)null : Reporters[0];
 
     internal SentinelHint WithSourceAddresses(RespireEndpoint endpoint, string[] addresses)
@@ -110,24 +160,41 @@ internal readonly record struct SentinelHint(
         for (var index = 0; index < Sources.Length; index++)
         {
             var source = Sources[index];
-            if (!SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, endpoint)) continue;
+
+            if (!SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, endpoint))
+            {
+                continue;
+            }
+
             return WithSourceEvidence(source.Evidence.HasSameAddresses(addresses)
                 ? source.Evidence : new(source.Endpoint, addresses));
         }
+
         return this;
     }
 
     internal SentinelHint WithSourceEvidence(SentinelAddressEvidence evidence, bool retainObservation = true)
     {
         var updated = retainObservation ? this with { Ledger = Ledger.WithDnsEvidence(evidence) } : this;
+
         for (var index = 0; index < Sources.Length; index++)
         {
             var source = Sources[index];
-            if (!SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, evidence.Endpoint)) continue;
+
+            if (!SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, evidence.Endpoint))
+            {
+                continue;
+            }
+
             if (source.Addresses.IsDefault == evidence.Addresses.IsDefault
-                && source.Addresses.AsSpan().SequenceEqual(evidence.Addresses.AsSpan())) return updated;
+                && source.Addresses.AsSpan().SequenceEqual(evidence.Addresses.AsSpan()))
+            {
+                return updated;
+            }
+
             return updated with { Sources = Sources.SetItem(index, SentinelSwitchSource.FromEvidence(evidence)) };
         }
+
         return updated;
     }
 }

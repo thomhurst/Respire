@@ -42,20 +42,32 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
         cancellationToken.ThrowIfCancellationRequested();
         // Materialize once: embedding/scoping and the provider must see the same conversation.
         var conversation = messages.ToList();
+
         if (ShouldBypass(conversation, options))
+        {
             return await InnerClient.GetResponseAsync(conversation, options, cancellationToken).ConfigureAwait(false);
+        }
 
         var userScope = _options.ScopeSelector(conversation, options);
+
         if (userScope is null)
+        {
             return await InnerClient.GetResponseAsync(conversation, options, cancellationToken).ConfigureAwait(false);
+        }
 
         string scope;
         byte[] vector;
+
         try
         {
             scope = GetScope(conversation, options, userScope);
             var cached = await LookupAsync(conversation[^1].Text, scope, cancellationToken).ConfigureAwait(false);
-            if (cached.Response is not null) return cached.Response;
+
+            if (cached.Response is not null)
+            {
+                return cached.Response;
+            }
+
             vector = cached.Vector;
         }
         catch (Exception error) when (_options.FailOpen && error is not OperationCanceledException)
@@ -66,6 +78,7 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
         }
 
         var response = await InnerClient.GetResponseAsync(conversation, options, cancellationToken).ConfigureAwait(false);
+
         if (CanStore(response))
         {
             try
@@ -81,17 +94,23 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
                 cancellationToken.ThrowIfCancellationRequested();
             }
         }
+
         return response;
     }
 
     private async Task<(ChatResponse? Response, byte[] Vector)> LookupAsync(string prompt, string scope, CancellationToken cancellationToken)
     {
         var embeddings = await _embeddingGenerator.GenerateAsync([prompt], cancellationToken: cancellationToken).ConfigureAwait(false);
+
         if (embeddings.Count != 1)
+        {
             throw new InvalidOperationException("The embedding generator must return exactly one embedding.");
+        }
+
         var vector = EncodeVector(embeddings[0].Vector);
         await EnsureIndexAsync(cancellationToken).ConfigureAwait(false);
         RespireSearchResult result;
+
         try
         {
             result = await SearchAsync().ConfigureAwait(false);
@@ -108,18 +127,37 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
             new("vector", vector, 1) { Filter = RespireSearchQueryBuilder.Tag("scope", scope) },
             new() { ReturnFields = ["vector_score"], Limit = (0, 1) }, cancellationToken);
 
-        if (result.Documents.Count == 0) return (null, vector);
+        if (result.Documents.Count == 0)
+        {
+            return (null, vector);
+        }
+
         var document = result.Documents[0];
+
         if (!document.Id.StartsWith(_prefix, StringComparison.Ordinal))
+        {
             throw new InvalidOperationException("Semantic search returned a key outside the cache namespace.");
+        }
+
         if (!document.Fields.TryGetValue("vector_score", out var scoreText)
             || !double.TryParse(scoreText, NumberStyles.Float, CultureInfo.InvariantCulture, out var distance)
             || !double.IsFinite(distance))
+        {
             throw new InvalidOperationException("Semantic search returned an invalid cosine distance.");
-        if (distance > _options.DistanceThreshold) return (null, vector);
+        }
+
+        if (distance > _options.DistanceThreshold)
+        {
+            return (null, vector);
+        }
         // Re-read the hash so an entry that expires between Search and retrieval is a miss.
         var json = await _client.Hashes.GetBytesAsync(document.DocumentKey, "response", cancellationToken).ConfigureAwait(false);
-        if (json is null) return (null, vector);
+
+        if (json is null)
+        {
+            return (null, vector);
+        }
+
         return ((ChatResponse?)JsonSerializer.Deserialize(json, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatResponse)))
             ?? throw new InvalidOperationException("The cached chat response is null."), vector);
     }
@@ -130,13 +168,22 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
     {
         if (options?.AdditionalProperties?.TryGetValue(RespireSemanticCacheOptions.DisableCacheKey, out var disabled) == true && disabled is true
             || _options.ShouldBypass?.Invoke(messages, options) == true)
+        {
             return true;
+        }
+
         if (messages.Count == 0 || messages[^1].Role != ChatRole.User || string.IsNullOrWhiteSpace(messages[^1].Text))
+        {
             return true;
+        }
+
         if (messages.Any(message => !IsPlainText(message))
             || messages[^1].Contents.Any(content => content.AdditionalProperties is { Count: > 0 }
                 || content.Annotations is { Count: > 0 }))
+        {
             return true;
+        }
+
         return options is not null && (options.GetType() != typeof(ChatOptions)
             || options.Tools is { Count: > 0 } || options.RawRepresentationFactory is not null
             || options.ConversationId is not null || options.ContinuationToken is not null
@@ -156,17 +203,23 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
     private string GetScope(List<ChatMessage> messages, ChatOptions? options, string userScope)
     {
         var scopedOptions = options?.Clone() ?? new ChatOptions();
+
         if (scopedOptions.AdditionalProperties is { } properties)
         {
             scopedOptions.AdditionalProperties = new(properties);
             scopedOptions.AdditionalProperties.Remove(RespireSemanticCacheOptions.DisableCacheKey);
-            if (scopedOptions.AdditionalProperties.Count == 0) scopedOptions.AdditionalProperties = null;
+
+            if (scopedOptions.AdditionalProperties.Count == 0)
+            {
+                scopedOptions.AdditionalProperties = null;
+            }
         }
         // JSON arrays keep each boundary unambiguous. Include the exact conversation history,
         // provider identity and options, but replace only the final user text with semantic matching.
         var metadata = InnerClient.GetService(typeof(ChatClientMetadata)) as ChatClientMetadata;
         var embeddingMetadata = _embeddingGenerator.GetService(typeof(EmbeddingGeneratorMetadata)) as EmbeddingGeneratorMetadata;
         using var stream = new MemoryStream();
+
         using (var writer = new Utf8JsonWriter(stream, new() { Encoder = StrictUnicodeJsonEncoder.Instance }))
         {
             writer.WriteStartArray();
@@ -178,37 +231,64 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
             writer.WriteStringValue(embeddingMetadata?.ProviderUri?.ToString());
             writer.WriteStringValue(embeddingMetadata?.DefaultModelId);
             JsonSerializer.Serialize(writer, scopedOptions, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatOptions)));
+
             foreach (var message in messages.Take(messages.Count - 1))
+            {
                 JsonSerializer.Serialize(writer, message, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatMessage)));
+            }
+
             var finalMessage = messages[^1].Clone();
             finalMessage.Contents = [];
             JsonSerializer.Serialize(writer, finalMessage, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatMessage)));
             writer.WriteEndArray();
         }
+
         return Hash(stream.ToArray());
     }
 
     private byte[] EncodeVector(ReadOnlyMemory<float> vector)
     {
         if (vector.Length != _options.Dimensions)
+        {
             throw new InvalidOperationException("The embedding dimensions do not match the semantic cache options.");
+        }
+
         double norm = 0;
+
         foreach (var value in vector.Span)
         {
-            if (!float.IsFinite(value)) throw new InvalidOperationException("Embeddings must contain finite values.");
+            if (!float.IsFinite(value))
+            {
+                throw new InvalidOperationException("Embeddings must contain finite values.");
+            }
+
             norm += (double)value * value;
         }
-        if (norm == 0) throw new InvalidOperationException("Cosine embeddings must have a nonzero norm.");
+
+        if (norm == 0)
+        {
+            throw new InvalidOperationException("Cosine embeddings must have a nonzero norm.");
+        }
+
         return MemoryMarshal.AsBytes(vector.Span).ToArray();
     }
 
     private async Task EnsureIndexAsync(CancellationToken cancellationToken)
     {
-        if (_indexReady) return;
+        if (_indexReady)
+        {
+            return;
+        }
+
         await _indexGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
-            if (_indexReady) return;
+            if (_indexReady)
+            {
+                return;
+            }
+
             try
             {
                 await _client.Search.CreateIndexAsync(_index, new()
@@ -227,6 +307,7 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
                 // Verify the index exists instead of depending on the server's duplicate-index wording.
                 await _client.Search.GetIndexInfoAsync(_index, cancellationToken).ConfigureAwait(false);
             }
+
             _indexReady = true;
         }
         finally { _indexGate.Release(); }
@@ -241,7 +322,11 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) _indexGate.Dispose();
+        if (disposing)
+        {
+            _indexGate.Dispose();
+        }
+
         base.Dispose(disposing);
     }
 }

@@ -85,7 +85,11 @@ public class UpstreamContractTests(ModernRedisTestContainer fixture)
         await collection.UpsertAsync(expected);
         var received = await Collect(collection.GetAsync(expected.Select(record => record.Id), new() { IncludeVectors = includeVectors }));
         received.Should().HaveCount(2);
-        foreach (var record in expected) AssertRecord(record, received.Single(value => value.Id == record.Id), includeVectors);
+
+        foreach (var record in expected)
+        {
+            AssertRecord(record, received.Single(value => value.Id == record.Id), includeVectors);
+        }
     });
 
     [Test, Arguments(2), Arguments(3)]
@@ -96,7 +100,11 @@ public class UpstreamContractTests(ModernRedisTestContainer fixture)
         await collection.UpsertAsync(records);
         var received = await Collect(collection.GetAsync(records.Select(record => record.Id), new() { IncludeVectors = true }));
         received.Should().HaveCount(2);
-        foreach (var record in records) AssertRecord(record, received.Single(value => value.Id == record.Id), includeVectors: true);
+
+        foreach (var record in records)
+        {
+            AssertRecord(record, received.Single(value => value.Id == record.Id), includeVectors: true);
+        }
     });
 
     private async Task WithCollection(int protocol, Func<RespireVectorStore, RespireVectorStoreCollection<Movie>, Task> test)
@@ -105,7 +113,11 @@ public class UpstreamContractTests(ModernRedisTestContainer fixture)
         using var store = new RespireVectorStore(client, "conformance:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new MovieMapper());
         using var collection = store.GetHashCollection<Movie>("movies");
-        try { await test(store, collection); }
+
+        try
+        {
+            await test(store, collection);
+        }
         finally
         {
             // BasicModelTests permits CRUD without creating an index. Create it to include those hashes in DD cleanup.
@@ -120,14 +132,26 @@ public class UpstreamContractTests(ModernRedisTestContainer fixture)
         received!.Id.Should().Be(expected.Id);
         received.Title.Should().Be(expected.Title);
         received.Tag.Should().Be(expected.Tag);
-        if (includeVectors) received.Vector.ToArray().Should().Equal(expected.Vector.ToArray());
-        else received.Vector.IsEmpty.Should().BeTrue();
+
+        if (includeVectors)
+        {
+            received.Vector.ToArray().Should().Equal(expected.Vector.ToArray());
+        }
+        else
+        {
+            received.Vector.IsEmpty.Should().BeTrue();
+        }
     }
 
     private static async Task<List<T>> Collect<T>(IAsyncEnumerable<T> values)
     {
         var result = new List<T>();
-        await foreach (var value in values) result.Add(value);
+
+        await foreach (var value in values)
+        {
+            result.Add(value);
+        }
+
         return result;
     }
 }

@@ -40,9 +40,18 @@ internal sealed class ReplicaHealth<TConnection> where TConnection : class
     /// <summary>Classifies <paramref name="connection"/> against <paramref name="interval"/>.</summary>
     internal ReplicaValidation Check(TConnection connection, TimeSpan interval)
     {
-        if (!_validated.TryGetValue(connection, out var checkedAt)) return ReplicaValidation.Required;
+        if (!_validated.TryGetValue(connection, out var checkedAt))
+        {
+            return ReplicaValidation.Required;
+        }
+
         var elapsed = Stopwatch.GetElapsedTime(Volatile.Read(ref checkedAt.Value));
-        if (elapsed < interval) return ReplicaValidation.Fresh;
+
+        if (elapsed < interval)
+        {
+            return ReplicaValidation.Fresh;
+        }
+
         return elapsed < interval + interval ? ReplicaValidation.Stale : ReplicaValidation.Required;
     }
 
@@ -58,6 +67,7 @@ internal sealed class ReplicaHealth<TConnection> where TConnection : class
             _validated.Remove(connection);
             return false;
         }
+
         _replicationLinkDown = !linkUp;
         _validated.AddOrUpdate(connection, new StrongBox<long>(checkedAt));
         Volatile.Write(ref _failedAt, 0);
@@ -80,10 +90,24 @@ internal sealed class ReplicaHealth<TConnection> where TConnection : class
     internal static bool IsReplica(in RespValue role, out bool linkUp)
     {
         linkUp = false;
-        if (role.Type != RespireDataType.Array) return false;
+
+        if (role.Type != RespireDataType.Array)
+        {
+            return false;
+        }
+
         var fields = role.AsArray();
-        if (fields.IsEmpty || fields[0].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)) return false;
-        if (fields[0].AsString() is not ("slave" or "replica")) return false;
+
+        if (fields.IsEmpty || fields[0].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
+        {
+            return false;
+        }
+
+        if (fields[0].AsString() is not ("slave" or "replica"))
+        {
+            return false;
+        }
+
         linkUp = fields.Length >= 4
             && fields[3].Type is (RespireDataType.BulkString or RespireDataType.SimpleString)
             && fields[3].AsString() == "connected";

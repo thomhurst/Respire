@@ -23,17 +23,24 @@ public partial class SentinelRoutingTests
         var roleAccepted = true;
         var successfulRoles = 0;
         var rejectedRoleReplies = 0;
+
         byte[]? RoleReply(int _, string command)
         {
-            if (command != "ROLE") return null;
+            if (command != "ROLE")
+            {
+                return null;
+            }
+
             if (!Volatile.Read(ref roleAccepted))
             {
                 Interlocked.Increment(ref rejectedRoleReplies);
                 return "*3\r\n+slave\r\n+127.0.0.1\r\n:6379\r\n"u8.ToArray();
             }
+
             Interlocked.Increment(ref successfulRoles);
             return PrimaryRole;
         }
+
         await using var first = Primary(RoleReply, maxConnections: 128);
         await using var second = Primary(RoleReply, maxConnections: 128);
         var port = first.Port;
@@ -52,6 +59,7 @@ public partial class SentinelRoutingTests
         var successes = 0;
         var failedRoles = 0;
         var staleReports = 0;
+
         for (var step = 0; step < 96; step++)
         {
             for (var offered = random.Next(1, 5); offered > 0; offered--)
@@ -74,6 +82,7 @@ public partial class SentinelRoutingTests
             var before = router.Current!;
             var validationsBefore = Volatile.Read(ref successfulRoles);
             var failed = false;
+
             try
             {
                 var selected = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true,
@@ -90,13 +99,26 @@ public partial class SentinelRoutingTests
             {
                 failed = true;
                 await Assert.That(router.Current).IsSameReferenceAs(before);
-                if (!roleAccepted) failedRoles++;
-                if (epoch < publishedEpoch) staleReports++;
+
+                if (!roleAccepted)
+                {
+                    failedRoles++;
+                }
+
+                if (epoch < publishedEpoch)
+                {
+                    staleReports++;
+                }
             }
+
             var validated = failed ? null : router.Current;
+
             if (coalescer.TakePending(failed, validated?.Endpoint, validated?.ValidatedPeer) is null)
+            {
                 coalescer.Complete();
+            }
         }
+
         await Assert.That(successes > 10).IsTrue();
         await Assert.That(failedRoles > 0).IsTrue();
         await Assert.That(Volatile.Read(ref rejectedRoleReplies) > 0).IsTrue();
@@ -129,7 +151,12 @@ public partial class SentinelRoutingTests
             (options, _, _) =>
             {
                 candidates.Add(options.PrimaryEndpoint.Host);
-                if (options.PrimaryEndpoint.Host == "owner.test") throw new RespireConnectionException("Hostname transport unavailable");
+
+                if (options.PrimaryEndpoint.Host == "owner.test")
+                {
+                    throw new RespireConnectionException("Hostname transport unavailable");
+                }
+
                 return ValueTask.FromResult(options.PrimaryEndpoint.Host);
             }, CancellationToken.None, new SentinelDiscoveryState(endpoints),
             hostResolver: (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback]));
@@ -187,8 +214,16 @@ public partial class SentinelRoutingTests
         var firstReply = first.ReplyOverride!;
         first.ReplyOverride = (id, command) =>
         {
-            if (command != "SENTINEL MASTER mymaster") return firstReply(id, command);
-            if (missingEpoch) return "-NOPERM metadata unavailable\r\n"u8.ToArray();
+            if (command != "SENTINEL MASTER mymaster")
+            {
+                return firstReply(id, command);
+            }
+
+            if (missingEpoch)
+            {
+                return "-NOPERM metadata unavailable\r\n"u8.ToArray();
+            }
+
             return Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(ConfigurationReply(primaryPort, newerEpoch ? 7 : 6)).Replace("127.0.0.1", hostname.Host));
         };
         var endpoints = new[] { new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", second.Port) };
@@ -198,14 +233,25 @@ public partial class SentinelRoutingTests
         var result = await SentinelResolver.ResolveAndConnectPrimaryAsync(Options(first.Port) with { Endpoints = [.. endpoints] },
             (options, _, _) =>
             {
-                if (options.PrimaryEndpoint == hostname) return ValueTask.FromResult(otherPeer);
+                if (options.PrimaryEndpoint == hostname)
+                {
+                    return ValueTask.FromResult(otherPeer);
+                }
                 // The rejected result must be released before another candidate connects.
-                if (!rejected.SequenceEqual([otherPeer])) throw new InvalidOperationException("Rejected candidate still owned.");
+                if (!rejected.SequenceEqual([otherPeer]))
+                {
+                    throw new InvalidOperationException("Rejected candidate still owned.");
+                }
+
                 return ValueTask.FromResult(originalPeer);
             }, CancellationToken.None, state,
             hostResolver: (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Loopback, IPAddress.Parse(otherPeer.Host)]),
             getValidatedPeer: static peer => peer,
-            rejectPrimaryAsync: peer => { rejected.Add(peer); return ValueTask.CompletedTask; });
+            rejectPrimaryAsync: peer =>
+            {
+                rejected.Add(peer);
+                return ValueTask.CompletedTask;
+            });
         await Assert.That(result).IsEqualTo(newerEpoch ? otherPeer : originalPeer);
         await Assert.That(rejected).IsEquivalentTo(newerEpoch ? [] : new[] { otherPeer });
     }
@@ -245,6 +291,7 @@ public partial class SentinelRoutingTests
                 return Array.Empty<IPAddress>();
             }).AsTask();
         await entered.Task.WaitAsync(Limit);
+
         if (cancelCaller)
         {
             cancellation.Cancel();
@@ -287,12 +334,14 @@ public partial class SentinelRoutingTests
         const string query = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
         var before = first.ReceivedCommands.Count(command => command == query);
         var secondBefore = second.ReceivedCommands.Count(command => command == query);
+
         foreach (var reporter in new[] { first, unavailable })
         {
             var reply = reporter.ReplyOverride!;
             reporter.ReplyOverride = (id, command) => command == query
                 ? "-ERR reporter unavailable\r\n"u8.ToArray() : reply(id, command);
         }
+
         var hint = SentinelHintBuilder.Create("backoff-reporters", new("127.0.0.1", promoted.Port),
             new("127.0.0.1", original.Port), ReportingSentinel: new("127.0.0.1", first.Port));
         router.QueueNotificationRediscovery(hint);
@@ -321,11 +370,13 @@ public partial class SentinelRoutingTests
         var clock = new DiscoverySpacingClock();
         router.Clock = clock;
         const string query = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+
         for (var index = 0; index < 8; index++)
         {
             var before = sentinel.ReceivedCommands.Count(command => command == query);
             router.QueueNotificationRediscovery(SentinelHintBuilder.Create($"fault-{index}", MustRediscover: true,
                 ReportingSentinel: new("127.0.0.1", sentinel.Port)));
+
             if (index > 0)
             {
                 var spacing = await clock.Timers.Reader.ReadAsync().AsTask().WaitAsync(Limit);
@@ -338,9 +389,15 @@ public partial class SentinelRoutingTests
                 clock.Advance(1);
                 remaining.Fire();
             }
-            if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+
+            if (router.NotificationRediscovery is { } worker)
+            {
+                await worker.WaitAsync(Limit);
+            }
+
             await Assert.That(sentinel.ReceivedCommands.Count(command => command == query)).IsGreaterThan(before);
         }
+
         await Assert.That(router.Current!.IsRetired).IsFalse();
     }
 
@@ -382,7 +439,11 @@ public partial class SentinelRoutingTests
         var reply = sentinel.ReplyOverride!;
         sentinel.ReplyOverride = (id, command) =>
         {
-            if (command != "SENTINEL MASTER mymaster") return reply(id, command);
+            if (command != "SENTINEL MASTER mymaster")
+            {
+                return reply(id, command);
+            }
+
             var snapshotPort = currentPort;
             currentPort = promotedPort;
             return ConfigurationReply(snapshotPort, 6);
@@ -440,7 +501,12 @@ public partial class SentinelRoutingTests
             (candidate, _, _) =>
             {
                 candidates.Add(candidate.PrimaryEndpoint.Port);
-                if (candidate.PrimaryEndpoint.Port == promotedPort) throw new RespireConnectionException("Transient promotion failure");
+
+                if (candidate.PrimaryEndpoint.Port == promotedPort)
+                {
+                    throw new RespireConnectionException("Transient promotion failure");
+                }
+
                 return ValueTask.FromResult(candidate.PrimaryEndpoint.Port);
             }, CancellationToken.None, state, notificationHint: SentinelHintBuilder.Create("gap", MustRediscover: true)))
             .Throws<RespireConnectionException>();
@@ -528,14 +594,25 @@ public partial class SentinelRoutingTests
             await SendSentinelMessageAsync(sentinel, sentinel.ReceivedConnectionIds[monitorIndex], "+switch-master",
                 $"mymaster 192.0.2.1 {primary.Port} 127.0.0.1 {primary.Port}");
             await WaitForQueuedNotificationsAsync(router, queued + 1);
-            if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+
+            if (router.NotificationRediscovery is { } worker)
+            {
+                await worker.WaitAsync(Limit);
+            }
         }
-        else await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true);
+        else
+        {
+            await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true);
+        }
+
         var replacement = router.Current!;
         await Assert.That(ReferenceEquals(replacement, original)).IsFalse();
         await Assert.That(original.IsRetired).IsTrue();
+
         for (var index = 0; index < 2; index++)
+        {
             await Assert.That(replacement.Multiplexer.GetConnection().NetworkPeerAddress).IsEqualTo("127.0.0.1");
+        }
     }
 
     [Test]
@@ -563,7 +640,12 @@ public partial class SentinelRoutingTests
         await SendSentinelMessageAsync(sentinel, sentinel.ReceivedConnectionIds[monitorIndex], "+switch-master",
             $"mymaster 192.0.2.1 {primary.Port} localhost {primary.Port}");
         await WaitForQueuedNotificationsAsync(router, queued + 1);
-        if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+
+        if (router.NotificationRediscovery is { } worker)
+        {
+            await worker.WaitAsync(Limit);
+        }
+
         await Assert.That(ReferenceEquals(router.Current, original)).IsFalse();
         await Assert.That(original.IsRetired).IsTrue();
         await Assert.That(router.Current!.ValidatedPeer!.Value.Host).IsEqualTo("127.0.0.1");
@@ -660,7 +742,12 @@ public partial class SentinelRoutingTests
         var resolve = typeof(SentinelRouter).GetMethod("ResolveAndRetireSwitchSourceAsync",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         var pending = (Task)resolve.Invoke(router, [hint, arrived, CancellationToken.None, null])!;
-        if (failback) coalescer.Offer(SentinelHintBuilder.Create("c-to-b", current.Endpoint, hint.Target), true);
+
+        if (failback)
+        {
+            coalescer.Offer(SentinelHintBuilder.Create("c-to-b", current.Endpoint, hint.Target), true);
+        }
+
         addresses.SetResult([IPAddress.Loopback]);
         await pending.WaitAsync(Limit);
         await Assert.That(current.IsRetired).IsEqualTo(!failback);
@@ -720,16 +807,22 @@ public partial class SentinelRoutingTests
         await using var client = RespireClient.Create(Options(sentinel.Port));
 #pragma warning restore RESP010
         await using var prefixed = client.WithKeyPrefix("tenant:");
+
         foreach (IRespireClient view in new[] { client, prefixed })
+        {
             await Assert.That(() => _ = view.Endpoint).ThrowsExactly<InvalidOperationException>();
+        }
+
         await Assert.That(sentinel.CommandsSeen).IsEqualTo(0);
         await Assert.That(primary.CommandsSeen).IsEqualTo(0);
+
         if (failValidation)
         {
             await Assert.That(async () => await client.PingAsync().AsTask().WaitAsync(Limit)).Throws<RespireConnectionException>();
             await Assert.That(() => _ = client.Endpoint).ThrowsExactly<InvalidOperationException>();
             Volatile.Write(ref valid, true);
         }
+
         await prefixed.PingAsync().AsTask().WaitAsync(Limit);
         await Assert.That(client.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", primary.Port));
         await Assert.That(prefixed.Endpoint).IsEqualTo(client.Endpoint);
@@ -756,10 +849,16 @@ public partial class SentinelRoutingTests
         await WaitForCommandAsync(firstSentinel, "SUBSCRIBE +switch-master");
         await WaitForCommandAsync(reportingSentinel, "SUBSCRIBE +switch-master");
         var router = client.Core.Sentinel!;
+
         using (var monitorTimeout = new CancellationTokenSource(Limit))
+        {
             await SentinelTestSetup.WaitForSubscriptionsAsync(router, 2, monitorTimeout.Token);
+        }
+
         while (router.NotificationRediscovery is { } initialRediscovery)
+        {
             await initialRediscovery.WaitAsync(Limit);
+        }
 
         var firstDiscoveryCount = firstSentinel.ReceivedCommands.Count(command =>
             command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster");
@@ -773,8 +872,11 @@ public partial class SentinelRoutingTests
             $"mymaster 127.0.0.1 {stalePrimary.Port} 127.0.0.1 {promotedPrimary.Port}");
 
         using var timeout = new CancellationTokenSource(Limit);
+
         while (client.Endpoint.Port != promotedPrimary.Port)
+        {
             await Task.Delay(5, timeout.Token);
+        }
 
         await Assert.That(reportingSentinel.ReceivedCommands.Count(command =>
             command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster")).IsGreaterThan(reportingDiscoveryCount);
@@ -804,10 +906,16 @@ public partial class SentinelRoutingTests
         await WaitForCommandAsync(firstSentinel, "SUBSCRIBE +sdown");
         await WaitForCommandAsync(reportingSentinel, "SUBSCRIBE +sdown");
         var router = client.Core.Sentinel!;
+
         using (var monitorTimeout = new CancellationTokenSource(Limit))
+        {
             await SentinelTestSetup.WaitForSubscriptionsAsync(router, 2, monitorTimeout.Token);
+        }
+
         while (router.NotificationRediscovery is { } initialRediscovery)
+        {
             await initialRediscovery.WaitAsync(Limit);
+        }
 
         var discovery = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
         var firstDiscoveryCount = firstSentinel.ReceivedCommands.Count(command => command == discovery);
@@ -820,8 +928,11 @@ public partial class SentinelRoutingTests
             $"master mymaster 127.0.0.1 {stalePrimary.Port}");
 
         using var timeout = new CancellationTokenSource(Limit);
+
         while (client.Endpoint.Port != promotedPrimary.Port)
+        {
             await Task.Delay(5, timeout.Token);
+        }
 
         await Assert.That(reportingSentinel.ReceivedCommands.Count(command => command == discovery))
             .IsGreaterThan(reportingDiscoveryCount);
@@ -926,12 +1037,14 @@ public partial class SentinelRoutingTests
             ? "*0\r\n"u8.ToArray() : null);
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+
         if (denyEpoch)
         {
             var reply = sentinel.ReplyOverride!;
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
         }
+
         var retryDelay = TimeSpan.FromSeconds(1);
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port) with
@@ -1040,7 +1153,12 @@ public partial class SentinelRoutingTests
         var index = second.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master"));
         var connection = second.ReceivedConnectionIds[index];
         var acknowledgements = second.ReplyOverride!(connection, second.ReceivedCommands[index]);
-        if (promotionBeforeAttach) Volatile.Write(ref reportedPort, promoted.Port);
+
+        if (promotionBeforeAttach)
+        {
+            Volatile.Write(ref reportedPort, promoted.Port);
+        }
+
         second.SuppressReply = null;
         await second.SendRawAsync(acknowledgements!, connection);
         await readiness.WaitAsync(Limit);
@@ -1067,6 +1185,7 @@ public partial class SentinelRoutingTests
             () => Volatile.Read(ref firstPort) == original.Port ? 1 : 2);
         await using var second = Sentinel(() => Volatile.Read(ref secondPort),
             () => Volatile.Read(ref secondPort) == original.Port ? 1 : 3);
+
         if (denyEpoch)
         {
             foreach (var sentinel in new[] { first, second })
@@ -1076,6 +1195,7 @@ public partial class SentinelRoutingTests
                     ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
             }
         }
+
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
@@ -1091,11 +1211,13 @@ public partial class SentinelRoutingTests
         first.SuppressReply = command => command == query;
         Volatile.Write(ref firstPort, intermediate.Port);
         Volatile.Write(ref secondPort, laterPromotion ? latest.Port : original.Port);
+
         SentinelHint HintFrom(FakeRespServer reporter) => switchHint
             ? SentinelHint.FromSwitchMaster("reconcile", new("127.0.0.1", original.Port),
                 new("127.0.0.1", intermediate.Port), new("127.0.0.1", reporter.Port))
             : SentinelHint.FromDown("reconcile", new("127.0.0.1", reporter.Port),
                 new("127.0.0.1", original.Port));
+
         var hint = HintFrom(first);
         router.QueueNotificationRediscovery(in hint);
         await WaitForCommandCountAsync(first, query, firstQueries + 1);
@@ -1104,7 +1226,12 @@ public partial class SentinelRoutingTests
         first.SuppressReply = null;
         await first.SendRawAsync(AddressReply(intermediate.Port), blockedConnection);
         await WaitForCommandCountAsync(second, query, secondQueries + 1);
-        if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+
+        if (router.NotificationRediscovery is { } worker)
+        {
+            await worker.WaitAsync(Limit);
+        }
+
         await Assert.That(client.Endpoint.Port).IsEqualTo(laterPromotion ? latest.Port : intermediate.Port);
     }
 
@@ -1116,12 +1243,14 @@ public partial class SentinelRoutingTests
         var firstPort = original.Port;
         await using var first = Sentinel(() => Volatile.Read(ref firstPort));
         await using var second = Sentinel(() => original.Port);
+
         foreach (var sentinel in new[] { first, second })
         {
             var reply = sentinel.ReplyOverride!;
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
         }
+
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
@@ -1159,12 +1288,14 @@ public partial class SentinelRoutingTests
         var firstPort = original.Port;
         await using var first = Sentinel(() => Volatile.Read(ref firstPort));
         await using var second = Sentinel(() => original.Port);
+
         foreach (var sentinel in new[] { first, second })
         {
             var reply = sentinel.ReplyOverride!;
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
         }
+
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
@@ -1189,7 +1320,12 @@ public partial class SentinelRoutingTests
         {
             router.QueueNotificationRediscovery(in hint);
             await WaitForEndpointAsync(client, expectedPort);
-            if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+
+            if (router.NotificationRediscovery is { } worker)
+            {
+                await worker.WaitAsync(Limit);
+            }
+
             await Assert.That(router.Current!.IsRetired).IsFalse();
         }
     }
@@ -1202,12 +1338,14 @@ public partial class SentinelRoutingTests
         var firstPort = current.Port;
         await using var first = Sentinel(() => Volatile.Read(ref firstPort));
         await using var second = Sentinel(() => current.Port);
+
         foreach (var sentinel in new[] { first, second })
         {
             var reply = sentinel.ReplyOverride!;
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM configuration metadata denied\r\n"u8.ToArray() : reply(id, command);
         }
+
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
@@ -1248,9 +1386,11 @@ public partial class SentinelRoutingTests
         await using var first = Sentinel(() => current.Port);
         await using var second = Sentinel(() => Volatile.Read(ref secondPort));
         const string query = "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster";
+
         byte[] CurrentReply() => hostname
             ? Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(AddressReply(current.Port)).Replace("127.0.0.1", "localhost"))
             : AddressReply(current.Port);
+
         foreach (var sentinel in new[] { first, second })
         {
             var previous = sentinel.ReplyOverride!;
@@ -1258,6 +1398,7 @@ public partial class SentinelRoutingTests
                 ? "-NOPERM configuration metadata denied\r\n"u8.ToArray()
                 : ReferenceEquals(sentinel, first) && command == query ? CurrentReply() : previous(id, command);
         }
+
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
@@ -1325,19 +1466,29 @@ public partial class SentinelRoutingTests
         var firstPort = original.Port;
         await using var first = Sentinel(() => Volatile.Read(ref firstPort));
         await using var second = Sentinel(() => original.Port);
+
         foreach (var sentinel in new[] { first, second })
         {
             var reply = sentinel.ReplyOverride!;
             sentinel.ReplyOverride = (id, command) =>
             {
-                if (command == "SENTINEL MASTER mymaster") return "-NOPERM metadata unavailable\r\n"u8.ToArray();
+                if (command == "SENTINEL MASTER mymaster")
+                {
+                    return "-NOPERM metadata unavailable\r\n"u8.ToArray();
+                }
+
                 var reportedPort = ReferenceEquals(sentinel, first) ? Volatile.Read(ref firstPort) : original.Port;
+
                 if (command == "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" && reportedPort == original.Port
                     && firstHost.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+                {
                     return AddressReply("localhost", original.Port);
+                }
+
                 return reply(id, command);
             };
         }
+
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(first.Port) with
         {
@@ -1365,6 +1516,7 @@ public partial class SentinelRoutingTests
         await WaitForCommandCountAsync(first, query, firstQueries + 1);
         var blockedConnection = first.ReceivedConnectionIds[^1];
         var worker = router.NotificationRediscovery!;
+
         if (delayed)
         {
             first.SuppressReply = null;
@@ -1372,6 +1524,7 @@ public partial class SentinelRoutingTests
             await worker.WaitAsync(Limit);
             await Assert.That((object?)router.NotificationRediscovery).IsNull();
         }
+
         await SendSentinelMessageAsync(second, second.ReceivedConnectionIds[secondMonitor], "+odown",
             $"master mymaster {secondHost} {original.Port} #quorum 2/2");
         await WaitForQueuedNotificationsAsync(router, queued + 2);
@@ -1384,7 +1537,11 @@ public partial class SentinelRoutingTests
             await first.SendRawAsync(AddressReply(promoted.Port), blockedConnection);
             await worker.WaitAsync(Limit);
         }
-        else if (router.NotificationRediscovery is { } delayedWorker) await delayedWorker.WaitAsync(Limit);
+        else if (router.NotificationRediscovery is { } delayedWorker)
+        {
+            await delayedWorker.WaitAsync(Limit);
+        }
+
         await Assert.That(second.ReceivedCommands.Count(command => command == query)).IsGreaterThan(secondQueries);
         await Assert.That(client.Endpoint.Port).IsEqualTo(promoted.Port);
 
@@ -1393,7 +1550,11 @@ public partial class SentinelRoutingTests
         await SendSentinelMessageAsync(first, first.ReceivedConnectionIds[firstMonitor], "+sdown",
             $"master mymaster 127.0.0.1 {promoted.Port}");
         await WaitForEndpointAsync(client, original.Port);
-        if (router.NotificationRediscovery is { } failback) await failback.WaitAsync(Limit);
+
+        if (router.NotificationRediscovery is { } failback)
+        {
+            await failback.WaitAsync(Limit);
+        }
         // A recurring A outage is fresh after failback; old outage identity must not fence B.
         Volatile.Write(ref firstPort, promoted.Port);
         await SendSentinelMessageAsync(first, first.ReceivedConnectionIds[firstMonitor], "+sdown",
@@ -1429,6 +1590,7 @@ public partial class SentinelRoutingTests
         var hint = SentinelHint.FromDown("alias-down", new("127.0.0.1", sentinel.Port), new(host, original.Port));
         var discovery = router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true,
             notificationHint: hint).AsTask().WaitAsync(Limit);
+
         if (accepts)
         {
             var selected = await discovery;
@@ -1470,7 +1632,11 @@ public partial class SentinelRoutingTests
             return candidate.PrimaryEndpoint;
         }, cancellation.Token, notificationHint: hint, hostResolver: async (host, token) =>
         {
-            if (host != "slow.test") return [IPAddress.Loopback];
+            if (host != "slow.test")
+            {
+                return [IPAddress.Loopback];
+            }
+
             entered.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return [];
@@ -1481,6 +1647,7 @@ public partial class SentinelRoutingTests
             deadlines.Writer.TryWrite((source, timeout));
             return source;
         }).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -1488,6 +1655,7 @@ public partial class SentinelRoutingTests
             var aliasToken = aliasDeadline.Source.Token;
             await Assert.That(aliasDeadline.Timeout).IsEqualTo(options.ConnectTimeout);
             await Assert.That(deadlines.Reader.TryPeek(out _)).IsFalse();
+
             if (cancelCaller)
             {
                 cancellation.Cancel();
@@ -1505,6 +1673,7 @@ public partial class SentinelRoutingTests
                 await Assert.That(candidateToken == aliasToken).IsFalse();
                 await Assert.That(aliasToken.IsCancellationRequested).IsTrue();
                 await Assert.That(candidateToken.IsCancellationRequested).IsFalse();
+
                 if (expireCandidate)
                 {
                     candidateDeadline.Source.Cancel();
@@ -1540,12 +1709,14 @@ public partial class SentinelRoutingTests
         var secondPort = current.Port;
         await using var first = Sentinel(() => Volatile.Read(ref firstPort));
         await using var second = Sentinel(() => Volatile.Read(ref secondPort));
+
         foreach (var sentinel in new[] { first, second })
         {
             var reply = sentinel.ReplyOverride!;
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
         }
+
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
@@ -1584,10 +1755,19 @@ public partial class SentinelRoutingTests
         var slowStopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         router.HostResolver = async (host, token) =>
         {
-            if (host != "slow.test") return [IPAddress.Loopback];
+            if (host != "slow.test")
+            {
+                return [IPAddress.Loopback];
+            }
+
             slowStarted.TrySetResult();
-            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
             finally { slowStopped.TrySetResult(); }
+
             return [];
         };
         Volatile.Write(ref port, promoted.Port);
@@ -1598,7 +1778,11 @@ public partial class SentinelRoutingTests
         var selected = await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true,
             notificationHint: hint).AsTask().WaitAsync(Limit);
         await Assert.That(selected.Endpoint.Port).IsEqualTo(promoted.Port);
-        if (slowStarted.Task.IsCompleted) await slowStopped.Task.WaitAsync(Limit);
+
+        if (slowStarted.Task.IsCompleted)
+        {
+            await slowStopped.Task.WaitAsync(Limit);
+        }
     }
 
     [Test]
@@ -1635,12 +1819,14 @@ public partial class SentinelRoutingTests
         var secondPort = current.Port;
         await using var first = Sentinel(() => Volatile.Read(ref firstPort));
         await using var second = Sentinel(() => Volatile.Read(ref secondPort));
+
         foreach (var sentinel in new[] { first, second })
         {
             var reply = sentinel.ReplyOverride!;
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
         }
+
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(first.Port) with
         {
@@ -1708,7 +1894,11 @@ public partial class SentinelRoutingTests
         var reply = sentinel.ReplyOverride!;
         sentinel.ReplyOverride = (id, command) =>
         {
-            if (command != "SENTINEL MASTER mymaster") return reply(id, command);
+            if (command != "SENTINEL MASTER mymaster")
+            {
+                return reply(id, command);
+            }
+
             return Volatile.Read(ref port) == original.Port
                 ? "-NOPERM metadata unavailable\r\n"u8.ToArray()
                 : "?invalid RESP\r\n"u8.ToArray();
@@ -1971,13 +2161,29 @@ public partial class SentinelRoutingTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         var pending = (Task)resolve.Invoke(router, [hint, current, CancellationToken.None, null])!;
         var failback = SentinelHintBuilder.Create("switch-back", current.Endpoint, new("127.0.0.1", 6380), MustRediscover: true);
-        if (failbackArrives) coalescer.Offer(in failback, targetIsCurrent: true);
-        if (discoveryCompleted) coalescer.Complete();
+
+        if (failbackArrives)
+        {
+            coalescer.Offer(in failback, targetIsCurrent: true);
+        }
+
+        if (discoveryCompleted)
+        {
+            coalescer.Complete();
+        }
+
         addresses.SetResult([IPAddress.Loopback]);
         await pending.WaitAsync(Limit);
         await Assert.That(current.IsRetired).IsEqualTo(!failbackArrives);
-        if (discoveryCompleted && failbackArrives) await Assert.That(coalescer.Active).IsNull();
-        else if (failbackArrives) await Assert.That(coalescer.Pending!.Value.Targets).Contains(current.Endpoint);
+
+        if (discoveryCompleted && failbackArrives)
+        {
+            await Assert.That(coalescer.Active).IsNull();
+        }
+        else if (failbackArrives)
+        {
+            await Assert.That(coalescer.Pending!.Value.Targets).Contains(current.Endpoint);
+        }
     }
 
     [Test]
@@ -2005,7 +2211,12 @@ public partial class SentinelRoutingTests
         var pending = (Task)resolve.Invoke(router, [hint, current, CancellationToken.None, null])!;
         coalescer.Complete();
         coalescer.Offer(SentinelHintBuilder.Create("gap", MustRediscover: true), targetIsCurrent: false);
-        if (discoveryCompleted) coalescer.Complete();
+
+        if (discoveryCompleted)
+        {
+            coalescer.Complete();
+        }
+
         addresses.SetResult([IPAddress.Loopback]);
         await pending.WaitAsync(Limit);
         await Assert.That(current.IsRetired).IsTrue();
@@ -2051,7 +2262,11 @@ public partial class SentinelRoutingTests
         var resolving = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         // Ignores cancellation, as a resolver stuck in the OS can.
-        router.HostResolver = (_, _) => { resolving.TrySetResult(); return release.Task; };
+        router.HostResolver = (_, _) =>
+        {
+            resolving.TrySetResult();
+            return release.Task;
+        };
         var monitorCommand = sentinel.ReceivedCommands.ToList()
             .FindIndex(command => command.StartsWith("SUBSCRIBE +switch-master", StringComparison.Ordinal));
         var monitorConnection = sentinel.ReceivedConnectionIds[monitorCommand];
@@ -2121,8 +2336,10 @@ public partial class SentinelRoutingTests
             LoggerFactory = logger,
             ReconnectPolicy = new()
             {
-                InitialDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(10),
-                JitterRatio = 0, MaxAttempts = 1,
+                InitialDelay = TimeSpan.FromMilliseconds(10),
+                MaxDelay = TimeSpan.FromMilliseconds(10),
+                JitterRatio = 0,
+                MaxAttempts = 1,
             },
         });
 #pragma warning restore RESP010
@@ -2155,12 +2372,20 @@ public partial class SentinelRoutingTests
         using var refused = closesBeforeSubscriptionAck ? null : new ReservedUnavailablePort();
         await using var unreachable = closesBeforeSubscriptionAck ? new FakeRespServer(64, FakeRespServer.OkReply) : null;
         var deadPort = refused?.Port ?? unreachable!.Port;
+
         if (unreachable is not null)
+        {
             unreachable.ReplyOverride = (id, command) =>
             {
-                if (command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal)) unreachable.CloseConnection(id);
+                if (command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal))
+                {
+                    unreachable.CloseConnection(id);
+                }
+
                 return FakeRespServer.OkReply;
             };
+        }
+
         var logger = new MonitorExhaustionLogger(deadPort);
         // A distinctive delay identifies the dead monitor's retry timer on the gated clock.
         var retryDelay = TimeSpan.FromSeconds(7);
@@ -2171,7 +2396,10 @@ public partial class SentinelRoutingTests
             LoggerFactory = logger,
             ReconnectPolicy = new()
             {
-                InitialDelay = retryDelay, MaxDelay = retryDelay, JitterRatio = 0, MaxAttempts = 1,
+                InitialDelay = retryDelay,
+                MaxDelay = retryDelay,
+                JitterRatio = 0,
+                MaxAttempts = 1,
             },
         });
 #pragma warning restore RESP010
@@ -2229,12 +2457,25 @@ public partial class SentinelRoutingTests
         // Every rediscovery fails ROLE validation until Sentinel names a real primary.
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
             $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {unavailable.Port}");
+
         using (var timeout = new CancellationTokenSource(Limit))
-            while (logger.Failures.Count < 3) await Task.Delay(5, timeout.Token);
+        {
+            while (logger.Failures.Count < 3)
+            {
+                await Task.Delay(5, timeout.Token);
+            }
+        }
+
         Volatile.Write(ref port, recovered.Port);
         await WaitForEndpointAsync(client, recovered.Port);
+
         using (var timeout = new CancellationTokenSource(Limit))
-            while (logger.Recoveries == 0) await Task.Delay(5, timeout.Token);
+        {
+            while (logger.Recoveries == 0)
+            {
+                await Task.Delay(5, timeout.Token);
+            }
+        }
 
         var levels = logger.Failures.ToArray();
         await Assert.That(levels[0]).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
@@ -2257,7 +2498,9 @@ public partial class SentinelRoutingTests
         {
             ReconnectPolicy = new()
             {
-                InitialDelay = TimeSpan.FromHours(1), MaxDelay = TimeSpan.FromHours(1), JitterRatio = 0,
+                InitialDelay = TimeSpan.FromHours(1),
+                MaxDelay = TimeSpan.FromHours(1),
+                JitterRatio = 0,
                 MaxAttempts = 1,
             },
         });
@@ -2290,14 +2533,24 @@ public partial class SentinelRoutingTests
         listener.InstrumentPublished = (instrument, owner) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.sentinel.guarded_logging.failures")
+            {
                 owner.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, _, _) =>
         {
             // The counter is process-wide and untagged. Count only failures this logger has just thrown.
-            if (!logger.ConsumeThrowOnCurrentThread()) return;
+            if (!logger.ConsumeThrowOnCurrentThread())
+            {
+                return;
+            }
+
             Interlocked.Add(ref failures, value);
-            if (throwingListener) throw new InvalidOperationException("Metrics listener failed");
+
+            if (throwingListener)
+            {
+                throw new InvalidOperationException("Metrics listener failed");
+            }
         });
         listener.Start();
         await using var original = Primary();
@@ -2323,36 +2576,67 @@ public partial class SentinelRoutingTests
     private sealed class RediscoveryLogger : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger
     {
         // Guarded logging records its failure metric synchronously on the throwing thread.
-        [ThreadStatic] private static RediscoveryLogger? t_thrower;
+        [ThreadStatic]
+        private static RediscoveryLogger? t_thrower;
         private int _recoveries;
-        internal Action? OnRecovery { get; set; }
-        internal bool ThrowOnSentinelLog { get; init; }
-        internal ConcurrentQueue<Microsoft.Extensions.Logging.LogLevel> Failures { get; } = new();
+
+        internal Action? OnRecovery
+        {
+            get; set;
+        }
+
+        internal bool ThrowOnSentinelLog
+        {
+            get; init;
+        }
+
+        internal ConcurrentQueue<Microsoft.Extensions.Logging.LogLevel> Failures
+        {
+            get;
+        } = new();
+
         internal int Recoveries => Volatile.Read(ref _recoveries);
 
         internal bool ConsumeThrowOnCurrentThread()
         {
-            if (!ReferenceEquals(t_thrower, this)) return false;
+            if (!ReferenceEquals(t_thrower, this))
+            {
+                return false;
+            }
+
             t_thrower = null;
             return true;
         }
 
         public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel level) => true;
+
         public void Log<TState>(Microsoft.Extensions.Logging.LogLevel level, Microsoft.Extensions.Logging.EventId eventId,
             TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
             var message = formatter(state, exception);
+
             if (ThrowOnSentinelLog && message.StartsWith("Sentinel ", StringComparison.Ordinal))
             {
                 t_thrower = this;
                 throw new InvalidOperationException("Sentinel logger failed");
             }
+
             if (message.StartsWith("Sentinel notification-triggered primary discovery failed", StringComparison.Ordinal))
+            {
                 Failures.Enqueue(level);
+            }
             else if (message.StartsWith("Sentinel notification-triggered primary discovery succeeded after", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref _recoveries);
@@ -2376,12 +2660,14 @@ public partial class SentinelRoutingTests
         await using var fresh = Sentinel(() => Volatile.Read(ref freshPort));
         await using var stale = Sentinel(() => Volatile.Read(ref stalePort));
         await using var alternate = Sentinel(() => Volatile.Read(ref stalePort));
+
         foreach (var sentinel in new[] { fresh, stale, alternate })
         {
             var reply = sentinel.ReplyOverride!;
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
         }
+
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(fresh.Port) with
         {
@@ -2400,7 +2686,11 @@ public partial class SentinelRoutingTests
         logger.OnRecovery = () =>
         {
             revalidated.TrySetResult();
-            if (!release.Wait(Limit)) throw new TimeoutException("Reconciliation was not released");
+
+            if (!release.Wait(Limit))
+            {
+                throw new TimeoutException("Reconciliation was not released");
+            }
         };
         Volatile.Write(ref freshPort, promoted.Port);
         Volatile.Write(ref stalePort, promoted.Port);
@@ -2408,6 +2698,7 @@ public partial class SentinelRoutingTests
             new("127.0.0.1", original.Port), ReportingSentinel: new("127.0.0.1", fresh.Port),
             AdditionalReportingSentinels: [new("127.0.0.1", stale.Port), new("127.0.0.1", alternate.Port)]));
         var worker = router.NotificationRediscovery!;
+
         try
         {
             using var deadline = new CancellationTokenSource(Limit);
@@ -2428,40 +2719,80 @@ public partial class SentinelRoutingTests
         private int _exhaustions;
         private int _resumptions;
         private readonly ConcurrentQueue<string> _events = new();
+
         internal int Resumptions => Volatile.Read(ref _resumptions);
+
         internal int Exhaustions => Volatile.Read(ref _exhaustions);
+
         public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel level) => level >= Microsoft.Extensions.Logging.LogLevel.Information;
+
         public void Log<TState>(Microsoft.Extensions.Logging.LogLevel level, Microsoft.Extensions.Logging.EventId eventId,
             TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
             var message = formatter(state, exception);
-            if (!message.Contains(":" + port, StringComparison.Ordinal)) return;
+
+            if (!message.Contains(":" + port, StringComparison.Ordinal))
+            {
+                return;
+            }
+
             _events.Enqueue(exception is null ? message : $"{message}: {exception}");
+
             if (message.StartsWith("Sentinel event monitor exhausted reconnect attempts", StringComparison.Ordinal))
+            {
                 Interlocked.Increment(ref _exhaustions);
+            }
             else if (message.StartsWith("Sentinel event monitor at", StringComparison.Ordinal)
                 && message.Contains("resumes", StringComparison.Ordinal))
+            {
                 Interlocked.Increment(ref _resumptions);
+            }
         }
 
         internal async Task WaitForExhaustionsAsync(int count)
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            try { while (Volatile.Read(ref _exhaustions) < count) await Task.Delay(10, timeout.Token); }
+
+            try
+            {
+                while (Volatile.Read(ref _exhaustions) < count)
+                {
+                    await Task.Delay(10, timeout.Token);
+                }
+            }
             catch (OperationCanceledException) when (timeout.IsCancellationRequested)
-            { throw new TimeoutException($"Expected {count} exhaustions; observed {Exhaustions}. Events: {string.Join(Environment.NewLine, _events)}"); }
+            {
+                throw new TimeoutException($"Expected {count} exhaustions; observed {Exhaustions}. Events: {string.Join(Environment.NewLine, _events)}");
+            }
         }
 
         internal async Task WaitForResumptionsAsync(int count)
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            try { while (Volatile.Read(ref _resumptions) < count) await Task.Delay(10, timeout.Token); }
+
+            try
+            {
+                while (Volatile.Read(ref _resumptions) < count)
+                {
+                    await Task.Delay(10, timeout.Token);
+                }
+            }
             catch (OperationCanceledException) when (timeout.IsCancellationRequested)
-            { throw new TimeoutException($"Expected {count} resumptions; observed {Resumptions}, exhaustions {Exhaustions}. Events: {string.Join(Environment.NewLine, _events)}"); }
+            {
+                throw new TimeoutException($"Expected {count} resumptions; observed {Resumptions}, exhaustions {Exhaustions}. Events: {string.Join(Environment.NewLine, _events)}");
+            }
         }
     }
 
@@ -2533,7 +2864,12 @@ public partial class SentinelRoutingTests
         await WaitForQueuedNotificationsAsync(router, queued + 1);
         await WaitForCommandCountAsync(sentinel, discovery, discoveries + 1);
         using var retiredTimeout = new CancellationTokenSource(Limit);
-        while (!current.IsRetired) await Task.Delay(10, retiredTimeout.Token);
+
+        while (!current.IsRetired)
+        {
+            await Task.Delay(10, retiredTimeout.Token);
+        }
+
         await Assert.That(current.IsRetired).IsTrue();
 
         Volatile.Write(ref host, "127.0.0.1");
@@ -2575,7 +2911,12 @@ public partial class SentinelRoutingTests
         await SendSentinelMessageAsync(sentinel, sentinel.ReceivedConnectionIds[monitorIndex], "+switch-master",
             $"mymaster localhost {original.Port} 127.0.0.1 {target.Port}");
         await WaitForQueuedNotificationsAsync(router, queued + 1);
-        if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+
+        if (router.NotificationRediscovery is { } worker)
+        {
+            await worker.WaitAsync(Limit);
+        }
+
         await Assert.That(originalGeneration.IsRetired).IsTrue();
         await Assert.That(router.Current).IsSameReferenceAs(originalGeneration);
         await Assert.That(original.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(roles);
@@ -2603,7 +2944,12 @@ public partial class SentinelRoutingTests
         var different = new RespireEndpoint("127.0.0.1", other.Port);
         router.QueueNotificationRediscovery(SentinelHintBuilder.Create("cycle", [hostname, different],
             [new(hostname, ["127.0.0.1"]), new(different, null)], [new("127.0.0.1", sentinel.Port)], true));
-        if (router.NotificationRediscovery is { } worker) await worker.WaitAsync(Limit);
+
+        if (router.NotificationRediscovery is { } worker)
+        {
+            await worker.WaitAsync(Limit);
+        }
+
         await Assert.That(generation.IsRetired).IsFalse();
         await Assert.That(router.Current).IsSameReferenceAs(generation);
         await client.PingAsync().AsTask().WaitAsync(Limit);
@@ -2664,9 +3010,12 @@ public partial class SentinelRoutingTests
         var original = router.Current!;
         announceHostname = true;
         var demotedAddress = reachesDemotedPeer ? "127.0.0.1" : "192.0.2.1";
+
         if (!reachesDemotedPeer)
+        {
             typeof(RespireConnection).GetField("_networkPeerAddress", System.Reflection.BindingFlags.Instance
                 | System.Reflection.BindingFlags.NonPublic)!.SetValue(original.Multiplexer.GetConnection(), demotedAddress);
+        }
         // Discovery sees the promoted address; the actual localhost connection still reaches
         // the former primary, which continues to answer ROLE master during split brain.
         router.HostResolver = (_, _) => Task.FromResult<IPAddress[]>(reachesDemotedPeer
@@ -2675,15 +3024,24 @@ public partial class SentinelRoutingTests
         var hint = SentinelHint.FromSwitchMaster("switch", new(demotedAddress, primary.Port), new("localhost", primary.Port),
             new("127.0.0.1", sentinel.Port));
         var accepted = false;
+
         try
         {
             await router.GetGenerationAsync(CancellationToken.None, forceDiscovery: true, notificationHint: hint);
             accepted = true;
         }
         catch (RespireConnectionException) { }
+
         await Assert.That(accepted).IsEqualTo(!reachesDemotedPeer);
-        if (reachesDemotedPeer) await Assert.That(router.Current).IsSameReferenceAs(original);
-        else await Assert.That(router.Current!.ValidatedPeer!.Value.Host).IsEqualTo("127.0.0.1");
+
+        if (reachesDemotedPeer)
+        {
+            await Assert.That(router.Current).IsSameReferenceAs(original);
+        }
+        else
+        {
+            await Assert.That(router.Current!.ValidatedPeer!.Value.Host).IsEqualTo("127.0.0.1");
+        }
     }
 
     [Test]
@@ -2725,10 +3083,20 @@ public partial class SentinelRoutingTests
         var validate = typeof(SentinelRouter).GetMethod("ValidateSwitchTargetPeer",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         Exception? rejection = null;
-        try { validate.Invoke(router, [candidate, hint]); }
+
+        try
+        {
+            validate.Invoke(router, [candidate, hint]);
+        }
         catch (System.Reflection.TargetInvocationException error) { rejection = error.InnerException; }
+
         await Assert.That(rejection is RespireConnectionException).IsEqualTo(includesSource);
-        if (!includesSource) await Assert.That(rejection).IsNull();
+
+        if (!includesSource)
+        {
+            await Assert.That(rejection).IsNull();
+        }
+
         await Assert.That(candidate.IsRetired).IsEqualTo(includesSource);
         await Assert.That(router.Current).IsSameReferenceAs(original);
         await Assert.That(original.IsRetired).IsFalse();
@@ -2795,7 +3163,11 @@ public partial class SentinelRoutingTests
         var releaseResolution = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         router.HostResolver = (host, _) =>
         {
-            if (host == "middle-primary.invalid") resolving.TrySetResult();
+            if (host == "middle-primary.invalid")
+            {
+                resolving.TrySetResult();
+            }
+
             return releaseResolution.Task;
         };
         var monitorCommand = sentinel.ReceivedCommands.ToList()
@@ -2811,7 +3183,11 @@ public partial class SentinelRoutingTests
         await WaitForQueuedNotificationsAsync(router, queued + 1);
         await WaitForCommandCountAsync(sentinel, discovery, initialDiscoveries + 1);
         using var originalRetirement = new CancellationTokenSource(Limit);
-        while (!originalGeneration.IsRetired) await Task.Delay(10, originalRetirement.Token);
+
+        while (!originalGeneration.IsRetired)
+        {
+            await Task.Delay(10, originalRetirement.Token);
+        }
 
         await SendSentinelMessageAsync(sentinel, monitorConnection, "+switch-master",
             $"mymaster middle-primary.invalid {middle.Port} 127.0.0.1 {final.Port}");
@@ -2829,7 +3205,12 @@ public partial class SentinelRoutingTests
 
         releaseResolution.TrySetResult([IPAddress.Loopback]);
         using var middleRetirement = new CancellationTokenSource(Limit);
-        while (!middleGeneration.IsRetired) await Task.Delay(10, middleRetirement.Token);
+
+        while (!middleGeneration.IsRetired)
+        {
+            await Task.Delay(10, middleRetirement.Token);
+        }
+
         await Assert.That(middleGeneration.IsRetired).IsTrue();
     }
 
@@ -2888,9 +3269,12 @@ public partial class SentinelRoutingTests
         await using var sentinel = Sentinel(() => primary.Port);
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+
 #pragma warning restore RESP010
         if (state == "failed-validation")
+        {
             await Assert.That(async () => await client.PingAsync().AsTask().WaitAsync(Limit)).Throws<RespireConnectionException>();
+        }
         else if (state == "published")
         {
             await client.PingAsync().AsTask().WaitAsync(Limit);
@@ -2898,22 +3282,30 @@ public partial class SentinelRoutingTests
             // settle, so commands sent before disposal cannot be counted after it.
             await WaitForInitialSentinelValidationAsync(client, sentinel);
         }
+
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         client.ConnectionStateChanged += change =>
         {
             if (change.ReconnectSource == RespireReconnectSource.Unspecified && change.State == RespireConnectionState.Disconnected)
+            {
                 changes.Enqueue(change);
+            }
         };
         var discoveryCommands = sentinel.CommandsSeen;
         await client.DisposeAsync().AsTask().WaitAsync(Limit);
         var commandsAfterDisposal = sentinel.CommandsSeen;
         await Task.Delay(100);
         await Assert.That(sentinel.CommandsSeen).IsEqualTo(commandsAfterDisposal);
+
         if (state != "published")
+        {
             await Assert.That(commandsAfterDisposal).IsEqualTo(discoveryCommands);
+        }
+
         await Assert.That(changes.Any(change => change.Endpoint.Port == sentinel.Port)).IsFalse();
         await Assert.That(changes.Select(change => change.Endpoint).ToArray()).IsEquivalentTo(
             state == "published" ? new[] { new RespireEndpoint("127.0.0.1", primary.Port) } : []);
+
         if (state == "unused")
         {
             await Assert.That(sentinel.CommandsSeen).IsEqualTo(0);
@@ -2941,6 +3333,7 @@ public partial class SentinelRoutingTests
         var publisher = Task.Factory.StartNew(() =>
         {
             started.TrySetResult();
+
             while (Volatile.Read(ref stop) == 0)
             {
                 current.SetValue(router, second);
@@ -2948,12 +3341,15 @@ public partial class SentinelRoutingTests
             }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         RespireEndpoint? mixed = null;
+
         try
         {
             await started.Task.WaitAsync(Limit);
+
             for (var index = 0; index < 1_000_000; index++)
             {
                 var endpoint = client.Endpoint;
+
                 if (endpoint != first.Endpoint && endpoint != second.Endpoint)
                 {
                     mixed = endpoint;
@@ -2967,6 +3363,7 @@ public partial class SentinelRoutingTests
             await publisher.WaitAsync(Limit);
             current.SetValue(router, null);
         }
+
         await Assert.That(mixed).IsNull();
     }
 
@@ -2994,8 +3391,10 @@ public partial class SentinelRoutingTests
     public async Task RapidFailoversDoNotWaitForBlockedObserversAndDrainNotificationsInOrder()
     {
         const int handoffs = 12;
+
         static byte[]? Reply(int _, string command) => command.StartsWith("SET retire", StringComparison.Ordinal)
             ? "-READONLY replica\r\n"u8.ToArray() : null;
+
         await using var first = Primary(Reply);
         await using var second = Primary(Reply);
         var port = first.Port;
@@ -3019,26 +3418,42 @@ public partial class SentinelRoutingTests
         listener.InstrumentPublished = (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.sentinel.failover")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
             foreach (var tag in tags)
+            {
                 if (tag.Key == "server.port" && (Equals(tag.Value, first.Port) || Equals(tag.Value, second.Port)))
+                {
                     Interlocked.Add(ref measurements, value);
+                }
+            }
         });
         listener.Start();
         client.ConnectionStateChanged += change =>
         {
-            if (change.State != RespireConnectionState.Connected) return;
+            if (change.State != RespireConnectionState.Connected)
+            {
+                return;
+            }
+
             endpoints.Enqueue(change.Endpoint.Port);
+
             if (endpoints.Count == 1)
             {
                 entered.TrySetResult();
                 release.Task.GetAwaiter().GetResult();
             }
-            if (endpoints.Count == handoffs + 1) drained.TrySetResult();
+
+            if (endpoints.Count == handoffs + 1)
+            {
+                drained.TrySetResult();
+            }
         };
+
         try
         {
             await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
@@ -3046,6 +3461,7 @@ public partial class SentinelRoutingTests
             // The monitor's revalidation could otherwise observe a port flip below and publish an
             // extra generation. It confirms the unchanged primary without waiting for the observer.
             await WaitForInitialSentinelValidationAsync(client, sentinel);
+
             for (var index = 1; index <= handoffs; index++)
             {
                 Volatile.Write(ref port, index % 2 == 0 ? first.Port : second.Port);
@@ -3054,10 +3470,12 @@ public partial class SentinelRoutingTests
                 await client.SetAsync("current", "value").AsTask().WaitAsync(Limit);
                 await Assert.That(client.Endpoint.Port).IsEqualTo(port);
             }
+
             await Assert.That(endpoints.Count).IsEqualTo(1);
             await Assert.That(Interlocked.Read(ref measurements)).IsEqualTo(0L);
         }
         finally { release.TrySetResult(); }
+
         await drained.Task.WaitAsync(Limit);
         await Assert.That(endpoints.SequenceEqual(
             Enumerable.Range(0, handoffs + 1).Select(index => index % 2 == 0 ? first.Port : second.Port))).IsTrue();
@@ -3079,8 +3497,12 @@ public partial class SentinelRoutingTests
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         Volatile.Write(ref primaryPort, promoted.Port);
         Volatile.Write(ref replica, true);
+
         using (var role = await client.ExecuteAsync($"ROLE"))
+        {
             await Assert.That(role[0].AsString()).IsEqualTo("slave");
+        }
+
         await Assert.That(client.IsConnected).IsFalse();
         await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
         await Assert.That(oldPrimary.ReceivedCommands).IsEquivalentTo(["ROLE", "ROLE", "ROLE"]);
@@ -3095,8 +3517,16 @@ public partial class SentinelRoutingTests
         await using var oldPrimary = Primary();
         oldPrimary.SuppressReply = command =>
         {
-            if (command != "PING") return false;
-            if (Interlocked.Increment(ref acceptedCount) == 4) full.TrySetResult();
+            if (command != "PING")
+            {
+                return false;
+            }
+
+            if (Interlocked.Increment(ref acceptedCount) == 4)
+            {
+                full.TrySetResult();
+            }
+
             return true;
         };
         await using var promoted = Primary();
@@ -3117,7 +3547,12 @@ public partial class SentinelRoutingTests
         await Assert.That(waiter.IsCompleted).IsFalse();
         Volatile.Write(ref primaryPort, promoted.Port);
         await oldPrimary.SendRawAsync("-READONLY replica\r\n"u8.ToArray());
-        using (var rejected = await accepted[0].WaitAsync(Limit)) await Assert.That(rejected.IsError).IsTrue();
+
+        using (var rejected = await accepted[0].WaitAsync(Limit))
+        {
+            await Assert.That(rejected.IsError).IsTrue();
+        }
+
         try
         {
             await Assert.That(async () => await waiter.WaitAsync(Limit)).Throws<RespireException>();
@@ -3130,7 +3565,11 @@ public partial class SentinelRoutingTests
         finally
         {
             await oldPrimary.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray());
-            foreach (var pending in accepted.Skip(1)) { using var reply = await pending.WaitAsync(Limit); }
+
+            foreach (var pending in accepted.Skip(1))
+            {
+                using var reply = await pending.WaitAsync(Limit);
+            }
         }
     }
 
@@ -3230,6 +3669,7 @@ public partial class SentinelRoutingTests
         await using var sentinel = Sentinel(() => primary.Port);
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+
 #pragma warning restore RESP010
         if (rediscovery)
         {
@@ -3240,6 +3680,7 @@ public partial class SentinelRoutingTests
             var generation = client.Core.Sentinel!.Current!;
             await generation.Multiplexer.GetConnection().DisposeAsync();
         }
+
         await Task.WhenAll(Enumerable.Range(0, 16)
             .Select(index => client.SetAsync($"key:{index}", "value").AsTask())).WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
@@ -3281,7 +3722,11 @@ public partial class SentinelRoutingTests
         var rejectWrites = false;
         await using var oldPrimary = Primary((_, command) =>
         {
-            if (command.StartsWith("SET ") && Volatile.Read(ref rejectWrites)) return "-READONLY replica\r\n"u8.ToArray();
+            if (command.StartsWith("SET ") && Volatile.Read(ref rejectWrites))
+            {
+                return "-READONLY replica\r\n"u8.ToArray();
+            }
+
             return null;
         });
         oldPrimary.SuppressReply = command => command.StartsWith("BLPOP ");
@@ -3331,11 +3776,25 @@ public partial class SentinelRoutingTests
             ShouldListenTo = source => source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == "SET"
                 ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
-            ActivityStarted = activity => { if (IsUploadActivity(activity)) started.Enqueue(activity); },
-            ActivityStopped = activity => { if (IsUploadActivity(activity)) stopped.Enqueue(activity); },
+            ActivityStarted = activity =>
+            {
+                if (IsUploadActivity(activity))
+                {
+                    started.Enqueue(activity);
+                }
+            },
+            ActivityStopped = activity =>
+            {
+                if (IsUploadActivity(activity))
+                {
+                    stopped.Enqueue(activity);
+                }
+            },
         };
+
         bool IsUploadActivity(Activity activity) => activity.OperationName == "SET"
             && activity.GetTagItem("server.port") is int port && (port == oldPrimary.Port || port == promoted.Port);
+
         ActivitySource.AddActivityListener(listener);
         await using var source = new PausedTelemetryStream();
         var pending = client.Strings.SetAsync("upload", source, source.Length).AsTask();
@@ -3355,8 +3814,16 @@ public partial class SentinelRoutingTests
 
     private sealed class PausedTelemetryStream() : MemoryStream("payload"u8.ToArray())
     {
-        internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Started
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Resume
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             Started.TrySetResult();
@@ -3494,20 +3961,30 @@ public partial class SentinelRoutingTests
         client.ConnectionStateChanged += change =>
         {
             events.Enqueue(change);
+
             if (change.Endpoint.Port == promoted.Port && change.State == RespireConnectionState.Connected)
+            {
                 published.TrySetResult();
+            }
         };
         var counted = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.sentinel.failover")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
             foreach (var tag in tags)
-                if (tag.Key == "server.port" && Equals(tag.Value, promoted.Port)) counted.TrySetResult(value);
+            {
+                if (tag.Key == "server.port" && Equals(tag.Value, promoted.Port))
+                {
+                    counted.TrySetResult(value);
+                }
+            }
         });
         listener.Start();
         await client.SetAsync("first", "value").AsTask().WaitAsync(Limit);
@@ -3549,7 +4026,8 @@ public partial class SentinelRoutingTests
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
@@ -3574,11 +4052,16 @@ public partial class SentinelRoutingTests
             "GET key" => "$3\r\nnew\r\n"u8.ToArray(),
             _ => null,
         };
+
         var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var primary = Primary((_, command) => Reply(command));
         primary.SuppressReply = command =>
         {
-            if (command != "GET key") return false;
+            if (command != "GET key")
+            {
+                return false;
+            }
+
             accepted.TrySetResult();
             return true;
         };
@@ -3600,8 +4083,12 @@ public partial class SentinelRoutingTests
         var follower = client.GetStringAsync("key").AsTask();
         await Assert.That(client.Core.ClientCache!.ActiveSharedReadCount).IsEqualTo(1);
         Volatile.Write(ref port, promoted.Port);
+
         using (var error = Respire.Protocol.RespValue.Error("READONLY replica"))
+        {
             generation.ObserveResponse(connection, "SET", in error);
+        }
+
         await Assert.That(await client.GetStringAsync("key").AsTask().WaitAsync(Limit)).IsEqualTo("new");
         await Assert.That(leader.IsCompleted).IsFalse();
         await Assert.That(follower.IsCompleted).IsFalse();
@@ -3617,12 +4104,14 @@ public partial class SentinelRoutingTests
     public async Task SubscriptionMovesToTheValidatedPrimaryAndReportsTheDeliveryGap()
     {
         var rejectWrites = false;
+
         static byte[]? SubscriptionReply(string command) => command switch
         {
             "SUBSCRIBE events" => "*3\r\n$9\r\nsubscribe\r\n$6\r\nevents\r\n:1\r\n"u8.ToArray(),
             "UNSUBSCRIBE events" => "*3\r\n$11\r\nunsubscribe\r\n$6\r\nevents\r\n:0\r\n"u8.ToArray(),
             _ => null,
         };
+
         await using var oldPrimary = Primary((_, command) => command.StartsWith("SET ") && Volatile.Read(ref rejectWrites)
             ? "-READONLY replica\r\n"u8.ToArray() : SubscriptionReply(command));
         await using var promoted = Primary((_, command) => SubscriptionReply(command));
@@ -3673,11 +4162,17 @@ public partial class SentinelRoutingTests
         await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
         using var batch = client.CreateBatch();
         var pending = batch.Set("batched", "value");
+
         if (durability)
+        {
             await Assert.That(await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1)).AsTask().WaitAsync(Limit))
                 .IsEqualTo(1);
+        }
         else
+        {
             await batch.ExecuteAsync().AsTask().WaitAsync(Limit);
+        }
+
         await Assert.That(pending.Result).IsTrue();
         await Assert.That(oldPrimary.ReceivedCommands.Any(command => command == "SET batched value")).IsFalse();
         var index = promoted.ReceivedCommands.ToList().IndexOf("SET batched value");
@@ -3693,10 +4188,12 @@ public partial class SentinelRoutingTests
     public async Task TrackedCorrectionRetainsItsOriginalPeerAfterPromotion()
     {
         var rejectWrites = false;
+
         static byte[]? ScriptReply(string command, int clientId)
             => command == "CLIENT ID" ? Encoding.ASCII.GetBytes($":{clientId}\r\n")
                 : command.StartsWith("CLIENT KILL ") ? ":0\r\n"u8.ToArray()
                 : command.StartsWith("EVAL") ? ":1\r\n"u8.ToArray() : null;
+
         await using var oldPrimary = Primary((_, command) => command.StartsWith("SET ") && Volatile.Read(ref rejectWrites)
             ? "-READONLY replica\r\n"u8.ToArray() : ScriptReply(command, 41));
         await using var promoted = Primary((_, command) => ScriptReply(command, 42));
@@ -3708,7 +4205,12 @@ public partial class SentinelRoutingTests
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var script = RespireScript.Create("return 1");
         var execution = await client.StartTrackedScriptExecutionAsync(script, ["key"], [], default, true);
-        using (var reply = await execution.ConsumeResponseAsync()) await Assert.That(reply.AsInteger()).IsEqualTo(1);
+
+        using (var reply = await execution.ConsumeResponseAsync())
+        {
+            await Assert.That(reply.AsInteger()).IsEqualTo(1);
+        }
+
         var original = execution.ConnectionIdentity;
         await Assert.That(original.ServerClientId).IsEqualTo(41);
         Volatile.Write(ref primaryPort, promoted.Port);
@@ -3716,7 +4218,12 @@ public partial class SentinelRoutingTests
         await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
         await client.EnsureReliableCorrectionOrderingAsync().AsTask().WaitAsync(Limit);
         var next = await client.StartTrackedScriptExecutionAsync(script, ["next"], [], default, true);
-        using (var reply = await next.ConsumeResponseAsync()) await Assert.That(reply.AsInteger()).IsEqualTo(1);
+
+        using (var reply = await next.ConsumeResponseAsync())
+        {
+            await Assert.That(reply.AsInteger()).IsEqualTo(1);
+        }
+
         await Assert.That(next.ConnectionIdentity.ServerClientId).IsEqualTo(42);
         await Assert.That(next.ConnectionIdentity.Endpoint.Port).IsEqualTo(promoted.Port);
         await client.ExecuteOnAllConnectionsAsync(script, ["key"], [], original).AsTask().WaitAsync(Limit);
@@ -3732,9 +4239,11 @@ public partial class SentinelRoutingTests
     public async Task ManagedLockInitializesTheSelectedGenerationAfterPromotion(bool release, bool rejectIdentity)
     {
         var rejectWrites = false;
+
         static byte[]? IdentityReply(string command, int clientId)
             => command == "CLIENT ID" ? Encoding.ASCII.GetBytes($":{clientId}\r\n")
                 : command.StartsWith("CLIENT KILL ") ? ":0\r\n"u8.ToArray() : null;
+
         await using var oldPrimary = Primary((_, command) => command.StartsWith("SET ") && Volatile.Read(ref rejectWrites)
             ? "-READONLY replica\r\n"u8.ToArray() : IdentityReply(command, 41));
         await using var promoted = Primary((_, command) => command == "CLIENT ID" && rejectIdentity
@@ -3753,6 +4262,7 @@ public partial class SentinelRoutingTests
         Volatile.Write(ref primaryPort, promoted.Port);
         Volatile.Write(ref rejectWrites, true);
         await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
+
         if (rejectIdentity)
         {
             await Assert.That(async () =>
@@ -3771,6 +4281,7 @@ public partial class SentinelRoutingTests
             var commands = promoted.ReceivedCommands.ToList();
             await Assert.That(commands.IndexOf("CLIENT ID")).IsLessThan(commands.FindIndex(IsLockMutation));
         }
+
         await Assert.That(oldPrimary.ReceivedCommands.Any(IsLockMutation)).IsFalse();
 
         static bool IsLockMutation(string command) => command.StartsWith("SET key ") || command.StartsWith("DELEX key ");
@@ -3790,9 +4301,11 @@ public partial class SentinelRoutingTests
 #pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var pool = client.Core.CreateServerPool(client.Endpoint);
+
         try
         {
             var connection = await pool.RentAsync(default);
+
             try
             {
                 Volatile.Write(ref primaryPort, promoted.Port);
@@ -3843,6 +4356,7 @@ public partial class SentinelRoutingTests
     {
         static byte[]? Hello(string command) => command == "HELLO 3"
             ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : null;
+
         await using var primary = Primary((_, command) => command == "GET key"
             ? "$5\r\nvalue\r\n"u8.ToArray() : Hello(command));
         await using var replica = Primary((_, command) => command == "ROLE"
@@ -3851,7 +4365,8 @@ public partial class SentinelRoutingTests
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
@@ -3860,8 +4375,12 @@ public partial class SentinelRoutingTests
         // Exercise an unpublished candidate while the published generation remains healthy.
         // The discovery owner disposes this candidate after ROLE rejects it.
         await using var candidate = new Respire.Internal.SentinelRouter.Generation(client.Core.Sentinel, client.Core,
-            Options(sentinel.Port) with { Endpoints = [new("127.0.0.1", replica.Port)], SentinelPrimaryName = null,
-                Protocol = RespireProtocol.Resp3 });
+            Options(sentinel.Port) with
+            {
+                Endpoints = [new("127.0.0.1", replica.Port)],
+                SentinelPrimaryName = null,
+                Protocol = RespireProtocol.Resp3
+            });
         await Assert.That(async () => await candidate.Multiplexer.EnsureConnectedAsync(default))
             .Throws<RespireConnectionException>();
         await Assert.That(candidate.IsRetired).IsTrue();
@@ -3893,8 +4412,12 @@ public partial class SentinelRoutingTests
 #pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         Volatile.Write(ref primaryPort, promoted.Port);
+
         using (var response = await client.ExecuteAsync((RespireCommand)operation, []))
+        {
             await Assert.That(response[0][0].IsError).IsTrue();
+        }
+
         await Assert.That(client.IsConnected).IsFalse();
         await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
         await Assert.That(promoted.ReceivedCommands).IsEquivalentTo(["ROLE", "SET next value"]);
@@ -3921,6 +4444,7 @@ public partial class SentinelRoutingTests
 #pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var generation = client.Core.Sentinel!.Current!;
+
         if (operation == "EXEC")
         {
             // EXEC is connection-affine and intentionally cannot enter the discarded path.
@@ -3930,6 +4454,7 @@ public partial class SentinelRoutingTests
             await Assert.That(generation.IsRetired).IsFalse();
             return;
         }
+
         primary.SuppressReply = command => command == operation || command == "PING";
         Volatile.Write(ref port, promoted.Port);
 
@@ -3945,16 +4470,22 @@ public partial class SentinelRoutingTests
         await barrier.WaitAsync(Limit);
         await Assert.That(generation.IsRetired).IsEqualTo(operation != "HGETALL");
         await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
+
         if (operation == "HGETALL")
+        {
             await Assert.That(promoted.CommandsSeen).IsEqualTo(0);
+        }
         else
+        {
             await Assert.That(promoted.ReceivedCommands).IsEquivalentTo(["ROLE", "SET next value"]);
+        }
     }
 
     [Test]
     public async Task DiscardedOperationMetadataDoesNotLeakAcrossRingWraparound()
     {
         var ring = new Respire.Networking.InflightRing(2);
+
         for (var iteration = 0; iteration < 8; iteration++)
         {
             await Assert.That(ring.TryEnqueueDiscard("ROLE", 10)).IsTrue();
@@ -4029,6 +4560,7 @@ public partial class SentinelRoutingTests
     public async Task RetirementDuringCacheLookupRejectsTheOldValue(string operation, bool coalesce)
     {
         using var metrics = new MetricConfigurationScope();
+
         static byte[]? Reply(string command, string value) => command switch
         {
             "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
@@ -4037,6 +4569,7 @@ public partial class SentinelRoutingTests
             "MGET key" => Encoding.ASCII.GetBytes($"*1\r\n$3\r\n{value}\r\n"),
             _ => null,
         };
+
         await using var primary = Primary((_, command) => Reply(command, "old"));
         await using var promoted = Primary((_, command) => Reply(command, "new"));
         var port = primary.Port;
@@ -4044,7 +4577,8 @@ public partial class SentinelRoutingTests
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
         });
 #pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
@@ -4057,15 +4591,32 @@ public partial class SentinelRoutingTests
         listener.InstrumentPublished = (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.csc.requests")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             var hit = false;
+
             foreach (var tag in tags)
-                if (tag.Key == "redis.client.csc.result" && Equals(tag.Value, "hit")) hit = true;
-            if (!hit) return;
-            if (!intercept.Value) return;
+            {
+                if (tag.Key == "redis.client.csc.result" && Equals(tag.Value, "hit"))
+                {
+                    hit = true;
+                }
+            }
+
+            if (!hit)
+            {
+                return;
+            }
+
+            if (!intercept.Value)
+            {
+                return;
+            }
+
             intercept.Value = false;
             Volatile.Write(ref port, promoted.Port);
             using var error = Respire.Protocol.RespValue.Error("READONLY replica");
@@ -4077,6 +4628,7 @@ public partial class SentinelRoutingTests
         await Assert.That(generation.IsRetired).IsTrue();
         var wireOperation = operation == "RAW MGET" ? "MGET" : operation;
         await Assert.That(promoted.ReceivedCommands.Any(command => command.StartsWith(wireOperation + " "))).IsTrue();
+
         if (operation == "RAW MGET")
         {
             await Assert.That(primary.ReceivedCommands.Count(command => command == "MGET key")).IsEqualTo(1);
@@ -4091,8 +4643,17 @@ public partial class SentinelRoutingTests
                 using var raw = await prefixed.ExecuteAsync((RespireCommand)"MGET", ["key"]);
                 return raw[0].AsString();
             }
-            if (operation == "GET") return await client.GetStringAsync("key");
-            if (operation == "MGET") return (await client.Strings.GetManyAsync(["key"]))[0];
+
+            if (operation == "GET")
+            {
+                return await client.GetStringAsync("key");
+            }
+
+            if (operation == "MGET")
+            {
+                return (await client.Strings.GetManyAsync(["key"]))[0];
+            }
+
             using var result = await client.ExecuteAsync((RespireCommand)"HGET", ["key", "field"]);
             return result.AsString();
         }
@@ -4111,6 +4672,7 @@ public partial class SentinelRoutingTests
     public async Task RetirementDuringHashFieldLookupRefetchesEveryField(bool raw, bool partial, bool coalesce)
     {
         using var metrics = new MetricConfigurationScope();
+
         static byte[]? Reply(string command, string value) => command switch
         {
             "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
@@ -4120,6 +4682,7 @@ public partial class SentinelRoutingTests
             "HMGET tenant:key second" => Encoding.ASCII.GetBytes($"*1\r\n$3\r\n{value}\r\n"),
             _ => null,
         };
+
         await using var primary = Primary((_, command) => Reply(command, "old"));
         await using var promoted = Primary((_, command) => Reply(command, "new"));
         var port = primary.Port;
@@ -4134,7 +4697,12 @@ public partial class SentinelRoutingTests
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         await using var view = client.WithKeyPrefix("tenant:");
         await view.Hashes.GetStringAsync("key", "first");
-        if (!partial) await view.Hashes.GetStringAsync("key", "second");
+
+        if (!partial)
+        {
+            await view.Hashes.GetStringAsync("key", "second");
+        }
+
         var generation = client.Core.Sentinel!.Current!;
         var connection = generation.Multiplexer.GetConnection();
         var intercept = new AsyncLocal<bool>();
@@ -4142,15 +4710,32 @@ public partial class SentinelRoutingTests
         listener.InstrumentPublished = (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.csc.requests")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             var hit = false;
+
             foreach (var tag in tags)
-                if (tag.Key == "redis.client.csc.result" && Equals(tag.Value, "hit")) hit = true;
-            if (!hit) return;
-            if (!intercept.Value) return;
+            {
+                if (tag.Key == "redis.client.csc.result" && Equals(tag.Value, "hit"))
+                {
+                    hit = true;
+                }
+            }
+
+            if (!hit)
+            {
+                return;
+            }
+
+            if (!intercept.Value)
+            {
+                return;
+            }
+
             intercept.Value = false;
             Volatile.Write(ref port, promoted.Port);
             using var error = Respire.Protocol.RespValue.Error("READONLY replica");
@@ -4159,13 +4744,18 @@ public partial class SentinelRoutingTests
         listener.Start();
         intercept.Value = true;
         string?[] values;
+
         if (raw)
         {
             using var response = await view.ExecuteAsync((RespireCommand)"HMGET", ["tenant:key", "first", "second"])
                 .AsTask().WaitAsync(Limit);
             values = [response[0].AsString(), response[1].AsString()];
         }
-        else values = await view.Hashes.GetManyAsync("key", "first", "second").AsTask().WaitAsync(Limit);
+        else
+        {
+            values = await view.Hashes.GetManyAsync("key", "first", "second").AsTask().WaitAsync(Limit);
+        }
+
         await Assert.That(values).IsEquivalentTo(new string?[] { "new", "new" });
         await Assert.That(generation.IsRetired).IsTrue();
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("HMGET "))).IsFalse();
@@ -4201,7 +4791,8 @@ public partial class SentinelRoutingTests
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         await WaitForInitialSentinelValidationAsync(client, sentinel);
@@ -4296,14 +4887,23 @@ public partial class SentinelRoutingTests
     public async Task FailedDiscoveryRetainsTelemetryWithoutInventingAPrimary(string kind, bool trace)
     {
         using var metrics = new MetricConfigurationScope();
-        var operation = kind switch { "blocking" or "blocking-rental" => "BLPOP", "script" => "EVALSHA", _ => "SET" };
+        var operation = kind switch
+        {
+            "blocking" or "blocking-rental" => "BLPOP",
+            "script" => "EVALSHA",
+            _ => "SET"
+        };
         var rental = kind == "blocking-rental";
         var queried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var primary = Primary();
         var roles = 0;
         primary.SuppressReply = command =>
         {
-            if (!rental || command != "ROLE" || Interlocked.Increment(ref roles) != 2) return false;
+            if (!rental || command != "ROLE" || Interlocked.Increment(ref roles) != 2)
+            {
+                return false;
+            }
+
             queried.TrySetResult();
             return true;
         };
@@ -4312,7 +4912,11 @@ public partial class SentinelRoutingTests
             ReplyOverride = (_, _) => rental ? AddressReply(primary.Port) : null,
             SuppressReply = command =>
             {
-                if (rental || !command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")) return false;
+                if (rental || !command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME "))
+                {
+                    return false;
+                }
+
                 queried.TrySetResult();
                 return true;
             },
@@ -4330,7 +4934,10 @@ public partial class SentinelRoutingTests
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStopped = activity =>
             {
-                if (observed.Value && Equals(activity.GetTagItem("db.operation.name"), operation)) activities.Enqueue(activity);
+                if (observed.Value && Equals(activity.GetTagItem("db.operation.name"), operation))
+                {
+                    activities.Enqueue(activity);
+                }
             },
         };
         ActivitySource.AddActivityListener(activityListener);
@@ -4339,13 +4946,23 @@ public partial class SentinelRoutingTests
         meterListener.InstrumentPublished = (instrument, listener) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
                 listener.EnableMeasurementEvents(instrument);
+            }
         };
         meterListener.SetMeasurementEventCallback<double>((_, duration, tags, _) =>
         {
-            if (!observed.Value) return;
+            if (!observed.Value)
+            {
+                return;
+            }
+
             var captured = tags.ToArray().ToDictionary(pair => pair.Key, pair => pair.Value);
-            if (Equals(captured.GetValueOrDefault("db.operation.name"), operation)) measurements.Enqueue((duration, captured));
+
+            if (Equals(captured.GetValueOrDefault("db.operation.name"), operation))
+            {
+                measurements.Enqueue((duration, captured));
+            }
         });
         meterListener.Start();
         using var batch = client.CreateBatch();
@@ -4363,8 +4980,16 @@ public partial class SentinelRoutingTests
         };
         await queried.Task.WaitAsync(Limit);
         var releaseTime = DateTime.UtcNow;
-        if (rental) await primary.SendRawAsync("*0\r\n"u8.ToArray(), connectionId: 1);
-        else await sentinel.SendRawAsync("$-1\r\n"u8.ToArray());
+
+        if (rental)
+        {
+            await primary.SendRawAsync("*0\r\n"u8.ToArray(), connectionId: 1);
+        }
+        else
+        {
+            await sentinel.SendRawAsync("$-1\r\n"u8.ToArray());
+        }
+
         await Assert.That(async () => await execution.WaitAsync(Limit)).Throws<RespireConnectionException>();
         var measured = measurements.ToArray();
         await Assert.That(measured.Length).IsEqualTo(1);
@@ -4374,6 +4999,7 @@ public partial class SentinelRoutingTests
         await Assert.That(measured[0].Tags.ContainsKey("server.port")).IsFalse();
         var traced = activities.ToArray();
         await Assert.That(traced.Length).IsEqualTo(trace ? 1 : 0);
+
         if (trace)
         {
             await Assert.That(traced[0].Status).IsEqualTo(ActivityStatusCode.Error);
@@ -4414,15 +5040,22 @@ public partial class SentinelRoutingTests
                 if (options.Name == "SET" || options.Name == "BLPOP" || options.Name.StartsWith("EVALSHA"))
                 {
                     var tags = options.Tags!.ToDictionary(tag => tag.Key, tag => tag.Value);
+
                     if (tags.TryGetValue("server.port", out var port) && (Equals(port, primary.Port) || Equals(port, sentinel.Port)))
+                    {
                         samples.Enqueue(tags);
+                    }
                 }
+
                 return ActivitySamplingResult.AllDataAndRecorded;
             },
         };
         ActivitySource.AddActivityListener(listener);
+
         if (kind == "blocking")
+        {
             await client.Lists.LeftPopAsync("key", waitFor: Timeout.InfiniteTimeSpan).AsTask().WaitAsync(Limit);
+        }
         else if (kind == "script")
         {
             using var result = await client.Scripts.ExecuteAsync(RespireScript.Create("return 1"));
@@ -4438,9 +5071,17 @@ public partial class SentinelRoutingTests
         {
             using var batch = client.CreateBatch();
             _ = batch.Set("key", "value");
-            if (kind == "durability") await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
-            else await batch.ExecuteAsync();
+
+            if (kind == "durability")
+            {
+                await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
+            }
+            else
+            {
+                await batch.ExecuteAsync();
+            }
         }
+
         await Assert.That(samples.Any(tags => Equals(tags["server.port"], primary.Port))).IsTrue();
         await Assert.That(samples.Any(tags => Equals(tags["server.port"], sentinel.Port))).IsFalse();
     }
@@ -4460,7 +5101,12 @@ public partial class SentinelRoutingTests
     public async Task SuccessfulSentinelOperationIncludesDiscoveryInItsDuration(string kind, bool trace)
     {
         using var metrics = new MetricConfigurationScope();
-        var operation = kind switch { "blocking" => "BLPOP", "script" => "EVALSHA", _ => "SET" };
+        var operation = kind switch
+        {
+            "blocking" => "BLPOP",
+            "script" => "EVALSHA",
+            _ => "SET"
+        };
         await using var primary = Primary((_, command) => command switch
         {
             "SET key value" when kind == "transaction" => "+QUEUED\r\n"u8.ToArray(),
@@ -4474,7 +5120,11 @@ public partial class SentinelRoutingTests
         await using var sentinel = Sentinel(() => primary.Port);
         sentinel.SuppressReply = command =>
         {
-            if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")) return false;
+            if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME "))
+            {
+                return false;
+            }
+
             queried.TrySetResult();
             return true;
         };
@@ -4488,16 +5138,32 @@ public partial class SentinelRoutingTests
             ShouldListenTo = source => trace && source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
             {
-                if (!options.Name.StartsWith(operation)) return ActivitySamplingResult.AllDataAndRecorded;
+                if (!options.Name.StartsWith(operation))
+                {
+                    return ActivitySamplingResult.AllDataAndRecorded;
+                }
+
                 var tags = options.Tags!.ToDictionary(tag => tag.Key, tag => tag.Value);
+
                 if (tags.TryGetValue("server.port", out var port) && (Equals(port, primary.Port) || Equals(port, sentinel.Port)))
-                    lock (sampled) sampled.Add(tags);
+                {
+                    lock (sampled)
+                    {
+                        sampled.Add(tags);
+                    }
+                }
+
                 return ActivitySamplingResult.AllDataAndRecorded;
             },
             ActivityStopped = activity =>
             {
                 if (Equals(activity.GetTagItem("db.operation.name"), operation) && TestTelemetry.IsFrom(activity, primary.Port, sentinel.Port))
-                    lock (activities) activities.Add(activity);
+                {
+                    lock (activities)
+                    {
+                        activities.Add(activity);
+                    }
+                }
             },
         };
         ActivitySource.AddActivityListener(activityListener);
@@ -4506,13 +5172,26 @@ public partial class SentinelRoutingTests
         meterListener.InstrumentPublished = (instrument, listener) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
                 listener.EnableMeasurementEvents(instrument);
+            }
         };
         meterListener.SetMeasurementEventCallback<double>((_, duration, tags, _) =>
         {
-            if (!TestTelemetry.IsFrom(tags, primary.Port, sentinel.Port)) return;
+            if (!TestTelemetry.IsFrom(tags, primary.Port, sentinel.Port))
+            {
+                return;
+            }
+
             var captured = tags.ToArray().ToDictionary(pair => pair.Key, pair => pair.Value);
-            if (Equals(captured["db.operation.name"], operation)) lock (measurements) measurements.Add((duration, captured));
+
+            if (Equals(captured["db.operation.name"], operation))
+            {
+                lock (measurements)
+                {
+                    measurements.Add((duration, captured));
+                }
+            }
         });
         meterListener.Start();
         var execution = ExecuteAsync();
@@ -4526,6 +5205,7 @@ public partial class SentinelRoutingTests
         await Assert.That(measurements[0].Tags["server.port"]).IsEqualTo(primary.Port);
         await Assert.That(measurements[0].Tags.ContainsKey("error.type")).IsFalse();
         await Assert.That(activities.Count).IsEqualTo(trace ? 1 : 0);
+
         if (trace)
         {
             await Assert.That(sampled.Single()["server.port"]).IsEqualTo(primary.Port);
@@ -4534,7 +5214,10 @@ public partial class SentinelRoutingTests
 
         async Task ExecuteAsync()
         {
-            if (kind == "blocking") await client.Lists.LeftPopAsync("key", waitFor: Timeout.InfiniteTimeSpan);
+            if (kind == "blocking")
+            {
+                await client.Lists.LeftPopAsync("key", waitFor: Timeout.InfiniteTimeSpan);
+            }
             else if (kind == "script")
             {
                 using var result = await client.Scripts.ExecuteAsync(RespireScript.Create("return 1"));
@@ -4550,8 +5233,15 @@ public partial class SentinelRoutingTests
             {
                 using var batch = client.CreateBatch();
                 _ = batch.Set("key", "value");
-                if (kind == "durability") await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
-                else await batch.ExecuteAsync();
+
+                if (kind == "durability")
+                {
+                    await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
+                }
+                else
+                {
+                    await batch.ExecuteAsync();
+                }
             }
         }
     }
@@ -4575,7 +5265,12 @@ public partial class SentinelRoutingTests
                 "durability" => command == "WAIT 1 1000",
                 _ => command == "SET delayed2 value",
             };
-            if (last) admitted.TrySetResult();
+
+            if (last)
+            {
+                admitted.TrySetResult();
+            }
+
             return kind switch
             {
                 "transaction" => command == "EXEC",
@@ -4596,21 +5291,31 @@ public partial class SentinelRoutingTests
         listener.InstrumentPublished = (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
         {
             var values = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
+
             if (Equals(values.GetValueOrDefault("db.operation.batch.size"), 2)
                 && (Equals(values.GetValueOrDefault("server.port"), primary.Port)
-                    || Equals(values.GetValueOrDefault("server.port"), promoted.Port))) samples.Enqueue(values);
+                    || Equals(values.GetValueOrDefault("server.port"), promoted.Port)))
+            {
+                samples.Enqueue(values);
+            }
         });
         listener.Start();
         var pending = ExecuteAsync();
         await admitted.Task.WaitAsync(Limit);
         Volatile.Write(ref port, promoted.Port);
+
         using (var rejection = Respire.Protocol.RespValue.Error("READONLY replica"))
+        {
             original.ObserveResponse(original.Multiplexer.GetConnection(), "SET", in rejection);
+        }
+
         await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
         await Assert.That(pending.IsCompleted).IsFalse();
         var commandIndex = primary.ReceivedCommands.ToList().IndexOf("SET delayed1 value");
@@ -4641,8 +5346,15 @@ public partial class SentinelRoutingTests
                 using var batch = client.CreateBatch();
                 _ = batch.Set("delayed1", "value");
                 _ = batch.Set("delayed2", "value");
-                if (kind == "durability") await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
-                else await batch.ExecuteAsync();
+
+                if (kind == "durability")
+                {
+                    await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
+                }
+                else
+                {
+                    await batch.ExecuteAsync();
+                }
             }
         }
     }
@@ -4658,7 +5370,11 @@ public partial class SentinelRoutingTests
         var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.State != RespireConnectionState.Connected) return;
+            if (change.State != RespireConnectionState.Connected)
+            {
+                return;
+            }
+
             try
             {
 #pragma warning disable RESP009 // Synchronous observer disposal deliberately probes re-entry and shutdown deadlocks.
@@ -4668,8 +5384,13 @@ public partial class SentinelRoutingTests
             }
             catch (Exception error) { disposed.TrySetException(error); }
         };
-        try { await client.SetAsync("key", "value"); }
+
+        try
+        {
+            await client.SetAsync("key", "value");
+        }
         catch (Exception) when (client.Core.Disposed) { }
+
         await disposed.Task.WaitAsync(Limit);
         await Assert.That(client.IsConnected).IsFalse();
     }
@@ -4708,7 +5429,9 @@ public partial class SentinelRoutingTests
         listener.InstrumentPublished = (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.sentinel.generations.retired")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, _, _) => retained = value);
         listener.Start();
@@ -4742,20 +5465,32 @@ public partial class SentinelRoutingTests
         listener.InstrumentPublished = (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.sentinel.failover")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
             foreach (var tag in tags)
-                if (tag.Key == "server.port" && Equals(tag.Value, promoted.Port)) measured.TrySetResult(value);
+            {
+                if (tag.Key == "server.port" && Equals(tag.Value, promoted.Port))
+                {
+                    measured.TrySetResult(value);
+                }
+            }
         });
         listener.Start();
         client.ConnectionStateChanged += change =>
         {
-            if (change.Endpoint.Port != primary.Port || change.State != RespireConnectionState.Connected) return;
+            if (change.Endpoint.Port != primary.Port || change.State != RespireConnectionState.Connected)
+            {
+                return;
+            }
+
             observerEntered.TrySetResult();
             releaseObserver.Task.GetAwaiter().GetResult();
         };
+
         try
         {
             await client.SetAsync("first", "value");
@@ -4767,6 +5502,7 @@ public partial class SentinelRoutingTests
             await client.DisposeAsync().AsTask().WaitAsync(Limit);
         }
         finally { releaseObserver.TrySetResult(); }
+
         await Assert.That(await measured.Task.WaitAsync(Limit)).IsEqualTo(1L);
     }
 
@@ -4807,6 +5543,7 @@ public partial class SentinelRoutingTests
         await Assert.That(second.Delay).IsEqualTo(TimeSpan.FromSeconds(2));
         await Assert.That(generation.CountedAsRetired).IsTrue();
         var actualRetirement = generation.Retirement;
+
         if (failRetirementWait)
         {
             generation.Retirement = Task.FromException(new InvalidOperationException("Injected disposal failure."));
@@ -4814,7 +5551,11 @@ public partial class SentinelRoutingTests
                 .ThrowsExactly<InvalidOperationException>();
             await actualRetirement.WaitAsync(Limit);
         }
-        else await client.DisposeAsync().AsTask().WaitAsync(Limit);
+        else
+        {
+            await client.DisposeAsync().AsTask().WaitAsync(Limit);
+        }
+
         await second.Disposed.Task.WaitAsync(Limit);
         await Assert.That(generation.Retirement.IsCompleted).IsTrue();
         await Assert.That(generation.CountedAsRetired).IsFalse();
@@ -4825,6 +5566,7 @@ public partial class SentinelRoutingTests
     public async Task ConsecutiveFailoversKeepBothCorrectionFencesUntilClientDisposal()
     {
         var rejectFences = new int[2];
+
         byte[]? Reply(int primary, string command) => command switch
         {
             "CLIENT ID" => Encoding.ASCII.GetBytes($":{41 + primary}\r\n"),
@@ -4832,6 +5574,7 @@ public partial class SentinelRoutingTests
                 ? "-ERR fencing unavailable\r\n"u8.ToArray() : ":0\r\n"u8.ToArray(),
             _ => null,
         };
+
         await using var first = Primary((_, command) => Reply(0, command));
         await using var second = Primary((_, command) => Reply(1, command));
         await using var third = Primary();
@@ -4847,6 +5590,7 @@ public partial class SentinelRoutingTests
         var generations = new List<Respire.Internal.SentinelRouter.Generation>();
         var timers = new List<FenceTimer>();
         var primaries = new[] { first, second };
+
         for (var index = 0; index < primaries.Length; index++)
         {
             Volatile.Write(ref port, primaries[index].Port);
@@ -4858,16 +5602,24 @@ public partial class SentinelRoutingTests
                 .Throws<RespireConnectionException>();
             timers.Add(await clock.Timers.Reader.ReadAsync().AsTask().WaitAsync(Limit));
         }
+
         Volatile.Write(ref port, third.Port);
         await client.SetAsync("current", "value").AsTask().WaitAsync(Limit);
+
         foreach (var generation in generations)
         {
             await Assert.That(generation.Multiplexer.HasPendingCorrectionFences).IsTrue();
             await Assert.That(generation.CountedAsRetired).IsTrue();
             await Assert.That(generation.Retirement.IsCompleted).IsFalse();
         }
+
         await client.DisposeAsync().AsTask().WaitAsync(Limit);
-        foreach (var timer in timers) await timer.Disposed.Task.WaitAsync(Limit);
+
+        foreach (var timer in timers)
+        {
+            await timer.Disposed.Task.WaitAsync(Limit);
+        }
+
         foreach (var generation in generations)
         {
             await Assert.That(generation.Retirement.IsCompleted).IsTrue();
@@ -4886,6 +5638,7 @@ public partial class SentinelRoutingTests
         await using var sentinel = Sentinel(() => primary.Port);
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port));
+
 #pragma warning restore RESP010
         if (rediscovery)
         {
@@ -4895,10 +5648,15 @@ public partial class SentinelRoutingTests
             using var error = Respire.Protocol.RespValue.Error("READONLY replica");
             generation.ObserveResponse(generation.Multiplexer.GetConnection(), "SET", in error);
         }
+
         var queried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         sentinel.SuppressReply = command =>
         {
-            if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")) return false;
+            if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME "))
+            {
+                return false;
+            }
+
             queried.TrySetResult();
             return true;
         };
@@ -4907,6 +5665,7 @@ public partial class SentinelRoutingTests
         var pending = client.SendBlockingAsync("BLPOP", new Respire.Commands.Cmd1(Respire.Commands.Verbs.BLPop, "key"),
             deadline.Token, cancellationTimeout: Limit, callerCancellationToken: caller.Token).AsTask();
         await queried.Task.WaitAsync(Limit);
+
         if (cancelCaller)
         {
             caller.Cancel();
@@ -4920,6 +5679,7 @@ public partial class SentinelRoutingTests
             await Assert.That(error.Diagnostics.Endpoint).IsNull();
             await Assert.That(error.Diagnostics.ConnectionId).IsNull();
         }
+
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("BLPOP "))).IsFalse();
     }
 
@@ -4936,6 +5696,7 @@ public partial class SentinelRoutingTests
             "GET tenant:key" => Encoding.ASCII.GetBytes($"${value.Length}\r\n{value}\r\n"),
             _ => null,
         };
+
         await using var first = Primary((_, command) => Reply(command, "old"));
         await using var second = Primary((_, command) => Reply(command, "new"));
         var port = first.Port;
@@ -4956,9 +5717,16 @@ public partial class SentinelRoutingTests
         using var subscription = client.ClientSideCache!.SubscribeInvalidations("tenant:key", change =>
         {
             if (!change.Reasons.HasFlag(RespireClientCacheInvalidationReason.ContinuityLost)
-                || Interlocked.CompareExchange(ref reading, 1, 0) != 0) return;
+                || Interlocked.CompareExchange(ref reading, 1, 0) != 0)
+            {
+                return;
+            }
+
 #pragma warning disable RESP009 // The continuity observer must synchronously read the promoted primary to exercise re-entry.
-            try { observed.TrySetResult(view.GetStringAsync("key").AsTask().WaitAsync(Limit).GetAwaiter().GetResult()); }
+            try
+            {
+                observed.TrySetResult(view.GetStringAsync("key").AsTask().WaitAsync(Limit).GetAwaiter().GetResult());
+            }
 #pragma warning restore RESP009
             catch (Exception error) { observed.TrySetException(error); }
         });
@@ -4998,6 +5766,7 @@ public partial class SentinelRoutingTests
         var commandTimeout = winner == "discoveryWithoutCommandTimeout" ? (TimeSpan?)null : timeout;
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = RespireClient.Create(Options(sentinel.Port) with { CommandTimeout = commandTimeout });
+
 #pragma warning restore RESP010
         if (rediscovery)
         {
@@ -5007,13 +5776,18 @@ public partial class SentinelRoutingTests
             using var rejection = Respire.Protocol.RespValue.Error("READONLY replica");
             generation.ObserveResponse(generation.Multiplexer.GetConnection(), "SET", in rejection);
         }
+
         CancellationTokenSource? discoveryDeadline = null;
         client.Core.Sentinel!.CreateDiscoveryTimeout = (token, _) =>
             discoveryDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         var queried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         sentinel.SuppressReply = command =>
         {
-            if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")) return false;
+            if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME "))
+            {
+                return false;
+            }
+
             queried.TrySetResult();
             return true;
         };
@@ -5023,6 +5797,7 @@ public partial class SentinelRoutingTests
         var pending = kind == "transaction" ? transaction.CommitAsync(caller.Token).AsTask()
             : (Task)client.EnsureReliableCorrectionOrderingAsync(caller.Token).AsTask();
         await queried.Task.WaitAsync(Limit);
+
         if (winner == "caller")
         {
             caller.Cancel();
@@ -5032,7 +5807,12 @@ public partial class SentinelRoutingTests
         else
         {
             var discoveryWins = winner is "discovery" or "discoveryWithoutCommandTimeout";
-            if (discoveryWins) discoveryDeadline!.Cancel();
+
+            if (discoveryWins)
+            {
+                discoveryDeadline!.Cancel();
+            }
+
             var error = await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
             await Assert.That(error!.CommandName).IsEqualTo(kind == "transaction" ? "MULTI/EXEC" : "CLIENT ID / CLIENT KILL");
             await Assert.That(error.Timeout).IsEqualTo(commandTimeout ?? Limit);
@@ -5040,6 +5820,7 @@ public partial class SentinelRoutingTests
             await Assert.That(error.Diagnostics.Endpoint).IsNull();
             await Assert.That(error.Endpoint).IsNull();
             await Assert.That(error.Diagnostics.ConnectionId).IsNull();
+
             if (discoveryWins)
             {
                 await Assert.That(error.InnerException).IsTypeOf<RespireTimeoutException>();
@@ -5049,6 +5830,7 @@ public partial class SentinelRoutingTests
                 await Assert.That(discoveryError.Endpoint).IsEqualTo(discoveryError.Diagnostics.Endpoint);
             }
         }
+
         await Assert.That(primary.ReceivedCommands.Any(command => command is "CLIENT ID" or "MULTI")).IsFalse();
     }
 
@@ -5071,7 +5853,11 @@ public partial class SentinelRoutingTests
         var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         primary.SuppressReply = command =>
         {
-            if (command != (kind == "transaction" ? "EXEC" : "CLIENT ID")) return false;
+            if (command != (kind == "transaction" ? "EXEC" : "CLIENT ID"))
+            {
+                return false;
+            }
+
             submitted.TrySetResult();
             return true;
         };
@@ -5082,11 +5868,19 @@ public partial class SentinelRoutingTests
         await submitted.Task.WaitAsync(Limit);
         var connection = client.Core.Multiplexer.GetConnection();
         using var limit = new CancellationTokenSource(Limit);
+
         while (connection.InspectForTests().Inflight.Count != 1)
+        {
             await Task.Delay(1, limit.Token);
+        }
+
         await Assert.That(connection.InspectForTests().Inflight.TryPeek(out var source)).IsTrue();
+
         while (connection.CaptureTimeoutDiagnostics().ForCommand(source!.WriteStart, source.WriteEnd).Stage != RespireCommandStage.AwaitingReply)
+        {
             await Task.Delay(1, limit.Token);
+        }
+
         RespireTimeoutDiagnostics? diagnostics = null;
         await Assert.That(source!.TrySetTimedOut(source.State, TimeSpan.FromSeconds(1), ref diagnostics, connection)).IsTrue();
         var error = await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
@@ -5119,13 +5913,20 @@ public partial class SentinelRoutingTests
 
     private sealed class FenceClock : TimeProvider
     {
-        internal Channel<FenceTimer> Timers { get; } = Channel.CreateUnbounded<FenceTimer>();
+        internal Channel<FenceTimer> Timers
+        {
+            get;
+        } = Channel.CreateUnbounded<FenceTimer>();
+
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             // These tests control retry/fence delays. Spacing follows this provider's
             // real timestamp; the dedicated spacing provider below controls both.
             if (dueTime <= TimeSpan.FromMilliseconds(100) && dueTime > TimeSpan.Zero)
+            {
                 return TimeProvider.System.CreateTimer(callback, state, dueTime, period);
+            }
+
             var timer = new FenceTimer(callback, state, dueTime);
             Timers.Writer.TryWrite(timer);
             return timer;
@@ -5137,10 +5938,18 @@ public partial class SentinelRoutingTests
         // Installed after startup; begin past the last System-clock spacing deadline.
         private long _milliseconds = TimeProvider.System.GetElapsedTime(0, TimeProvider.System.GetTimestamp()).Ticks
             / TimeSpan.TicksPerMillisecond + 1000;
-        internal Channel<FenceTimer> Timers { get; } = Channel.CreateUnbounded<FenceTimer>();
+
+        internal Channel<FenceTimer> Timers
+        {
+            get;
+        } = Channel.CreateUnbounded<FenceTimer>();
+
         public override long TimestampFrequency => 1000;
+
         public override long GetTimestamp() => Interlocked.Read(ref _milliseconds);
+
         internal void Advance(long milliseconds) => Interlocked.Add(ref _milliseconds, milliseconds);
+
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = new FenceTimer(callback, state, dueTime);
@@ -5152,28 +5961,54 @@ public partial class SentinelRoutingTests
     private static async Task<FenceTimer> ReadFenceTimerAsync(FenceClock clock, TimeSpan delay)
     {
         using var timeout = new CancellationTokenSource(Limit);
+
         while (true)
         {
             var timer = await clock.Timers.Reader.ReadAsync(timeout.Token);
-            if (timer.Delay == delay) return timer;
+
+            if (timer.Delay == delay)
+            {
+                return timer;
+            }
         }
     }
 
     private sealed class FenceTimer(TimerCallback callback, object? state, TimeSpan delay) : ITimer
     {
         internal TimeSpan Delay => delay;
-        internal TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal void Fire() { if (!Disposed.Task.IsCompleted) callback(state); }
+
+        internal TaskCompletionSource Disposed
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal void Fire()
+        {
+            if (!Disposed.Task.IsCompleted)
+            {
+                callback(state);
+            }
+        }
+
         public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException();
+
         public void Dispose() => Disposed.TrySetResult();
-        public ValueTask DisposeAsync() { Dispose(); return default; }
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return default;
+        }
     }
 
     private static async Task WaitForCommandAsync(FakeRespServer server, string prefix)
     {
         using var timeout = new CancellationTokenSource(Limit);
+
         while (!server.ReceivedCommands.Any(command => command.StartsWith(prefix)))
+        {
             await Task.Delay(5, timeout.Token);
+        }
     }
 
     private static async Task WaitForInitialSentinelValidationAsync(
@@ -5181,17 +6016,28 @@ public partial class SentinelRoutingTests
     {
         var router = client.Core.Sentinel!;
         await WaitForCommandAsync(sentinel, "SUBSCRIBE +switch-master");
+
         using (var timeout = new CancellationTokenSource(Limit))
+        {
             await SentinelTestSetup.WaitForSubscriptionsAsync(router, expectedSubscriptions, timeout.Token);
+        }
+
         var rediscovery = router.NotificationRediscovery;
-        if (waitForRediscovery && rediscovery is not null) await rediscovery.WaitAsync(Limit);
+
+        if (waitForRediscovery && rediscovery is not null)
+        {
+            await rediscovery.WaitAsync(Limit);
+        }
     }
 
     private static async Task WaitForCommandCountAsync(FakeRespServer server, string command, int count)
     {
         using var timeout = new CancellationTokenSource(Limit);
+
         while (server.ReceivedCommands.Count(value => value == command) < count)
+        {
             await Task.Delay(5, timeout.Token);
+        }
     }
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SentinelRouter, NotificationCounter> NotificationCounters = new();
@@ -5199,6 +6045,7 @@ public partial class SentinelRoutingTests
     private sealed class NotificationCounter
     {
         internal int Count;
+
         internal void Observed() => Interlocked.Increment(ref Count);
     }
 
@@ -5219,20 +6066,28 @@ public partial class SentinelRoutingTests
     private static async Task WaitForQueuedNotificationsAsync(SentinelRouter router, int count)
     {
         using var timeout = new CancellationTokenSource(Limit);
+
         while (QueuedNotificationCount(router) < count)
+        {
             await Task.Delay(5, timeout.Token);
+        }
     }
 
     private static async Task WaitForEndpointAsync(RespireClient client, int port)
     {
         using var timeout = new CancellationTokenSource(Limit);
+
         while (true)
         {
             try
             {
-                if (client.Endpoint.Port == port) return;
+                if (client.Endpoint.Port == port)
+                {
+                    return;
+                }
             }
             catch (InvalidOperationException) { }
+
             await Task.Delay(5, timeout.Token);
         }
     }
@@ -5245,8 +6100,12 @@ public partial class SentinelRoutingTests
 
     private static RespireOptions Options(int sentinelPort) => new()
     {
-        Endpoints = [new("127.0.0.1", sentinelPort)], SentinelPrimaryName = "mymaster",
-        Connections = 1, ConnectTimeout = Limit, CommandTimeout = Limit, Protocol = RespireProtocol.Resp2,
+        Endpoints = [new("127.0.0.1", sentinelPort)],
+        SentinelPrimaryName = "mymaster",
+        Connections = 1,
+        ConnectTimeout = Limit,
+        CommandTimeout = Limit,
+        Protocol = RespireProtocol.Resp2,
     };
 
     private static FakeRespServer Primary(Func<int, string, byte[]?>? reply = null, int maxConnections = 8)
@@ -5259,16 +6118,23 @@ public partial class SentinelRoutingTests
     private static FakeRespServer Sentinel(Func<int> primaryPort, Func<long>? configurationEpoch = null, int maxConnections = 64)
     {
         var epochs = new Dictionary<int, long>();
+
         byte[] Configuration()
         {
             var port = primaryPort();
             long epoch;
+
             lock (epochs)
             {
-                if (!epochs.TryGetValue(port, out epoch)) epochs[port] = epoch = epochs.Count;
+                if (!epochs.TryGetValue(port, out epoch))
+                {
+                    epochs[port] = epoch = epochs.Count;
+                }
             }
+
             return ConfigurationReply(port, configurationEpoch?.Invoke() ?? epoch);
         }
+
         return new(maxConnections, "*0\r\n"u8.ToArray())
         {
             ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")

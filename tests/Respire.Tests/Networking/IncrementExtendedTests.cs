@@ -21,11 +21,18 @@ public class IncrementExtendedTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var view = client.WithKeyPrefix("tenant:");
         byte[] key = "counter"u8.ToArray();
-        var integer = new RespireIntegerIncrementOptions { LowerBound = long.MinValue, UpperBound = long.MaxValue,
-            Saturate = true, Expiry = TimeSpan.FromSeconds(5), ExpireOnlyWhenPersistent = true };
+        var integer = new RespireIntegerIncrementOptions
+        {
+            LowerBound = long.MinValue,
+            UpperBound = long.MaxValue,
+            Saturate = true,
+            Expiry = TimeSpan.FromSeconds(5),
+            ExpireOnlyWhenPersistent = true
+        };
         var floating = new RespireFloatIncrementOptions { LowerBound = -1.5, UpperBound = 2.5, Expiry = RespireExpiry.Persist };
         RespireIncrementResult<long> first;
         RespireIncrementResult<double> second;
+
         if (mode == "immediate")
         {
             first = await view.Strings.IncrementExtendedAsync(key, 3, integer);
@@ -39,11 +46,20 @@ public class IncrementExtendedTests
             var pendingFirst = queue.Strings.IncrementExtended(key, 3, integer);
             var pendingSecond = queue.Strings.IncrementExtended("float", -0.5, floating);
             Array.Fill(key, (byte)'x');
-            if (transaction is not null) await transaction.CommitAsync();
-            else await batch!.ExecuteAsync();
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
+
             first = pendingFirst.Result;
             second = pendingSecond.Result;
         }
+
         await Assert.That(first).IsEqualTo(new RespireIncrementResult<long>(long.MaxValue, 2));
         await Assert.That(second).IsEqualTo(new RespireIncrementResult<double>(1.5, -0.5));
         await Assert.That(server.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC"))
@@ -73,16 +89,19 @@ public class IncrementExtendedTests
             new() { Expiry = TimeSpan.Zero }, new() { Expiry = RespireExpiry.At(DateTimeOffset.UnixEpoch) },
             new() { ExpireOnlyWhenPersistent = true }, new() { Expiry = RespireExpiry.Persist, ExpireOnlyWhenPersistent = true },
             new() { Expiry = RespireExpiry.Keep, ExpireOnlyWhenPersistent = true }];
+
         foreach (var options in invalid)
         {
             await Assert.That(async () => await client.Strings.IncrementExtendedAsync("key", options: options)).Throws<ArgumentException>();
             await Assert.That(() => batch.Strings.IncrementExtended("key", options: options)).Throws<ArgumentException>();
         }
+
         foreach (var by in new[] { double.NaN, double.NegativeInfinity, double.PositiveInfinity })
         {
             await Assert.That(async () => await client.Strings.IncrementExtendedAsync("key", by)).Throws<ArgumentOutOfRangeException>();
             await Assert.That(() => batch.Strings.IncrementExtended("key", by)).Throws<ArgumentOutOfRangeException>();
         }
+
         await Assert.That(async () => await client.Strings.IncrementExtendedAsync("key", 0.5, new() { UpperBound = double.NaN }))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Strings.IncrementExtendedAsync("key", cancellationToken: new(true)))
@@ -107,8 +126,14 @@ public class IncrementExtendedTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await Assert.That(async () =>
         {
-            if (floating) await client.Strings.IncrementExtendedAsync("key", 0.5);
-            else await client.Strings.IncrementExtendedAsync("key");
+            if (floating)
+            {
+                await client.Strings.IncrementExtendedAsync("key", 0.5);
+            }
+            else
+            {
+                await client.Strings.IncrementExtendedAsync("key");
+            }
         }).Throws<RespireException>();
     }
 
@@ -166,7 +191,10 @@ public class IncrementExtendedTests
             .IsEqualTo(new RespireIncrementResult<double>(0.5, -2));
         await Assert.That(async () => await client.Strings.IncrementExtendedAsync("float")).Throws<RespireServerException>();
         await Assert.That(await client.GetStringAsync("float")).IsEqualTo("0.5");
-        await Assert.That(async () => { using var invalid = await client.ExecuteAsync("INCREX", ["float", "BYINT", 1, "BYINT", 2]); })
+        await Assert.That(async () =>
+            {
+                using var invalid = await client.ExecuteAsync("INCREX", ["float", "BYINT", 1, "BYINT", 2]);
+            })
             .Throws<RespireServerException>();
     }
 }

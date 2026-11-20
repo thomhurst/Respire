@@ -66,8 +66,13 @@ public sealed class ConformanceCoverageTests : TestSuiteImplementationTests
             AssertCovered(upstream.Except(excluded), applicable);
             Assert.Equal(excluded.Order(), Facts(adapter).Where(IsExcluded).Select(m => m.Name).Order());
             Assert.All(Facts(adapter).Where(m => !IsExcluded(m)), m => Assert.Null(m.GetCustomAttribute<FactAttribute>()!.Skip));
-            if (suite == typeof(IndexKindTests<string>)) AssertRunnable(adapter.GetMethod("Hnsw")!);
+
+            if (suite == typeof(IndexKindTests<string>))
+            {
+                AssertRunnable(adapter.GetMethod("Hnsw")!);
+            }
         }
+
         foreach (var (upstream, resp2, resp3) in new (Type?, Type, Type)[]
         {
             (typeof(DataTypeTests<string, DataTypeTests<string>.DefaultRecord>), typeof(HashResp2DataTypeTests), typeof(HashResp3DataTypeTests)),
@@ -92,6 +97,7 @@ public sealed class ConformanceCoverageTests : TestSuiteImplementationTests
         AssertDiscoverable(typeof(JsonBackendTests));
         AssertRunnable(typeof(JsonBackendTests).GetMethod(nameof(JsonBackendTests.Official_json_contract))!);
         var cases = JsonBackendTests.Cases().Where(row => (RespireProtocol)row[0] == protocol).ToArray();
+
         foreach (var (name, suite, excluded) in new (string, Type, string[])[]
         {
             ("Basic", typeof(BasicModelTests<string>),
@@ -109,12 +115,14 @@ public sealed class ConformanceCoverageTests : TestSuiteImplementationTests
             Assert.All(excluded, method => Assert.Contains(facts, f => f.Name == method));
             var rows = cases.Where(row => (string)row[1] == name).ToArray();
             AssertCovered(facts.Select(m => m.Name).Except(excluded), rows.Select(row => (string)row[2]));
+
             foreach (var fact in facts.Where(m => !excluded.Contains(m.Name)))
             {
                 var values = rows.Where(row => (string)row[2] == fact.Name).Select(row => row[3]).ToArray();
                 Assert.Equal(fact.GetParameters().Length == 0 ? [null] : new object?[] { false, true }, values);
             }
         }
+
         Assert.Single(cases, row => (string)row[1] == "Index" && (string)row[2] == "Hnsw");
         var lifecycle = protocol == RespireProtocol.Resp2 ? typeof(JsonResp2CollectionManagementTests) : typeof(JsonResp3CollectionManagementTests);
         AssertDiscoverable(lifecycle);
@@ -138,9 +146,14 @@ public sealed class ConformanceCoverageTests : TestSuiteImplementationTests
         AssertRunnable(method);
         var rows = method.GetCustomAttributes<InlineDataAttribute>().Select(row => row.Data).ToArray();
         Assert.Equal(4, rows.Length);
+
         foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
-        foreach (var json in new[] { false, true })
-            Assert.Single(rows, row => (RespireProtocol)row[0]! == protocol && (bool)row[1]! == json);
+        {
+            foreach (var json in new[] { false, true })
+            {
+                Assert.Single(rows, row => (RespireProtocol)row[0]! == protocol && (bool)row[1]! == json);
+            }
+        }
     }
 
     private static void AssertReviewed(IEnumerable<Type> upstream, IEnumerable<Type> reviewed)

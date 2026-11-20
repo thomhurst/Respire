@@ -84,6 +84,7 @@ public class BufferDistributedCacheTests(RedisTestContainer fixture)
         {
             Cache.Set("sync-buffered", new ReadOnlySequence<byte>(value), new DistributedCacheEntryOptions());
             var destination = new ArrayBufferWriter<byte>();
+
             if (!Cache.TryGet("sync-buffered", destination) || !destination.WrittenSpan.SequenceEqual(value))
             {
                 throw new InvalidOperationException("Sync TryGet returned a different value than Set stored.");
@@ -98,6 +99,7 @@ public class BufferDistributedCacheTests(RedisTestContainer fixture)
         public SequenceSegment(byte[] payload, SequenceSegment? previous)
         {
             Memory = payload;
+
             if (previous is not null)
             {
                 RunningIndex = previous.RunningIndex + previous.Memory.Length;

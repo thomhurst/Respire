@@ -11,8 +11,19 @@ namespace Respire.Benchmarks;
 [OperationsPerSecond]
 public class CacheAsideBenchmarks
 {
-    public enum Workload { DefaultSingle, CoalescedSingle, CoalescedBurst }
-    [ParamsAllValues] public Workload Scenario { get; set; }
+    public enum Workload
+    {
+        DefaultSingle,
+        CoalescedSingle,
+        CoalescedBurst
+    }
+
+    [ParamsAllValues]
+    public Workload Scenario
+    {
+        get; set;
+    }
+
     private delegate ValueTask<string?> Read(RespireClient client, RespireKey key,
         Func<CancellationToken, ValueTask<string?>> factory, TimeSpan ttl, CancellationToken cancellationToken);
 
@@ -46,8 +57,12 @@ public class CacheAsideBenchmarks
         _factory = FactoryAsync;
         await _client.SetAsync(_key, "value", TimeSpan.FromHours(1));
         _ = await _client.GetStringAsync(_key);
+
         if (await _read(_client, _key, _factory, Ttl, default) != "value" || _factoryCalls != 0)
+        {
             throw new InvalidOperationException("The selected cache-aside adapter did not return the primed hit.");
+        }
+
         _cpuStarted = Process.GetCurrentProcess().TotalProcessorTime;
         _started = Stopwatch.GetTimestamp();
     }
@@ -68,8 +83,12 @@ public class CacheAsideBenchmarks
         // asynchronous work represents a loader, rather than raw Redis command throughput.
         await _client.DeleteAsync(_key);
         var reads = new Task<string?>[Scenario == Workload.CoalescedBurst ? 32 : 1];
+
         for (var index = 0; index < reads.Length; index++)
+        {
             reads[index] = _read(_client, _key, _factory, Ttl, default).AsTask();
+        }
+
         return await Task.WhenAll(reads);
     }
 
@@ -84,10 +103,20 @@ public class CacheAsideBenchmarks
         Func<CancellationToken, ValueTask<string?>> factory, TimeSpan ttl, CancellationToken cancellationToken)
     {
         var existing = await client.GetStringAsync(key, cancellationToken);
-        if (existing is not null) return existing;
+
+        if (existing is not null)
+        {
+            return existing;
+        }
+
         var created = await factory(cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
-        if (created is null) return null;
+
+        if (created is null)
+        {
+            return null;
+        }
+
         return await client.Strings.GetAndSetAsync(key, created, ttl, RespireSetWhen.NotExists, cancellationToken) ?? created;
     }
 
@@ -97,7 +126,9 @@ public class CacheAsideBenchmarks
         Console.WriteLine("CACHE_ASIDE_PROCESS_METRICS " + JsonSerializer.Serialize(new
         {
             operation = _missOperations == 0 ? nameof(HotGetOrSet) : nameof(MissBurst),
-            scenario = Scenario.ToString(), operations = _operations, factoryCalls = _factoryCalls,
+            scenario = Scenario.ToString(),
+            operations = _operations,
+            factoryCalls = _factoryCalls,
             elapsedSeconds = Stopwatch.GetElapsedTime(_started).TotalSeconds,
             cpuMilliseconds = (Process.GetCurrentProcess().TotalProcessorTime - _cpuStarted).TotalMilliseconds,
         }));

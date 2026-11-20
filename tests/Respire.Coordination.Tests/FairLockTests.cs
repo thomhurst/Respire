@@ -30,6 +30,7 @@ public class FairLockTests(RedisTestContainer fixture)
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var started = Stopwatch.GetTimestamp();
         var snapshots = new List<string>();
+
         try
         {
             for (var i = 0; i < 8; i++)
@@ -38,7 +39,9 @@ public class FairLockTests(RedisTestContainer fixture)
                 await WaitForQueueAsync(first, fair, i + 1, timeout.Token);
                 snapshots.Add(await SnapshotAsync($"enqueued {i}", first, fair, started));
             }
+
             await holder.DisposeAsync();
+
             for (var i = 0; i < pending.Count; i++)
             {
                 await using var acquired = await pending[i].WaitAsync(timeout.Token);
@@ -46,6 +49,7 @@ public class FairLockTests(RedisTestContainer fixture)
                 await Assert.That(pending.Skip(i + 1).All(task => !task.IsCompleted)).IsTrue();
                 await Assert.That(await acquired.VerifyStillHeldAsync()).IsTrue();
             }
+
             await Assert.That(await first.Keys.ExistsAsync(fair.QueueKey)).IsFalse();
         }
         catch (Exception error)
@@ -78,6 +82,7 @@ public class FairLockTests(RedisTestContainer fixture)
         // can accidentally establish tracking and hide the missed wakeup.
         var cache = waiterClient.Core.ClientCache!;
         var mutation = cache.BeginKeysMutation([held.Key, held.QueueKey]);
+
         try
         {
             var pending = waiting.AcquireAsync(Lease, Wait, timeout.Token).AsTask();
@@ -105,19 +110,26 @@ public class FairLockTests(RedisTestContainer fixture)
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
         var pending = new List<Task<RespireFencedLock>>();
+
         for (var i = 0; i < 3; i++)
         {
             pending.Add(fair.AcquireAsync(Lease, Wait, i == cancelled ? cancel.Token : timeout.Token).AsTask());
             await WaitForQueueAsync(client, fair, i + 1, timeout.Token);
         }
+
         await cancel.CancelAsync();
         await Assert.That(async () => await pending[cancelled]).Throws<OperationCanceledException>();
         await WaitForQueueAsync(client, fair, 2, timeout.Token);
         await holder.DisposeAsync();
         long fence = 2;
+
         for (var i = 0; i < 3; i++)
         {
-            if (i == cancelled) continue;
+            if (i == cancelled)
+            {
+                continue;
+            }
+
             await using var acquired = await pending[i].WaitAsync(timeout.Token);
             await Assert.That(acquired.FencingToken).IsEqualTo(fence++);
         }
@@ -132,7 +144,10 @@ public class FairLockTests(RedisTestContainer fixture)
         // Enqueue an owner with no managed waiter to cancel, release or process notifications.
         using (var orphan = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
             [fair.Key, fair.FencingCounterKey, fair.QueueKey], ["orphan", 20000, 10000, "join"]))
+        {
             await Assert.That(orphan[0].AsInteger()).IsEqualTo(0);
+        }
+
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var next = fair.AcquireAsync(Lease, Wait, timeout.Token).AsTask();
         await WaitForQueueAsync(client, fair, 2, timeout.Token);
@@ -141,7 +156,10 @@ public class FairLockTests(RedisTestContainer fixture)
             local t = redis.call('TIME')
             redis.call('HSET', KEYS[1], 'dorphan', t[1] * 1000 + math.floor(t[2] / 1000) + 200)
             return 1
-            """), [fair.QueueKey], [])) { }
+            """), [fair.QueueKey], []))
+        {
+        }
+
         await holder.DisposeAsync();
         await using var acquired = await next.WaitAsync(timeout.Token);
         await Assert.That(acquired.FencingToken).IsEqualTo(2);
@@ -154,23 +172,39 @@ public class FairLockTests(RedisTestContainer fixture)
         await using var client = await ConnectAsync();
         var fair = Create(client);
         await SeedExpiredWaitersAsync(client, fair);
+
         using (var first = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
             [fair.Key, fair.FencingCounterKey, fair.QueueKey], ["first", 20000, 10000, "join"]))
+        {
             await Assert.That(first[0].AsInteger()).IsEqualTo(2);
+        }
+
         await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "head")).IsEqualTo("orphan64");
         var deadline = await client.Hashes.GetStringAsync(fair.QueueKey, "dfirst");
+
         using (var second = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
             [fair.Key, fair.FencingCounterKey, fair.QueueKey], ["second", 20000, 10000, "join"]))
+        {
             await Assert.That(second[0].AsInteger()).IsEqualTo(2);
+        }
+
         await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "head")).IsEqualTo("orphan128");
+
         using (var waiting = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
             [fair.Key, fair.FencingCounterKey, fair.QueueKey], ["second", 20000, 10000, "retry"]))
+        {
             await Assert.That(waiting[0].AsInteger()).IsEqualTo(0);
+        }
+
         await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "head")).IsEqualTo("first");
         await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "dfirst")).IsEqualTo(deadline);
+
         using (var acquired = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
             [fair.Key, fair.FencingCounterKey, fair.QueueKey], ["first", 20000, 10000, "retry"]))
+        {
             await Assert.That(acquired[0].AsInteger()).IsEqualTo(1);
+        }
+
         await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "head")).IsEqualTo("second");
     }
 
@@ -236,16 +270,23 @@ public class FairLockTests(RedisTestContainer fixture)
         await using var client = await ConnectAsync();
         var fair = Create(client);
         await using var holder = await fair.AcquireAsync(Lease, Wait);
+
         using (var orphan = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
             [fair.Key, fair.FencingCounterKey, fair.QueueKey], ["orphan", 20000, 10000, "join"]))
+        {
             await Assert.That(orphan[0].AsInteger()).IsEqualTo(0);
+        }
+
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var pending = fair.AcquireAsync(Lease, Wait, timeout.Token).AsTask();
         await WaitForQueueAsync(client, fair, 2, timeout.Token);
         var owner = await client.Hashes.GetStringAsync(fair.QueueKey, "tail");
         var deadline = await client.Hashes.GetStringAsync(fair.QueueKey, "d" + owner);
+
         if (deleteWholeQueue)
+        {
             await client.Keys.DeleteAsync(fair.QueueKey);
+        }
         else
         {
             using var removed = await client.Scripts.ExecuteAsync(RespireFairLock.RemoveWaiter,
@@ -256,8 +297,12 @@ public class FairLockTests(RedisTestContainer fixture)
         await Assert.That(error!.Message).Contains("is no longer queued");
         await Assert.That(error.Message).Contains($"previous deadline={deadline}ms");
         await Assert.That(error.Message).Contains($"queue fields={(deleteWholeQueue ? 0 : 3)}");
+
         if (deleteWholeQueue)
+        {
             await Assert.That(error.Message).Contains("queue PTTL=-2ms");
+        }
+
         await Assert.That(await client.GetStringAsync(fair.FencingCounterKey)).IsEqualTo("1");
         await Assert.That(await holder.VerifyStillHeldAsync()).IsTrue();
         await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "tail"))
@@ -270,6 +315,7 @@ public class FairLockTests(RedisTestContainer fixture)
         await using var client = await ConnectAsync();
         var fair = Create(client);
         await using var holder = await fair.AcquireAsync(Lease, Wait);
+
         foreach (var owner in new[] { "head", "expired" })
         {
             using var enqueued = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
@@ -277,6 +323,7 @@ public class FairLockTests(RedisTestContainer fixture)
             await Assert.That(enqueued[0].AsInteger()).IsEqualTo(0);
             await Assert.That(enqueued[4].AsInteger() - enqueued[3].AsInteger()).IsEqualTo(10000);
         }
+
         using var shortened = await client.Scripts.ExecuteAsync(RespireScript.Create("""
             local t = redis.call('TIME')
             local deadline = t[1] * 1000 + math.floor(t[2] / 1000) - 1
@@ -361,8 +408,11 @@ public class FairLockTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { NoLoop = true }, Connections = 1,
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            Database = fixture.IsolatedDatabase,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new() { NoLoop = true },
+            Connections = 1,
         });
         var fair = Create(client);
         await Assert.That(async () => await fair.AcquireAsync(Lease, Wait)).Throws<RespireConfigurationException>();
@@ -387,8 +437,11 @@ public class FairLockTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { KeyPrefixes = ["covered:"] }, Connections = 1,
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            Database = fixture.IsolatedDatabase,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new() { KeyPrefixes = ["covered:"] },
+            Connections = 1,
         });
         var uncovered = Create(client);
         await Assert.That(async () => await uncovered.AcquireAsync(Lease, Wait)).Throws<RespireConfigurationException>();
@@ -401,8 +454,11 @@ public class FairLockTests(RedisTestContainer fixture)
 
     private ValueTask<RespireClient> ConnectAsync(RespireClientTrackingMode trackingMode = RespireClientTrackingMode.OptIn) => RespireClient.ConnectAsync(new RespireOptions
     {
-        Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
-        Protocol = RespireProtocol.Resp3, ClientSideCache = new() { TrackingMode = trackingMode }, Connections = 1,
+        Endpoints = [new(fixture.Host, fixture.Port)],
+        Database = fixture.IsolatedDatabase,
+        Protocol = RespireProtocol.Resp3,
+        ClientSideCache = new() { TrackingMode = trackingMode },
+        Connections = 1,
     });
 
     private static RespireFairLock Create(IRespireClient client)
@@ -417,7 +473,12 @@ public class FairLockTests(RedisTestContainer fixture)
         while (true)
         {
             using var length = await client.ExecuteAsync(RespireCommands.Hash.HLEN, token, (RespireValue)fair.QueueKey);
-            if (length.AsInteger() == count * 3) return;
+
+            if (length.AsInteger() == count * 3)
+            {
+                return;
+            }
+
             await Task.Delay(10, token);
         }
     }

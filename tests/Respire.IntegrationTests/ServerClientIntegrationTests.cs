@@ -9,10 +9,16 @@ namespace Respire.IntegrationTests;
 public class ServerClientIntegrationTests
 {
     [ClassDataSource<Redis7ReferenceContainer>(Shared = SharedType.PerTestSession)]
-    public required Redis7ReferenceContainer Redis7 { get; init; }
+    public required Redis7ReferenceContainer Redis7
+    {
+        get; init;
+    }
 
     [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
-    public required ModernRedisTestContainer Redis8 { get; init; }
+    public required ModernRedisTestContainer Redis8
+    {
+        get; init;
+    }
 
     [Test]
     [Arguments(2, false)]
@@ -26,7 +32,9 @@ public class ServerClientIntegrationTests
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
-            Connections = 2, AllowAdmin = true, ClientName = "admin-test",
+            Connections = 2,
+            AllowAdmin = true,
+            ClientName = "admin-test",
             ClientSideCache = caching ? new() : null,
         };
         await using var client = await RespireClient.ConnectAsync(options);
@@ -65,28 +73,41 @@ public class ServerClientIntegrationTests
             await first.UnpauseClientsAsync();
             (await first.EchoAsync(payload)).Should().Equal(payload);
         }
+
         (await first.UnblockClientAsync(long.MaxValue)).Should().BeFalse();
         await using var blocked = await RespireClient.ConnectAsync(options with { Connections = 1, ClientName = "blocked-test" });
+
         foreach (var mode in new[] { RespireClientUnblockMode.Timeout, RespireClientUnblockMode.Error })
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             var pop = blocked.Lists.LeftPopAsync("missing", TimeSpan.FromSeconds(30), deadline.Token).AsTask();
             RespireServerClientInfo? waiting;
+
             do
             {
                 // cmd retains the previous BLPOP after UNBLOCK; wait for this iteration to block.
                 waiting = (await client.Server.ClientsAsync(deadline.Token)).SingleOrDefault(row =>
                     row.Name == "blocked-test" && row.Command == "blpop" && row.Flags.Contains('b'));
-                if (waiting is null) await Task.Delay(10, deadline.Token);
+
+                if (waiting is null)
+                {
+                    await Task.Delay(10, deadline.Token);
+                }
             } while (waiting is null);
+
             (await first.UnblockClientAsync(waiting.Id, mode, deadline.Token)).Should().BeTrue();
-            if (mode == RespireClientUnblockMode.Timeout) (await pop).Should().BeNull();
+
+            if (mode == RespireClientUnblockMode.Timeout)
+            {
+                (await pop).Should().BeNull();
+            }
             else
             {
                 Func<Task> observe = async () => await pop;
                 await observe.Should().ThrowAsync<RespireServerException>();
             }
         }
+
         await client.DisposeAsync();
         first.IsConnected.Should().BeFalse();
         info.Attributes["lib-name"].Should().Be("custom-library");
@@ -101,7 +122,9 @@ public class ServerClientIntegrationTests
         // Connection-scoped settings only, so the shared Redis 7 server is safe.
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Redis7.ConnectionString) with
         {
-            Connections = 1, AllowAdmin = true, Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
+            Connections = 1,
+            AllowAdmin = true,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         });
         var connection = await client.Server.GetClientConnectionAsync();
         Func<Task> noTouch = async () => await connection.SetNoTouchAsync(true);
@@ -123,7 +146,8 @@ public class ServerClientIntegrationTests
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Redis8.ConnectionString) with
         {
-            Connections = 1, ClientSideCache = new(),
+            Connections = 1,
+            ClientSideCache = new(),
         });
         var key = $"cached:{Guid.NewGuid():N}";
         var connection = await client.Server.GetClientConnectionAsync();
@@ -133,13 +157,23 @@ public class ServerClientIntegrationTests
         (await client.Strings.GetAsync<string>(key)).Should().Be("value");
         client.ClientSideCache!.Count.Should().Be(1);
         var statistics = client.ClientSideCache.GetStatistics();
+
         switch (inspection)
         {
-            case "ID": (await client.Server.GetClientConnectionAsync()).Id.Should().Be(connection.Id); break;
-            case "INFO": (await connection.InfoAsync()).Id.Should().Be(connection.Id); break;
-            case "GETNAME": (await connection.GetNameAsync()).Should().BeNull(); break;
-            case "TRACKINGINFO": (await connection.TrackingInfoAsync()).Flags.Should().BeEquivalentTo(before.Flags); break;
+            case "ID":
+                (await client.Server.GetClientConnectionAsync()).Id.Should().Be(connection.Id);
+                break;
+            case "INFO":
+                (await connection.InfoAsync()).Id.Should().Be(connection.Id);
+                break;
+            case "GETNAME":
+                (await connection.GetNameAsync()).Should().BeNull();
+                break;
+            case "TRACKINGINFO":
+                (await connection.TrackingInfoAsync()).Flags.Should().BeEquivalentTo(before.Flags);
+                break;
         }
+
         client.ClientSideCache.Count.Should().Be(1);
         client.ClientSideCache.GetStatistics().Invalidations.Should().Be(statistics.Invalidations);
         var after = await connection.TrackingInfoAsync();
@@ -149,7 +183,6 @@ public class ServerClientIntegrationTests
         client.ClientSideCache.GetStatistics().Hits.Should().Be(statistics.Hits + 1);
     }
 }
-
 
 [Category(TestCategories.ProtocolIndependent)]
 [ClassDataSource<ClusterTransactionTestContainer>(Shared = SharedType.PerTestSession)]
@@ -162,8 +195,11 @@ public class ServerClientClusterIntegrationTests(ClusterTransactionTestContainer
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], UseCluster = true, Connections = 2,
-            Protocol = (RespireProtocol)protocol, ClientName = $"cluster-admin-{protocol}",
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            UseCluster = true,
+            Connections = 2,
+            Protocol = (RespireProtocol)protocol,
+            ClientName = $"cluster-admin-{protocol}",
         });
         var handle = await client.Server.GetClientConnectionAsync();
         (await handle.InfoAsync()).Id.Should().Be(handle.Id);

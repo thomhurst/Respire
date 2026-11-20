@@ -19,6 +19,7 @@ internal static class ConnectionTelemetry
 
     // Diagnostic delivery has its own lifetime; transport disposal never waits for it.
     internal static int PendingMeasurements => Volatile.Read(ref _pendingMeasurements);
+
     // Counts rejected delivery attempts, not listener failures or shutdown loss.
     internal static long DroppedMeasurements => Interlocked.Read(ref _droppedMeasurements);
 
@@ -48,11 +49,19 @@ internal static class ConnectionTelemetry
 
     internal static IEnumerable<Measurement<long>> ObserveDedicatedPoolSize()
     {
-        if (!RespireMetrics.Current.Includes(RespireMetricGroups.ConnectionBasic)) yield break;
+        if (!RespireMetrics.Current.Includes(RespireMetricGroups.ConnectionBasic))
+        {
+            yield break;
+        }
+
         foreach (var pool in Pools.Snapshot)
         {
             var size = pool.ReadDedicatedSize();
-            if (size is { } count) yield return new(count, pool.Tags);
+
+            if (size is { } count)
+            {
+                yield return new(count, pool.Tags);
+            }
         }
     }
 
@@ -73,8 +82,16 @@ internal static class ConnectionTelemetry
         if (RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionAdvanced, RespireTelemetry.ConnectionsClosed))
         {
             var reason = CloseReason.Error;
-            if (peerClosed) reason = CloseReason.Server;
-            else if (IsCallerCancellation(error, callerToken)) reason = CloseReason.Application;
+
+            if (peerClosed)
+            {
+                reason = CloseReason.Server;
+            }
+            else if (IsCallerCancellation(error, callerToken))
+            {
+                reason = CloseReason.Application;
+            }
+
             QueueClosed(ForConnection(host, port, options), reason, reason == CloseReason.Error ? error : null);
         }
     }
@@ -88,15 +105,28 @@ internal static class ConnectionTelemetry
         // TLS can wrap the socket reset in IOException. Do not classify local aborts,
         // timeouts or arbitrary I/O errors as a peer close.
         for (; error is not null; error = error.InnerException)
+        {
             if (error is SocketException { SocketErrorCode: SocketError.ConnectionReset } or EndOfStreamException)
+            {
                 return true;
+            }
+        }
+
         return false;
     }
 
     internal static bool IsHandshakePeerClose(Socket socket, Exception error)
     {
-        if (IsPeerReset(error)) return true;
-        if (error is not IOException) return false;
+        if (IsPeerReset(error))
+        {
+            return true;
+        }
+
+        if (error is not IOException)
+        {
+            return false;
+        }
+
         try
         {
             // SslStream reports handshake EOF as an IOException without an inner cause.
@@ -109,7 +139,11 @@ internal static class ConnectionTelemetry
 
     internal static IEnumerable<Measurement<long>> ObserveConnections()
     {
-        if (!RespireMetrics.Current.Includes(RespireMetricGroups.ConnectionBasic)) yield break;
+        if (!RespireMetrics.Current.Includes(RespireMetricGroups.ConnectionBasic))
+        {
+            yield break;
+        }
+
         foreach (var pool in Pools.Snapshot)
         {
             var (idle, used, _) = pool.Read();
@@ -120,16 +154,28 @@ internal static class ConnectionTelemetry
 
     internal static IEnumerable<Measurement<long>> ObservePendingRequests()
     {
-        if (!RespireMetrics.Current.Includes(RespireMetricGroups.ConnectionAdvanced)) yield break;
+        if (!RespireMetrics.Current.Includes(RespireMetricGroups.ConnectionAdvanced))
+        {
+            yield break;
+        }
+
         foreach (var pool in Pools.Snapshot)
+        {
             yield return new(pool.Read().Pending, pool.Tags);
+        }
     }
 
     internal static IEnumerable<Measurement<long>> ObserveRelaxedTimeouts()
     {
-        if (!RespireMetrics.Current.Includes(RespireMetricGroups.ConnectionBasic)) yield break;
+        if (!RespireMetrics.Current.Includes(RespireMetricGroups.ConnectionBasic))
+        {
+            yield break;
+        }
+
         foreach (var pool in Pools.Snapshot)
+        {
             yield return new(pool.ReadRelaxedTimeouts(), pool.Tags);
+        }
     }
 
     internal sealed class State
@@ -152,26 +198,44 @@ internal static class ConnectionTelemetry
 
         internal void Ready(long started)
         {
-            if (Volatile.Read(ref _closed) != 0) return;
+            if (Volatile.Read(ref _closed) != 0)
+            {
+                return;
+            }
+
             Volatile.Write(ref _ready, 1);
-            if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionBasic, RespireTelemetry.ConnectionCreateTime)) return;
+
+            if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionBasic, RespireTelemetry.ConnectionCreateTime))
+            {
+                return;
+            }
+
             QueueDuration(RespireTelemetry.ConnectionCreateTime, _pool, started);
         }
 
         internal void SetRented(bool rented) => Volatile.Write(ref _rented, rented ? 1 : 0);
+
         internal void RequestClose(string reason) => Volatile.Write(ref _requestedCloseReason, reason);
 
         internal bool IsCollected => !_connection.TryGetTarget(out _);
 
         internal void Waited(long started)
         {
-            if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionAdvanced, RespireTelemetry.ConnectionWaitTime)) return;
+            if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionAdvanced, RespireTelemetry.ConnectionWaitTime))
+            {
+                return;
+            }
+
             QueueDuration(RespireTelemetry.ConnectionWaitTime, _pool, started);
         }
 
         internal void HandedOff()
         {
-            if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionBasic, RespireTelemetry.ConnectionHandoffs)) return;
+            if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionBasic, RespireTelemetry.ConnectionHandoffs))
+            {
+                return;
+            }
+
             Queue(static pool => RespireTelemetry.ConnectionHandoffs.Add(1, pool.Tags), _pool);
         }
 
@@ -179,10 +243,21 @@ internal static class ConnectionTelemetry
         {
             var enabled = metrics is not null
                 && RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionBasic, RespireTelemetry.ConnectionRecycles);
-            if (!enabled && logger is null) return;
+
+            if (!enabled && logger is null)
+            {
+                return;
+            }
+
             Queue(static state =>
             {
-                try { if (state.Enabled) RespireTelemetry.ConnectionRecycles.Add(1, state.Pool!.Tags); }
+                try
+                {
+                    if (state.Enabled)
+                    {
+                        RespireTelemetry.ConnectionRecycles.Add(1, state.Pool!.Tags);
+                    }
+                }
                 finally { state.Logger?.ConnectionRecycled(state.Host, state.Port); }
             }, (Pool: metrics?._pool, Logger: logger, Enabled: enabled, Host: host, Port: port));
         }
@@ -192,14 +267,30 @@ internal static class ConnectionTelemetry
 
         internal void Closed(Exception? error, bool peerClosed)
         {
-            if (Interlocked.Exchange(ref _closed, 1) != 0) return;
+            if (Interlocked.Exchange(ref _closed, 1) != 0)
+            {
+                return;
+            }
+
             _pool.Remove(this);
-            if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionAdvanced, RespireTelemetry.ConnectionsClosed)) return;
+
+            if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionAdvanced, RespireTelemetry.ConnectionsClosed))
+            {
+                return;
+            }
+
             var reason = CloseReason.Error;
-            if (peerClosed || IsPeerReset(error)) reason = CloseReason.Server;
+
+            if (peerClosed || IsPeerReset(error))
+            {
+                reason = CloseReason.Server;
+            }
             else if (error is null or RespireConnectionRetiredException
                 || error is OperationCanceledException && Volatile.Read(ref _requestedCloseReason) == CloseReason.Application)
+            {
                 reason = Volatile.Read(ref _requestedCloseReason) ?? CloseReason.Application;
+            }
+
             QueueClosed(_pool, reason, reason == CloseReason.Error ? error : null);
         }
 
@@ -207,8 +298,13 @@ internal static class ConnectionTelemetry
         {
             used = false;
             pending = 0;
+
             if (Volatile.Read(ref _ready) == 0 || Volatile.Read(ref _closed) != 0 ||
-                !_connection.TryGetTarget(out var connection) || !connection.IsConnected) return false;
+                !_connection.TryGetTarget(out var connection) || !connection.IsConnected)
+            {
+                return false;
+            }
+
             pending = connection.PendingResponseCount;
             used = _pool.PubSub || pending != 0 || _dedicated && Volatile.Read(ref _rented) != 0;
             return true;
@@ -230,6 +326,7 @@ internal static class ConnectionTelemetry
         // Bound queued and running callbacks together. A stuck listener must not retain
         // an unbounded backlog or keep consuming additional thread-pool workers.
         var pending = Volatile.Read(ref _pendingMeasurements);
+
         while (true)
         {
             if (pending >= MaximumPendingMeasurements)
@@ -237,20 +334,34 @@ internal static class ConnectionTelemetry
                 Interlocked.Increment(ref _droppedMeasurements);
                 return;
             }
+
             var observed = Interlocked.CompareExchange(ref _pendingMeasurements, pending + 1, pending);
-            if (observed == pending) break;
+
+            if (observed == pending)
+            {
+                break;
+            }
+
             pending = observed;
         }
+
         try
         {
             if (ThreadPool.UnsafeQueueUserWorkItem(static state =>
             {
-                try { state.Record(state.Value); }
+                try
+                {
+                    state.Record(state.Value);
+                }
                 catch { /* Listener failures must not replace connection outcomes. */ }
                 finally { Interlocked.Decrement(ref _pendingMeasurements); }
-            }, (Record: record, Value: value), preferLocal: false)) return;
+            }, (Record: record, Value: value), preferLocal: false))
+            {
+                return;
+            }
         }
         catch { /* A failed diagnostic enqueue must not replace transport or disposal outcomes. */ }
+
         Interlocked.Decrement(ref _pendingMeasurements);
         Interlocked.Increment(ref _droppedMeasurements);
     }
@@ -260,8 +371,14 @@ internal static class ConnectionTelemetry
         try
         {
             TagList tags = default;
-            foreach (var tag in pool.Tags) tags.Add(tag);
+
+            foreach (var tag in pool.Tags)
+            {
+                tags.Add(tag);
+            }
+
             tags.Add("redis.client.connection.close.reason", reason);
+
             if (error is not null)
             {
                 var cause = error is RespireConnectionException { InnerException: not null } and not RespireAuthenticationException
@@ -277,6 +394,7 @@ internal static class ConnectionTelemetry
                     _ => "other",
                 });
             }
+
             RespireTelemetry.ConnectionsClosed.Add(1, tags);
         }
         catch { /* Listener failures must not replace transport or disposal outcomes. */ }
@@ -310,7 +428,10 @@ internal static class ConnectionTelemetry
                 _connections.Add(state);
                 // Geometric growth amortizes scans while bounding abandoned records even
                 // when no listener ever observes the pool. Live targets remain untouched.
-                if (_connections.Count >= _nextPruneCount) PruneCollected();
+                if (_connections.Count >= _nextPruneCount)
+                {
+                    PruneCollected();
+                }
             }
         }
 
@@ -319,6 +440,7 @@ internal static class ConnectionTelemetry
             lock (_gate)
             {
                 _dedicatedPools.Add(new(pool));
+
                 if (_dedicatedPools.Count >= _nextPoolPruneCount)
                 {
                     _dedicatedPools.RemoveAll(static reference => !reference.TryGetTarget(out _));
@@ -330,22 +452,37 @@ internal static class ConnectionTelemetry
         internal long? ReadDedicatedSize()
         {
             WeakReference<DedicatedConnectionPool>[] snapshot;
+
             lock (_gate)
             {
-                if (_dedicatedPools.Count == 0) return null;
+                if (_dedicatedPools.Count == 0)
+                {
+                    return null;
+                }
+
                 _dedicatedPools.RemoveAll(static reference => !reference.TryGetTarget(out _));
                 snapshot = [.. _dedicatedPools];
             }
+
             long size = 0;
             // Never acquire a pool's ownership gate while holding the telemetry registry gate.
             foreach (var reference in snapshot)
-                if (reference.TryGetTarget(out var pool)) size += pool.CaptureSize();
+            {
+                if (reference.TryGetTarget(out var pool))
+                {
+                    size += pool.CaptureSize();
+                }
+            }
+
             return size;
         }
 
         internal void Remove(State state)
         {
-            lock (_gate) _connections.Remove(state);
+            lock (_gate)
+            {
+                _connections.Remove(state);
+            }
         }
 
         internal State[] SnapshotForObservation()
@@ -368,21 +505,41 @@ internal static class ConnectionTelemetry
         internal (long Idle, long Used, long Pending) Read()
         {
             long idle = 0, used = 0, pending = 0;
+
             foreach (var state in SnapshotForObservation())
             {
-                if (!state.TryRead(out var busy, out var count)) continue;
-                if (busy) used++;
-                else idle++;
+                if (!state.TryRead(out var busy, out var count))
+                {
+                    continue;
+                }
+
+                if (busy)
+                {
+                    used++;
+                }
+                else
+                {
+                    idle++;
+                }
+
                 pending += count;
             }
+
             return (idle, used, pending);
         }
 
         internal long ReadRelaxedTimeouts()
         {
             long count = 0;
+
             foreach (var state in SnapshotForObservation())
-                if (state.HasRelaxedTimeout) count++;
+            {
+                if (state.HasRelaxedTimeout)
+                {
+                    count++;
+                }
+            }
+
             return count;
         }
     }
@@ -397,15 +554,21 @@ internal static class ConnectionTelemetry
         private Pool[] _snapshot = [];
         private Pool? _ordinaryOverflow;
         private Pool? _pubsubOverflow;
+
         internal Pool[] Snapshot => Volatile.Read(ref _snapshot);
 
         internal Pool ForPool(string host, int port, int database, string purpose)
         {
             _ = RespireTelemetry.Meter;
+
             lock (_gate)
             {
                 var key = (host, port, database, purpose);
-                if (_pools.TryGetValue(key, out var existing)) return existing;
+
+                if (_pools.TryGetValue(key, out var existing))
+                {
+                    return existing;
+                }
                 // Format tags only for a new identity that can fit the lifetime budget.
                 var name = host.Length <= MaximumPoolNameLength && _pools.Count < MaximumPoolNames
                     ? host + ":" + port.ToString(CultureInfo.InvariantCulture) + "/"
@@ -413,10 +576,16 @@ internal static class ConnectionTelemetry
                     : null;
                 var pubsub = purpose == "pubsub";
                 Pool pool;
+
                 if (name is null || name.Length > MaximumPoolNameLength)
                 {
                     ref var overflow = ref (pubsub ? ref _pubsubOverflow : ref _ordinaryOverflow);
-                    if (overflow is not null) return overflow;
+
+                    if (overflow is not null)
+                    {
+                        return overflow;
+                    }
+
                     pool = overflow = new Pool(pubsub ? "overflow/pubsub" : "overflow/shared", pubsub);
                 }
                 else
@@ -424,6 +593,7 @@ internal static class ConnectionTelemetry
                     pool = new Pool(name, pubsub);
                     _pools.Add(key, pool);
                 }
+
                 Volatile.Write(ref _snapshot, [.. _snapshot, pool]);
                 return pool;
             }

@@ -17,6 +17,7 @@ internal sealed class ClusterReplicaDiscovery(
 
     // Deterministic completion/interleaving seam for the coordinator's tests.
     internal Lock TestingGate => _gate;
+
     internal Task? TestingCurrentProbe => _current.Completion;
 
     internal async ValueTask<long> DiscoverAsync(int slot, CancellationToken cancellationToken)
@@ -27,6 +28,7 @@ internal sealed class ClusterReplicaDiscovery(
             Task<(int Slot, long Version)> current;
             TaskCompletionSource<(int Slot, long Version)>? start = null;
             long version = 0;
+
             lock (_gate)
             {
                 if (hasCoverage(slot))
@@ -34,13 +36,21 @@ internal sealed class ClusterReplicaDiscovery(
                     _notBefore.Remove(slot);
                     return 0;
                 }
+
                 var pending = _current.Completion is { IsCompleted: false };
                 var now = clock?.Invoke() ?? Environment.TickCount64;
                 // A completed attempt remains usable while another slot probes. The current
                 // slot must still join its own pending probe, whose throttle starts at launch.
                 if ((!pending || _current.Slot != slot)
-                    && _notBefore.TryGetValue(slot, out var next) && now < next.NotBefore) return next.Version;
-                if (pending) current = _current.Completion!;
+                    && _notBefore.TryGetValue(slot, out var next) && now < next.NotBefore)
+                {
+                    return next.Version;
+                }
+
+                if (pending)
+                {
+                    current = _current.Completion!;
+                }
                 else
                 {
                     version = ++_nextVersion;
@@ -50,13 +60,21 @@ internal sealed class ClusterReplicaDiscovery(
                     _current = (slot, current);
                 }
             }
-            if (start is not null) _ = RunAsync(slot, version, start);
+
+            if (start is not null)
+            {
+                _ = RunAsync(slot, version, start);
+            }
             // Caller cancellation only detaches this waiter. The router owns probe cancellation.
             var attempt = await current.WaitAsync(cancellationToken).ConfigureAwait(false);
+
             lock (_gate)
             {
                 // Another slot starting a probe does not invalidate this completed attempt.
-                if (attempt.Slot == slot && IsCurrentLocked(slot, attempt.Version)) return attempt.Version;
+                if (attempt.Slot == slot && IsCurrentLocked(slot, attempt.Version))
+                {
+                    return attempt.Version;
+                }
             }
             // Recheck this slot after shared work. A partial reply for another slot neither
             // completes this discovery nor consumes this slot's refresh interval.
@@ -67,7 +85,10 @@ internal sealed class ClusterReplicaDiscovery(
 
     internal bool IsCurrent(int slot, long version)
     {
-        lock (_gate) return IsCurrentLocked(slot, version);
+        lock (_gate)
+        {
+            return IsCurrentLocked(slot, version);
+        }
     }
 
     private bool IsCurrentLocked(int slot, long version)
@@ -87,13 +108,21 @@ internal sealed class ClusterReplicaDiscovery(
         {
             // Dictionary permits removal during enumeration on the supported runtimes.
             foreach (var slot in _notBefore.Keys)
-                if (hasCoverage(slot)) _notBefore.Remove(slot);
+            {
+                if (hasCoverage(slot))
+                {
+                    _notBefore.Remove(slot);
+                }
+            }
         }
     }
 
     private async Task RunAsync(int slot, long version, TaskCompletionSource<(int Slot, long Version)> completion)
     {
-        try { await refresh(slot).ConfigureAwait(false); }
+        try
+        {
+            await refresh(slot).ConfigureAwait(false);
+        }
         catch
         {
             // RefreshReplicaRoutesAsync reports failed rounds through its rate-limited warning

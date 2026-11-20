@@ -27,8 +27,11 @@ internal static class AwsIamCredentialProvider
         cancellationToken.ThrowIfCancellationRequested();
 
         var query = $"Action=connect&User={Uri.EscapeDataString(username)}";
+
         if (isElastiCacheServerless)
+        {
             query += "&ResourceType=ServerlessCache";
+        }
 
         var request = new AWSSigningRequest
         {

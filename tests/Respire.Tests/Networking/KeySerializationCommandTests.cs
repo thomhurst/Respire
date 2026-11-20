@@ -51,6 +51,7 @@ public class KeySerializationCommandTests
         byte[]? dump;
         byte[]? missing;
         bool restored;
+
         if (mode == 0)
         {
             dump = await view.Keys.DumpAsync("key");
@@ -65,11 +66,21 @@ public class KeySerializationCommandTests
             var first = queue.Keys.Dump("key");
             var second = queue.Keys.Dump("missing");
             var third = queue.Keys.Restore("target", "payload"u8.ToArray(), expiry, options);
-            if (transaction is not null) await transaction.CommitAsync(); else await batch!.ExecuteAsync();
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
+
             dump = first.Result;
             missing = second.Result;
             restored = third.Result;
         }
+
         await client.DisposeAsync();
         await Assert.That(dump!).IsEquivalentTo(binary, CollectionOrdering.Matching);
         await Assert.That(missing).IsNull();
@@ -141,7 +152,14 @@ public class KeySerializationCommandTests
     public async Task CancellationReachesBothCommands(bool restore)
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var server = new FakeRespServer { SuppressReply = _ => { received.TrySetResult(); return true; } };
+        await using var server = new FakeRespServer
+        {
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            }
+        };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
         Task operation = restore

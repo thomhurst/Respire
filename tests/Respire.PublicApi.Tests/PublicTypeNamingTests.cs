@@ -74,7 +74,12 @@ public class PublicTypeNamingTests
                              ?? throw new InvalidOperationException("The shipping assembly manifest is missing.");
         using var reader = new StreamReader(manifest);
         var names = reader.ReadToEnd().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (names.Length == 0) throw new InvalidOperationException("The shipping inventory must not be empty.");
+
+        if (names.Length == 0)
+        {
+            throw new InvalidOperationException("The shipping inventory must not be empty.");
+        }
+
         return names.Select(name => System.Reflection.Assembly.LoadFrom(Path.Combine(AppContext.BaseDirectory, name + ".dll")))
             .SelectMany(assembly => assembly.GetExportedTypes()).Where(type => !type.IsNested).ToArray();
     }

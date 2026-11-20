@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using Respire.Tests.Networking;
 using Respire.StackExchangeCompat;
+using Respire.Tests.Networking;
 using StackExchange.Redis;
 using TUnit.Core;
 using Assert = Xunit.Assert;
@@ -100,6 +100,7 @@ public class TransactionTests(RedisTestContainer redis)
             new Hangfire.Redis.StackExchange.RedisStorageOptions { Db = redis.IsolatedDatabase, UseTransactions = true });
         using var storageConnection = storage.GetConnection();
         var concrete = (Hangfire.Storage.JobStorageConnection)storageConnection;
+
         using (var transaction = storageConnection.CreateWriteTransaction())
         {
             transaction.SetRangeInHash("metadata", [new KeyValuePair<string, string>("field", "value")]);
@@ -110,18 +111,26 @@ public class TransactionTests(RedisTestContainer redis)
             Assert.False(await connection.GetDatabase().KeyExistsAsync("{hangfire}:metadata"));
             transaction.Commit();
         }
+
         Assert.Equal("value", storageConnection.GetAllEntriesFromHash("metadata")["field"]);
         Assert.Equal(new[] { "entry" }, concrete.GetAllItemsFromList("history"));
         Assert.Contains("job", storageConnection.GetAllItemsFromSet("jobs"));
         Assert.Equal(1, concrete.GetCounter("counter"));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         using (var fetched = storageConnection.FetchNextJob(["default"], timeout.Token))
         {
             Assert.Equal("job", fetched.JobId);
             fetched.Requeue();
         }
+
         Assert.Equal("job", (string?)await connection.GetDatabase().ListGetByIndexAsync("{hangfire}:queue:default", 0));
-        using (var fetched = storageConnection.FetchNextJob(["default"], timeout.Token)) fetched.RemoveFromQueue();
+
+        using (var fetched = storageConnection.FetchNextJob(["default"], timeout.Token))
+        {
+            fetched.RemoveFromQueue();
+        }
+
         Assert.Equal(0, await connection.GetDatabase().ListLengthAsync("{hangfire}:queue:default:dequeued"));
         Assert.Equal(RedisValue.Null, await connection.GetDatabase().HashGetAsync("{hangfire}:job:job", "Fetched"));
         storageConnection.AnnounceServer("worker", new Hangfire.Server.ServerContext { Queues = ["default"], WorkerCount = 1 });
@@ -203,6 +212,7 @@ public class TransactionTests(RedisTestContainer redis)
         var expected = control.GetDatabase();
         await expected.StringSetAsync([new KeyValuePair<RedisKey, RedisValue>("left", 0), new("right", 0)]);
         var observed = 0;
+
         async Task ObserveAsync()
         {
             for (var index = 0; index < 100; index++)
@@ -212,7 +222,9 @@ public class TransactionTests(RedisTestContainer redis)
                 observed++;
             }
         }
+
         var observing = ObserveAsync();
+
         for (var index = 0; index < 30; index++)
         {
             var transaction = database.CreateTransaction();
@@ -222,6 +234,7 @@ public class TransactionTests(RedisTestContainer redis)
             Assert.Equal(index + 1, await left);
             Assert.Equal(-index - 1, await right);
         }
+
         await observing;
         Assert.Equal(100, observed);
     }
@@ -270,6 +283,7 @@ public class TransactionTests(RedisTestContainer redis)
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
         using var control = await ConnectionMultiplexer.ConnectAsync(redis.IsolatedStackExchangeConnectionString);
         var expected = control.GetDatabase();
+
         foreach (var score in new[] { double.NegativeInfinity, double.PositiveInfinity })
         {
             await expected.SortedSetAddAsync("sorted", "member", score);
@@ -285,6 +299,7 @@ public class TransactionTests(RedisTestContainer redis)
                 (Condition.SortedSetEqual("sorted", "missing", RedisValue.Null), true),
                 (Condition.SortedSetNotEqual("sorted", "missing", RedisValue.Null), false),
             };
+
             foreach (var (condition, satisfied) in conditions)
             {
                 var upstream = expected.CreateTransaction();
@@ -297,8 +312,15 @@ public class TransactionTests(RedisTestContainer redis)
                 Assert.Equal(satisfied, await transaction.ExecuteAsync());
                 Assert.Equal(reference.WasSatisfied, actual.WasSatisfied);
                 Assert.False(transaction.WasWatchConflict);
-                if (satisfied) await write;
-                else await Assert.ThrowsAnyAsync<OperationCanceledException>(() => write);
+
+                if (satisfied)
+                {
+                    await write;
+                }
+                else
+                {
+                    await Assert.ThrowsAnyAsync<OperationCanceledException>(() => write);
+                }
             }
         }
 
@@ -348,6 +370,7 @@ public class TransactionTests(RedisTestContainer redis)
             Condition.StreamLengthEqual("stream", 0), Condition.StreamLengthLessThan("stream", 1),
             Condition.HashEqual("hash", "field", "wrong"), Condition.ListLengthEqual("list", 0),
         };
+
         foreach (var condition in conditions)
         {
             var native = connection.GetDatabase().CreateTransaction();
@@ -381,7 +404,9 @@ public class TransactionTests(RedisTestContainer redis)
             ActivityStopped = activity =>
             {
                 if ((string?)activity.GetTagItem("db.operation.name") == "GET" && Interlocked.Exchange(ref changed, 1) == 0)
+                {
                     expected.StringSet("tenant:guard", "new");
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -435,14 +460,25 @@ public class TransactionTests(RedisTestContainer redis)
         Assert.Throws<ArgumentNullException>(() => transaction.AddCondition(null!));
         Assert.Contains("native WATCH", Assert.Throws<NotSupportedException>(() =>
             transaction.AddCondition(Condition.SortedSetScoreExists("sorted", 1))).Message);
+
         foreach (var flags in new[] { CommandFlags.FireAndForget, CommandFlags.NoRedirect, CommandFlags.PreferReplica, CommandFlags.DemandReplica })
         {
-            Assert.Throws<NotSupportedException>(() => { _ = transaction.StringIncrementAsync("counter", flags: flags); });
+            Assert.Throws<NotSupportedException>(() =>
+            {
+                _ = transaction.StringIncrementAsync("counter", flags: flags);
+            });
             Assert.Throws<NotSupportedException>(() => transaction.Execute(flags));
         }
-        Assert.Throws<NotSupportedException>(() => { _ = transaction.HashSetAsync("hash", "field", "value", When.Exists); });
+
+        Assert.Throws<NotSupportedException>(() =>
+        {
+            _ = transaction.HashSetAsync("hash", "field", "value", When.Exists);
+        });
         Assert.Throws<NotSupportedException>(() => transaction.SortedSetScanAsync("sorted"));
-        Assert.Throws<NotSupportedException>(() => { _ = transaction.LockTakeAsync("lock", "owner", TimeSpan.FromSeconds(1)); });
+        Assert.Throws<NotSupportedException>(() =>
+        {
+            _ = transaction.LockTakeAsync("lock", "owner", TimeSpan.FromSeconds(1));
+        });
         var pending = transaction.StringIncrementAsync("counter", flags: CommandFlags.DemandMaster);
         Assert.Throws<NotSupportedException>(() => transaction.Execute(CommandFlags.FireAndForget));
         Assert.False(pending.IsCompleted);
@@ -481,6 +517,7 @@ public class TransactionTests(RedisTestContainer redis)
         var server = control.GetServer(redis.Host, redis.Port);
         var username = "transaction-" + Guid.NewGuid().ToString("N");
         await server.ExecuteAsync("ACL", "SETUSER", username, "on", ">password", "~*", "+@all", "-incr");
+
         try
         {
             await using var connection = RespireConnectionMultiplexer.Create(Options(protocol) with
@@ -518,7 +555,11 @@ public class TransactionTests(RedisTestContainer redis)
             ReplyOverride = (_, command) => command.StartsWith("INCR ", StringComparison.Ordinal) ? "+QUEUED\r\n"u8.ToArray() : null,
             SuppressReply = command =>
             {
-                if (command != "EXEC") return false;
+                if (command != "EXEC")
+                {
+                    return false;
+                }
+
                 reachedExec.TrySetResult();
                 return true;
             },
@@ -553,12 +594,14 @@ public class TransactionTests(RedisTestContainer redis)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(2));
         var abandoned = CreateAbandonedTask(connection.GetDatabase());
+
         for (var attempt = 0; attempt < 5 && abandoned.IsAlive; attempt++)
         {
             GC.Collect();
             GC.WaitForPendingFinalizers();
             GC.Collect();
         }
+
         Assert.False(abandoned.IsAlive);
         var retained = connection.GetDatabase().CreateTransaction().HashGetAsync("hash", "field");
         await connection.CloseAsync();
@@ -581,13 +624,18 @@ public class TransactionTests(RedisTestContainer redis)
             Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStopped = activity =>
             {
-                if ((string?)activity.GetTagItem("db.operation.name") != "EXISTS") return;
+                if ((string?)activity.GetTagItem("db.operation.name") != "EXISTS")
+                {
+                    return;
+                }
+
                 reachedRead.TrySetResult();
                 Assert.True(releaseRead.Wait(TimeSpan.FromSeconds(10)));
             },
         };
         ActivitySource.AddActivityListener(listener);
         var executing = transaction.ExecuteAsync();
+
         try
         {
             await reachedRead.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -600,6 +648,7 @@ public class TransactionTests(RedisTestContainer redis)
             await closing;
         }
         finally { releaseRead.Set(); }
+
         Assert.Equal("1", await client.GetStringAsync("counter"));
     }
 
@@ -619,13 +668,18 @@ public class TransactionTests(RedisTestContainer redis)
             Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStopped = activity =>
             {
-                if ((string?)activity.GetTagItem("db.operation.name") != "EXISTS") return;
+                if ((string?)activity.GetTagItem("db.operation.name") != "EXISTS")
+                {
+                    return;
+                }
+
                 reachedRead.TrySetResult();
                 Assert.True(releaseRead.Wait(TimeSpan.FromSeconds(10)));
             },
         };
         ActivitySource.AddActivityListener(listener);
         var first = transaction.ExecuteAsync();
+
         try
         {
             await reachedRead.Task.WaitAsync(TimeSpan.FromSeconds(10));

@@ -49,6 +49,7 @@ public class SetCardinalityTests
         await Assert.That(async () => await client.Sets.UnionCountAsync([])).Throws<ArgumentException>();
         await Assert.That(async () => await client.Sets.DifferenceCountAsync(-1, "key")).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Sets.UnionCountAsync(new RespireSetUnionCountOptions(-1), "key")).Throws<ArgumentOutOfRangeException>();
+
         foreach (var queue in new IRespireCommandQueue[] { batch, transaction })
         {
             await Assert.That(() => queue.Sets.DifferenceCount([])).Throws<ArgumentException>();
@@ -56,6 +57,7 @@ public class SetCardinalityTests
             await Assert.That(() => queue.Sets.DifferenceCount(-1, "key")).Throws<ArgumentOutOfRangeException>();
             await Assert.That(() => queue.Sets.UnionCount(new RespireSetUnionCountOptions(-1), "key")).Throws<ArgumentOutOfRangeException>();
         }
+
         await Assert.That(batch.Count).IsEqualTo(0);
         await Assert.That(transaction.Count).IsEqualTo(0);
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
@@ -75,8 +77,11 @@ public class SetCardinalityTests
         await batch.ExecuteAsync();
         await Assert.That(difference.Result).IsEqualTo(1);
         await Assert.That(union.Result).IsEqualTo(1);
+
         foreach (var arguments in server.ReceivedArguments)
+        {
             await Assert.That(arguments[2].SequenceEqual(binary)).IsTrue();
+        }
     }
 
     [Test]
@@ -93,16 +98,22 @@ public class SetCardinalityTests
 #pragma warning disable RESP010
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var client = root.WithKeyPrefix("tenant:");
         await Assert.That(await Count(client, mode, false, ["{sets}:first", "{sets}:second"])).IsEqualTo(2);
         await Assert.That(await Count(client, mode, true, ["{sets}:first", "{sets}:second"])).IsEqualTo(5);
+
         foreach (var union in new[] { false, true })
+        {
             await Assert.That(async () => await Count(client, mode, union, ["{a}:first", "{b}:second"]))
                 .Throws<RespireCrossSlotException>();
+        }
+
         await Assert.That(seed.ReceivedCommands.SequenceEqual(["CLUSTER SLOTS"])).IsTrue();
     }
 
@@ -112,7 +123,14 @@ public class SetCardinalityTests
     public async Task CancellationReachesThePendingRead(bool union)
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var server = new FakeRespServer { SuppressReply = _ => { received.TrySetResult(); return true; } };
+        await using var server = new FakeRespServer
+        {
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            }
+        };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
         var pending = union ? client.Sets.UnionCountAsync(new(2, true), ["key"], cancellation.Token)
@@ -130,14 +148,26 @@ public class SetCardinalityTests
     private static async Task<long> Count(IRespireClient client, string mode, bool union, RespireKey[] keys,
         long limit = 0, bool approximate = false)
     {
-        if (mode == "immediate") return union ? await client.Sets.UnionCountAsync(new(limit, approximate), keys)
+        if (mode == "immediate")
+        {
+            return union ? await client.Sets.UnionCountAsync(new(limit, approximate), keys)
             : await client.Sets.DifferenceCountAsync(limit, keys);
+        }
+
         using var batch = mode == "batch" ? client.CreateBatch() : null;
         await using var transaction = mode == "transaction" ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = union ? queue.Sets.UnionCount(new(limit, approximate), keys) : queue.Sets.DifferenceCount(limit, keys);
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         return pending.Result;
     }
 }

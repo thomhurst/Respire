@@ -1,5 +1,5 @@
-using System.Text;
 using System.Collections.Concurrent;
+using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Respire.Testing;
@@ -20,22 +20,32 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
         await using var first = await Connect();
         await using var second = await Connect();
         var queue = Queue(first);
+
         for (var i = 0; i < 20; i++)
+        {
             await queue.EnqueueScheduledAsync("id-" + i, "p", new() { Group = i % 2 == 0 ? "a" : "b" });
+        }
+
         var state = new HandledJobs();
         await using var firstHost = Host(first, "first");
         await using var secondHost = Host(second, "second");
         var workers = new[] { firstHost, secondHost }.Select(provider => provider.GetServices<IHostedService>().Single()).ToArray();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
         try
         {
-            foreach (var worker in workers) await worker.StartAsync(deadline.Token);
+            foreach (var worker in workers)
+            {
+                await worker.StartAsync(deadline.Token);
+            }
+
             await state.Complete.Task.WaitAsync(deadline.Token);
             await Assert.That(state.Jobs.Count).IsEqualTo(20);
             await Assert.That(state.Jobs.Count(job => job.Group == "a")).IsEqualTo(10);
             await Assert.That(state.Jobs.Select(job => job.Id).Distinct().Count()).IsEqualTo(20);
         }
-        finally { foreach (var worker in workers) await worker.StopAsync(CancellationToken.None); }
+        finally { foreach (var worker in workers) { await worker.StopAsync(CancellationToken.None); } }
+
         await Assert.That((await first.Streams.PendingSummaryAsync(queue.StreamKey, ConsumerGroup)).Count).IsEqualTo(0);
 
         ServiceProvider Host(IRespireClient client, string consumer)
@@ -50,8 +60,15 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
 
     public sealed class HandledJobs
     {
-        public ConcurrentQueue<RespireJob<string>> Jobs { get; } = new();
-        public TaskCompletionSource Complete { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ConcurrentQueue<RespireJob<string>> Jobs
+        {
+            get;
+        } = new();
+
+        public TaskCompletionSource Complete
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     public sealed class GroupHandler(HandledJobs state) : IRespireStreamHandler<RespireJob<string>>
@@ -59,7 +76,12 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
         public ValueTask<RespireStreamWorkerResult> HandleAsync(RespireJob<string> job, CancellationToken cancellationToken)
         {
             state.Jobs.Enqueue(job);
-            if (state.Jobs.Count == 20) state.Complete.TrySetResult();
+
+            if (state.Jobs.Count == 20)
+            {
+                state.Complete.TrySetResult();
+            }
+
             return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
         }
     }
@@ -71,15 +93,23 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
     {
         await using var producer = await Connect(protocol);
         var queue = Queue(producer);
+
         for (var i = 0; i < 10000; i++)
+        {
             await queue.EnqueueScheduledAsync("large-" + i, "payload", new() { Group = "large" });
+        }
+
         for (var i = 0; i < 10; i++)
+        {
             await queue.EnqueueScheduledAsync("small-" + i, "payload", new() { Group = "small" });
+        }
+
         await producer.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
 
         // Two independent connections use exactly the hosted worker's atomic selection script.
         // Recreate both midway through a round: neither process owns a fairness cursor.
         var delivered = new List<RespireStreamEntry>();
+
         for (var restart = 0; restart < 2; restart++)
         {
             await using var first = await Connect(protocol);
@@ -87,24 +117,34 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
             var reads = await Task.WhenAll(Consume(first, "first-" + restart, 5), Consume(second, "second-" + restart, 5));
             delivered.AddRange(reads.SelectMany(entries => entries));
         }
+
         await Assert.That(delivered.Count).IsEqualTo(20);
         await Assert.That(delivered.Count(entry => entry.GetString("_respire.job.group") == "small")).IsEqualTo(10);
         await Assert.That(delivered.Select(entry => entry.GetString("_respire.job.id")).Distinct().Count()).IsEqualTo(20);
         await Assert.That((await producer.Streams.PendingSummaryAsync(queue.StreamKey, ConsumerGroup)).Count).IsEqualTo(0);
         await Assert.That(await producer.Streams.CountAsync(queue.StreamKey + ":scheduled")).IsEqualTo(9990);
         var ordered = (await producer.Streams.ReadAsync(queue.StreamKey)).ToArray();
+
         for (var i = 0; i < ordered.Length; i++)
+        {
             await Assert.That(ordered[i].GetString("_respire.job.group")).IsEqualTo(i % 2 == 0 ? "large" : "small");
+        }
 
         async Task<List<RespireStreamEntry>> Consume(IRespireClient client, string name, int count)
         {
             var result = new List<RespireStreamEntry>();
+
             for (var i = 0; i < count; i++)
             {
                 var entry = (await JobGroupIntegrationTests.Read(client, queue, name)).Single();
-                using (await client.ExecuteAsync("XACK", [queue.StreamKey, ConsumerGroup, entry.Id.Value])) { }
+
+                using (await client.ExecuteAsync("XACK", [queue.StreamKey, ConsumerGroup, entry.Id.Value]))
+                {
+                }
+
                 result.Add(entry);
             }
+
             return result;
         }
     }
@@ -114,7 +154,12 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
     {
         await using var client = await Connect();
         var queue = Queue(client);
-        for (var i = 0; i < 100; i++) await queue.EnqueueScheduledAsync("large-" + i, "p", new() { Group = "large" });
+
+        for (var i = 0; i < 100; i++)
+        {
+            await queue.EnqueueScheduledAsync("large-" + i, "p", new() { Group = "large" });
+        }
+
         await client.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
         await JobGroupIntegrationTests.Read(client, queue, "first", count: 5);
         await queue.EnqueueScheduledAsync("new", "p", new() { Group = "small" });
@@ -130,7 +175,11 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
         var queue = Queue(client);
         await queue.EnqueueScheduledAsync("delayed", "p", new() { Group = "a", Delay = TimeSpan.FromDays(1) });
         var missing = await queue.EnqueueScheduledAsync("missing", "p", new() { Group = "b" });
-        using (await client.ExecuteAsync("XDEL", [queue.StreamKey + ":scheduled", missing.EntryId.Value])) { }
+
+        using (await client.ExecuteAsync("XDEL", [queue.StreamKey + ":scheduled", missing.EntryId.Value]))
+        {
+        }
+
         await queue.EnqueueScheduledAsync("low", "p", new() { Group = "c", Priority = -1 });
         await queue.EnqueueScheduledAsync("high", "p", new() { Group = "c", Priority = 10 });
         await queue.EnqueueScheduledAsync("peer", "p", new() { Group = "d", Priority = -100 });
@@ -148,8 +197,15 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
         // Fixed expired envelope, indexed using the real staged member: no timing dependency.
         var staged = await client.Streams.AddAsync(queue.StreamKey + ":scheduled", ("_respire.job.id", "expired"),
             ("_respire.job.payload", "p"), ("_respire.job.group", "e"), ("_respire.job.expires", "1"));
-        using (await client.ExecuteAsync("ZADD", [queue.StreamKey + ":group-order", 0, "65|"])) { }
-        using (await client.ExecuteAsync("ZADD", [queue.StreamKey + ":group-jobs", 0, "65|0000000000000000|" + staged.Value])) { }
+
+        using (await client.ExecuteAsync("ZADD", [queue.StreamKey + ":group-order", 0, "65|"]))
+        {
+        }
+
+        using (await client.ExecuteAsync("ZADD", [queue.StreamKey + ":group-jobs", 0, "65|0000000000000000|" + staged.Value]))
+        {
+        }
+
         await Assert.That((await JobGroupIntegrationTests.Read(client, queue, "owner", count: 4)).Length).IsEqualTo(0);
         await Assert.That(await client.Streams.CountAsync(queue.StreamKey + ":scheduled")).IsEqualTo(1);
     }
@@ -168,10 +224,12 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
         await admin.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
         var user = "group-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-" + denied]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = user, Password = "password" });
+                with
+            { Username = user, Password = "password" });
             await Assert.That(async () => await JobGroupIntegrationTests.Read(restricted, queue, "owner")).Throws<RespireServerException>();
             await Assert.That(await admin.Streams.CountAsync(queue.StreamKey)).IsEqualTo(0);
             await Assert.That(await admin.Streams.CountAsync(queue.StreamKey + ":scheduled")).IsEqualTo(1);
@@ -269,5 +327,6 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
 
     private ValueTask<RespireClient> Connect(int protocol = 3) => RespireClient.ConnectAsync(
         RespireOptions.Parse(redis.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
+
     private static RespireJobQueue<string> Queue(IRespireClient client) => new(client, "fair", Encoding.UTF8.GetBytes);
 }

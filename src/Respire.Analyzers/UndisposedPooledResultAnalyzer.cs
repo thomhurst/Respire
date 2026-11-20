@@ -31,12 +31,14 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         category: DiagnosticIds.Category,
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
-        description:
-            "Results from explicit lease APIs own pooled memory. A local that is awaited "
+        description: "Results from explicit lease APIs own pooled memory. A local that is awaited "
             + "into existence and then never disposed keeps that buffer out of the pool for good. "
             + "Declare it with a 'using' declaration (or dispose it explicitly).");
 
-    public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule);
+    public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics
+    {
+        get;
+    } = ImmutableArray.Create(Rule);
 
     public override void Initialize(AnalysisContext context)
     {
@@ -47,6 +49,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         {
             var resultType = compilationStart.Compilation.GetTypeByMetadataName(ResultTypeName);
             var leaseType = compilationStart.Compilation.GetTypeByMetadataName(LeaseTypeName);
+
             if (resultType is null && leaseType is null)
             {
                 return;
@@ -74,6 +77,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         }
 
         var scope = ScopeWalker.GetEnclosingScope(declaration);
+
         if (scope is null)
         {
             return;
@@ -97,6 +101,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             }
 
             var pooledType = Match(local.Type, resultType) ?? Match(local.Type, leaseType);
+
             if (pooledType is null)
             {
                 continue;
@@ -116,6 +121,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         SyntaxNodeAnalysisContext context, INamedTypeSymbol? resultType, INamedTypeSymbol? leaseType)
     {
         var assignment = (AssignmentExpressionSyntax)context.Node;
+
         if (ScopeWalker.Unwrap(assignment.Left) is not IdentifierNameSyntax identifier
             || context.SemanticModel.GetSymbolInfo(identifier, context.CancellationToken).Symbol is not ILocalSymbol local
             || !ContainsRespireAcquisition(context, assignment.Right)
@@ -127,6 +133,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         }
 
         var pooledType = Match(local.Type, resultType) ?? Match(local.Type, leaseType);
+
         if (pooledType is null
             || FindAcquisitions(context, assignment.Right).All(acquisition =>
                 IsDisposedOrEscapes(context, scope, acquisition, assignment, local)))
@@ -152,17 +159,25 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             case ConditionalExpressionSyntax conditional:
                 foreach (var acquisition in FindAcquisitions(context, conditional.WhenTrue)
                              .Concat(FindAcquisitions(context, conditional.WhenFalse)))
+                {
                     yield return acquisition;
+                }
                 break;
             case BinaryExpressionSyntax coalesce when coalesce.IsKind(SyntaxKind.CoalesceExpression):
                 foreach (var acquisition in FindAcquisitions(context, coalesce.Left)
                              .Concat(FindAcquisitions(context, coalesce.Right)))
+                {
                     yield return acquisition;
+                }
                 break;
             case SwitchExpressionSyntax switchExpression:
                 foreach (var arm in switchExpression.Arms)
+                {
                     foreach (var acquisition in FindAcquisitions(context, arm.Expression))
+                    {
                         yield return acquisition;
+                    }
+                }
                 break;
         }
     }
@@ -218,14 +233,13 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         };
     }
 
-    private static bool IsAwaitAdapter(IMethodSymbol method)
-        => method.Name switch
-        {
-            nameof(Task.ConfigureAwait) or "AsTask" => true,
-            "WaitAsync" => method.ContainingType.Name == nameof(Task)
-                           && method.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks",
-            _ => false,
-        };
+    private static bool IsAwaitAdapter(IMethodSymbol method) => method.Name switch
+    {
+        nameof(Task.ConfigureAwait) or "AsTask" => true,
+        "WaitAsync" => method.ContainingType.Name == nameof(Task)
+                       && method.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks",
+        _ => false,
+    };
 
     /// <summary>
     /// True when disposal or ownership transfer covers every path from acquisition to scope exit.
@@ -246,6 +260,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             .Select(static reference => (AssignmentExpressionSyntax)reference.Parent!)
             .ToArray();
         var releases = new List<SyntaxNode>();
+
         if (acquisitionAssignment is not null
             && IsImmediatelyReleasedOrTransferred(context, acquisitionAssignment))
         {
@@ -285,6 +300,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             }
 
             var use = ScopeWalker.GetOutermostTransparentExpression(reference);
+
             switch (use.Parent)
             {
                 // result.AsString(), result.Type, result.Dispose()
@@ -375,6 +391,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
     {
         var use = ScopeWalker.GetOutermostTransparentExpression(expression);
+
         switch (use.Parent)
         {
             case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, use):

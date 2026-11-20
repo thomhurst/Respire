@@ -16,9 +16,13 @@ public class ValkeySlotMigrationParserTests
     {
         byte[] bytes = [255, 0, 128];
         var fields = Fields();
+
         if (!trackingReplica)
+        {
             fields.AddRange([Text("source_node"), Text("source"), Text("target_node"), Text("target"),
                 Text("remaining_repl_size"), RespValue.Integer(123)]);
+        }
+
         fields.AddRange([Text("future"), RespValue.Array(RespValue.BulkString(bytes))]);
         var storage = System.Buffers.ArrayPool<RespValue>.Shared.Rent(fields.Count);
         fields.CopyTo(storage);
@@ -39,8 +43,11 @@ public class ValkeySlotMigrationParserTests
         await Assert.That(result.TargetNodeId).IsEqualTo(trackingReplica ? null : "target");
         await Assert.That(result.RemainingReplicationBytes).IsEqualTo(trackingReplica ? (long?)null : 123);
         await Assert.That(result.AdditionalFields["future"][0].AsBytes()).IsEquivalentTo((byte[])[255, 0, 128]);
+
         foreach (var state in new[] { "success", "failed", "cancelled" })
+        {
             await Assert.That((result with { State = state }).IsTerminal).IsTrue();
+        }
     }
 
     [Test]
@@ -62,22 +69,50 @@ public class ValkeySlotMigrationParserTests
     public async Task RejectsMalformedReplies(string shape)
     {
         var fields = Fields();
+
         switch (shape)
         {
-            case "odd": fields.Add(Text("dangling")); break;
-            case "key-type": fields[0] = RespValue.Integer(1); break;
-            case "missing": fields.RemoveRange(0, 2); break;
-            case "duplicate": fields.AddRange([Text("name"), Text("other")]); break;
-            case "duplicate-extra": fields.AddRange([Text("extra"), Text("a"), Text("extra"), Text("b")]); break;
-            case "text-type": fields[1] = RespValue.Integer(1); break;
-            case "optional-type": fields.AddRange([Text("source_node"), RespValue.Null]); break;
-            case "time-type": fields[7] = Text("1700000000"); break;
-            case "negative-time": fields[7] = RespValue.Integer(-1); break;
-            case "time-overflow": fields[7] = RespValue.Integer(long.MaxValue); break;
-            case "negative-cow": fields[^1] = RespValue.Integer(-1); break;
-            case "remaining-type": fields.AddRange([Text("remaining_repl_size"), Text("1")]); break;
-            case "negative-remaining": fields.AddRange([Text("remaining_repl_size"), RespValue.Integer(-1)]); break;
+            case "odd":
+                fields.Add(Text("dangling"));
+                break;
+            case "key-type":
+                fields[0] = RespValue.Integer(1);
+                break;
+            case "missing":
+                fields.RemoveRange(0, 2);
+                break;
+            case "duplicate":
+                fields.AddRange([Text("name"), Text("other")]);
+                break;
+            case "duplicate-extra":
+                fields.AddRange([Text("extra"), Text("a"), Text("extra"), Text("b")]);
+                break;
+            case "text-type":
+                fields[1] = RespValue.Integer(1);
+                break;
+            case "optional-type":
+                fields.AddRange([Text("source_node"), RespValue.Null]);
+                break;
+            case "time-type":
+                fields[7] = Text("1700000000");
+                break;
+            case "negative-time":
+                fields[7] = RespValue.Integer(-1);
+                break;
+            case "time-overflow":
+                fields[7] = RespValue.Integer(long.MaxValue);
+                break;
+            case "negative-cow":
+                fields[^1] = RespValue.Integer(-1);
+                break;
+            case "remaining-type":
+                fields.AddRange([Text("remaining_repl_size"), Text("1")]);
+                break;
+            case "negative-remaining":
+                fields.AddRange([Text("remaining_repl_size"), RespValue.Integer(-1)]);
+                break;
         }
+
         using var reply = shape switch
         {
             "outer" => Text("bad"),
@@ -95,5 +130,6 @@ public class ValkeySlotMigrationParserTests
         Text("slot_ranges"), Text("0-1 4-5"), Text("create_time"), RespValue.Integer(1_700_000_000),
         Text("last_update_time"), RespValue.Integer(1_700_000_001), Text("last_ack_time"), RespValue.Integer(1_700_000_002),
         Text("state"), Text("future-state"), Text("message"), Text(""), Text("cow_size"), RespValue.Integer(42)];
+
     private static RespValue Text(string value) => RespValue.BulkString(value);
 }

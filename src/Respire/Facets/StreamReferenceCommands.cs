@@ -61,7 +61,6 @@ internal sealed partial class StreamCommands
     public ValueTask<RespireStreamDeletionResult[]> AcknowledgeAndRemoveAsync(RespireKey key, string group, RespireStreamReferencePolicy policy, RespireStreamId ids, CancellationToken cancellationToken)
         => AcknowledgeAndRemoveAsync(key, group, policy, [ids], cancellationToken);
 
-
     private static readonly Verb XDelEx = new("XDELEX");
     private static readonly Verb XAckDel = new("XACKDEL");
 
@@ -102,11 +101,21 @@ internal sealed partial class StreamCommands
         ValidateNumericIds(ids);
         var arguments = new RespireValue[ids.Length + (group is null ? 3 : 4)];
         var index = 0;
-        if (group is not null) arguments[index++] = group;
+
+        if (group is not null)
+        {
+            arguments[index++] = group;
+        }
+
         arguments[index++] = token;
         arguments[index++] = "IDS";
         arguments[index++] = ids.Length;
-        foreach (var id in ids) arguments[index++] = id.Value;
+
+        foreach (var id in ids)
+        {
+            arguments[index++] = id.Value;
+        }
+
         return new Cmd1N(group is null ? XDelEx : XAckDel, client.Key(key), arguments);
     }
 
@@ -115,17 +124,28 @@ internal sealed partial class StreamCommands
         foreach (var id in ids)
         {
             if (id == RespireStreamId.Min || id == RespireStreamId.Max || id == RespireStreamId.New)
+            {
                 throw new ArgumentException("The command requires numeric stream IDs.", nameof(ids));
-            try { _ = id.CompareTo(RespireStreamId.Beginning); }
+            }
+
+            try
+            {
+                _ = id.CompareTo(RespireStreamId.Beginning);
+            }
             catch (FormatException error) { throw new ArgumentException("The command requires numeric stream IDs.", nameof(ids), error); }
         }
     }
 
     internal static RespireStreamDeletionResult[] ParseDeletionResults(in RespValue value)
     {
-        if (value.Type != RespireDataType.Array) throw new RespireProtocolException("Expected stream deletion outcomes.");
+        if (value.Type != RespireDataType.Array)
+        {
+            throw new RespireProtocolException("Expected stream deletion outcomes.");
+        }
+
         var items = value.AsArray();
         var results = new RespireStreamDeletionResult[items.Length];
+
         for (var i = 0; i < items.Length; i++)
         {
             results[i] = ResponseReader.Integer(in items[i]) switch
@@ -136,6 +156,7 @@ internal sealed partial class StreamCommands
                 _ => throw new RespireProtocolException("Unknown stream deletion outcome."),
             };
         }
+
         return results;
     }
 }

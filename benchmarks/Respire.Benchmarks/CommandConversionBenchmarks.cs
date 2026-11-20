@@ -20,6 +20,7 @@ public class CommandConversionBenchmarks
     {
         var host = Environment.GetEnvironmentVariable("REDIS_HOST");
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort) ? configuredPort : 6379;
+
         if (string.IsNullOrEmpty(host))
         {
             _container = new RedisBuilder("redis:8.10").Build();
@@ -27,24 +28,39 @@ public class CommandConversionBenchmarks
             host = _container.Hostname;
             port = _container.GetMappedPublicPort(6379);
         }
+
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new RespireEndpoint(host, port) }, Protocol = RespireProtocol.Resp2, Connections = 1,
+            Endpoints = { new RespireEndpoint(host, port) },
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
-        if (!await _client.SetAsync(_key, _value)) throw new InvalidOperationException("Seed SET failed.");
+
+        if (!await _client.SetAsync(_key, _value))
+        {
+            throw new InvalidOperationException("Seed SET failed.");
+        }
+
         _rawLengthArguments = [_key.ToString()];
         var expected = "benchmark-value".Length;
+
         if (await SmallLength() != expected || await LargeSetRange() != expected
             || await SmallLengthPipeline() != 8 * expected || await LargeSetRangePipeline() != 8 * expected
             || await RawLength() != expected || await RawLengthPipeline() != 8 * expected
             || await InterpolatedOwnedLength() != expected || await InterpolatedLeasedLength() != expected)
+        {
             throw new InvalidOperationException("Conversion fixture did not preserve all replies.");
+        }
+
         await InterpolatedFireAndForgetLength();
     }
 
-    [Benchmark] public ValueTask<long> SmallLength() => _client.Strings.LengthAsync(_key);
-    [Benchmark] public ValueTask<long> LargeSetRange() => _client.Strings.SetRangeAsync(_key, _offset, _value);
+    [Benchmark]
+    public ValueTask<long> SmallLength() => _client.Strings.LengthAsync(_key);
+
+    [Benchmark]
+    public ValueTask<long> LargeSetRange() => _client.Strings.SetRangeAsync(_key, _offset, _value);
 
     // Cover the three public interpolation owners with hooks disabled, including handler construction.
     [Benchmark]
@@ -120,7 +136,14 @@ public class CommandConversionBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_client is not null) await _client.DisposeAsync();
-        if (_container is not null) await _container.DisposeAsync();
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+        }
+
+        if (_container is not null)
+        {
+            await _container.DisposeAsync();
+        }
     }
 }

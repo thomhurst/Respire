@@ -14,6 +14,7 @@ public class RedlockTests(RedlockRedisCluster fixture)
     public async Task QuorumContentionRenewalAndReleaseWorkAcrossIndependentNodes()
     {
         var clients = fixture.CreateClients();
+
         try
         {
             var group = new RespireRedlockGroup(clients);
@@ -44,6 +45,7 @@ public class RedlockTests(RedlockRedisCluster fixture)
         var clients = fixture.CreateClients();
         var key = (RespireKey)$"redlock:{Guid.NewGuid():N}";
         var blocker = new RespireLockToken(new byte[] { 1, 2, 3 });
+
         try
         {
             var group = new RespireRedlockGroup(clients);
@@ -65,6 +67,7 @@ public class RedlockTests(RedlockRedisCluster fixture)
     public async Task GroupRejectsEvenOrRepeatedClientSets()
     {
         var clients = fixture.CreateClients();
+
         try
         {
             await Assert.That(() => new RespireRedlockGroup(clients.Take(2))).Throws<ArgumentException>();
@@ -72,7 +75,10 @@ public class RedlockTests(RedlockRedisCluster fixture)
         }
         finally
         {
-            foreach (var client in clients) await client.DisposeAsync();
+            foreach (var client in clients)
+            {
+                await client.DisposeAsync();
+            }
         }
     }
 
@@ -81,6 +87,7 @@ public class RedlockTests(RedlockRedisCluster fixture)
     {
         var containers = new RedisContainer[3];
         var clients = Array.Empty<IRespireClient>();
+
         try
         {
             await Task.WhenAll(Enumerable.Range(0, containers.Length).Select(async index =>
@@ -98,8 +105,11 @@ public class RedlockTests(RedlockRedisCluster fixture)
             await containers[2].StopAsync();
 
             var key = (RespireKey)$"redlock:{Guid.NewGuid():N}";
+
             await using (var quorum = await group.TryAcquireAsync(key, TimeSpan.FromSeconds(5)))
+            {
                 await Assert.That(quorum.Acquired).IsTrue();
+            }
 
             await containers[1].StopAsync();
             var started = Stopwatch.GetTimestamp();
@@ -112,7 +122,12 @@ public class RedlockTests(RedlockRedisCluster fixture)
             await fixture.DisposeClientsAsync(clients);
             // A node that never started was already removed by the retry helper.
             foreach (var container in containers)
-                if (container is not null) await container.DisposeAsync();
+            {
+                if (container is not null)
+                {
+                    await container.DisposeAsync();
+                }
+            }
         }
     }
 }
@@ -128,7 +143,11 @@ public sealed class RedlockRedisCluster : IAsyncInitializer, IAsyncDisposable
         await Task.WhenAll(Enumerable.Range(0, 3).Select(async _ =>
         {
             var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15").Build(), [RedisBuilder.RedisPort]);
-            lock (_containers) _containers.Add(container);
+
+            lock (_containers)
+            {
+                _containers.Add(container);
+            }
         }));
     }
 
@@ -141,12 +160,19 @@ public sealed class RedlockRedisCluster : IAsyncInitializer, IAsyncDisposable
 
     public async ValueTask DisposeClientsAsync(IEnumerable<IRespireClient> clients)
     {
-        foreach (var client in clients) await client.DisposeAsync();
+        foreach (var client in clients)
+        {
+            await client.DisposeAsync();
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var container in _containers) await container.DisposeAsync();
+        foreach (var container in _containers)
+        {
+            await container.DisposeAsync();
+        }
+
         _containers.Clear();
     }
 }

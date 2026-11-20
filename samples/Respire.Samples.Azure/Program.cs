@@ -43,6 +43,7 @@ else
 string GetSetting(string name, string placeholder)
 {
     var value = Environment.GetEnvironmentVariable(name);
+
     if (!string.IsNullOrWhiteSpace(value))
     {
         return value;

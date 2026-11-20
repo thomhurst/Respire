@@ -21,7 +21,11 @@ public class FilterTests(ModernRedisTestContainer fixture)
     private static readonly int StaticNumber = 8;
     private readonly int _number = 8;
     private readonly Wrapper _wrapper = new();
-    private sealed class Wrapper { public int Number = 8; }
+
+    private sealed class Wrapper
+    {
+        public int Number = 8;
+    }
 
     [Test, Arguments(2), Arguments(3)]
     public async Task PinnedUpstreamFilterContracts(int protocol)
@@ -30,6 +34,7 @@ public class FilterTests(ModernRedisTestContainer fixture)
         {
             var data = Data();
             await collection.UpsertAsync(data);
+
             foreach (var (name, filter) in Cases())
             {
                 // Compilation is only the test oracle; production translation never compiles expressions.
@@ -136,11 +141,13 @@ public class FilterTests(ModernRedisTestContainer fixture)
     {
         string[] values = ["", "foo", "FOO", " foo ", "a,b|c", "映画😀", "@number:[-inf +inf] | *", "} | * =>[KNN 99 @v $vector]", "a\r\nb\t\\'\"", "s"];
         await collection.UpsertAsync(values.Select((value, index) => new FilterRecord(index.ToString(), index, value, true, [value], [value], index)));
+
         foreach (var value in values)
         {
             (await Collect(collection.GetAsync(r => r.String == value, 100))).Should().ContainSingle().Which.String.Should().Be(value);
             (await Collect(collection.GetAsync(r => r.StringArray.Contains(value), 100))).Should().ContainSingle().Which.String.Should().Be(value);
         }
+
         (await Collect(collection.GetAsync(r => r.String == "missing } | *", 100))).Should().BeEmpty();
         var empty = (await collection.GetAsync("0", new() { IncludeVectors = true }))!;
         await collection.UpsertAsync(empty with { String = null });
@@ -174,7 +181,12 @@ public class FilterTests(ModernRedisTestContainer fixture)
         using var store = new RespireVectorStore(client, "filters:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new FilterMapper());
         using var collection = store.GetHashCollection<FilterRecord>("records");
-        try { await collection.EnsureCollectionExistsAsync(); await test(collection); }
+
+        try
+        {
+            await collection.EnsureCollectionExistsAsync();
+            await test(collection);
+        }
         finally { await collection.EnsureCollectionDeletedAsync(); }
     }
 
@@ -189,11 +201,30 @@ public class FilterTests(ModernRedisTestContainer fixture)
 
     internal sealed record FilterRecord(string Id, int Int, string? String, bool Bool, string[] StringArray, List<string> StringList, int? Optional)
     {
-        public double Double { get; init; }
-        public float Float { get; init; }
-        public short? Short { get; init; }
-        public ReadOnlyMemory<float> Vector { get; init; } = new float[] { 1, 0 };
-        public ReadOnlyMemory<float> OtherVector { get; init; } = new float[] { int.Parse(Id, CultureInfo.InvariantCulture) + 1, 0 };
+        public double Double
+        {
+            get; init;
+        }
+
+        public float Float
+        {
+            get; init;
+        }
+
+        public short? Short
+        {
+            get; init;
+        }
+
+        public ReadOnlyMemory<float> Vector
+        {
+            get; init;
+        } = new float[] { 1, 0 };
+
+        public ReadOnlyMemory<float> OtherVector
+        {
+            get; init;
+        } = new float[] { int.Parse(Id, CultureInfo.InvariantCulture) + 1, 0 };
     }
 
     internal sealed class FilterMapper : RespireVectorDataHashMapper<FilterRecord>
@@ -201,6 +232,7 @@ public class FilterTests(ModernRedisTestContainer fixture)
         public override IReadOnlyList<RespireVectorDataVectorField> VectorFields =>
         [new(nameof(FilterRecord.Vector), "v", 2) { Algorithm = RespireSearchVectorAlgorithm.Flat, DistanceMetric = RespireSearchDistanceMetric.L2 },
          new(nameof(FilterRecord.OtherVector), "other", 2) { Algorithm = RespireSearchVectorAlgorithm.Flat, DistanceMetric = RespireSearchDistanceMetric.L2 }];
+
         public override IReadOnlyList<RespireVectorDataFilterField> FilterFields =>
         [new(nameof(FilterRecord.Int), "number", RespireVectorDataFilterKind.Numeric),
          new(nameof(FilterRecord.String), "text", RespireVectorDataFilterKind.String),
@@ -211,7 +243,9 @@ public class FilterTests(ModernRedisTestContainer fixture)
          new(nameof(FilterRecord.Double), "double", RespireVectorDataFilterKind.Numeric),
          new(nameof(FilterRecord.Float), "float", RespireVectorDataFilterKind.Numeric),
          new(nameof(FilterRecord.Short), "short", RespireVectorDataFilterKind.Numeric)];
+
         public override string GetKey(FilterRecord record) => record.Id;
+
         public override IReadOnlyDictionary<string, ReadOnlyMemory<byte>> Write(FilterRecord record)
         {
             var fields = new Dictionary<string, ReadOnlyMemory<byte>>
@@ -225,11 +259,25 @@ public class FilterTests(ModernRedisTestContainer fixture)
                 ["tags"] = Bytes(RespireVectorDataFilterEncoding.EncodeTags(record.StringArray)),
                 ["list"] = Bytes(RespireVectorDataFilterEncoding.EncodeTags(record.StringList)),
             };
-            if (record.String is { } text) fields.Add("text", Bytes(RespireVectorDataFilterEncoding.EncodeTag(text)));
-            if (record.Optional is { } number) fields.Add("optional", Bytes(number.ToString(CultureInfo.InvariantCulture)));
-            if (record.Short is { } small) fields.Add("short", Bytes(small.ToString(CultureInfo.InvariantCulture)));
+
+            if (record.String is { } text)
+            {
+                fields.Add("text", Bytes(RespireVectorDataFilterEncoding.EncodeTag(text)));
+            }
+
+            if (record.Optional is { } number)
+            {
+                fields.Add("optional", Bytes(number.ToString(CultureInfo.InvariantCulture)));
+            }
+
+            if (record.Short is { } small)
+            {
+                fields.Add("short", Bytes(small.ToString(CultureInfo.InvariantCulture)));
+            }
+
             return fields;
         }
+
         public override FilterRecord Read(string key, IReadOnlyDictionary<string, ReadOnlyMemory<byte>> fields)
             => new(key, int.Parse(Text(fields["number"]), CultureInfo.InvariantCulture),
                 fields.TryGetValue("text", out var text) ? RespireVectorDataFilterEncoding.DecodeTag(Text(text)) : null,
@@ -242,15 +290,23 @@ public class FilterTests(ModernRedisTestContainer fixture)
                 Vector = fields.TryGetValue("v", out var vector) ? RespireVectorDataFloat32.Decode(vector.Span) : default,
                 OtherVector = fields.TryGetValue("other", out var other) ? RespireVectorDataFloat32.Decode(other.Span) : default,
             };
+
         private static byte[] Bytes(string value) => Encoding.UTF8.GetBytes(value);
+
         private static string Text(ReadOnlyMemory<byte> bytes) => Encoding.UTF8.GetString(bytes.Span);
+
         private static string[] Tags(ReadOnlyMemory<byte> bytes) => Text(bytes).Length == 0 ? [] : Text(bytes).Split(',').Select(RespireVectorDataFilterEncoding.DecodeTag).ToArray();
     }
 
     private static async Task<List<T>> Collect<T>(IAsyncEnumerable<T> values)
     {
         var items = new List<T>();
-        await foreach (var value in values) items.Add(value);
+
+        await foreach (var value in values)
+        {
+            items.Add(value);
+        }
+
         return items;
     }
 }

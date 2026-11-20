@@ -18,14 +18,21 @@ public class SortedSetCombineOptionsIntegrationTests(VersionedServerFixture serv
     {
         var lease = await servers.LeaseAsync("redis:8.10-alpine");
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(lease.ConnectionString(protocol))
-            with { ClientSideCache = protocol == 3 ? new() : null });
+            with
+        { ClientSideCache = protocol == 3 ? new() : null });
         var view = client.WithKeyPrefix($"combine:{Guid.NewGuid():N}:");
         await view.SortedSets.AddAsync("a", ("shared", 2), ("only-a", 8));
         await view.SortedSets.AddAsync("b", ("shared", 5), ("only-b", 1));
+
         foreach (var aggregate in new[] { RespireSortedSetAggregate.Sum, RespireSortedSetAggregate.Min, RespireSortedSetAggregate.Max })
         {
             var options = new RespireSortedSetCombineOptions { Weights = new double[] { 2, 3 }, Aggregate = aggregate };
-            var sharedScore = aggregate switch { RespireSortedSetAggregate.Sum => 19, RespireSortedSetAggregate.Min => 4, _ => 15 };
+            var sharedScore = aggregate switch
+            {
+                RespireSortedSetAggregate.Sum => 19,
+                RespireSortedSetAggregate.Min => 4,
+                _ => 15
+            };
             var expected = new[] { new RespireSortedSetEntry("only-b", 3), new("only-a", 16), new("shared", sharedScore) }
                 .OrderBy(e => e.Score).ThenBy(e => e.Member, StringComparer.Ordinal).ToArray();
             (await Run(view, mode, s => s.UnionAsync(["a", "b"], options), s => s.Union(["a", "b"], options)))
@@ -42,6 +49,7 @@ public class SortedSetCombineOptionsIntegrationTests(VersionedServerFixture serv
                 .Should().Be(1);
             (await view.SortedSets.RangeWithScoresAsync("dest")).Should().Equal(new RespireSortedSetEntry("shared", sharedScore));
         }
+
         await view.DeleteAsync("a", "b", "dest");
     }
 
@@ -60,11 +68,17 @@ public class SortedSetCombineOptionsIntegrationTests(VersionedServerFixture serv
         var info = await client.Server.InfoAsync("server");
         var versionLine = info.Split('\n').Single(l => l.StartsWith("redis_version:", StringComparison.Ordinal));
         var version = Version.Parse(versionLine["redis_version:".Length..].Trim());
-        if (image == "redis:8.10-alpine") version.Should().BeGreaterThanOrEqualTo(new Version(8, 10));
+
+        if (image == "redis:8.10-alpine")
+        {
+            version.Should().BeGreaterThanOrEqualTo(new Version(8, 10));
+        }
+
         Skip.Unless(version >= new Version(8, 8), "AGGREGATE COUNT requires Redis 8.8 or later.");
         var view = client.WithKeyPrefix($"count:{Guid.NewGuid():N}:");
         await view.SortedSets.AddAsync("a", ("shared", -100), ("only-a", 200));
         await view.SortedSets.AddAsync("b", ("shared", 900), ("only-b", -500));
+
         foreach (var weighted in new[] { false, true })
         {
             var options = new RespireSortedSetCombineOptions
@@ -82,13 +96,18 @@ public class SortedSetCombineOptionsIntegrationTests(VersionedServerFixture serv
             (await Run(view, mode, s => s.IntersectStoreAsync("dest", ["a", "b"], options), s => s.IntersectStore("dest", ["a", "b"], options))).Should().Be(1);
             (await view.SortedSets.RangeWithScoresAsync("dest")).Should().Equal(expected[2]);
         }
+
         await view.DeleteAsync("a", "b", "dest");
     }
 
     private static async Task<T> Run<T>(IRespireClient client, string mode,
         Func<IRespireSortedSetCommands, ValueTask<T>> immediate, Func<IRespireBatchSortedSetCommands, RespirePending<T>> deferred)
     {
-        if (mode == "immediate") return await immediate(client.SortedSets);
+        if (mode == "immediate")
+        {
+            return await immediate(client.SortedSets);
+        }
+
         if (mode == "batch")
         {
             using var batch = client.CreateBatch();
@@ -96,6 +115,7 @@ public class SortedSetCombineOptionsIntegrationTests(VersionedServerFixture serv
             await batch.ExecuteAsync();
             return pending.Result;
         }
+
         await using var transaction = client.CreateTransaction();
         var result = deferred(transaction.SortedSets);
         await transaction.CommitAsync();

@@ -68,14 +68,25 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         {
             var lengths = new List<int>();
             var cleared = true;
+
             foreach (var buffer in _spares)
             {
-                if (buffer is null) continue;
+                if (buffer is null)
+                {
+                    continue;
+                }
+
                 lengths.Add(buffer.Length);
+
                 foreach (var entry in buffer)
+                {
                     if (entry.Source is not null || !entry.Value.Equals(default(RespValue)))
+                    {
                         cleared = false;
+                    }
+                }
             }
+
             return new(lengths.ToArray(), Unsafe.SizeOf<Entry>(), cleared, _spareCount, _spareEntryCount);
         }
     }
@@ -88,11 +99,17 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// behind them move to the thread pool for a while (see <see cref="AdaptiveDispatch"/>).
     /// Set once by the owning connection before any reply is delivered.
     /// </summary>
-    internal bool AdaptiveDispatchEnabled { get; set; }
+    internal bool AdaptiveDispatchEnabled
+    {
+        get; set;
+    }
 
     /// <summary>How long a tripped dispatch window stays open. Tests lengthen it so runner pauses
     /// cannot close the window mid-batch.</summary>
-    internal long AdaptiveDispatchWindowTicks { get; init; } = AdaptiveDispatch.WindowTicks;
+    internal long AdaptiveDispatchWindowTicks
+    {
+        get; init;
+    } = AdaptiveDispatch.WindowTicks;
 
     // Deliberately unsynchronized: it is only a heuristic. A racing handoff runner may also update
     // it, and on 32-bit runtimes a torn window end can occur; either way only the window shifts.
@@ -151,6 +168,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             source.ReleaseRef();
             return;
         }
+
         if (_fillingCount == _filling.Length)
         {
             Array.Resize(ref _filling, Math.Min(MaxBatchSize, _filling.Length * 2));
@@ -194,6 +212,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         var batch = new Batch(_filling, _fillingCount);
         Entry[]? replacement = null;
         bool schedule;
+
         lock (_gate)
         {
             if (_pendingCount == _pending.Length)
@@ -203,6 +222,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
 
             _pending[(_pendingHead + _pendingCount) % _pending.Length] = batch;
             _pendingCount++;
+
             if (_spareCount > 0)
             {
                 replacement = _spares[--_spareCount];
@@ -216,6 +236,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
 
         _filling = replacement ?? new Entry[InitialBatchSize];
         _fillingCount = 0;
+
         if (!schedule)
         {
             // Queued behind a runner that is already delivering.
@@ -232,7 +253,11 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     {
         var previousScheduler = t_runnerScheduler;
         var previousGeneration = t_runnerGeneration;
-        try { ExecuteCore(); }
+
+        try
+        {
+            ExecuteCore();
+        }
         finally
         {
             t_runnerScheduler = previousScheduler;
@@ -244,10 +269,12 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     {
         Entry[]? delivered = null;
         var generation = 0;
+
         while (true)
         {
             Batch batch;
             bool armStallWatch;
+
             lock (_gate)
             {
                 if (delivered is not null)
@@ -255,11 +282,15 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                     RetainSpareLocked(delivered);
 
                     // Handed off while delivering: the replacement runner owns what is left.
-                    if (_generation != generation) return;
+                    if (_generation != generation)
+                    {
+                        return;
+                    }
                 }
 
                 _activeItems = null;
                 _activeCount = 0;
+
                 if (_pendingCount == 0)
                 {
                     _running = false;
@@ -286,6 +317,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             t_runnerGeneration = generation;
             var items = batch.Items;
             var claim = (long)generation << 32;
+
             for (var i = 0; i < batch.Count; i++, claim++)
             {
                 if (Interlocked.CompareExchange(ref _claim, claim + 1, claim) != claim)
@@ -306,11 +338,13 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                 var source = entry.Source;
                 var value = entry.Value;
                 long started = 0;
+
                 if (AdaptiveDispatchEnabled && (i + 1 < batch.Count || Volatile.Read(ref _pendingCount) > 0))
                 {
                     // Other replies wait behind this one: dispatch it while the window is open,
                     // otherwise time its inline continuation.
                     started = Stopwatch.GetTimestamp();
+
                     if (_adaptive.ShouldDispatch(started))
                     {
                         source.DispatchContinuationAsynchronously();
@@ -346,7 +380,10 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         if (_spareCount < MaxSpareBuffers && delivered.Length <= MaxSpareEntries - _spareEntryCount)
         {
             if (_spareCount == _spares.Length)
+            {
                 Array.Resize(ref _spares, Math.Min(MaxSpareBuffers, _spares.Length * 2));
+            }
+
             _spares[_spareCount++] = delivered;
             _spareEntryCount += delivered.Length;
             return;
@@ -357,12 +394,18 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         // remain with their runner. Scan at most 16 slots, only on a cache miss.
         var largest = -1;
         var largestLength = delivered.Length;
+
         for (var index = 0; index < _spareCount; index++)
         {
-            if (_spares[index]!.Length <= largestLength) continue;
+            if (_spares[index]!.Length <= largestLength)
+            {
+                continue;
+            }
+
             largest = index;
             largestLength = _spares[index]!.Length;
         }
+
         if (largest >= 0)
         {
             _spareEntryCount += delivered.Length - largestLength;
@@ -376,7 +419,11 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// </summary>
     internal void ReleaseCurrentRunner()
     {
-        if (!ReferenceEquals(t_runnerScheduler, this)) return;
+        if (!ReferenceEquals(t_runnerScheduler, this))
+        {
+            return;
+        }
+
         lock (_gate)
         {
             if (_generation == t_runnerGeneration)
@@ -427,6 +474,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         }
 
         var remaining = stallMilliseconds - (nowMilliseconds - _observedSince);
+
         if (remaining > 0)
         {
             nextCheckMilliseconds = remaining;
@@ -441,9 +489,17 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         {
             // Only an executing runner can be stuck in caller code. A runner still queued
             // behind a starved pool must remain the single owner, or two would deliver.
-            if (!_executing || Volatile.Read(ref _claim) != claim) return false;
+            if (!_executing || Volatile.Read(ref _claim) != claim)
+            {
+                return false;
+            }
+
             var stillWaiting = _pendingCount > 0 || (_activeItems is not null && (int)claim < _activeCount);
-            if (!stillWaiting || !TryRescueHandOffLocked(claim)) return false;
+
+            if (!stillWaiting || !TryRescueHandOffLocked(claim))
+            {
+                return false;
+            }
         }
 
         _observedSince = nowMilliseconds;
@@ -487,6 +543,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             lock (_gate)
             {
                 var count = _activeItems is null ? 0 : Math.Max(0, _activeCount - (int)Volatile.Read(ref _claim));
+
                 for (var i = 0; i < _pendingCount; i++)
                 {
                     count += _pending[(_pendingHead + i) % _pending.Length].Count;
@@ -534,6 +591,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     private bool TryRescueHandOffLocked(long claim)
     {
         var next = (int)claim;
+
         if (_activeItems is { } items && next > 0 && items[next - 1].Source is { } inFlight
             && HasUnclaimedReplyFor(inFlight, next))
         {
@@ -541,6 +599,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         }
 
         var generation = _generation + 1;
+
         if (Interlocked.CompareExchange(ref _claim, (long)generation << 32, claim) != claim)
         {
             // The runner moved on; the next check re-evaluates from its new claim.
@@ -556,15 +615,22 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     {
         for (var i = next; i < _activeCount; i++)
         {
-            if (ReferenceEquals(_activeItems![i].Source, source)) return true;
+            if (ReferenceEquals(_activeItems![i].Source, source))
+            {
+                return true;
+            }
         }
 
         for (var b = 0; b < _pendingCount; b++)
         {
             var batch = _pending[(_pendingHead + b) % _pending.Length];
+
             for (var i = 0; i < batch.Count; i++)
             {
-                if (ReferenceEquals(batch.Items[i].Source, source)) return true;
+                if (ReferenceEquals(batch.Items[i].Source, source))
+                {
+                    return true;
+                }
             }
         }
 
@@ -574,12 +640,18 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     private void TransferUnclaimedLocked(int next)
     {
         var remaining = _activeItems is null ? 0 : _activeCount - next;
+
         if (remaining > 0)
         {
             var tail = new Entry[remaining];
             Array.Copy(_activeItems!, next, tail, 0, remaining);
             Array.Clear(_activeItems!, next, remaining);
-            if (_pendingCount == _pending.Length) GrowPending();
+
+            if (_pendingCount == _pending.Length)
+            {
+                GrowPending();
+            }
+
             _pendingHead = (_pendingHead + _pending.Length - 1) % _pending.Length;
             _pending[_pendingHead] = new Batch(tail, remaining);
             _pendingCount++;
@@ -589,6 +661,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         _activeCount = 0;
         _executing = false;
         _running = _pendingCount != 0;
+
         if (_running)
         {
             ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: false);
@@ -688,7 +761,11 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         {
             if (elapsedTicks > SlowTicks)
             {
-                if (++_score < TripScore) return;
+                if (++_score < TripScore)
+                {
+                    return;
+                }
+
                 _dispatchUntil = now + windowTicks;
                 _score = TripScore - 2;
             }
@@ -702,6 +779,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     private void GrowPending()
     {
         var grown = new Batch[_pending.Length * 2];
+
         for (var i = 0; i < _pendingCount; i++)
         {
             grown[i] = _pending[(_pendingHead + i) % _pending.Length];

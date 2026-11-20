@@ -18,11 +18,14 @@ public class WatchedTransactionPoolTests
         for (var burst = 0; burst < 2; burst++)
         {
             var transactions = new List<RespireWatchedTransaction>();
+
             try
             {
                 // Hold eight leases at once so a burst cannot reuse its own earlier returns.
                 for (var index = 0; index < 8; index++)
+                {
                     transactions.Add(await client.CreateTransactionAsync([$"watched:{index}"], deadline.Token));
+                }
 
                 foreach (var transaction in transactions)
                 {
@@ -32,7 +35,10 @@ public class WatchedTransactionPoolTests
             }
             finally
             {
-                foreach (var transaction in transactions) await transaction.DisposeAsync();
+                foreach (var transaction in transactions)
+                {
+                    await transaction.DisposeAsync();
+                }
             }
         }
 

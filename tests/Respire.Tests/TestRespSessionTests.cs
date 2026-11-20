@@ -29,10 +29,12 @@ public class TestRespSessionTests
                     entered.TrySetResult();
                     await Task.Delay(Timeout.InfiniteTimeSpan, token);
                 }
+
                 return stream;
             },
         };
         var setup = TestRespSession.ConnectAsync(options, cancellation.Token);
+
         try
         {
             await (stage == "factory" ? entered.Task : stream.ReadStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
@@ -45,22 +47,36 @@ public class TestRespSessionTests
         {
             cancellation.Cancel();
             // Own any session returned if the cancellation assertion fails.
-            try { await using var session = await setup; }
+            try
+            {
+                await using var session = await setup;
+            }
             catch (OperationCanceledException) { }
         }
     }
 
     private sealed class PendingSetupStream(byte[] initialReply) : MemoryStream(initialReply)
     {
-        internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal bool Disposed { get; private set; }
+        internal TaskCompletionSource ReadStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal bool Disposed
+        {
+            get; private set;
+        }
 
         public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (Position < Length) return await base.ReadAsync(buffer, cancellationToken);
+            if (Position < Length)
+            {
+                return await base.ReadAsync(buffer, cancellationToken);
+            }
+
             ReadStarted.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return 0;

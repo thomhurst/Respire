@@ -2,8 +2,8 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using Respire.Commands;
-using Respire.TimeSeries;
 using Respire.Tests.Networking;
+using Respire.TimeSeries;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -51,11 +51,15 @@ public class TimeSeriesClientTests
             ["TS.READ"] = RespireCacheMutation.ReadOnly,
         };
         await Assert.That(commands.Count).IsEqualTo(expected.Count);
+
         foreach (var (name, mutation) in expected)
         {
             await Assert.That(commands[name].CacheMutation).IsEqualTo(mutation).Because(name);
+
             if (mutation == RespireCacheMutation.SingleKey)
+            {
                 await Assert.That(RawCommandKeyLayouts.HasSingleFirstKeyLayout(name)).IsTrue().Because(name);
+            }
         }
     }
 
@@ -195,11 +199,13 @@ public class TimeSeriesClientTests
             new() { GroupBy = ("room", "max") },
             new() { Empty = true },
         ];
+
         foreach (var options in rejected)
         {
             await Assert.That(async () => await timeSeries.ReverseRangeAsync("series", new(0, 1), options))
                 .Throws<ArgumentException>();
         }
+
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
     }
 
@@ -295,9 +301,12 @@ public class TimeSeriesClientTests
         var timeSeries = new RespireTimeSeriesClient(client);
         var options = new RespireTimeSeriesRangeOptions
         {
-            SelectedLabels = ["room"], Count = 2,
-            Aggregation = (RespireTimeSeriesAggregation.Avg, 10), Empty = true,
-            Filters = ["room=1", "sensor=temp"], ExcludeEmpty = true,
+            SelectedLabels = ["room"],
+            Count = 2,
+            Aggregation = (RespireTimeSeriesAggregation.Avg, 10),
+            Empty = true,
+            Filters = ["room=1", "sensor=temp"],
+            ExcludeEmpty = true,
         };
         await ReadAsync(options);
         await ReadAsync(options with { ExcludeEmpty = false });
@@ -512,11 +521,23 @@ public class TimeSeriesClientTests
             new("first", 11, 1), new("missing", 12, 2), new("third", 13, 3),
             new("fourth", 14, 4), new("unsent", 15, 5)], 2, cancellation.Token).AsTask();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen < 2) await Task.Delay(5, deadline.Token);
-        if (cancel) await cancellation.CancelAsync();
-        else server.CloseConnections();
+
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(5, deadline.Token);
+        }
+
+        if (cancel)
+        {
+            await cancellation.CancelAsync();
+        }
+        else
+        {
+            server.CloseConnections();
+        }
 
         var error = await Assert.That(async () => await write.WaitAsync(TimeSpan.FromSeconds(5))).Throws<Exception>();
+
         if (cancel)
         {
             await Assert.That(error).IsTypeOf<RespireTimeSeriesMultiAddCanceledException>();
@@ -527,6 +548,7 @@ public class TimeSeriesClientTests
             await Assert.That(error).IsTypeOf<RespireTimeSeriesMultiAddInterruptedException>();
             await Assert.That(error!.InnerException).IsTypeOf<RespireConnectionException>();
         }
+
         var progress = RespireTimeSeriesMultiAddProgress.FromException(error!);
         await Assert.That(progress).IsNotNull();
         await Assert.That(progress!.CompletedChunkCount).IsEqualTo(1);
@@ -554,7 +576,9 @@ public class TimeSeriesClientTests
             ActivityStopped = activity =>
             {
                 if (activity.OperationName == "TS.MADD" && TestTelemetry.IsFrom(activity, server.Port))
+                {
                     disposal ??= client.DisposeAsync().AsTask();
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -581,11 +605,21 @@ public class TimeSeriesClientTests
             ShouldListenTo = source => source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
             {
-                if (options.Name != "TS.MADD") return ActivitySamplingResult.None;
+                if (options.Name != "TS.MADD")
+                {
+                    return ActivitySamplingResult.None;
+                }
                 // Other tests' TS.MADD activities share the process-wide source; never fail them.
                 if (options.Tags?.Any(tag => tag.Key == "server.port" && Equals(tag.Value, server.Port)) != true)
+                {
                     return ActivitySamplingResult.None;
-                if (++sampled == 2) throw failure;
+                }
+
+                if (++sampled == 2)
+                {
+                    throw failure;
+                }
+
                 return ActivitySamplingResult.AllDataAndRecorded;
             },
         };
@@ -640,8 +674,12 @@ public class TimeSeriesClientTests
 
         var write = timeSeries.MultiAddAsync(samples, maxBatchSize: 1).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (server.CommandsSeen == 0)
+        {
             await Task.Delay(10, timeout.Token);
+        }
+
         samples[1] = new RespireTimeSeriesWrite("replacement", 99, 99);
 
         await write;
@@ -699,10 +737,12 @@ public class TimeSeriesClientTests
             }),
             async () => await timeSeries.RangeAsync("series", new(0, 1), new RespireTimeSeriesRangeOptions { FilterByTimestamps = [-1] }),
         ];
+
         foreach (var call in rejected)
         {
             await Assert.That(call).Throws<ArgumentException>();
         }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 

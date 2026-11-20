@@ -25,30 +25,47 @@ public sealed partial class RespireFakeServer
             foreach (var key in _entries.Keys.ToArray())
             {
                 if (Find(key) is not null && KeyspaceGlob(key, pattern, ref remainingWork))
+                {
                     replies.Add(FakeReply.Bulk(key));
+                }
             }
         }
         catch (ArrayGlobLimitException) { return KeyspaceGlobLimit("KEYS"); }
+
         return FakeReply.Array(replies.ToArray());
     }
 
     private FakeReply Scan(byte[][] args)
     {
         if (!Utf8Parser.TryParse(args[1], out ulong cursor, out var consumed) || consumed != args[1].Length)
+        {
             return FakeReply.Error("ERR invalid cursor");
+        }
+
         long count = 10;
         byte[]? pattern = null;
+
         for (var index = 2; index < args.Length; index += 2)
         {
-            if (index + 1 == args.Length) return Syntax("SCAN");
+            if (index + 1 == args.Length)
+            {
+                return Syntax("SCAN");
+            }
+
             switch (Token(args[index]))
             {
-                case "MATCH": pattern = args[index + 1]; break;
+                case "MATCH":
+                    pattern = args[index + 1];
+                    break;
                 case "COUNT":
                     count = Integer(args[index + 1]);
-                    if (count <= 0) return Syntax("SCAN");
+                    if (count <= 0)
+                    {
+                        return Syntax("SCAN");
+                    }
                     break;
-                default: return Syntax("SCAN");
+                default:
+                    return Syntax("SCAN");
             }
         }
 
@@ -61,6 +78,7 @@ public sealed partial class RespireFakeServer
             var buckets = _entries.Keys.ToLookup(key => BinaryKeyComparer.Instance.GetHashCode(key) & (ScanBucketCount - 1));
             var remainingWork = ArrayGlobWorkLimit;
             long visited = 0;
+
             try
             {
                 do
@@ -68,15 +86,24 @@ public sealed partial class RespireFakeServer
                     foreach (var key in buckets[(int)cursor])
                     {
                         visited++;
+
                         if (Find(key) is not null && (pattern is null || KeyspaceGlob(key, pattern, ref remainingWork)))
+                        {
                             replies.Add(FakeReply.Bulk(key));
+                        }
                     }
+
                     cursor++;
                 } while (cursor < ScanBucketCount && visited < count);
             }
             catch (ArrayGlobLimitException) { return KeyspaceGlobLimit("SCAN"); }
         }
-        if (cursor >= ScanBucketCount) cursor = 0;
+
+        if (cursor >= ScanBucketCount)
+        {
+            cursor = 0;
+        }
+
         return FakeReply.Array([FakeReply.Text(cursor.ToString(CultureInfo.InvariantCulture)), FakeReply.Array(replies.ToArray())]);
     }
 
@@ -84,8 +111,16 @@ public sealed partial class RespireFakeServer
     {
         // KEYS and SCAN bypass Redis's glob matcher for a single '*'. Otherwise,
         // its empty-candidate rule only accepts an empty pattern, not even '**'.
-        if (pattern.SequenceEqual("*"u8)) return true;
-        if (key.IsEmpty) return pattern.IsEmpty;
+        if (pattern.SequenceEqual("*"u8))
+        {
+            return true;
+        }
+
+        if (key.IsEmpty)
+        {
+            return pattern.IsEmpty;
+        }
+
         return ArrayGlob(key, pattern, ignoreCase: false, ref remainingWork);
     }
 

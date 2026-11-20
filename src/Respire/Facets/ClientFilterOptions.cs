@@ -29,65 +29,184 @@ public enum RespireClientType
 public sealed record RespireClientFilterOptions
 {
     /// <summary>Positive selectors. Cannot be combined with legacy flat selector properties.</summary>
-    public RespireClientIncludeFilters? Include { get; init; }
+    public RespireClientIncludeFilters? Include
+    {
+        get; init;
+    }
+
     /// <summary>Negative selectors. Cannot be combined with legacy flat selector properties.</summary>
-    public RespireClientExcludeFilters? Exclude { get; init; }
+    public RespireClientExcludeFilters? Exclude
+    {
+        get; init;
+    }
+
     /// <summary>Explicitly permits KILL without a selector, including a SkipMe-only call. Ignored by LIST.</summary>
-    public bool AllowUnfilteredKill { get; init; }
+    public bool AllowUnfilteredKill
+    {
+        get; init;
+    }
+
     /// <summary>Include only this connection class.</summary>
-    public RespireClientType? Type { get; init; }
+    public RespireClientType? Type
+    {
+        get; init;
+    }
+
     /// <summary>Include any of these positive client IDs; empty means no ID filter.</summary>
-    public IReadOnlyList<long> Ids { get; init; } = [];
+    public IReadOnlyList<long> Ids
+    {
+        get; init;
+    } = [];
+
     /// <summary>Match an ACL username.</summary>
-    public string? User { get; init; }
+    public string? User
+    {
+        get; init;
+    }
+
     /// <summary>Match the remote address and port as reported by CLIENT LIST.</summary>
-    public string? Address { get; init; }
+    public string? Address
+    {
+        get; init;
+    }
+
     /// <summary>Match the local address and port as reported by CLIENT LIST.</summary>
-    public string? LocalAddress { get; init; }
+    public string? LocalAddress
+    {
+        get; init;
+    }
+
     /// <summary>Exclude the executing connection. Null preserves the server default (yes for KILL, no for LIST).</summary>
-    public bool? SkipMe { get; init; }
+    public bool? SkipMe
+    {
+        get; init;
+    }
+
     /// <summary>Match connections at least this old, in whole seconds (MAXAGE), for both LIST and KILL.</summary>
-    public long? MaximumAgeSeconds { get; init; }
+    public long? MaximumAgeSeconds
+    {
+        get; init;
+    }
+
     /// <summary>Match the connection name. Requires Valkey 9+.</summary>
-    public string? Name { get; init; }
+    public string? Name
+    {
+        get; init;
+    }
+
     /// <summary>Match connections idle for at least this many seconds. Must be positive. Requires Valkey 9+.</summary>
-    public long? IdleSeconds { get; init; }
+    public long? IdleSeconds
+    {
+        get; init;
+    }
+
     /// <summary>Match connection flags. Must be nonempty when specified. Requires Valkey 9+.</summary>
-    public string? Flags { get; init; }
+    public string? Flags
+    {
+        get; init;
+    }
+
     /// <summary>Match the library name. Requires Valkey 9+.</summary>
-    public string? LibraryName { get; init; }
+    public string? LibraryName
+    {
+        get; init;
+    }
+
     /// <summary>Match the library version. Requires Valkey 9+.</summary>
-    public string? LibraryVersion { get; init; }
+    public string? LibraryVersion
+    {
+        get; init;
+    }
+
     /// <summary>Match the database number. Requires Valkey 9+.</summary>
-    public int? Database { get; init; }
+    public int? Database
+    {
+        get; init;
+    }
+
     /// <summary>Match connection capabilities. Must be nonempty when specified. Requires Valkey 9+.</summary>
-    public string? Capabilities { get; init; }
+    public string? Capabilities
+    {
+        get; init;
+    }
+
     /// <summary>Match the remote IP address. Requires Valkey 9+.</summary>
-    public string? Ip { get; init; }
+    public string? Ip
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this connection class. Requires Valkey 9+.</summary>
-    public RespireClientType? ExcludedType { get; init; }
+    public RespireClientType? ExcludedType
+    {
+        get; init;
+    }
+
     /// <summary>Exclude these positive IDs. Requires Valkey 9+.</summary>
-    public IReadOnlyList<long> ExcludedIds { get; init; } = [];
+    public IReadOnlyList<long> ExcludedIds
+    {
+        get; init;
+    } = [];
+
     /// <summary>Exclude this ACL username. Requires Valkey 9+.</summary>
-    public string? ExcludedUser { get; init; }
+    public string? ExcludedUser
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this remote address and port. Must be nonempty when specified. Requires Valkey 9+.</summary>
-    public string? ExcludedAddress { get; init; }
+    public string? ExcludedAddress
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this local address and port. Must be nonempty when specified. Requires Valkey 9+.</summary>
-    public string? ExcludedLocalAddress { get; init; }
+    public string? ExcludedLocalAddress
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this connection name. Must be nonempty when specified. Requires Valkey 9+.</summary>
-    public string? ExcludedName { get; init; }
+    public string? ExcludedName
+    {
+        get; init;
+    }
+
     /// <summary>Exclude these connection flags. Requires Valkey 9+.</summary>
-    public string? ExcludedFlags { get; init; }
+    public string? ExcludedFlags
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this library name. Must be nonempty when specified. Requires Valkey 9+.</summary>
-    public string? ExcludedLibraryName { get; init; }
+    public string? ExcludedLibraryName
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this library version. Must be nonempty when specified. Requires Valkey 9+.</summary>
-    public string? ExcludedLibraryVersion { get; init; }
+    public string? ExcludedLibraryVersion
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this database number. Requires Valkey 9+.</summary>
-    public int? ExcludedDatabase { get; init; }
+    public int? ExcludedDatabase
+    {
+        get; init;
+    }
+
     /// <summary>Exclude these capabilities. Requires Valkey 9+.</summary>
-    public string? ExcludedCapabilities { get; init; }
+    public string? ExcludedCapabilities
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this remote IP address. Must be nonempty when specified. Requires Valkey 9+.</summary>
-    public string? ExcludedIp { get; init; }
+    public string? ExcludedIp
+    {
+        get; init;
+    }
 
     internal bool HasFlatSelectors => Type.HasValue || Ids is not { Count: 0 } || User is not null
         || Address is not null || LocalAddress is not null || MaximumAgeSeconds.HasValue || Name is not null
@@ -103,30 +222,50 @@ internal ref struct ClientFilterArguments(bool kill)
 {
     private readonly List<RespireValue> _arguments = [];
     private bool _hasSelector;
-    internal string PropertyPrefix { get; set; } = "";
+
+    internal string PropertyPrefix
+    {
+        get; set;
+    } = "";
 
     internal static CmdN Build(RespireClientFilterOptions options, bool kill)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(options.Ids, nameof(options.Ids));
         ArgumentNullException.ThrowIfNull(options.ExcludedIds, nameof(options.ExcludedIds));
+
         if ((options.Include is not null || options.Exclude is not null) && options.HasFlatSelectors)
+        {
             throw new ArgumentException("Include/Exclude cannot be combined with legacy flat selector properties.", nameof(options));
+        }
+
         var writer = new ClientFilterArguments(kill);
         RespireClientIncludeFilters.AppendArguments(options, ref writer);
         RespireClientExcludeFilters.AppendArguments(options, ref writer);
+
         if (kill && !writer._hasSelector)
         {
             if (!options.AllowUnfilteredKill)
+            {
                 throw new ArgumentException("CLIENT KILL requires a selector or AllowUnfilteredKill = true.", nameof(options));
-            if (!options.SkipMe.HasValue) writer.Add("SKIPME", "yes", isSelector: false);
+            }
+
+            if (!options.SkipMe.HasValue)
+            {
+                writer.Add("SKIPME", "yes", isSelector: false);
+            }
         }
+
         return new CmdN(kill ? Verbs.ClientKill : Verbs.ClientList, writer._arguments.ToArray());
     }
 
     internal void Add(string token, string? value, bool isSelector = true)
     {
-        if (value is null) return;
+        if (value is null)
+        {
+            return;
+        }
+
         AddToken(token, isSelector);
         _arguments.Add(value);
     }
@@ -134,23 +273,37 @@ internal ref struct ClientFilterArguments(bool kill)
     internal void AddNonEmpty(string token, string? value, string propertyName)
     {
         if (value is "")
+        {
             throw new ArgumentException($"{PropertyPrefix}{propertyName} must be nonempty when specified.", "options");
+        }
+
         Add(token, value);
     }
 
     internal void AddNumber(string token, long? value, string propertyName, bool positive = false)
     {
-        if (value is not { } number) return;
+        if (value is not { } number)
+        {
+            return;
+        }
+
         if (number < 0 || (positive && number == 0))
+        {
             throw new ArgumentOutOfRangeException("options", number,
                 $"{PropertyPrefix}{propertyName} must be {(positive ? "positive" : "nonnegative")}.");
+        }
+
         AddToken(token);
         _arguments.Add(number);
     }
 
     internal void AddType(string token, RespireClientType? type, string propertyName)
     {
-        if (type is null) return;
+        if (type is null)
+        {
+            return;
+        }
+
         Add(token, type switch
         {
             RespireClientType.Normal => "normal",
@@ -163,13 +316,25 @@ internal ref struct ClientFilterArguments(bool kill)
 
     internal void AddIds(string token, IReadOnlyList<long> ids, string propertyName)
     {
-        if (ids is null) throw new ArgumentNullException(PropertyPrefix + propertyName);
-        if (ids.Count == 0) return;
+        if (ids is null)
+        {
+            throw new ArgumentNullException(PropertyPrefix + propertyName);
+        }
+
+        if (ids.Count == 0)
+        {
+            return;
+        }
+
         AddToken(token);
+
         foreach (var id in ids)
         {
             if (id <= 0)
+            {
                 throw new ArgumentOutOfRangeException("options", id, $"{PropertyPrefix}{propertyName} must contain only positive client IDs.");
+            }
+
             _arguments.Add(id);
         }
     }

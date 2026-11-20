@@ -34,10 +34,16 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     }
 
     /// <summary>The hash key, before the client's prefix.</summary>
-    public RespireKey HashKey { get; }
+    public RespireKey HashKey
+    {
+        get;
+    }
 
     /// <summary>The binary-safe hash field that stores this lease.</summary>
-    public RespireKey Field { get; }
+    public RespireKey Field
+    {
+        get;
+    }
 
     /// <summary>The generated owner token used to compare every operation.</summary>
     public RespireLockToken OwnerToken => _owner;
@@ -50,7 +56,11 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     {
         get
         {
-            if (Volatile.Read(ref _state) != StateHeld) return TimeSpan.Zero;
+            if (Volatile.Read(ref _state) != StateHeld)
+            {
+                return TimeSpan.Zero;
+            }
+
             var snapshot = Volatile.Read(ref _snapshot);
             var remaining = TimeSpan.FromTicks(snapshot.DurationTicks) - Stopwatch.GetElapsedTime(snapshot.RenewedTimestamp);
             return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
@@ -77,14 +87,24 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     {
         var milliseconds = RespireCoordination.ValidateLease(HashKey, Field, duration);
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
             var state = Volatile.Read(ref _state);
-            if (state is StateReleasing or StateReleased or StateNotOwned) return false;
+
+            if (state is StateReleasing or StateReleased or StateNotOwned)
+            {
+                return false;
+            }
             // An earlier timed-out renewal may still execute on another Redis connection.
             // Its late execution could shorten a later renewal, so uncertain state stays fail-closed.
-            if (state == StateUncertain) return false;
+            if (state == StateUncertain)
+            {
+                return false;
+            }
+
             var started = Stopwatch.GetTimestamp();
+
             try
             {
                 if (!await _coordination.RenewHashFieldLeaseAsync(HashKey, Field, _owner, milliseconds, cancellationToken)
@@ -102,9 +122,16 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
             {
                 lock (_releaseSync)
                 {
-                    if (_state == StateReleasing) _releasePreviousState = StateUncertain;
-                    else Volatile.Write(ref _state, StateUncertain);
+                    if (_state == StateReleasing)
+                    {
+                        _releasePreviousState = StateUncertain;
+                    }
+                    else
+                    {
+                        Volatile.Write(ref _state, StateUncertain);
+                    }
                 }
+
                 throw;
             }
 
@@ -128,10 +155,19 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     private ValueTask<RespireLockReleaseOutcome> ReleaseUnhookedAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
         lock (_releaseSync)
         {
-            if (_state == StateReleased) return ValueTask.FromResult(RespireLockReleaseOutcome.AlreadyReleased);
-            if (_state == StateNotOwned) return ValueTask.FromResult(RespireLockReleaseOutcome.NotOwned);
+            if (_state == StateReleased)
+            {
+                return ValueTask.FromResult(RespireLockReleaseOutcome.AlreadyReleased);
+            }
+
+            if (_state == StateNotOwned)
+            {
+                return ValueTask.FromResult(RespireLockReleaseOutcome.NotOwned);
+            }
+
             if (_state == StateReleasing)
             {
                 if (_releaseTask is null)
@@ -140,8 +176,10 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
                     _releaseTask = retryTask;
                     ObserveReleaseFailure(retryTask);
                 }
+
                 return new ValueTask<RespireLockReleaseOutcome>(_releaseTask!.WaitAsync(cancellationToken));
             }
+
             _releasePreviousState = _state;
             _state = StateReleasing;
             // The shared release outlives each caller so cancellation cannot cancel another waiter's operation.
@@ -164,6 +202,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
         var entered = false;
         var retryAfterGateRelease = false;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
         try
         {
             await _operationGate.WaitAsync(deadline.Token).ConfigureAwait(false);
@@ -181,8 +220,10 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
                 {
                     Volatile.Write(ref _state, _releasePreviousState);
                 }
+
                 _releaseTask = null;
             }
+
             throw;
         }
         catch
@@ -191,20 +232,32 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
             {
                 if (_state == StateReleasing)
                 {
-                    if (entered) Volatile.Write(ref _state, StateUncertain);
+                    if (entered)
+                    {
+                        Volatile.Write(ref _state, StateUncertain);
+                    }
                 }
+
                 _releaseTask = null;
                 // If the gate owner has already released before we cleared the task, its
                 // ResumeQueuedRelease call observed the old task and could not restart it.
                 // Retry only in that race. Otherwise the gate owner's finally resumes release.
                 retryAfterGateRelease = !entered && _state == StateReleasing && _operationGate.CurrentCount != 0;
             }
-            if (retryAfterGateRelease) ResumeQueuedRelease();
+
+            if (retryAfterGateRelease)
+            {
+                ResumeQueuedRelease();
+            }
+
             throw;
         }
         finally
         {
-            if (entered) _operationGate.Release();
+            if (entered)
+            {
+                _operationGate.Release();
+            }
         }
     }
 
@@ -212,7 +265,11 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     {
         lock (_releaseSync)
         {
-            if (_state != StateReleasing || _releaseTask is not null) return;
+            if (_state != StateReleasing || _releaseTask is not null)
+            {
+                return;
+            }
+
             var releaseTask = ReleaseCoreAsync();
             _releaseTask = releaseTask;
             ObserveReleaseFailure(releaseTask);

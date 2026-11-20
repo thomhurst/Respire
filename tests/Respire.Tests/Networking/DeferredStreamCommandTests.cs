@@ -43,8 +43,16 @@ public class DeferredStreamCommandTests
         Array.Fill(payload, (byte)'x');
         fields[0] = ("changed", "changed");
         ids[0] = "9-9";
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         await Assert.That(added.Result.ToString()).IsEqualTo("1-0");
         await Assert.That(absent.Result).IsNull();
         await Assert.That(count.Result).IsEqualTo(1);
@@ -54,7 +62,12 @@ public class DeferredStreamCommandTests
         await Assert.That(acknowledged.Result).IsEqualTo(1);
         // Disposal of the execution owner does not invalidate copied entry fields.
         batch?.Dispose();
-        if (transaction is not null) await transaction.DisposeAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.DisposeAsync();
+        }
+
         await Assert.That(entries.Result[0]["value"]!).IsEquivalentTo(new byte[] { 0xff, 0 }, CollectionOrdering.Matching);
         await Assert.That(reverse.Result[0].Id.ToString()).IsEqualTo("1-0");
         var commands = server.ReceivedArguments.Where(args => Encoding.UTF8.GetString(args[0]) is not "MULTI" and not "EXEC").ToArray();
@@ -69,6 +82,7 @@ public class DeferredStreamCommandTests
         await Assert.That(Encoding.UTF8.GetString(commands[1][1])).IsEqualTo(prefix + "missing");
         await Assert.That(commands[1].Skip(2).Take(5).Select(Encoding.UTF8.GetString))
             .IsEquivalentTo(new[] { "NOMKSTREAM", "MAXLEN", "~", "10", "*" }, CollectionOrdering.Matching);
+
         if (transactional)
         {
             await Assert.That(server.ReceivedCommands[0]).IsEqualTo("MULTI");
@@ -89,8 +103,16 @@ public class DeferredStreamCommandTests
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var failed = queue.Streams.Add("wrong", ("value", "value"));
         var successful = queue.Streams.Count("events");
-        if (transaction is not null) await transaction.CommitAsync();
-        else await Assert.That(async () => await batch!.ExecuteAsync()).Throws<RespireServerException>();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await Assert.That(async () => await batch!.ExecuteAsync()).Throws<RespireServerException>();
+        }
+
         await Assert.That(failed.Error).IsTypeOf<RespireServerException>();
         await Assert.That(() => failed.Result).Throws<RespireServerException>();
         await Assert.That(successful.Result).IsEqualTo(7);
@@ -105,6 +127,7 @@ public class DeferredStreamCommandTests
         byte[][] replies = ["-ERR wrong number of arguments for 'xack' command\r\n"u8.ToArray()];
         await using var server = new FakeRespServer(WrapReplies(replies, transactional: surface == 2));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
         if (surface == 0)
         {
             await Assert.That(async () => await client.Streams.AcknowledgeAsync("events", "workers", []))
@@ -116,10 +139,19 @@ public class DeferredStreamCommandTests
             await using var transaction = surface == 2 ? client.CreateTransaction() : null;
             IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
             var acknowledged = queue.Streams.Acknowledge("events", "workers", []);
-            if (transaction is not null) await transaction.CommitAsync();
-            else await Assert.That(async () => await batch!.ExecuteAsync()).Throws<RespireServerException>();
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                await Assert.That(async () => await batch!.ExecuteAsync()).Throws<RespireServerException>();
+            }
+
             await Assert.That(() => acknowledged.Result).Throws<RespireServerException>();
         }
+
         await Assert.That(server.ReceivedCommands).Contains("XACK events workers");
     }
 
@@ -132,6 +164,7 @@ public class DeferredStreamCommandTests
         var view = client.WithKeyPrefix("tenant:");
         using var batch = view.CreateBatch();
         await using var transaction = view.CreateTransaction();
+
         foreach (var streams in new[] { batch.Streams, transaction.Streams })
         {
             await Assert.That(() => streams.Remove("{a}:events", [])).Throws<ArgumentException>();
@@ -139,6 +172,7 @@ public class DeferredStreamCommandTests
             await Assert.That(() => streams.Add("{a}:events", new RespireStreamAddOptions { MaxLength = -1 }, ("field", "value")))
                 .Throws<ArgumentOutOfRangeException>();
         }
+
         await Assert.That(batch.Count).IsEqualTo(0);
         await Assert.That(transaction.Count).IsEqualTo(0);
         _ = transaction.Set("{a}:state", "ready");
@@ -167,7 +201,9 @@ public class DeferredStreamCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
@@ -181,8 +217,16 @@ public class DeferredStreamCommandTests
         _ = queue.Streams.Remove("{foo}:events", "1-0");
         _ = queue.Streams.TrimByMaxLength("{foo}:events", 1);
         _ = queue.Streams.Acknowledge("{foo}:events", "workers", "1-0");
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         await Assert.That(added.Result.ToString()).IsEqualTo("1-0");
         await Assert.That(count.Result).IsEqualTo(1);
         await Assert.That(range.Result).IsEmpty();
@@ -193,12 +237,16 @@ public class DeferredStreamCommandTests
                 "XADD tenant:{foo}:events * value value", "XLEN tenant:{foo}:events", "XRANGE tenant:{foo}:events - +",
                 "XDEL tenant:{foo}:events 1-0", "XTRIM tenant:{foo}:events MAXLEN 1", "XACK tenant:{foo}:events workers 1-0",
             }, CollectionOrdering.Matching);
+
         if (otherCount is not null)
         {
             await Assert.That(otherCount.Result).IsEqualTo(9);
             await Assert.That(other.ReceivedCommands).IsEquivalentTo(new[] { "XLEN tenant:{bar}:events" });
         }
-        else await Assert.That(other.ReceivedCommands).IsEmpty();
+        else
+        {
+            await Assert.That(other.ReceivedCommands).IsEmpty();
+        }
     }
 
     private static byte[][] WrapReplies(byte[][] replies, bool transactional)

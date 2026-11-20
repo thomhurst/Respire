@@ -19,10 +19,14 @@ internal static class AllocationMeasurement
     {
         // This is a bounded GC reservation, not a permitted allocation threshold.
         if (!GC.TryStartNoGCRegion(NoGcReservationBytes))
+        {
             throw new InvalidOperationException("Could not establish the allocation measurement's no-GC region.");
+        }
+
         TResult result;
         InvalidOperationException? regionError = null;
         RegionSnapshot started = default, prepared = default, finished = default;
+
         try
         {
             // A deterministic interference seam for lifecycle regressions. The first
@@ -41,14 +45,21 @@ internal static class AllocationMeasurement
         finally
         {
             finished = RegionSnapshot.Capture();
-            try { GC.EndNoGCRegion(); }
+
+            try
+            {
+                GC.EndNoGCRegion();
+            }
             catch (InvalidOperationException error) { regionError = error; }
         }
         // Preserve a measurement exception; otherwise surface failed region cleanup.
         if (regionError is not null)
+        {
             throw new InvalidOperationException($"The allocation measurement's no-GC region was not retained. " +
                 $"Reservation={NoGcReservationBytes}; preparation: {prepared.DescribeSince(started)}; " +
                 $"measurement: {finished.DescribeSince(prepared)}.", regionError);
+        }
+
         return result;
     }
 

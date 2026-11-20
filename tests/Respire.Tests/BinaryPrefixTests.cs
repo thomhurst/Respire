@@ -19,10 +19,16 @@ public class BinaryPrefixTests
         await using var root = await FakeRespServer.ConnectClientAsync(server.Port);
         byte[] prefix = [255, 0];
         var view = root.WithKeyPrefix((RespireKey)prefix);
+
         if (counted)
+        {
             await Assert.That(await view.Lists.PopManyAsync(["one", "two"], waitFor: TimeSpan.FromMilliseconds(1))).IsNull();
+        }
         else
+        {
             await Assert.That(await view.Lists.PopAsync(["one", "two"], TimeSpan.FromMilliseconds(1))).IsNull();
+        }
+
         var received = server.ReceivedArguments.Single();
         var firstKey = counted ? 3 : 1;
         await Assert.That(received[firstKey].SequenceEqual(prefix.Concat("one"u8.ToArray()))).IsTrue();
@@ -66,9 +72,13 @@ public class BinaryPrefixTests
         await Assert.That(received[3].SequenceEqual(prefix.Concat("weight:*"u8.ToArray()))).IsTrue();
         await Assert.That(received[5].SequenceEqual(prefix.Concat("value:*"u8.ToArray()))).IsTrue();
         await Assert.That(received[7].AsSpan().SequenceEqual("#"u8)).IsTrue();
+
         foreach (var unsafeBytes in new byte[][] { [255, (byte)'*'], [255, (byte)'-', (byte)'>'], [255, 0] })
+        {
             await Assert.That(async () => await root.WithKeyPrefix((RespireKey)unsafeBytes).Keys.SortAsync("list", new() { By = "weight:*" }))
                 .Throws<NotSupportedException>();
+        }
+
         await Assert.That(server.ReceivedArguments.Count).IsEqualTo(1);
     }
 
@@ -78,7 +88,9 @@ public class BinaryPrefixTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], ReplicaEndpoints = [new("127.0.0.1", 2)], ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", 1)],
+            ReplicaEndpoints = [new("127.0.0.1", 2)],
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var view = (RespireClient)root.WithKeyPrefix((RespireKey)new byte[] { 255, 0 });
@@ -108,7 +120,9 @@ public class BinaryPrefixTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -156,7 +170,12 @@ public class BinaryPrefixTests
             ("MIGRATE", ["host", 6379, "", 0, 1000, "KEYS", "one", "two"], [6, 7], false),
         ];
         var unsupportedDeferred = cases.Where(item => !item.Deferred).ToArray();
-        if (mode != 0) cases = cases.Where(item => item.Deferred).ToArray();
+
+        if (mode != 0)
+        {
+            cases = cases.Where(item => item.Deferred).ToArray();
+        }
+
         byte[][] replies = mode == 2
             ? [FakeRespServer.OkReply, .. cases.Select(_ => "+QUEUED\r\n"u8.ToArray()),
                 Encoding.ASCII.GetBytes($"*{cases.Length}\r\n" + string.Concat(cases.Select(_ => "+OK\r\n")))]
@@ -168,37 +187,72 @@ public class BinaryPrefixTests
         using var batch = mode == 1 ? view.CreateBatch() : null;
         await using var transaction = mode == 2 ? view.CreateTransaction() : null;
         IRespireCommandQueue? queue = transaction ?? (IRespireCommandQueue?)batch;
+
         if (queue is not null)
+        {
             foreach (var item in unsupportedDeferred)
+            {
                 await Assert.That(() => queue.Execute(item.Operation, item.Args)).Throws<NotSupportedException>();
+            }
+        }
+
         var pending = new List<RespirePending<RespireResult>>();
+
         foreach (var item in cases)
         {
-            if (queue is null) { using var result = await view.ExecuteAsync((RespireCommand)item.Operation, item.Args); }
-            else pending.Add(queue.Execute(item.Operation, item.Args));
+            if (queue is null)
+            {
+                using var result = await view.ExecuteAsync((RespireCommand)item.Operation, item.Args);
+            }
+            else
+            {
+                pending.Add(queue.Execute(item.Operation, item.Args));
+            }
         }
-        if (batch is not null) await batch.ExecuteAsync();
-        if (transaction is not null) await transaction.CommitAsync();
-        foreach (var result in pending) result.Result.Dispose();
+
+        if (batch is not null)
+        {
+            await batch.ExecuteAsync();
+        }
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+
+        foreach (var result in pending)
+        {
+            result.Result.Dispose();
+        }
+
         var received = server.ReceivedArguments.Where(args => !args[0].AsSpan().SequenceEqual("MULTI"u8)
             && !args[0].AsSpan().SequenceEqual("EXEC"u8)).ToArray();
         await Assert.That(received.Length).IsEqualTo(cases.Length);
+
         for (var index = 0; index < cases.Length; index++)
         {
             var item = cases[index];
             var words = item.Operation.Split(' ');
             await Assert.That(received[index].Length).IsEqualTo(words.Length + item.Args.Length);
+
             for (var argument = 0; argument < item.Args.Length; argument++)
             {
                 var expected = item.Args[argument].AsKey().ToBytes();
                 // Immediate caller-supplied core commands retain physical arguments. Known
                 // module layouts and supported deferred layouts apply the view's prefix.
                 if (item.Keys.Contains(argument) && (mode != 0 || item.Operation.Contains('.')))
+                {
                     expected = [.. prefix, .. expected];
+                }
+
                 await Assert.That(received[index][words.Length + argument].SequenceEqual(expected)).IsTrue();
             }
         }
-        await Assert.That(async () => { using var result = await view.ExecuteAsync(RespireCommands.String.MGET, "key"); })
+
+        await Assert.That(async () =>
+            {
+                using var result = await view.ExecuteAsync(RespireCommands.String.MGET, "key");
+            })
             .Throws<NotSupportedException>();
     }
 
@@ -212,7 +266,12 @@ public class BinaryPrefixTests
         await using var server = new FakeRespServer(response);
         await using var root = await FakeRespServer.ConnectClientAsync(server.Port);
         var keys = new List<string>();
-        await foreach (var key in root.WithKeyPrefix((RespireKey)prefix).Keys.ScanAsync()) keys.Add(key);
+
+        await foreach (var key in root.WithKeyPrefix((RespireKey)prefix).Keys.ScanAsync())
+        {
+            keys.Add(key);
+        }
+
         await Assert.That(keys).IsEquivalentTo(["visible"]);
         await Assert.That(server.ReceivedArguments[0][3].SequenceEqual(new byte[] { 255, (byte)'\\', (byte)'*', 0, (byte)'*' })).IsTrue();
     }
@@ -228,7 +287,12 @@ public class BinaryPrefixTests
         await using var root = await FakeRespServer.ConnectClientAsync(server.Port);
         var view = root.WithKeyPrefix((RespireKey)"\uD800");
         var keys = new List<string>();
-        await foreach (var key in view.Keys.ScanAsync("\uDC00*")) keys.Add(key);
+
+        await foreach (var key in view.Keys.ScanAsync("\uDC00*"))
+        {
+            keys.Add(key);
+        }
+
         await Assert.That(keys).IsEquivalentTo(["\uDC00key"]);
         await Assert.That(view.ResolveKey(keys[0]).ToBytes().SequenceEqual(physical)).IsTrue();
     }

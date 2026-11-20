@@ -39,11 +39,14 @@ public class ConnectionFactoryTests
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         var options = new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp2,
             ClientName = "write-through",
             ConnectionFactory = async (endpoint, token) =>
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(endpoint.Host, endpoint.Port, token);
@@ -64,30 +67,43 @@ public class ConnectionFactoryTests
     private sealed class WriteThroughStream(Socket socket) : NetworkStream(socket, ownsSocket: true)
     {
         public override void Flush() => throw new InvalidOperationException("Write-through streams need no flush.");
+
         public override Task FlushAsync(CancellationToken cancellationToken)
             => throw new InvalidOperationException("Write-through streams need no flush.");
     }
 
     private sealed class DisposalStream(bool disposalFails) : MemoryStream
     {
-        internal bool DisposedAsync { get; private set; }
+        internal bool DisposedAsync
+        {
+            get; private set;
+        }
 
         public override async ValueTask DisposeAsync()
         {
             DisposedAsync = true;
             await base.DisposeAsync();
-            if (disposalFails) throw new IOException("Stream cleanup failed.");
+
+            if (disposalFails)
+            {
+                throw new IOException("Stream cleanup failed.");
+            }
         }
     }
 
     private sealed class ConnectedFailureLogger(Exception error) : ILogger
     {
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (eventId.Name == "ConnectionConnected") throw error;
+            if (eventId.Name == "ConnectionConnected")
+            {
+                throw error;
+            }
         }
     }
 
@@ -100,10 +116,13 @@ public class ConnectionFactoryTests
 #pragma warning disable RESP010 // Test-owned client makes live connection metric registration and disposal observable.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp2,
             ConnectionFactory = async (endpoint, token) =>
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(endpoint.Host, endpoint.Port, token);
@@ -119,14 +138,20 @@ public class ConnectionFactoryTests
         listener.InstrumentPublished = (instrument, capture) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.connection.count")
+            {
                 capture.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
             foreach (var tag in tags)
+            {
                 if (tag.Key == "db.client.connection.pool.name" && tag.Value is string name
                     && (name.StartsWith(poolPrefix, StringComparison.Ordinal) || name.StartsWith("overflow/", StringComparison.Ordinal)))
+                {
                     connections += value;
+                }
+            }
         });
         listener.Start();
         listener.RecordObservableInstruments();
@@ -153,7 +178,10 @@ public class ConnectionFactoryTests
             ConnectionFactory = (endpoint, token) =>
             {
                 if (endpoint != options.Endpoints[0] || !token.CanBeCanceled)
+                {
                     throw new InvalidOperationException("Factory lost the destination or deadline.");
+                }
+
                 Interlocked.Increment(ref opened);
                 return factory(endpoint, token);
             },
@@ -175,11 +203,20 @@ public class ConnectionFactoryTests
     public async Task InvalidFactoryStreamIsRejectedAndDisposed(string kind)
     {
         var stream = kind == "null" ? null : new MemoryStream([], writable: false);
-        if (kind == "closed") stream!.Dispose();
+
+        if (kind == "closed")
+        {
+            stream!.Dispose();
+        }
+
         var options = new RespireOptions { ConnectionFactory = (_, _) => ValueTask.FromResult<Stream>(stream!) };
         await Assert.That(async () => await RespireConnection.ConnectAsync("custom", 6379, options.ToConnectionOptions()))
             .Throws<InvalidOperationException>();
-        if (stream is not null) await Assert.That(stream.CanRead).IsFalse();
+
+        if (stream is not null)
+        {
+            await Assert.That(stream.CanRead).IsFalse();
+        }
     }
 
     [Test]
@@ -190,7 +227,11 @@ public class ConnectionFactoryTests
         var calls = 0;
         var options = new RespireOptions
         {
-            ConnectionFactory = (_, _) => { calls++; throw new IOException("Must not run."); },
+            ConnectionFactory = (_, _) =>
+            {
+                calls++;
+                throw new IOException("Must not run.");
+            },
         };
         var error = await Assert.That(async () => await RespireConnection.ConnectAsync("custom", 6379,
             options.ToConnectionOptions(), cancellationToken: cancellation.Token)).Throws<OperationCanceledException>();
@@ -214,6 +255,7 @@ public class ConnectionFactoryTests
             ConnectionFactory = async (endpoint, token) =>
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port, token);
@@ -227,6 +269,7 @@ public class ConnectionFactoryTests
         using var peer = await listener.AcceptSocketAsync(cancellation.Token);
         // A TLS ClientHello proves factory acquisition finished before we cancel or expire TLS.
         await peer.ReceiveAsync(new byte[4096], SocketFlags.None, cancellation.Token);
+
         if (callerCancellation)
         {
             cancellation.Cancel();
@@ -239,6 +282,7 @@ public class ConnectionFactoryTests
             await Assert.That(error!.CommandName).IsEqualTo("CONNECT");
             await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(new RespireEndpoint("redis.internal", 6379));
         }
+
         await Assert.That(stream!.CanRead).IsFalse();
     }
 
@@ -254,10 +298,12 @@ public class ConnectionFactoryTests
         NetworkStream? stream = null;
         var options = new RespireOptions
         {
-            UseTls = true, TlsOptions = new() { RemoteCertificateValidationCallback = (_, _, _, _) => false },
+            UseTls = true,
+            TlsOptions = new() { RemoteCertificateValidationCallback = (_, _, _, _) => false },
             ConnectionFactory = async (_, token) =>
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port, token);
@@ -276,11 +322,16 @@ public class ConnectionFactoryTests
         {
             using var socket = await listener.AcceptSocketAsync(cancellation.Token);
             await using var tls = new SslStream(new NetworkStream(socket, ownsSocket: false));
+
             try
             {
                 await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
                 {
-                    ServerCertificateSelectionCallback = (_, host) => { targetHost = host; return certificate; },
+                    ServerCertificateSelectionCallback = (_, host) =>
+                    {
+                        targetHost = host;
+                        return certificate;
+                    },
                 }, cancellation.Token);
                 await Assert.That(await tls.ReadAsync(new byte[1], cancellation.Token)).IsEqualTo(0);
             }

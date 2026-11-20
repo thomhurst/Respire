@@ -10,13 +10,28 @@ public sealed class RespireQueueMessage<T>
         => (Id, Payload, DeliveryCount, Receipt) = (id, payload, deliveryCount, receipt);
 
     /// <summary>The stable stream entry ID across deliveries.</summary>
-    public RespireStreamId Id { get; }
+    public RespireStreamId Id
+    {
+        get;
+    }
+
     /// <summary>The deserialized message body.</summary>
-    public T Payload { get; }
+    public T Payload
+    {
+        get;
+    }
+
     /// <summary>The number of deliveries, including this one.</summary>
-    public int DeliveryCount { get; }
+    public int DeliveryCount
+    {
+        get;
+    }
+
     /// <summary>An opaque token valid only for this delivery and queue.</summary>
-    public string Receipt { get; }
+    public string Receipt
+    {
+        get;
+    }
 }
 
 /// <summary>A typed, at-least-once message queue with scheduled sends, visibility leases, delayed rejection and dead letters.</summary>
@@ -40,8 +55,12 @@ public sealed class RespireReliableQueue<T>
         ArgumentNullException.ThrowIfNull(serialize);
         ArgumentNullException.ThrowIfNull(deserialize);
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+
         if (queueName.Contains('{') || queueName.Contains('}'))
+        {
             throw new ArgumentException("Queue names cannot contain braces.", nameof(queueName));
+        }
+
         _ = StrictUtf8.GetByteCount(queueName);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(deliveryLimit);
         StreamKey = "{respire-queue:" + queueName + "}:ready";
@@ -53,9 +72,16 @@ public sealed class RespireReliableQueue<T>
     }
 
     /// <summary>The queue's stream key, before any client key prefix.</summary>
-    public string StreamKey { get; }
+    public string StreamKey
+    {
+        get;
+    }
+
     /// <summary>The retained dead-letter stream. Entries contain payload, source_id and delivery_count fields.</summary>
-    public string DeadLetterStreamKey { get; }
+    public string DeadLetterStreamKey
+    {
+        get;
+    }
 
     /// <summary>Sends a message, optionally deduplicating by application ID for a window (default one day).</summary>
     /// <remarks>Duplicates return the first entry ID without replacing its payload or extending the window,
@@ -64,7 +90,11 @@ public sealed class RespireReliableQueue<T>
     public async ValueTask<RespireStreamId> SendAsync(T payload, string? deduplicationId = null,
         TimeSpan? deduplicationWindow = null, CancellationToken cancellationToken = default)
     {
-        if (deduplicationId is not null) ArgumentException.ThrowIfNullOrWhiteSpace(deduplicationId);
+        if (deduplicationId is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(deduplicationId);
+        }
+
         var window = deduplicationWindow ?? TimeSpan.FromDays(1);
         JobQueueScheduling.ValidateDuration(window, nameof(deduplicationWindow));
         cancellationToken.ThrowIfCancellationRequested();
@@ -114,15 +144,24 @@ public sealed class RespireReliableQueue<T>
         CancellationToken cancellationToken = default)
     {
         JobQueueScheduling.ValidateDuration(visibilityTimeout, nameof(visibilityTimeout));
-        if (max is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(max));
+
+        if (max is < 1 or > 1000)
+        {
+            throw new ArgumentOutOfRangeException(nameof(max));
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
         var receipt = Guid.NewGuid().ToString("N");
         using var reply = await _client.Scripts.ExecuteAsync(ReliableQueueScripts.Receive, [.. _keys],
             [(long)Math.Ceiling(visibilityTimeout.TotalMilliseconds), max, _deliveryLimit, receipt], cancellationToken).ConfigureAwait(false);
         var messages = new RespireQueueMessage<T>[reply.Count];
+
         for (var i = 0; i < messages.Length; i++)
+        {
             messages[i] = new(new(reply[i][0].AsString()), _deserialize(reply[i][1].AsBytes()),
                 checked((int)reply[i][2].AsInteger()), receipt);
+        }
+
         return messages;
     }
 

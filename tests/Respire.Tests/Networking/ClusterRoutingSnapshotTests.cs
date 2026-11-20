@@ -1,5 +1,5 @@
-using System.Runtime.CompilerServices;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Respire.Infrastructure;
 using Respire.Internal;
 using TUnit.Assertions;
@@ -19,16 +19,19 @@ public class ClusterRoutingSnapshotTests
         AssertMatchesFullRebuild(router);
         var target = router.GetMultiplexer(new("localhost", 6381));
         int[] slots = [0, 255, 256, 511, 512, 16383];
+
         foreach (var slot in slots)
         {
             router.SetSlotOwner(slot, target);
             AssertMatchesFullRebuild(router);
         }
+
         foreach (var slot in slots)
         {
             router.ClearSlotOwner(slot, target);
             AssertMatchesFullRebuild(router);
         }
+
         router.ApplyTopology(Topology(6382, 6383), router.TopologyVersion, 2);
         AssertMatchesFullRebuild(router);
     }
@@ -37,7 +40,9 @@ public class ClusterRoutingSnapshotTests
     private static void AssertMatchesFullRebuild(ClusterRouter router)
     {
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+
         object Field(string name) => typeof(ClusterRouter).GetField(name, flags)!.GetValue(router)!;
+
         lock (Field("_nodesGate"))
         {
             var owners = (RespireConnectionMultiplexer?[])Field("_slots");
@@ -46,9 +51,14 @@ public class ClusterRoutingSnapshotTests
             var rebuilt = ClusterRoutingSnapshot.Empty.Publish(owners, routes, ulong.MaxValue,
                 published.Masters, published.ReplicaNodes, published.Replicas,
                 published.MasterSlotCounts.ToArray(), published.IsComplete);
+
             for (var slot = 0; slot < ClusterHash.SlotCount; slot++)
+            {
                 if (published[slot] != rebuilt[slot])
+                {
                     throw new InvalidOperationException($"Incremental publication differs from staging at slot {slot}.");
+                }
+            }
         }
     }
 
@@ -94,6 +104,7 @@ public class ClusterRoutingSnapshotTests
     private static long MeasureSelection(ClusterRouter router, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
             var route = router.RoutingSnapshot[index];
@@ -101,8 +112,13 @@ public class ClusterRoutingSnapshotTests
             var selector = new ClusterReplicaSelector(route.Replicas!);
             selector.TryNext(out var replica);
             GC.KeepAlive(replica);
-            if (allocate) GC.KeepAlive(AllocateControl());
+
+            if (allocate)
+            {
+                GC.KeepAlive(AllocateControl());
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -182,23 +198,36 @@ public class ClusterRoutingSnapshotTests
         {
             int[] slots = [0, 255, 256, 16383];
             var samples = 0;
+
             while (!stop.IsCancellationRequested)
             {
                 var snapshot = router.RoutingSnapshot;
+
                 foreach (var slot in slots)
                 {
                     var route = snapshot[slot];
+
                     if (route.Primary!.Port + 1 != route.Replicas!.Nodes[0].Port)
+                    {
                         throw new InvalidOperationException("Mixed topology publication.");
+                    }
                 }
+
                 samples++;
-                if (samples == 1) started.SetResult();
+
+                if (samples == 1)
+                {
+                    started.SetResult();
+                }
             }
+
             return samples;
         });
+
         try
         {
             await started.Task;
+
             for (var generation = 2; generation <= 100; generation++)
             {
                 var primary = generation % 2 == 0 ? 6381 : 6379;
@@ -206,6 +235,7 @@ public class ClusterRoutingSnapshotTests
             }
         }
         finally { stop.Cancel(); }
+
         await Assert.That(await reader).IsGreaterThan(0);
     }
 }

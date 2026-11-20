@@ -26,6 +26,7 @@ public class ConnectionContentionBenchmarks
         var host = Environment.GetEnvironmentVariable("REDIS_HOST");
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort)
             ? configuredPort : 6379;
+
         if (string.IsNullOrEmpty(host))
         {
             _container = new RedisBuilder("redis:8.10").Build();
@@ -33,15 +34,26 @@ public class ConnectionContentionBenchmarks
             host = _container.Hostname;
             port = _container.GetMappedPublicPort(6379);
         }
+
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new RespireEndpoint(host, port) }, Connections = 1, Protocol = RespireProtocol.Resp2,
+            Endpoints = { new RespireEndpoint(host, port) },
+            Connections = 1,
+            Protocol = RespireProtocol.Resp2,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
-        if (!await _client.SetAsync(_key, _value)) throw new InvalidOperationException("Seed SET failed.");
+
+        if (!await _client.SetAsync(_key, _value))
+        {
+            throw new InvalidOperationException("Seed SET failed.");
+        }
+
         if (await GetPipeline() != PipelineLength * "benchmark-value".Length
             || await ConcurrentGetPipelines() != Concurrency * PipelineLength * "benchmark-value".Length)
+        {
             throw new InvalidOperationException("GET pipelines lost replies.");
+        }
+
         await ReportConcurrentProcessCpuAsync();
     }
 
@@ -50,17 +62,25 @@ public class ConnectionContentionBenchmarks
         // Keep CPU instrumentation outside BDN's timed methods. Both pinned revisions run
         // this same bounded c=50 workload, including all client background threads but not Redis.
         var warmup = Stopwatch.StartNew();
-        while (warmup.Elapsed < TimeSpan.FromSeconds(2)) await ConcurrentGetPipelines();
+
+        while (warmup.Elapsed < TimeSpan.FromSeconds(2))
+        {
+            await ConcurrentGetPipelines();
+        }
 
         using var process = Process.GetCurrentProcess();
         process.Refresh();
         var cpuAt = process.TotalProcessorTime;
         var startedAt = Stopwatch.GetTimestamp();
         long operations = 0;
+
         do
         {
             if (await ConcurrentGetPipelines() != Concurrency * PipelineLength * "benchmark-value".Length)
+            {
                 throw new InvalidOperationException("CPU stress lost replies.");
+            }
+
             operations += Concurrency * PipelineLength;
         } while (Stopwatch.GetElapsedTime(startedAt) < TimeSpan.FromSeconds(5));
 
@@ -69,7 +89,10 @@ public class ConnectionContentionBenchmarks
         var elapsedSeconds = Stopwatch.GetElapsedTime(startedAt).TotalSeconds;
         Console.WriteLine("CONNECTION_CONTENTION_CPU " + JsonSerializer.Serialize(new
         {
-            concurrency = Concurrency, operations, cpuMilliseconds, elapsedSeconds,
+            concurrency = Concurrency,
+            operations,
+            cpuMilliseconds,
+            elapsedSeconds,
         }));
     }
 
@@ -84,6 +107,7 @@ public class ConnectionContentionBenchmarks
             var worker = i;
             _workers[i] = Task.Run(() => RunPipeline(worker).AsTask());
         }
+
         var lengths = await Task.WhenAll(_workers);
         return lengths.Sum();
     }
@@ -93,21 +117,39 @@ public class ConnectionContentionBenchmarks
         var pending = _pending[worker];
         // Issue 200 real public commands before awaiting any reply. These loops
         // describe application pipelining, not amplification of a synthetic operation.
-        for (var i = 0; i < PipelineLength; i++) pending[i] = _client.GetStringAsync(_key);
+        for (var i = 0; i < PipelineLength; i++)
+        {
+            pending[i] = _client.GetStringAsync(_key);
+        }
+
         long length = 0;
+
         for (var i = 0; i < PipelineLength; i++)
         {
             var value = await pending[i];
-            if (value != "benchmark-value") throw new InvalidOperationException("Unexpected GET reply.");
+
+            if (value != "benchmark-value")
+            {
+                throw new InvalidOperationException("Unexpected GET reply.");
+            }
+
             length += value.Length;
         }
+
         return length;
     }
 
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_client is not null) await _client.DisposeAsync();
-        if (_container is not null) await _container.DisposeAsync();
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+        }
+
+        if (_container is not null)
+        {
+            await _container.DisposeAsync();
+        }
     }
 }

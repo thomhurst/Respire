@@ -27,15 +27,21 @@ public partial class SentinelIdentityTests
         var handshake = Path.Combine(Path.GetTempPath(), $"respire-sentinel-{Guid.NewGuid():N}");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var collected = false;
+
         async Task CollectWhenChildRegionIsOpen()
         {
-            while (!File.Exists(handshake + ".ready")) await Task.Delay(10, deadline.Token);
+            while (!File.Exists(handshake + ".ready"))
+            {
+                await Task.Delay(10, deadline.Token);
+            }
+
             GC.Collect(2, GCCollectionMode.Forced, blocking: true);
             collected = true;
             await File.WriteAllTextAsync(handshake + ".continue", "", deadline.Token);
         }
 
         var activity = CollectWhenChildRegionIsOpen();
+
         try
         {
             await RunMatchingProbeAsync("normal", handshake);
@@ -45,8 +51,13 @@ public partial class SentinelIdentityTests
         finally
         {
             deadline.Cancel();
-            try { await activity; }
+
+            try
+            {
+                await activity;
+            }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+
             File.Delete(handshake + ".ready");
             File.Delete(handshake + ".continue");
         }
@@ -58,18 +69,31 @@ public partial class SentinelIdentityTests
             Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(SentinelIdentityTests).Assembly.Location);
         start.Environment[MatchingProbeMode] = mode;
         start.Environment[MatchingProbeRuntime] = Environment.Version.ToString();
-        if (handshake is not null) start.Environment[MatchingProbeHandshake] = handshake;
+
+        if (handshake is not null)
+        {
+            start.Environment[MatchingProbeHandshake] = handshake;
+        }
+
         await AsyncFlushSignalTests.RunProbeAsync(start, TimeSpan.FromSeconds(30));
     }
 
     internal static int? RunIsolatedAllocationProbe()
     {
         var mode = Environment.GetEnvironmentVariable(MatchingProbeMode);
-        if (mode is null) return null;
+
+        if (mode is null)
+        {
+            return null;
+        }
+
         try
         {
             if (Environment.GetEnvironmentVariable(MatchingProbeRuntime) != Environment.Version.ToString())
+            {
                 throw new InvalidOperationException("Sentinel matching probe runtime differs from parent.");
+            }
+
             MeasureNormalizedEvidence(mode, Environment.GetEnvironmentVariable(MatchingProbeHandshake));
             return 0;
         }

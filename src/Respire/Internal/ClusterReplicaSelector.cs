@@ -24,7 +24,11 @@ internal struct ClusterReplicaSelector
         while (_offset < _nodes.Length)
         {
             node = _nodes[(_start + _offset++) % _nodes.Length];
-            if (!node.IsRetired) return true;
+
+            if (!node.IsRetired)
+            {
+                return true;
+            }
         }
 
         node = null!;

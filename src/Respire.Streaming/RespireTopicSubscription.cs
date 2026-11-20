@@ -9,13 +9,28 @@ public sealed class RespireTopicMessage<T>
         => (Id, Payload, DeliveryCount, Receipt) = (id, payload, deliveryCount, receipt);
 
     /// <summary>The retained source entry ID.</summary>
-    public RespireStreamId Id { get; }
+    public RespireStreamId Id
+    {
+        get;
+    }
+
     /// <summary>The deserialized body.</summary>
-    public T Payload { get; }
+    public T Payload
+    {
+        get;
+    }
+
     /// <summary>The number of deliveries to this subscription, including this one.</summary>
-    public int DeliveryCount { get; }
+    public int DeliveryCount
+    {
+        get;
+    }
+
     /// <summary>An opaque token valid only for this delivery and subscription.</summary>
-    public string Receipt { get; }
+    public string Receipt
+    {
+        get;
+    }
 }
 
 /// <summary>A named consumer group with visibility leases, delayed rejection, replay, and dead letters.</summary>
@@ -39,11 +54,22 @@ public sealed class RespireTopicSubscription<T>
     }
 
     /// <summary>The server consumer group name.</summary>
-    public string Name { get; }
+    public string Name
+    {
+        get;
+    }
+
     /// <summary>The retained source stream, before any client key prefix.</summary>
-    public string StreamKey { get; }
+    public string StreamKey
+    {
+        get;
+    }
+
     /// <summary>This subscription's dead-letter stream, with payload, source_id, delivery_count and subscription fields.</summary>
-    public string DeadLetterStreamKey { get; }
+    public string DeadLetterStreamKey
+    {
+        get;
+    }
 
     /// <summary>Receives up to max messages, recovering expired deliveries before reading new entries.</summary>
     /// <remarks>Max is 1 through 1000. A codec error or lost response leaves messages leased until expiry.
@@ -52,16 +78,25 @@ public sealed class RespireTopicSubscription<T>
         CancellationToken cancellationToken = default)
     {
         JobQueueScheduling.ValidateDuration(visibilityTimeout, nameof(visibilityTimeout));
-        if (max is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(max));
+
+        if (max is < 1 or > 1000)
+        {
+            throw new ArgumentOutOfRangeException(nameof(max));
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
         var receipt = Guid.NewGuid().ToString("N");
         using var reply = await _client.Scripts.ExecuteAsync(ReliableTopicScripts.Receive, _keys,
             [Name, (long)Math.Ceiling(visibilityTimeout.TotalMilliseconds), max, _deliveryLimit, receipt],
             cancellationToken).ConfigureAwait(false);
         var messages = new RespireTopicMessage<T>[reply.Count];
+
         for (var i = 0; i < messages.Length; i++)
+        {
             messages[i] = new(new(reply[i][0].AsString()), _deserialize(reply[i][1].AsBytes()),
                 checked((int)reply[i][2].AsInteger()), receipt);
+        }
+
         return messages;
     }
 
@@ -98,15 +133,21 @@ public sealed class RespireTopicSubscription<T>
         var interval = pollInterval ?? TimeSpan.FromMilliseconds(100);
         JobQueueScheduling.ValidateDuration(interval, nameof(pollInterval));
         interval = TimeSpan.FromMilliseconds(Math.Ceiling(interval.TotalMilliseconds));
+
         while (true)
         {
             var messages = await ReceiveAsync(visibilityTimeout, batchSize, cancellationToken).ConfigureAwait(false);
+
             foreach (var message in messages)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 yield return message;
             }
-            if (messages.Length == 0) await Task.Delay(interval, cancellationToken).ConfigureAwait(false);
+
+            if (messages.Length == 0)
+            {
+                await Task.Delay(interval, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 

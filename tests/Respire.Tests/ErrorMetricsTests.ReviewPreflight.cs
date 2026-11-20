@@ -16,12 +16,13 @@ public partial class ErrorMetricsTests
         [Matrix(false, true)] bool enabled)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         await using var server = new FakeRespServer(4, ":123\r\n"u8.ToArray());
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             AllowAdmin = failure is not ("info-admin" or "evict" or "touch" or "pause-admin" or "unpause" or "unblock-admin"),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
@@ -33,23 +34,50 @@ public partial class ErrorMetricsTests
         {
             switch (failure)
             {
-                case "info-admin": await handle.SetInfoAsync(RespireClientInfoAttribute.LibraryName, "name"); break;
-                case "evict": await handle.SetNoEvictAsync(true); break;
-                case "touch": await handle.SetNoTouchAsync(true); break;
-                case "pause-admin": await handle.PauseClientsAsync(TimeSpan.Zero); break;
-                case "unpause": await handle.UnpauseClientsAsync(); break;
-                case "unblock-admin": await handle.UnblockClientAsync(123); break;
-                case "info-null": await handle.SetInfoAsync(RespireClientInfoAttribute.LibraryName, null!); break;
-                case "info-attribute": await handle.SetInfoAsync((RespireClientInfoAttribute)99, "name"); break;
-                case "pause-negative": await handle.PauseClientsAsync(TimeSpan.FromMilliseconds(-1)); break;
-                case "pause-fraction": await handle.PauseClientsAsync(TimeSpan.FromTicks(1)); break;
-                case "pause-mode": await handle.PauseClientsAsync(TimeSpan.Zero, (RespireClientPauseMode)99); break;
-                case "unblock-id": await handle.UnblockClientAsync(0); break;
-                default: await handle.UnblockClientAsync(123, (RespireClientUnblockMode)99); break;
+                case "info-admin":
+                    await handle.SetInfoAsync(RespireClientInfoAttribute.LibraryName, "name");
+                    break;
+                case "evict":
+                    await handle.SetNoEvictAsync(true);
+                    break;
+                case "touch":
+                    await handle.SetNoTouchAsync(true);
+                    break;
+                case "pause-admin":
+                    await handle.PauseClientsAsync(TimeSpan.Zero);
+                    break;
+                case "unpause":
+                    await handle.UnpauseClientsAsync();
+                    break;
+                case "unblock-admin":
+                    await handle.UnblockClientAsync(123);
+                    break;
+                case "info-null":
+                    await handle.SetInfoAsync(RespireClientInfoAttribute.LibraryName, null!);
+                    break;
+                case "info-attribute":
+                    await handle.SetInfoAsync((RespireClientInfoAttribute)99, "name");
+                    break;
+                case "pause-negative":
+                    await handle.PauseClientsAsync(TimeSpan.FromMilliseconds(-1));
+                    break;
+                case "pause-fraction":
+                    await handle.PauseClientsAsync(TimeSpan.FromTicks(1));
+                    break;
+                case "pause-mode":
+                    await handle.PauseClientsAsync(TimeSpan.Zero, (RespireClientPauseMode)99);
+                    break;
+                case "unblock-id":
+                    await handle.UnblockClientAsync(0);
+                    break;
+                default:
+                    await handle.UnblockClientAsync(123, (RespireClientUnblockMode)99);
+                    break;
             }
         }).Throws<Exception>();
         await Assert.That(server.CommandsSeen).IsEqualTo(commandsBefore);
         await Assert.That(capture.Items.Count).IsEqualTo(enabled ? 1 : 0);
+
         if (enabled)
         {
             var final = capture.Items.Single();
@@ -76,25 +104,44 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var handle = await client.Server.GetClientConnectionAsync();
         using var capture = new Capture(throwOnMeasurement: true);
+
         async Task Execute()
         {
             switch (operation)
             {
-                case "info": await handle.SetInfoAsync(RespireClientInfoAttribute.LibraryName, "name"); break;
-                case "evict": await handle.SetNoEvictAsync(true); break;
-                case "touch": await handle.SetNoTouchAsync(true); break;
-                case "pause": await handle.PauseClientsAsync(TimeSpan.Zero); break;
-                case "unpause": await handle.UnpauseClientsAsync(); break;
-                default: await Assert.That(await handle.UnblockClientAsync(123)).IsTrue(); break;
+                case "info":
+                    await handle.SetInfoAsync(RespireClientInfoAttribute.LibraryName, "name");
+                    break;
+                case "evict":
+                    await handle.SetNoEvictAsync(true);
+                    break;
+                case "touch":
+                    await handle.SetNoTouchAsync(true);
+                    break;
+                case "pause":
+                    await handle.PauseClientsAsync(TimeSpan.Zero);
+                    break;
+                case "unpause":
+                    await handle.UnpauseClientsAsync();
+                    break;
+                default:
+                    await Assert.That(await handle.UnblockClientAsync(123)).IsTrue();
+                    break;
             }
         }
-        if (response == "success") await Execute();
+
+        if (response == "success")
+        {
+            await Execute();
+        }
         else
         {
             var error = await Assert.That(Execute).Throws<Exception>();
@@ -103,6 +150,7 @@ public partial class ErrorMetricsTests
             await Assert.That(final.Tags["error.type"]).IsEqualTo(error!.GetType().FullName);
             await Assert.That(final.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
         }
+
         await Assert.That(capture.Items.Count).IsEqualTo(response == "success" ? 0 : 1);
     }
 
@@ -117,7 +165,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = failure != "admin",
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            AllowAdmin = failure != "admin",
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -149,8 +199,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, Connections = 1, ClientSideCache = new(),
-            UseCluster = cluster, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp3,
+            Connections = 1,
+            ClientSideCache = new(),
+            UseCluster = cluster,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -158,12 +211,22 @@ public partial class ErrorMetricsTests
         using var capture = new Capture(throwOnMeasurement: true, onMeasurement: item =>
         {
             if (!(bool)item.Tags["redis.client.errors.internal"]!)
+            {
                 mutationsAtFinal = client.Core.ClientCache!.InspectForTests().ActiveMutationCount;
+            }
         });
         using var batch = client.CreateBatch();
         var pending = batch.Strings.Set("key", "value");
-        if (throwingExecute) await Assert.That(async () => await batch.ExecuteAsync()).Throws<RespireServerException>();
-        else await Assert.That((await batch.TryExecuteAsync()).Failures.Count).IsEqualTo(1);
+
+        if (throwingExecute)
+        {
+            await Assert.That(async () => await batch.ExecuteAsync()).Throws<RespireServerException>();
+        }
+        else
+        {
+            await Assert.That((await batch.TryExecuteAsync()).Failures.Count).IsEqualTo(1);
+        }
+
         await Assert.That(pending.Error).IsTypeOf<RespireServerException>();
         await Assert.That(mutationsAtFinal).IsEqualTo(0);
         await Assert.That(capture.Items.Count).IsEqualTo(1);
@@ -179,7 +242,9 @@ public partial class ErrorMetricsTests
         await using var second = new FakeRespServer(20, FakeRespServer.OkReply);
         var topology = NotificationTopology(first.Port);
         var descriptor = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
+
         foreach (var server in new[] { first, second })
+        {
             server.ReplyOverride = (_, command) => command switch
             {
                 "CLUSTER SLOTS" => Volatile.Read(ref topology),
@@ -190,15 +255,23 @@ public partial class ErrorMetricsTests
                     $"*3\r\n$11\r\nunsubscribe\r\n${descriptor.ToString().Length}\r\n{descriptor}\r\n:0\r\n"),
                 _ => null,
             };
+        }
+
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             ReconnectPolicy = new()
             {
-                MaxAttempts = attempts, InitialDelay = TimeSpan.FromMilliseconds(1),
-                MaxDelay = TimeSpan.FromMilliseconds(1), JitterRatio = 0,
-            }, Endpoints = [new("127.0.0.1", first.Port)],
+                MaxAttempts = attempts,
+                InitialDelay = TimeSpan.FromMilliseconds(1),
+                MaxDelay = TimeSpan.FromMilliseconds(1),
+                JitterRatio = 0,
+            },
+            Endpoints = [new("127.0.0.1", first.Port)],
         });
 #pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
@@ -208,6 +281,7 @@ public partial class ErrorMetricsTests
         await subscription.Completion.WaitAsync(TimeSpan.FromSeconds(10));
         var rejection = capture.Items.Where(item => item.Tags.GetValueOrDefault("db.response.status_code") is "NOPERM").ToArray();
         await Assert.That(rejection.Length).IsEqualTo(attempts);
+
         foreach (var item in rejection)
         {
             await Assert.That((bool)item.Tags["redis.client.errors.internal"]!).IsTrue();

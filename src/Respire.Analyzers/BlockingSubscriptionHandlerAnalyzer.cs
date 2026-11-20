@@ -18,7 +18,10 @@ public sealed class BlockingSubscriptionHandlerAnalyzer : DiagnosticAnalyzer
         description: "Blocking subscription consumers delays messages; blocking DeliveryGap handlers stalls the receive path.",
         helpLinkUri: "https://respire.tomlonghurst.dev/docs/diagnostics/RESP012");
 
-    public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule);
+    public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics
+    {
+        get;
+    } = ImmutableArray.Create(Rule);
 
     public override void Initialize(AnalysisContext context)
     {
@@ -40,12 +43,17 @@ public sealed class BlockingSubscriptionHandlerAnalyzer : DiagnosticAnalyzer
             case IForEachLoopOperation { IsAsynchronous: true } loop when IsMessageStream(loop.Collection.Type):
                 Inspect(context, loop.Body, reported);
                 break;
-            case IEventAssignmentOperation { Adds: true, EventReference: IEventReferenceOperation reference } assignment
-                when reference.Event.Name == "DeliveryGap"
+            case IEventAssignmentOperation { Adds: true, EventReference: IEventReferenceOperation reference } assignment when reference.Event.Name == "DeliveryGap"
                     && reference.Event.ContainingType.ToDisplayString() == "Respire.RespireSubscription":
                 var handler = assignment.HandlerValue;
-                while (handler is IDelegateCreationOperation creation) handler = creation.Target;
-                if (handler is IAnonymousFunctionOperation lambda) Inspect(context, lambda.Body, reported);
+                while (handler is IDelegateCreationOperation creation)
+                {
+                    handler = creation.Target;
+                }
+                if (handler is IAnonymousFunctionOperation lambda)
+                {
+                    Inspect(context, lambda.Body, reported);
+                }
                 else if (handler is IMethodReferenceOperation method)
                 {
                     foreach (var declaration in method.Method.DeclaringSyntaxReferences)
@@ -57,10 +65,13 @@ public sealed class BlockingSubscriptionHandlerAnalyzer : DiagnosticAnalyzer
                             LocalFunctionStatementSyntax f => (SyntaxNode?)f.Body ?? f.ExpressionBody?.Expression,
                             _ => null,
                         };
+
                         if (body is not null && context.Operation.SemanticModel is { } model
                             && body.SyntaxTree == model.SyntaxTree
                             && model.GetOperation(body, context.CancellationToken) is { } operation)
+                        {
                             Inspect(context, operation, reported);
+                        }
                     }
                 }
                 break;
@@ -69,8 +80,16 @@ public sealed class BlockingSubscriptionHandlerAnalyzer : DiagnosticAnalyzer
 
     private static bool IsMessageStream(ITypeSymbol? type)
     {
-        if (type is null) return false;
-        if (type.ToDisplayString() == "Respire.RespireSubscription") return true;
+        if (type is null)
+        {
+            return false;
+        }
+
+        if (type.ToDisplayString() == "Respire.RespireSubscription")
+        {
+            return true;
+        }
+
         return type is INamedTypeSymbol named && IsMessageEnumerable(named)
             || type is ITypeParameterSymbol parameter && parameter.ConstraintTypes
                 .OfType<INamedTypeSymbol>().Any(IsMessageEnumerable)
@@ -88,7 +107,11 @@ public sealed class BlockingSubscriptionHandlerAnalyzer : DiagnosticAnalyzer
     {
         context.CancellationToken.ThrowIfCancellationRequested();
         // Work scheduled in another delegate/local function does not block this consumer.
-        if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation or INameOfOperation) return;
+        if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation or INameOfOperation)
+        {
+            return;
+        }
+
         if (operation is IForEachLoopOperation { IsAsynchronous: true } loop && IsMessageStream(loop.Collection.Type))
         {
             // Collection setup runs inside this consumer; the nested action only inspects its body.
@@ -97,37 +120,63 @@ public sealed class BlockingSubscriptionHandlerAnalyzer : DiagnosticAnalyzer
         }
 
         string? blocking = null;
+
         if (SyncOverAsyncAnalyzer.GetAwaitable(operation) is not null)
+        {
             blocking = operation is IInvocationOperation call ? call.TargetMethod.Name : "Result";
+        }
         else if (operation is IInvocationOperation invocation)
         {
             var method = invocation.TargetMethod;
             var type = method.ContainingType.ToDisplayString();
+
             if ((type == "System.Threading.Thread" && method.Name is "Sleep" or "Join")
                 || (type == "System.Threading.Tasks.Task" && method.Name is "WaitAll" or "WaitAny")
                 || (type is "System.Threading.SemaphoreSlim" or "System.Threading.ManualResetEventSlim" && method.Name == "Wait")
                 || (type == "System.Threading.WaitHandle" && method.Name is "WaitOne" or "WaitAll" or "WaitAny"))
+            {
                 blocking = method.Name;
+            }
         }
 
         if (operation is IInvocationOperation timedWait && blocking is not null
             && timedWait.TargetMethod.Name != "Sleep" && HasZeroTimeout(timedWait))
+        {
             blocking = null;
+        }
 
         if (blocking is not null && reported.TryAdd(operation.Syntax.GetLocation(), 0))
+        {
             context.ReportDiagnostic(Diagnostic.Create(Rule, operation.Syntax.GetLocation(), blocking));
-        foreach (var child in operation.ChildOperations) Inspect(context, child, reported);
+        }
+
+        foreach (var child in operation.ChildOperations)
+        {
+            Inspect(context, child, reported);
+        }
     }
 
     private static bool HasZeroTimeout(IInvocationOperation call)
     {
         foreach (var argument in call.Arguments)
         {
-            if (argument.Parameter?.Name is not ("millisecondsTimeout" or "timeout")) continue;
-            if (argument.Value.ConstantValue is { HasValue: true, Value: 0 }) return true;
+            if (argument.Parameter?.Name is not ("millisecondsTimeout" or "timeout"))
+            {
+                continue;
+            }
+
+            if (argument.Value.ConstantValue is { HasValue: true, Value: 0 })
+            {
+                return true;
+            }
+
             if (argument.Value is IFieldReferenceOperation { Field.Name: "Zero" } field
-                && field.Field.ContainingType.ToDisplayString() == "System.TimeSpan") return true;
+                && field.Field.ContainingType.ToDisplayString() == "System.TimeSpan")
+            {
+                return true;
+            }
         }
+
         return false;
     }
 }

@@ -25,14 +25,20 @@ public class OutputCacheTests(RedisTestContainer fixture)
         var prefix = NewPrefix();
         var store = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
         string[] tags = withTags ? ["one", "two"] : [];
+
         if (segmented)
+        {
             await store.SetAsync("key", Sequence(), tags, TimeSpan.FromMinutes(5));
+        }
         else
+        {
             await store.SetAsync("key", new byte[] { 1, 2, 3, 4 }, tags, TimeSpan.FromMinutes(5));
+        }
 
         await Assert.That((await client.GetBytesAsync(prefix + "__MSOCV_key"))!.SequenceEqual(new byte[] { 1, 2, 3, 4 })).IsTrue();
         using var ttl = await client.ExecuteAsync("PTTL", [prefix + "__MSOCV_key"]);
         await Assert.That(ttl.AsInteger() > 0 && ttl.AsInteger() <= 300_000).IsTrue();
+
         foreach (var tag in tags)
         {
             using var members = await client.ExecuteAsync("ZRANGE", [prefix + "__MSOCT_" + tag, 0, -1]);
@@ -51,6 +57,7 @@ public class OutputCacheTests(RedisTestContainer fixture)
         await Assert.That(await store.GetAsync("missing")).IsNull();
         using var output = new MemoryStream();
         var destination = PipeWriter.Create(output, new(leaveOpen: true));
+
         try
         {
             await Assert.That(await store.TryGetAsync("missing", destination)).IsFalse();
@@ -149,6 +156,7 @@ public class OutputCacheTests(RedisTestContainer fixture)
         var prefix = NewPrefix();
         var store = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
         var keys = new RespireValue[601];
+
         using (var batch = client.CreateBatch())
         {
             for (var index = 0; index < keys.Length; index++)
@@ -159,8 +167,10 @@ public class OutputCacheTests(RedisTestContainer fixture)
                 _ = batch.SortedSets.Add(prefix + "__MSOCT_shared", (RespireValue)member,
                     DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeMilliseconds());
             }
+
             await batch.ExecuteAsync();
         }
+
         await store.SetAsync("unrelated", new byte[] { 1 }, ["other"], TimeSpan.FromMinutes(5));
         await store.EvictByTagAsync("shared");
         using var remaining = await client.ExecuteAsync("EXISTS", keys);
@@ -176,6 +186,7 @@ public class OutputCacheTests(RedisTestContainer fixture)
         var prefix = NewPrefix();
         var store = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
         using (var batch = client.CreateBatch())
         {
             _ = batch.SortedSets.Add(prefix + "__MSOCT", (RespireValue)"expired", now - 1);
@@ -186,8 +197,10 @@ public class OutputCacheTests(RedisTestContainer fixture)
                 _ = batch.SortedSets.Add(prefix + "__MSOCT", (RespireValue)$"expired:{index}", now - 1);
                 _ = batch.SortedSets.Add(prefix + $"__MSOCT_expired:{index}", (RespireValue)"old", now - 1);
             }
+
             await batch.ExecuteAsync();
         }
+
         await store.SetAsync("live", new byte[] { 1 }, ["live"], TimeSpan.FromHours(1));
         await client.SetAsync(prefix + "__MSOCTGC", (RespireValue)"Microsoft GC", TimeSpan.FromMinutes(5));
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -210,11 +223,13 @@ public class OutputCacheTests(RedisTestContainer fixture)
         services.AddSingleton<IRespireClient>(client);
         services.AddRespireOutputCache(options => options.InstanceName = NewPrefix());
         services.AddRespireOutputCache();
+
         await using (var provider = services.BuildServiceProvider())
         {
             await Assert.That(provider.GetRequiredService<IOutputCacheStore>() is IOutputCacheBufferStore).IsTrue();
             await Assert.That(provider.GetServices<IHostedService>().Count()).IsEqualTo(1);
         }
+
         await client.SetAsync(NewPrefix(), (RespireValue)"still connected");
     }
 

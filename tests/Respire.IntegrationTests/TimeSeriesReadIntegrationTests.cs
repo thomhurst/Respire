@@ -12,7 +12,10 @@ public class TimeSeriesReadIntegrationTests(ModernRedisTestContainer fixture)
     // Command statistics are server-wide, so the rate assertion reads them on servers that only
     // serialized commandstats tests use; concurrent readers on the shared fixture cannot disturb it.
     [ClassDataSource<VersionedServerFixture>(Shared = SharedType.Keyed, Key = VersionedServerFixture.CommandStatsKey)]
-    public required VersionedServerFixture CommandStatsServers { get; init; }
+    public required VersionedServerFixture CommandStatsServers
+    {
+        get; init;
+    }
 
     [Test]
     [NotInParallel(VersionedServerFixture.CommandStatsKey)]
@@ -56,7 +59,8 @@ public class TimeSeriesReadIntegrationTests(ModernRedisTestContainer fixture)
     {
         var name = $"follow-recreate-{Guid.NewGuid():N}";
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespireProtocol)protocol, ClientName = name });
+            with
+        { Protocol = (RespireProtocol)protocol, ClientName = name });
         await using var observer = await RespireClient.ConnectAsync(fixture.ConnectionString);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await client.TimeSeries.AddAsync(name, 10, 1, cancellationToken: timeout.Token);
@@ -134,7 +138,12 @@ public class TimeSeriesReadIntegrationTests(ModernRedisTestContainer fixture)
         while (true)
         {
             var clients = await observer.Server.ClientsAsync(cancellationToken);
-            if (clients.Any(client => client.Name == name && client.Flags.Contains('b') && client.Command == "ts.read")) return;
+
+            if (clients.Any(client => client.Name == name && client.Flags.Contains('b') && client.Command == "ts.read"))
+            {
+                return;
+            }
+
             await Task.Delay(10, cancellationToken);
         }
     }

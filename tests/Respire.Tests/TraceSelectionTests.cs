@@ -43,7 +43,11 @@ public class TraceSelectionTests
     public async Task NamesIncludeSubcommandsAndExcludeScriptIdentifiers()
     {
         var names = new List<string>();
-        using var configuration = new Configuration(name => { names.Add(name); return name is "CLIENT LIST" or "EVALSHA"; });
+        using var configuration = new Configuration(name =>
+        {
+            names.Add(name);
+            return name is "CLIENT LIST" or "EVALSHA";
+        });
         using var capture = new Capture();
         Emit("CLIENT LIST");
         RespireTelemetry.StartOperation("EVALSHA", "localhost", 6379, 0, storedProcedureName: "digest")
@@ -65,7 +69,11 @@ public class TraceSelectionTests
     public async Task BatchRequiresEveryMemberIncludingDurabilityCommand(string prefix, bool endpoint)
     {
         var names = new List<string>();
-        using var configuration = new Configuration(name => { names.Add(name); return name == "GET"; });
+        using var configuration = new Configuration(name =>
+        {
+            names.Add(name);
+            return name == "GET";
+        });
         using var capture = new Capture();
         Batch(prefix, ["GET", "SET"], endpoint);
         Batch(prefix, ["GET", "GET"], endpoint);
@@ -79,7 +87,11 @@ public class TraceSelectionTests
     public async Task EmptyAndSingleMemberBatchesUsePrefixAndMemberRespectively()
     {
         var names = new List<string>();
-        using var configuration = new Configuration(name => { names.Add(name); return name == "GET"; });
+        using var configuration = new Configuration(name =>
+        {
+            names.Add(name);
+            return name == "GET";
+        });
         using var capture = new Capture();
         Batch("PIPELINE", []);
         Batch("MULTI", ["GET"], endpoint: true);
@@ -140,7 +152,11 @@ public class TraceSelectionTests
     public async Task NoListenerDoesNotCallPredicate()
     {
         var calls = 0;
-        using var configuration = new Configuration(_ => { calls++; return true; });
+        using var configuration = new Configuration(_ =>
+        {
+            calls++;
+            return true;
+        });
         await Assert.That(RespireTelemetry.Source.HasListeners()).IsFalse();
         Emit("GET");
         Batch("PIPELINE", ["GET", "SET"]);
@@ -150,7 +166,11 @@ public class TraceSelectionTests
     [Test]
     public async Task ConfigurationChangesAffectNewSpansAndBatchUsesOnePredicate()
     {
-        using var configuration = new Configuration(_ => { RespireTracing.Configure(new() { CommandFilter = static _ => false }); return true; });
+        using var configuration = new Configuration(_ =>
+        {
+            RespireTracing.Configure(new() { CommandFilter = static _ => false });
+            return true;
+        });
         using var capture = new Capture();
         Batch("PIPELINE", ["GET", "GET"]);
         Emit("GET");
@@ -208,7 +228,11 @@ public class TraceSelectionTests
     {
         private readonly ActivityListener _activities;
         private readonly MeterListener _metrics = new();
-        public List<Activity> Activities { get; } = [];
+
+        public List<Activity> Activities
+        {
+            get;
+        } = [];
         public int SampleCalls;
         public int Durations;
 
@@ -217,14 +241,20 @@ public class TraceSelectionTests
             _activities = new ActivityListener
             {
                 ShouldListenTo = static source => source.Name == "Respire",
-                Sample = (ref ActivityCreationOptions<ActivityContext> _) => { SampleCalls++; return ActivitySamplingResult.AllDataAndRecorded; },
+                Sample = (ref ActivityCreationOptions<ActivityContext> _) =>
+                {
+                    SampleCalls++;
+                    return ActivitySamplingResult.AllDataAndRecorded;
+                },
                 ActivityStopped = activity => Activities.Add(activity),
             };
             ActivitySource.AddActivityListener(_activities);
             _metrics.InstrumentPublished = (instrument, listener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _metrics.SetMeasurementEventCallback<double>((_, _, _, _) => Interlocked.Increment(ref Durations));
             _metrics.Start();

@@ -26,9 +26,12 @@ public class ReplicaRedirectProvenanceTests
                 ? Encoding.UTF8.GetBytes($"-REDIRECT 127.0.0.1:{second.Port}\r\n") : Reply(command);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", source.Port)], Connections = 1,
-            EnableReplicaRedirects = true, ClientSideCache = new() { TrackingMode = mode },
-            RetryPolicy = retry ? new() : null, CommandTimeout = limit,
+            Endpoints = [new("127.0.0.1", source.Port)],
+            Connections = 1,
+            EnableReplicaRedirects = true,
+            ClientSideCache = new() { TrackingMode = mode },
+            RetryPolicy = retry ? new() : null,
+            CommandTimeout = limit,
         });
         // Admit both destinations before warming: a new destination remains a failover fence.
         await client.GetStringAsync("first-admit");
@@ -41,7 +44,10 @@ public class ReplicaRedirectProvenanceTests
         var lost = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var subscription = client.ClientSideCache!.SubscribeInvalidations("first", change =>
         {
-            if ((change.Reasons & RespireClientCacheInvalidationReason.ContinuityLost) != 0) lost.TrySetResult();
+            if ((change.Reasons & RespireClientCacheInvalidationReason.ContinuityLost) != 0)
+            {
+                lost.TrySetResult();
+            }
         });
         first.CloseConnections();
         await lost.Task.WaitAsync(limit);
@@ -71,14 +77,19 @@ public class ReplicaRedirectProvenanceTests
             ? Encoding.UTF8.GetBytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : Reply(command);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", source.Port)], Connections = 1,
-            EnableReplicaRedirects = true, ClientSideCache = new(),
-            RetryPolicy = retry ? new() : null, CommandTimeout = limit,
+            Endpoints = [new("127.0.0.1", source.Port)],
+            Connections = 1,
+            EnableReplicaRedirects = true,
+            ClientSideCache = new(),
+            RetryPolicy = retry ? new() : null,
+            CommandTimeout = limit,
         });
         await client.GetStringAsync("first-admit");
+
         async ValueTask<string?> ReadQuery() => multipleKeys
             ? await client.Strings.LcsAsync("first", "secondary")
             : await client.Hashes.GetStringAsync("first", "field");
+
         await Assert.That(await ReadQuery()).IsEqualTo("value");
         await Assert.That(await ReadQuery()).IsEqualTo("value");
         await client.GetStringAsync("secondary");
@@ -89,7 +100,10 @@ public class ReplicaRedirectProvenanceTests
         // Wait for the last dependency so its invalidation is complete before refetching it.
         using var subscription = client.ClientSideCache!.SubscribeInvalidations(multipleKeys ? "secondary" : "first", change =>
         {
-            if ((change.Reasons & RespireClientCacheInvalidationReason.ContinuityLost) != 0) lost.TrySetResult();
+            if ((change.Reasons & RespireClientCacheInvalidationReason.ContinuityLost) != 0)
+            {
+                lost.TrySetResult();
+            }
         });
         target.CloseConnections();
         await lost.Task.WaitAsync(limit);
@@ -120,10 +134,12 @@ public class ReplicaRedirectProvenanceTests
             ? Encoding.UTF8.GetBytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : Reply(command);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", source.Port)], Connections = 1,
+            Endpoints = [new("127.0.0.1", source.Port)],
+            Connections = 1,
             EnableReplicaRedirects = true,
             ClientSideCache = new() { TrackingMode = mode, KeyPrefixes = ["cache:"] },
-            RetryPolicy = retry ? new() : null, CommandTimeout = limit,
+            RetryPolicy = retry ? new() : null,
+            CommandTimeout = limit,
         });
         await client.GetStringAsync("cache:target");
         await client.GetStringAsync("cache:independent");
@@ -132,7 +148,10 @@ public class ReplicaRedirectProvenanceTests
         var lost = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var subscription = client.ClientSideCache!.SubscribeInvalidations("cache:target", change =>
         {
-            if ((change.Reasons & RespireClientCacheInvalidationReason.ContinuityLost) != 0) lost.TrySetResult();
+            if ((change.Reasons & RespireClientCacheInvalidationReason.ContinuityLost) != 0)
+            {
+                lost.TrySetResult();
+            }
         });
         target.CloseConnections();
         await lost.Task.WaitAsync(limit);
@@ -158,10 +177,12 @@ public class ReplicaRedirectProvenanceTests
             ? Encoding.UTF8.GetBytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : Reply(command);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", source.Port)], Connections = 1,
+            Endpoints = [new("127.0.0.1", source.Port)],
+            Connections = 1,
             EnableReplicaRedirects = true,
             ClientSideCache = new() { TrackingMode = mode, KeyPrefixes = ["cache:"] },
-            RetryPolicy = retry ? new() : null, CommandTimeout = limit,
+            RetryPolicy = retry ? new() : null,
+            CommandTimeout = limit,
         });
         await client.GetStringAsync("cache:target-admit");
         await client.GetStringAsync("cache:independent");
@@ -177,7 +198,10 @@ public class ReplicaRedirectProvenanceTests
         var lost = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var subscription = client.ClientSideCache!.SubscribeInvalidations("cache:target-second", change =>
         {
-            if ((change.Reasons & RespireClientCacheInvalidationReason.ContinuityLost) != 0) lost.TrySetResult();
+            if ((change.Reasons & RespireClientCacheInvalidationReason.ContinuityLost) != 0)
+            {
+                lost.TrySetResult();
+            }
         });
         target.CloseConnections();
         await lost.Task.WaitAsync(limit);
@@ -191,6 +215,7 @@ public class ReplicaRedirectProvenanceTests
     }
 
     private static FakeRespServer Server() => new(8) { ReplyOverride = (_, command) => Reply(command) };
+
     private static byte[] Reply(string command) => Encoding.UTF8.GetBytes(command.StartsWith("HELLO 3", StringComparison.Ordinal)
         ? "%1\r\n$5\r\nproto\r\n:3\r\n" : command.StartsWith("MGET ", StringComparison.Ordinal)
             ? $"*{command.Count(character => character == ' ')}\r\n" + string.Concat(Enumerable.Repeat("$5\r\nvalue\r\n", command.Count(character => character == ' ')))

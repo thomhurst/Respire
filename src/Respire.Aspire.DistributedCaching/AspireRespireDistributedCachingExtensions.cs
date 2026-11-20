@@ -1,7 +1,7 @@
-using Respire.Aspire;
+using global::Respire.Caching;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.DependencyInjection;
-using global::Respire.Caching;
+using Respire.Aspire;
 
 namespace Microsoft.Extensions.Hosting;
 

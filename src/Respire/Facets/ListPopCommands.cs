@@ -56,7 +56,6 @@ internal sealed partial class ListCommands
     public ValueTask<RespireListPopResult?> PopAsync(RespireKey key, TimeSpan? waitFor, RespireListSide side = RespireListSide.Left, CancellationToken cancellationToken = default)
         => PopAsync([key], waitFor, side, cancellationToken);
 
-
     public ValueTask<RespireListPopManyResult?> PopManyAsync(ReadOnlySpan<RespireKey> keys, TimeSpan? waitFor, long count = 1, RespireListSide side = RespireListSide.Left, CancellationToken cancellationToken = default)
         => PopManyCoreAsync(keys, count, side, waitFor ?? Timeout.InfiniteTimeSpan, cancellationToken);
 
@@ -68,6 +67,7 @@ internal sealed partial class ListCommands
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireListPopManyResult?>.Start();
+
         try
         {
             var (operation, command) = PopManyCommand(client, keys, count, side, waitFor);
@@ -84,6 +84,7 @@ internal sealed partial class ListCommands
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireListPopResult?>.Start();
+
         try
         {
             var operation = side == RespireListSide.Left ? "BLPOP" : "BRPOP";
@@ -122,11 +123,14 @@ internal sealed partial class ListCommands
         {
             return null;
         }
+
         var elements = reply.AsArray();
+
         if (elements.Length != 2)
         {
             throw new RespireProtocolException("Expected a selected list key and one popped value.");
         }
+
         return new RespireListPopResult(MultiKeyPop.ParsePoppedKey(in elements[0], prefix), elements[1].AsString());
     }
 
@@ -135,18 +139,22 @@ internal sealed partial class ListCommands
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
         var sideToken = SideToken(side);
+
         if (waitFor is { } wait)
         {
             MultiKeyPop.ValidateWait(wait);
         }
+
         var blocking = waitFor.HasValue;
         var operation = blocking ? "BLMPOP" : "LMPOP";
         var arguments = new RespireValue[keys.Length + (blocking ? 5 : 4)];
         var index = 0;
+
         if (waitFor is { } timeout)
         {
             arguments[index++] = MultiKeyPop.ToSeconds(timeout);
         }
+
         arguments[index++] = keys.Length;
         MultiKeyPop.CopyPopKeys(client, keys, arguments.AsSpan(index, keys.Length), operation);
         index += keys.Length;
@@ -169,11 +177,14 @@ internal sealed partial class ListCommands
         {
             return null;
         }
+
         var elements = reply.AsArray();
+
         if (elements.Length != 2)
         {
             throw new RespireProtocolException("Expected a selected list key and an array of popped values.");
         }
+
         return new RespireListPopManyResult(MultiKeyPop.ParsePoppedKey(in elements[0], prefix), ResponseReader.StringArray(in elements[1]));
     }
 

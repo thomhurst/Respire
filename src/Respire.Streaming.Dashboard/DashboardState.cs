@@ -4,10 +4,15 @@ using Respire.Internal;
 namespace Respire.Streaming.Dashboard;
 
 internal sealed record DashboardSnapshot(IReadOnlyList<DashboardStreamSnapshot> Streams);
+
 internal sealed record DashboardJobLogs(string QueueName, string JobId, string[] Lines);
+
 internal sealed record DashboardJobGroups(int Index, string QueueName, IReadOnlyList<RespireJobGroupInfo> Groups, string? NextCursor);
+
 internal sealed record DashboardJobBatch(string Id, RespireJobBatchStatus? Status, bool Unavailable = false);
+
 internal sealed record DashboardJobDeduplication(string Identity, string Mode);
+
 internal sealed record DashboardStreamSnapshot(int Index, RespireDashboardStream Configuration,
     long Length, long DeadLetterLength, RespireStreamGroupInfo[] Groups,
     RespireStreamPendingEntry[] Pending, RespireStreamEntry[] DeadLetters,
@@ -36,9 +41,22 @@ internal sealed class DashboardState
     internal DashboardState(IRespireClient client, RespireDashboardOptions options, TimeProvider? clock = null)
     {
         ArgumentNullException.ThrowIfNull(client);
-        if (options.EntryLimit is < 1 or > 200) throw new ArgumentOutOfRangeException(nameof(options));
-        if (options.MetricsHistoryMinutes is < 1 or > 1440) throw new ArgumentOutOfRangeException(nameof(options));
-        if (options.Streams.Count is < 1 or > 100) throw new ArgumentException("Configure between 1 and 100 streams.", nameof(options));
+
+        if (options.EntryLimit is < 1 or > 200)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options));
+        }
+
+        if (options.MetricsHistoryMinutes is < 1 or > 1440)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options));
+        }
+
+        if (options.Streams.Count is < 1 or > 100)
+        {
+            throw new ArgumentException("Configure between 1 and 100 streams.", nameof(options));
+        }
+
         _client = client;
         _clock = clock ?? TimeProvider.System;
         _limit = options.EntryLimit;
@@ -47,15 +65,24 @@ internal sealed class DashboardState
         {
             var copy = new RespireDashboardStream
             {
-                Name = s.Name, Stream = s.Stream, Group = s.Group,
-                DeadLetterStream = s.DeadLetterStream, IsJobQueue = s.IsJobQueue,
+                Name = s.Name,
+                Stream = s.Stream,
+                Group = s.Group,
+                DeadLetterStream = s.DeadLetterStream,
+                IsJobQueue = s.IsJobQueue,
             };
-            foreach (var id in s.BatchIds) copy.BatchIds.Add(id);
+
+            foreach (var id in s.BatchIds)
+            {
+                copy.BatchIds.Add(id);
+            }
+
             return copy;
         }).ToArray();
         _batchQueues = _streams.Select(stream => CreateBatchReader(client, stream, _limit)).ToArray();
         var deadKeys = new HashSet<string>(StringComparer.Ordinal);
         var sourceKeys = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var stream in _streams)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(stream.Name);
@@ -63,37 +90,73 @@ internal sealed class DashboardState
             ArgumentException.ThrowIfNullOrWhiteSpace(stream.Group);
             var source = client.ResolveKey(stream.Stream).ToBytes();
             sourceKeys.Add(Convert.ToBase64String(source));
-            if (stream.DeadLetterStream is not { } dead) continue;
+
+            if (stream.DeadLetterStream is not { } dead)
+            {
+                continue;
+            }
+
             ArgumentException.ThrowIfNullOrWhiteSpace(dead);
+
             if (Encoding.UTF8.GetByteCount(stream.Group) > 256)
+            {
                 throw new ArgumentException("Dead-letter group names must fit the worker's 256-byte metadata.", nameof(options));
+            }
+
             var target = client.ResolveKey(dead).ToBytes();
+
             if (source.AsSpan().SequenceEqual(target) || ClusterHash.GetSlot(source) != ClusterHash.GetSlot(target))
+            {
                 throw new ArgumentException("Source and dead-letter keys must resolve to distinct keys in one Cluster slot.", nameof(options));
+            }
+
             if (!deadKeys.Add(Convert.ToBase64String(target)))
+            {
                 throw new ArgumentException("Each dead-letter stream must belong to exactly one configured source/group.", nameof(options));
+            }
         }
+
         if (deadKeys.Overlaps(sourceKeys))
+        {
             throw new ArgumentException("A dead-letter stream cannot also be a configured source.", nameof(options));
+        }
+
         _samples = new (long, long)?[_streams.Length];
         _rates = new double?[_streams.Length];
     }
 
     private static RespireJobQueue<byte[]>? CreateBatchReader(IRespireClient client, RespireDashboardStream stream, int limit)
     {
-        if (stream.BatchIds.Count == 0) return null;
+        if (stream.BatchIds.Count == 0)
+        {
+            return null;
+        }
+
         if (!stream.IsJobQueue || stream.BatchIds.Count > limit)
+        {
             throw new ArgumentException("Configure at most EntryLimit batch IDs on a job queue.");
+        }
+
         const string prefix = "{respire-job:";
         const string suffix = "}:ready";
+
         if (stream.Stream is null || !stream.Stream.StartsWith(prefix, StringComparison.Ordinal)
             || !stream.Stream.EndsWith(suffix, StringComparison.Ordinal) || stream.Stream.Length <= prefix.Length + suffix.Length)
+        {
             throw new ArgumentException("Batch inspection requires the job queue's logical StreamKey.");
+        }
+
         var utf8 = new UTF8Encoding(false, true);
+
         foreach (var id in stream.BatchIds)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(id);
-            if (id.Length > 4096) throw new ArgumentException("Batch IDs must be at most 4096 characters.");
+
+            if (id.Length > 4096)
+            {
+                throw new ArgumentException("Batch IDs must be at most 4096 characters.");
+            }
+
             _ = utf8.GetByteCount(id);
         }
         // The runtime owns ID hashing, key prefixing and decoding. Inspection never uses a payload codec.
@@ -104,11 +167,17 @@ internal sealed class DashboardState
     internal async Task<DashboardSnapshot> ReadAsync(CancellationToken cancellationToken)
     {
         await _readGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
             var version = Interlocked.Read(ref _version);
+
             if (_snapshot is not null && _snapshotVersion == version
-                && _clock.GetElapsedTime(_snapshotTimestamp) < TimeSpan.FromSeconds(2)) return _snapshot;
+                && _clock.GetElapsedTime(_snapshotTimestamp) < TimeSpan.FromSeconds(2))
+            {
+                return _snapshot;
+            }
+
             var result = new DashboardStreamSnapshot[_streams.Length];
             await Parallel.ForEachAsync(Enumerable.Range(0, _streams.Length),
                 new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken }, async (i, token) =>
@@ -127,6 +196,7 @@ internal sealed class DashboardState
                 RespireJobGroupPage? jobGroups = null;
                 DashboardJobBatch[] batches = [];
                 var checkpoints = new Dictionary<RespireStreamId, RespireJobCheckpoint?>();
+
                 if (stream.IsJobQueue)
                 {
                     if (_batchQueues[i] is { } queue)
@@ -134,6 +204,7 @@ internal sealed class DashboardState
                         batches = await ReadBatchesAsync(stream.BatchIds,
                             (id, ct) => queue.GetBatchStatusAsync(id, ct), token).ConfigureAwait(false);
                     }
+
                     try
                     {
                         jobGroups = await RespireJobGroups.ReadAsync(_client, stream.Stream, _limit,
@@ -143,6 +214,7 @@ internal sealed class DashboardState
                     {
                         error = "Application job groups unavailable. Check the group keys and Redis permissions.";
                     }
+
                     try
                     {
                         using var controls = await _client.Scripts.ExecuteAsync(QueueControlState,
@@ -154,6 +226,7 @@ internal sealed class DashboardState
                     {
                         error = (error is null ? "" : error + " ") + "Queue controls unavailable. Check the control key and Redis permissions.";
                     }
+
                     try
                     {
                         metrics = await RespireJobMetrics.ReadAsync(_client, stream.Stream, _metricsHistoryMinutes, token).ConfigureAwait(false);
@@ -163,6 +236,7 @@ internal sealed class DashboardState
                         error = (error is null ? "" : error + " ") + "Metrics history unavailable. Check the metrics key and Redis permissions.";
                     }
                 }
+
                 try
                 {
                     length = await _client.Streams.CountAsync(stream.Stream, token).ConfigureAwait(false);
@@ -176,15 +250,21 @@ internal sealed class DashboardState
                     sourceUnavailable = true;
                     error = (error is null ? "" : error + " ") + "Source stream unavailable. Check the configured key, group and Redis permissions.";
                 }
+
                 if (stream.IsJobQueue && !sourceUnavailable)
                 {
                     var checkpointReads = await ReadCheckpointsAsync(pending.Select(entry => entry.Id).ToArray(),
                         (id, ct) => RespireJobCheckpoints.ReadAsync(_client, stream.Stream, id, ct), token).ConfigureAwait(false);
                     checkpoints = checkpointReads.Checkpoints;
+
                     if (checkpointReads.Unavailable)
+                    {
                         error = (error is null ? "" : error + " ") + "Checkpoints unavailable. Check Redis permissions.";
+                    }
                 }
+
                 Dictionary<RespireStreamId, DashboardJobDeduplication>? deduplication = null;
+
                 if (stream.IsJobQueue && !sourceUnavailable && pending.Length > 0)
                 {
                     try
@@ -192,15 +272,19 @@ internal sealed class DashboardState
                         using var policies = await _client.Scripts.ExecuteAsync(DashboardScripts.Deduplication,
                             [stream.Stream], pending.Select(entry => (RespireValue)entry.Id.Value).ToArray(), token).ConfigureAwait(false);
                         deduplication = new();
+
                         for (var row = 0; row < policies.Count; row++)
+                        {
                             deduplication[new(policies[row][0].AsString())] =
                                 new(policies[row][1].AsString(), policies[row][2].AsString());
+                        }
                     }
                     catch (RespireException)
                     {
                         error = (error is null ? "" : error + " ") + "Deduplication details unavailable. Check Redis permissions.";
                     }
                 }
+
                 try
                 {
                     if (stream.DeadLetterStream is { } dead)
@@ -214,8 +298,10 @@ internal sealed class DashboardState
                     deadLettersUnavailable = true;
                     error = (error is null ? "" : error + " ") + "Dead-letter stream unavailable. Check its key and Redis permissions.";
                 }
+
                 var count = sourceUnavailable ? null : groups.FirstOrDefault(g => g.Name == stream.Group).EntriesRead;
                 var now = _clock.GetTimestamp();
+
                 if (count is not { } current)
                 {
                     _samples[i] = null;
@@ -231,6 +317,7 @@ internal sealed class DashboardState
                     _rates[i] = (current - previous.Count) / _clock.GetElapsedTime(previous.Timestamp, now).TotalSeconds;
                     _samples[i] = (current, now);
                 }
+
                 result[i] = new(i, stream, length, deadLength, groups, pending, entries, _rates[i], error,
                     sourceUnavailable, deadLettersUnavailable, paused, rateLimitHits, metrics, jobGroups, batches, checkpoints, deduplication);
             }).ConfigureAwait(false);
@@ -262,11 +349,19 @@ internal sealed class DashboardState
         }).ConfigureAwait(false);
         var checkpoints = new Dictionary<RespireStreamId, RespireJobCheckpoint?>(ids.Count);
         var unavailable = false;
+
         for (var index = 0; index < ids.Count; index++)
         {
-            if (results[index].Unavailable) unavailable = true;
-            else checkpoints[ids[index]] = results[index].Checkpoint;
+            if (results[index].Unavailable)
+            {
+                unavailable = true;
+            }
+            else
+            {
+                checkpoints[ids[index]] = results[index].Checkpoint;
+            }
         }
+
         return (checkpoints, unavailable);
     }
 
@@ -279,6 +374,7 @@ internal sealed class DashboardState
             new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken }, async (index, token) =>
         {
             var id = ids[index];
+
             try
             {
                 batches[index] = new(id, await read(id, token).ConfigureAwait(false));
@@ -298,7 +394,11 @@ internal sealed class DashboardState
 
     internal async ValueTask<DashboardJobLogs?> ReadLogsAsync(int index, string jobId, CancellationToken cancellationToken)
     {
-        if (index < 0 || index >= _streams.Length || !_streams[index].IsJobQueue) return null;
+        if (index < 0 || index >= _streams.Length || !_streams[index].IsJobQueue)
+        {
+            return null;
+        }
+
         var stream = _streams[index];
         var lines = await _client.Lists.RangeAsync(JobLogKeys.ForJob(stream.Stream, jobId), -_limit, -1,
             cancellationToken).ConfigureAwait(false);
@@ -308,22 +408,41 @@ internal sealed class DashboardState
     internal async ValueTask<DashboardJobGroups?> ReadGroupsAsync(int index, string? cursor, string? name,
         CancellationToken cancellationToken)
     {
-        if (index < 0 || index >= _streams.Length || !_streams[index].IsJobQueue) return null;
+        if (index < 0 || index >= _streams.Length || !_streams[index].IsJobQueue)
+        {
+            return null;
+        }
+
         var stream = _streams[index];
+
         if (name is not null)
+        {
             return new(index, stream.Name,
                 [await RespireJobGroups.GetAsync(_client, stream.Stream, name, cancellationToken).ConfigureAwait(false)], null);
+        }
+
         var page = await RespireJobGroups.ReadAsync(_client, stream.Stream, _limit, cursor, cancellationToken).ConfigureAwait(false);
         return new(index, stream.Name, page.Groups, page.NextCursor);
     }
 
     internal async ValueTask<bool> SetGroupPausedAsync(int index, string name, bool paused, CancellationToken cancellationToken)
     {
-        if (index < 0 || index >= _streams.Length || !_streams[index].IsJobQueue) return false;
+        if (index < 0 || index >= _streams.Length || !_streams[index].IsJobQueue)
+        {
+            return false;
+        }
+
         try
         {
-            if (paused) await RespireJobGroups.PauseAsync(_client, _streams[index].Stream, name, cancellationToken).ConfigureAwait(false);
-            else await RespireJobGroups.ResumeAsync(_client, _streams[index].Stream, name, cancellationToken).ConfigureAwait(false);
+            if (paused)
+            {
+                await RespireJobGroups.PauseAsync(_client, _streams[index].Stream, name, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await RespireJobGroups.ResumeAsync(_client, _streams[index].Stream, name, cancellationToken).ConfigureAwait(false);
+            }
+
             return true;
         }
         finally { Interlocked.Increment(ref _version); }
@@ -331,8 +450,13 @@ internal sealed class DashboardState
 
     internal async ValueTask<long> MutateAsync(int index, string id, bool retry, CancellationToken cancellationToken)
     {
-        if (index < 0 || index >= _streams.Length || _streams[index].DeadLetterStream is not { } dead) return -2;
+        if (index < 0 || index >= _streams.Length || _streams[index].DeadLetterStream is not { } dead)
+        {
+            return -2;
+        }
+
         var stream = _streams[index];
+
         try
         {
             return await _client.Scripts.ExecuteIntegerAsync(DashboardScripts.Mutate,

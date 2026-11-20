@@ -20,6 +20,7 @@ public partial class ErrorMetricsTests
         // Framework dependencies remain shared, so the actual MeterListener sees publication.
         var context = new AssemblyLoadContext("cold-error-publication", isCollectible: true);
         Meter? meter = null;
+
         try
         {
             var assembly = context.LoadFromAssemblyPath(typeof(RespireClient).Assembly.Location);
@@ -30,6 +31,7 @@ public partial class ErrorMetricsTests
             var record = telemetry.GetMethod("RecordError", flags)!;
             var original = new InvalidOperationException("Original application failure.");
             var publications = 0;
+
             using (var rejecting = new MeterListener())
             {
                 rejecting.InstrumentPublished = (instrument, _) =>
@@ -41,6 +43,7 @@ public partial class ErrorMetricsTests
                     }
                 };
                 rejecting.Start();
+
                 switch (boundary)
                 {
                     case "record":
@@ -50,7 +53,9 @@ public partial class ErrorMetricsTests
                         var valueType = assembly.GetType("Respire.Protocol.RespValue", throwOnError: true)!;
                         using (var value = (IDisposable)valueType.GetMethod("Error", [typeof(string)])!
                             .Invoke(null, ["ERR discarded error"])!)
+                        {
                             telemetry.GetMethod("RecordDiscardedError", flags)!.Invoke(null, [value, "PING", 0, null]);
+                        }
                         break;
                     case "observe":
                         var observe = telemetry.GetMethods(flags).Single(method =>
@@ -61,10 +66,13 @@ public partial class ErrorMetricsTests
                         await Assert.That(ReferenceEquals(error, original)).IsTrue();
                         break;
                     case "rent":
-                        using (var lease = (IDisposable)observation.GetMethod("Rent", flags)!.Invoke(null, [false])!) { }
+                        using (var lease = (IDisposable)observation.GetMethod("Rent", flags)!.Invoke(null, [false])!)
+                        {
+                        }
                         break;
                 }
             }
+
             await Assert.That(publications).IsEqualTo(1);
 
             // Removing a faulty publisher must permit future reports, rather than leave a
@@ -74,7 +82,9 @@ public partial class ErrorMetricsTests
             accepting.InstrumentPublished = (instrument, listener) =>
             {
                 if (ReferenceEquals(instrument.Meter, meter) && instrument.Name == "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             accepting.SetMeasurementEventCallback<long>((_, count, _, _) => measurements += (int)count);
             accepting.Start();

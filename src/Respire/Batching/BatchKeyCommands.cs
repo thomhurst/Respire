@@ -92,6 +92,7 @@ internal sealed partial class BatchKeyCommands(IPendingSink sink) : IRespireBatc
         RespireKey key, RespireExpiry expiry, RespireExpireWhen when = RespireExpireWhen.Always)
     {
         var condition = KeyCommands.ExpireWhenToken(when);
+
         if (expiry.IsPersist)
         {
             if (condition is not null)

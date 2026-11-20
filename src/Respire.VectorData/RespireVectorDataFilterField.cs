@@ -20,7 +20,10 @@ public enum RespireVectorDataFilterKind
 public sealed record RespireVectorDataFilterField(string PropertyName, string StorageName, RespireVectorDataFilterKind Kind)
 {
     /// <summary>JSON source property path. Defaults to <c>$.StorageName</c>; ignored by hash mappings.</summary>
-    public string? JsonPath { get; init; }
+    public string? JsonPath
+    {
+        get; init;
+    }
 }
 
 /// <summary>Lossless TAG storage for ordinal filtering, including empty strings, whitespace and Redis syntax.</summary>
@@ -46,14 +49,23 @@ public static class RespireVectorDataFilterEncoding
     public static string DecodeTag(string value)
     {
         ArgumentNullException.ThrowIfNull(value);
-        if (value.Length == 0 || value[0] != 's') throw new FormatException("Expected an encoded VectorData TAG.");
+
+        if (value.Length == 0 || value[0] != 's')
+        {
+            throw new FormatException("Expected an encoded VectorData TAG.");
+        }
+
         return Utf8.GetString(Convert.FromHexString(value[1..]));
     }
 
     /// <summary>Formats finite NUMERIC values with their exact double representation. Promotes float values losslessly.</summary>
     public static string EncodeNumber(double value)
     {
-        if (!double.IsFinite(value)) throw new ArgumentOutOfRangeException(nameof(value), "Filter numbers must be finite.");
+        if (!double.IsFinite(value))
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), "Filter numbers must be finite.");
+        }
+
         return value.ToString("R", CultureInfo.InvariantCulture);
     }
 }

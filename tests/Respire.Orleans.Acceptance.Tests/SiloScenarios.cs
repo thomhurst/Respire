@@ -51,6 +51,7 @@ public partial class SiloScenarios
             await connections.AssertSiloDisposed();
             await connections.AssertClientUsable(client);
         }
+
         await connections.AssertAllProvidersDisposed();
 
         await using (var silo = BuildSilo(connections, serviceId, clusterId))
@@ -68,6 +69,7 @@ public partial class SiloScenarios
             await grain.SetValue(43);
             await grain.RemoveReminder();
         }
+
         await connections.AssertAllProvidersDisposed();
     }
 
@@ -104,15 +106,22 @@ public partial class SiloScenarios
         var disconnected = 0;
         native.ConnectionStateChanged += change =>
         {
-            if (change.State != RespireConnectionState.Connected) Interlocked.Exchange(ref disconnected, 1);
+            if (change.State != RespireConnectionState.Connected)
+            {
+                Interlocked.Exchange(ref disconnected, 1);
+            }
+
             if (change.State == RespireConnectionState.Connected
                 && (topology == RespireContainerTopology.Sentinel
                     ? change.Endpoint == redis.DataEndpoints[1]
                     : Volatile.Read(ref disconnected) != 0))
+            {
                 recovered.TrySetResult();
+            }
         };
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(failedElection ? 30 : 90));
+
         if (topology == RespireContainerTopology.Sentinel)
         {
             // A later marker on a control connection fences the replication stream containing
@@ -122,7 +131,11 @@ public partial class SiloScenarios
             Assert.Equal(1, (long)await control.GetDatabase().ExecuteAsync("WAIT", 1, 10000));
             // Removing the only candidate makes a failed election deterministic, including
             // on machines where Sentinel's clock protection does not enter TILT.
-            if (failedElection) await redis.StopDataNodeAsync(1, deadline.Token);
+            if (failedElection)
+            {
+                await redis.StopDataNodeAsync(1, deadline.Token);
+            }
+
             await redis.StopDataNodeAsync(0, deadline.Token);
         }
         else
@@ -132,6 +145,7 @@ public partial class SiloScenarios
             var killed = (long)await control.GetDatabase().ExecuteAsync("CLIENT", "KILL", "TYPE", "normal", "SKIPME", "yes");
             Assert.True(killed > 0);
         }
+
         try
         {
             await recovered.Task.WaitAsync(deadline.Token);
@@ -142,23 +156,35 @@ public partial class SiloScenarios
             Console.WriteLine("Recovery deadline expired; collecting server diagnostics.");
             // Capture the election evidence before fixture cleanup removes the server logs.
             using var diagnostics = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            try { await redis.ReadServerLogsAsync(diagnostics.Token); }
+
+            try
+            {
+                await redis.ReadServerLogsAsync(diagnostics.Token);
+            }
             catch (Exception diagnosticsError) { Console.WriteLine($"Server diagnostics unavailable: {diagnosticsError.Message}"); }
+
             throw;
         }
+
         Assert.Equal(activation, await grain.GetActivation());
         Assert.Equal(42, await grain.GetValue());
         await grain.SetValue(43);
         // Clear buffered pre-recovery callbacks; require a delivery which observes the new value.
         var reader = silo.Host.Services.GetRequiredService<ReminderDeliveries>().Received.Reader;
         (Guid Activation, int Value) delivery;
-        do { delivery = await reader.ReadAsync(deadline.Token); } while (delivery.Value != 43);
+
+        do
+        {
+            delivery = await reader.ReadAsync(deadline.Token);
+        } while (delivery.Value != 43);
+
         Assert.Equal(activation, delivery.Activation);
         // A second silo joins through the recovered Redis membership provider.
         await using var verification = BuildSilo(connections, serviceId, clusterId);
         await verification.Start();
         var table = silo.Host.Services.GetRequiredService<IMembershipTable>();
         Assert.Equal(2, (await table.ReadAll()).Members.Count(row => row.Item1.Status == SiloStatus.Active));
+
         if (topology == RespireContainerTopology.Sentinel)
         {
             await redis.StartDataNodeAsync(0, deadline.Token);
@@ -166,6 +192,7 @@ public partial class SiloScenarios
             await grain.SetValue(44);
             Assert.Equal(redis.DataEndpoints[1], native.Endpoint);
         }
+
         await client.DisposeAsync();
         await silo.DisposeAsync();
         await using var nextClient = BuildClient(connections, serviceId, clusterId);
@@ -201,9 +228,15 @@ public partial class SiloScenarios
         var builder = new HostBuilder().ConfigureLogging(log => log.AddConsole().SetMinimumLevel(LogLevel.Warning));
         builder.UseOrleans(silo =>
         {
-            silo.Configure<ClusterOptions>(options => { options.ServiceId = serviceId; options.ClusterId = clusterId; });
+            silo.Configure<ClusterOptions>(options =>
+            {
+                options.ServiceId = serviceId;
+                options.ClusterId = clusterId;
+            });
             // Bound failure detection in the process-death scenario; these are not production defaults.
-            if (fastDetection) silo.Configure<ClusterMembershipOptions>(options =>
+            if (fastDetection)
+            {
+                silo.Configure<ClusterMembershipOptions>(options =>
             {
                 options.ProbeTimeout = TimeSpan.FromSeconds(1);
                 options.TableRefreshTimeout = TimeSpan.FromSeconds(1);
@@ -211,6 +244,8 @@ public partial class SiloScenarios
                 options.NumMissedProbesLimit = 2;
                 options.NumVotesForDeathDeclaration = 1;
             });
+            }
+
             silo.Configure<EndpointOptions>(options =>
             {
                 options.AdvertisedIPAddress = IPAddress.Loopback;
@@ -247,7 +282,11 @@ public partial class SiloScenarios
         var builder = new HostBuilder().ConfigureLogging(log => log.AddConsole().SetMinimumLevel(LogLevel.Warning));
         builder.UseOrleansClient(client =>
         {
-            client.Configure<ClusterOptions>(options => { options.ServiceId = serviceId; options.ClusterId = clusterId; });
+            client.Configure<ClusterOptions>(options =>
+            {
+                options.ServiceId = serviceId;
+                options.ClusterId = clusterId;
+            });
             client.UseRedisClustering(options =>
             {
                 options.ConfigurationOptions = connections.Configuration;
@@ -277,18 +316,28 @@ public partial class SiloScenarios
     {
         public IHost Host => host;
         private bool _disposed;
+
         public async Task Start()
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             await host.StartAsync(deadline.Token);
         }
+
         public async ValueTask DisposeAsync()
         {
-            if (_disposed) return;
+            if (_disposed)
+            {
+                return;
+            }
+
             _disposed = true;
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             Console.WriteLine($"{role} StopAsync starting (30s deadline).");
-            try { await host.StopAsync(deadline.Token).WaitAsync(deadline.Token); }
+
+            try
+            {
+                await host.StopAsync(deadline.Token).WaitAsync(deadline.Token);
+            }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested)
             {
                 Console.WriteLine($"{role} StopAsync exceeded its 30s deadline.");
@@ -300,8 +349,14 @@ public partial class SiloScenarios
                 // Disposal has no cancellation contract and may synchronously block.
                 await Task.Run(async () =>
                 {
-                    if (host is IAsyncDisposable disposable) await disposable.DisposeAsync();
-                    else host.Dispose();
+                    if (host is IAsyncDisposable disposable)
+                    {
+                        await disposable.DisposeAsync();
+                    }
+                    else
+                    {
+                        host.Dispose();
+                    }
                 }).WaitAsync(TimeSpan.FromSeconds(30));
                 Console.WriteLine($"{role} disposal completed.");
             }
@@ -314,7 +369,9 @@ public partial class SiloScenarios
         private readonly object _gate = new();
         private readonly RespireClient _sharedNative = RespireClient.Create(options);
         private RespireConnectionMultiplexer? _shared;
+
         public RespireClient SharedNative => _sharedNative;
+
         public ConfigurationOptions Configuration => new()
         {
             EndPoints = { { options.Endpoints[0].Host, options.Endpoints[0].Port } },
@@ -338,12 +395,15 @@ public partial class SiloScenarios
             Assert.Contains(_created, entry => entry.Role == "membership");
             Assert.Contains(_created, entry => entry.Role == "storage");
             Assert.Contains(_created, entry => entry.Role == "reminders");
+
             if (!shared)
+            {
                 foreach (var entry in _created.Where(entry => entry.Role != "gateway"))
                 {
                     Assert.Throws<ObjectDisposedException>(() => entry.Mux.GetDatabase());
                     await Assert.ThrowsAsync<ObjectDisposedException>(() => entry.Native.PingAsync().AsTask());
                 }
+            }
         }
 
         public async Task AssertClientUsable(HostedScenario client)
@@ -356,16 +416,19 @@ public partial class SiloScenarios
         public async Task AssertAllProvidersDisposed()
         {
             if (!shared)
+            {
                 foreach (var entry in _created)
                 {
                     Assert.Throws<ObjectDisposedException>(() => entry.Mux.GetDatabase());
                     await Assert.ThrowsAsync<ObjectDisposedException>(() => entry.Native.PingAsync().AsTask());
                 }
+            }
             else
             {
                 Assert.NotNull(_shared!.GetDatabase());
                 await _sharedNative.PingAsync();
             }
+
             _created.Clear();
         }
 
@@ -373,8 +436,16 @@ public partial class SiloScenarios
         {
             Console.WriteLine("Provider connection disposal starting.");
             // Cleanup also runs after failed assertions; ownership assertions happen before this fallback.
-            foreach (var entry in _created) await entry.Mux.DisposeAsync();
-            if (_shared is not null) await _shared.DisposeAsync();
+            foreach (var entry in _created)
+            {
+                await entry.Mux.DisposeAsync();
+            }
+
+            if (_shared is not null)
+            {
+                await _shared.DisposeAsync();
+            }
+
             await _sharedNative.DisposeAsync();
             Console.WriteLine("Provider connection disposal completed.");
         }

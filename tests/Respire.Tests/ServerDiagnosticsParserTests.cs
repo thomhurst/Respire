@@ -19,6 +19,7 @@ public class ServerDiagnosticsParserTests
         reply.Dispose();
         payload.AsSpan().Clear();
         await Assert.That(histograms.Length).IsEqualTo(2);
+
         foreach (var histogram in histograms)
         {
             await Assert.That(histogram.Command).IsEqualTo("get");
@@ -27,6 +28,7 @@ public class ServerDiagnosticsParserTests
                 new RespireLatencyHistogramBucket(1, 2), new RespireLatencyHistogramBucket(16, 7)]);
             await Assert.That(histogram.AdditionalFields["future"][0].AsBytes()).IsEquivalentTo((byte[])[255, 0, 128]);
         }
+
         histograms[0].Buckets[0] = default;
         await Assert.That(histograms[1].Buckets[0]).IsEqualTo(new RespireLatencyHistogramBucket(1, 2));
     }
@@ -105,6 +107,8 @@ public class ServerDiagnosticsParserTests
 
     private static RespValue HistogramFields(long calls, params RespValue[] buckets)
         => RespValue.Array(Text("calls"), Number(calls), Text("histogram_usec"), RespValue.Array(buckets));
+
     private static RespValue Number(long value) => RespValue.Integer(value);
+
     private static RespValue Text(string value) => RespValue.BulkString(value);
 }

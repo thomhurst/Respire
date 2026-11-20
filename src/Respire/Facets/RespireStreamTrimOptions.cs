@@ -6,29 +6,55 @@ namespace Respire;
 public readonly record struct RespireStreamTrimOptions
 {
     /// <summary>Maximum number of entries to retain. Must be non-negative.</summary>
-    public long? MaxLength { get; init; }
+    public long? MaxLength
+    {
+        get; init;
+    }
 
     /// <summary>Evicts entries older than this numeric stream id. Requires Redis 6.2+.</summary>
-    public RespireStreamId? MinId { get; init; }
+    public RespireStreamId? MinId
+    {
+        get; init;
+    }
 
     /// <summary>Allows whole-node trimming that can retain extra entries. Defaults to false.</summary>
     /// <remarks>Unlike XTRIM, <see cref="RespireStreamAddOptions.ApproximateTrim"/> defaults to true for XADD.</remarks>
-    public bool Approximate { get; init; }
+    public bool Approximate
+    {
+        get; init;
+    }
 
     /// <summary>Limits trimming work; requires approximate trimming and Redis 6.2+. Zero disables the limit.</summary>
-    public long? Limit { get; init; }
+    public long? Limit
+    {
+        get; init;
+    }
 
     /// <summary>Redis 8.2+ consumer-group reference handling. Null omits the option for older servers.</summary>
-    public RespireStreamReferencePolicy? ReferencePolicy { get; init; }
+    public RespireStreamReferencePolicy? ReferencePolicy
+    {
+        get; init;
+    }
 
     internal int ValidateAndCountArguments(bool requireThreshold, string parameterName)
     {
         if (MaxLength.HasValue && MinId.HasValue)
+        {
             throw new ArgumentException("MAXLEN and MINID are mutually exclusive trimming thresholds.", parameterName);
+        }
+
         var hasThreshold = MaxLength.HasValue || MinId.HasValue;
+
         if (requireThreshold && !hasThreshold)
+        {
             throw new ArgumentException("A MAXLEN or MINID trimming threshold is required.", parameterName);
-        if (MaxLength is { } length) ArgumentOutOfRangeException.ThrowIfNegative(length, parameterName);
+        }
+
+        if (MaxLength is { } length)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(length, parameterName);
+        }
+
         if (MinId is { } id)
         {
             // MINID accepts numeric thresholds, not the ms-* ID-generation syntax used by XADD.
@@ -36,21 +62,36 @@ public readonly record struct RespireStreamTrimOptions
             // Redis's stream ID parser copies into a 128-byte buffer including the terminator.
             // Leading zeros can keep the numeric value in range while exceeding that buffer.
             if (text.Length > 127)
+            {
                 throw new ArgumentException("MINID stream id must not exceed 127 bytes.", parameterName);
+            }
+
             var separator = text.IndexOf('-');
             var milliseconds = separator < 0 ? text : text[..separator];
+
             if (!ulong.TryParse(milliseconds, NumberStyles.None, CultureInfo.InvariantCulture, out _)
                 || (separator >= 0 && !ulong.TryParse(text[(separator + 1)..], NumberStyles.None,
                     CultureInfo.InvariantCulture, out _)))
+            {
                 throw new ArgumentException("MINID requires a numeric stream id.", parameterName);
+            }
         }
+
         if (Limit is { } limit)
         {
             ArgumentOutOfRangeException.ThrowIfNegative(limit, parameterName);
+
             if (!hasThreshold || !Approximate)
+            {
                 throw new ArgumentException("LIMIT requires a trimming threshold and approximate trimming.", parameterName);
+            }
         }
-        if (ReferencePolicy is { } policy) _ = StreamCommands.ReferencePolicyToken(policy);
+
+        if (ReferencePolicy is { } policy)
+        {
+            _ = StreamCommands.ReferencePolicyToken(policy);
+        }
+
         return (hasThreshold ? 2 + (Approximate ? 1 : 0) + (Limit.HasValue ? 2 : 0) : 0)
             + (ReferencePolicy.HasValue ? 1 : 0);
     }
@@ -59,16 +100,32 @@ public readonly record struct RespireStreamTrimOptions
     internal int CopyArgumentsTo(Span<RespireValue> arguments)
     {
         var index = 0;
-        if (ReferencePolicy is { } policy) arguments[index++] = StreamCommands.ReferencePolicyToken(policy);
-        if (!MaxLength.HasValue && !MinId.HasValue) return index;
+
+        if (ReferencePolicy is { } policy)
+        {
+            arguments[index++] = StreamCommands.ReferencePolicyToken(policy);
+        }
+
+        if (!MaxLength.HasValue && !MinId.HasValue)
+        {
+            return index;
+        }
+
         arguments[index++] = MaxLength.HasValue ? "MAXLEN" : "MINID";
-        if (Approximate) arguments[index++] = "~";
+
+        if (Approximate)
+        {
+            arguments[index++] = "~";
+        }
+
         arguments[index++] = MaxLength is { } length ? (RespireValue)length : MinId!.Value.Value;
+
         if (Limit is { } limit)
         {
             arguments[index++] = "LIMIT";
             arguments[index++] = limit;
         }
+
         return index;
     }
 }

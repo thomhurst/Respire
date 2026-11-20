@@ -11,7 +11,9 @@ internal sealed class StrictUnicodeJsonEncoder : JavaScriptEncoder
     internal static readonly StrictUnicodeJsonEncoder Instance = new();
     internal static readonly Encoding Utf8 = new UTF8Encoding(false, true);
 
-    private StrictUnicodeJsonEncoder() { }
+    private StrictUnicodeJsonEncoder()
+    {
+    }
 
     public override int MaxOutputCharactersPerInputCharacter => Default.MaxOutputCharactersPerInputCharacter;
 

@@ -17,7 +17,10 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
 
     internal sealed class Entry(EndpointCircuitBreaker circuit)
     {
-        internal EndpointCircuitBreaker Circuit { get; } = circuit;
+        internal EndpointCircuitBreaker Circuit
+        {
+            get;
+        } = circuit;
         internal int ActiveAdmissions;
         internal long LastUse;
         internal bool TrimAfterRelease;
@@ -27,6 +30,7 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
     {
         cancellationToken.ThrowIfCancellationRequested();
         Entry entry;
+
         lock (_gate)
         {
             if (!_circuits.TryGetValue(endpoint, out entry!))
@@ -34,16 +38,21 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
                 _circuits.Add(endpoint, entry = new(new(endpoint, options, reportMetrics: true)));
                 _trimPending = true;
             }
+
             entry.LastUse = ++_lastUse;
             // Retain the entry while TryAcquire publishes metrics outside the registry
             // gate. Listeners can admit work on this registry from any thread.
             entry.ActiveAdmissions++;
             TrimInactive();
         }
+
         try
         {
             if (!entry.Circuit.TryAcquire(out var permit, out var retryAfter))
+            {
                 throw new RespireCircuitOpenException(endpoint, retryAfter);
+            }
+
             return new(permit, this, entry);
         }
         catch
@@ -58,35 +67,62 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
         lock (_gate)
         {
             entry.ActiveAdmissions--;
-            if (entry.ActiveAdmissions == 0 && entry.TrimAfterRelease) _trimPending = true;
+
+            if (entry.ActiveAdmissions == 0 && entry.TrimAfterRelease)
+            {
+                _trimPending = true;
+            }
+
             TrimInactive();
         }
     }
 
     private void TrimInactive()
     {
-        if (_circuits.Count <= RetainedEndpointLimit) return;
+        if (_circuits.Count <= RetainedEndpointLimit)
+        {
+            return;
+        }
+
         var current = getCurrentEndpoint?.Invoke();
         var version = Volatile.Read(ref _membershipVersion);
         // A stable live set above the standalone cap has nothing to evict. Revisit only
         // after membership changes, a new entry, or completion of retained inactive work.
-        if (!_trimPending && version == _trimmedMembershipVersion && current == _lastCurrentEndpoint) return;
+        if (!_trimPending && version == _trimmedMembershipVersion && current == _lastCurrentEndpoint)
+        {
+            return;
+        }
+
         _trimPending = false;
         _trimmedMembershipVersion = version;
         _lastCurrentEndpoint = current;
+
         while (_circuits.Count > RetainedEndpointLimit)
         {
             Entry? oldest = null;
+
             foreach (var entry in _circuits.Values)
             {
                 var isCurrent = current is { } endpoint && RespireEndpointComparer.Instance.Equals(entry.Circuit.Endpoint, endpoint)
                     || isCurrentEndpoint?.Invoke(entry.Circuit.Endpoint) == true;
                 entry.TrimAfterRelease = !isCurrent && entry.ActiveAdmissions != 0;
-                if (isCurrent || entry.ActiveAdmissions != 0) continue;
-                if (oldest is null || entry.LastUse < oldest.LastUse) oldest = entry;
+
+                if (isCurrent || entry.ActiveAdmissions != 0)
+                {
+                    continue;
+                }
+
+                if (oldest is null || entry.LastUse < oldest.LastUse)
+                {
+                    oldest = entry;
+                }
             }
             // Active work owns its state until completion; it cannot be evicted to meet a cap.
-            if (oldest is null) return;
+            if (oldest is null)
+            {
+                return;
+            }
+
             _circuits.Remove(oldest.Circuit.Endpoint);
         }
     }
@@ -94,11 +130,23 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
     // Safe under router writer gates: no registry lock or router callback is taken here.
     internal void InvalidateMembership() => Interlocked.Increment(ref _membershipVersion);
 
-    internal int CountForTests { get { lock (_gate) return _circuits.Count; } }
+    internal int CountForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _circuits.Count;
+            }
+        }
+    }
 
     internal EndpointCircuitBreaker GetForTests(RespireEndpoint endpoint)
     {
-        lock (_gate) return _circuits[endpoint].Circuit;
+        lock (_gate)
+        {
+            return _circuits[endpoint].Circuit;
+        }
     }
 }
 
@@ -125,7 +173,11 @@ internal struct CircuitAdmission(CircuitPermit permit, StandaloneCircuitRegistry
     internal void Failed(Exception error, CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested || error is OperationCanceledException
-            || error is RespireException { IsCommandNotSubmitted: true }) return;
+            || error is RespireException { IsCommandNotSubmitted: true })
+        {
+            return;
+        }
+
         _outcome = error switch
         {
             RespireAuthenticationException => CircuitOutcome.Ignored,
@@ -137,7 +189,11 @@ internal struct CircuitAdmission(CircuitPermit permit, StandaloneCircuitRegistry
 
     public void Dispose()
     {
-        if (_permit.Owner is not { } owner) return;
+        if (_permit.Owner is not { } owner)
+        {
+            return;
+        }
+
         owner.Complete(ref _permit, _outcome);
         // Complete clears this mutable permit. Repeated Dispose cannot release twice.
         _registry?.Release(_entry!);

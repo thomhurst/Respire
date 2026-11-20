@@ -9,7 +9,10 @@ namespace Respire.Coordination.Tests;
 public class DecoratorTrackingTests
 {
     [ClassDataSource<SharedRedis74>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis74 Redis { get; init; }
+    public required SharedRedis74 Redis
+    {
+        get; init;
+    }
 
     [Test]
     [Arguments(false)]
@@ -19,7 +22,8 @@ public class DecoratorTrackingTests
         var invalidated = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var options = Redis.CreateOptions() with
         {
-            Protocol = RespireProtocol.Resp3, Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            Connections = 1,
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
         };
         await using var ownerClient = await RespireClient.ConnectAsync(options);
@@ -42,8 +46,11 @@ public class DecoratorTrackingTests
         using var subscription = cache.SubscribeInvalidations(prefix + "lease", notification =>
         {
             if ((notification.Reasons & RespireClientCacheInvalidationReason.ServerInvalidation) != 0)
+            {
                 invalidated.TrySetResult();
+            }
         }, cancellation.Token);
+
         try
         {
             await CoordinationCommandHooks.TrackAsync(proxy, "lease",
@@ -69,16 +76,28 @@ public class DecoratorTrackingTests
 
     public class ForwardingClient : DispatchProxy, IRespireNameResolver
     {
-        public IRespireClient Inner { get; set; } = null!;
-        public Action<MethodInfo, object?[]>? Before { get; set; }
+        public IRespireClient Inner
+        {
+            get; set;
+        } = null!;
+
+        public Action<MethodInfo, object?[]>? Before
+        {
+            get; set;
+        }
 
         public RespireKey ResolveKey(RespireKey key) => ((IRespireNameResolver)Inner).ResolveKey(key);
+
         public RespireChannel ResolveChannel(RespireChannel channel) => ((IRespireNameResolver)Inner).ResolveChannel(channel);
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             Before?.Invoke(targetMethod!, args!);
-            try { return targetMethod!.Invoke(Inner, args); }
+
+            try
+            {
+                return targetMethod!.Invoke(Inner, args);
+            }
             catch (TargetInvocationException error) when (error.InnerException is { } inner)
             {
                 ExceptionDispatchInfo.Capture(inner).Throw();

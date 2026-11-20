@@ -1,6 +1,6 @@
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
-using System.Runtime.CompilerServices;
 using Respire.Internal;
 
 namespace Respire.Streaming;
@@ -78,10 +78,16 @@ public sealed partial class RespireJobQueue<T>
     }
 
     /// <summary>The logical stream key, before any client key prefix is applied.</summary>
-    public string StreamKey { get; }
+    public string StreamKey
+    {
+        get;
+    }
 
     /// <summary>The default logical dead-letter stream key. Worker options can override it with a same-slot destination.</summary>
-    public string DeadLetterStreamKey { get; }
+    public string DeadLetterStreamKey
+    {
+        get;
+    }
 
     /// <summary>The retained progress and completion stream. No automatic expiry or trimming is applied.</summary>
     public string EventsStreamKey => StreamKey + ":events";
@@ -90,7 +96,11 @@ public sealed partial class RespireJobQueue<T>
     /// <remarks>Returns an empty array for missing or expired logs. Reusing a job ID before log expiry shares its log history.</remarks>
     public ValueTask<string[]> GetLogsAsync(string jobId, int count = 100, CancellationToken cancellationToken = default)
     {
-        if (count is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(count));
+        if (count is < 1 or > 1000)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+
         return _client.Lists.RangeAsync(JobLogKeys.ForJob(StreamKey, jobId), -count, -1, cancellationToken);
     }
 
@@ -108,7 +118,9 @@ public sealed partial class RespireJobQueue<T>
     {
         await foreach (var entry in _client.Streams.ReadAllAsync(EventsStreamKey, after,
             cancellationToken: cancellationToken).ConfigureAwait(false))
+        {
             yield return new(entry);
+        }
     }
 
     /// <summary>Enqueues a job once within a window, returning the original entry ID on duplicate submissions.</summary>
@@ -139,8 +151,12 @@ public sealed partial class RespireJobQueue<T>
         ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
         JobDeduplication.Validate(deduplicationMode);
         var window = deduplicationWindow ?? TimeSpan.FromDays(1);
+
         if (window <= TimeSpan.Zero || window > TimeSpan.FromMilliseconds(int.MaxValue))
+        {
             throw new ArgumentOutOfRangeException(nameof(deduplicationWindow));
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
         // Hash the ID so user-supplied braces and arbitrarily long IDs cannot change the Redis key's hash tag.
         var deduplicationKey = StreamKey + ":dedup:" + Convert.ToHexString(SHA256.HashData(StrictUtf8.GetBytes(jobId)));
@@ -191,8 +207,12 @@ public sealed partial class RespireJobQueue<T>
     internal static string GetStreamKey(string queueName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
+
         if (queueName.Contains('{') || queueName.Contains('}'))
+        {
             throw new ArgumentException("Queue names cannot contain braces.", nameof(queueName));
+        }
+
         _ = StrictUtf8.GetByteCount(queueName);
         return "{respire-job:" + queueName + "}:ready";
     }
@@ -203,7 +223,12 @@ public sealed partial class RespireJobQueue<T>
     internal static RespireJob<T> Deserialize(RespireStreamEntry entry, Func<byte[], T> deserialize)
     {
         var id = entry.GetString("_respire.job.id");
-        if (string.IsNullOrWhiteSpace(id)) throw new FormatException("The stream entry has no job ID.");
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            throw new FormatException("The stream entry has no job ID.");
+        }
+
         var payload = entry["_respire.job.payload"] ?? throw new FormatException("The stream entry has no job payload.");
         return new(id, deserialize(payload), entry.Id) { Group = entry.GetString("_respire.job.group") };
     }

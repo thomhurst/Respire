@@ -76,15 +76,30 @@ internal sealed class ClusterSlotFences
     internal bool IsFenced(int slot, RespireConnectionMultiplexer? owner, RespireConnectionMultiplexer? source,
         RespireEndpoint sourceEndpoint, long token)
     {
-        if (_versions[slot] <= token) return false;
-        if (owner is null || !ReferenceEquals(owner, source)) return true;
+        if (_versions[slot] <= token)
+        {
+            return false;
+        }
+
+        if (owner is null || !ReferenceEquals(owner, source))
+        {
+            return true;
+        }
+
         var chain = _chains[slot];
-        if (chain is null || _chainStarts[slot] > token) return true;
+
+        if (chain is null || _chainStarts[slot] > token)
+        {
+            return true;
+        }
+
         for (var link = chain; link is not null; link = link.Previous)
         {
             if (link.Token > token && (ReferenceEquals(link.Departed, source)
                     || ClusterNodeIdentityIndex.EndpointsEqual(link.DepartedEndpoint, sourceEndpoint)))
+            {
                 return true;
+            }
 
             if (link.Token > token && (ReferenceEquals(link.Arrived, source)
                     || ClusterNodeIdentityIndex.EndpointsEqual(link.ArrivedEndpoint, sourceEndpoint)))
@@ -93,10 +108,13 @@ internal sealed class ClusterSlotFences
                 {
                     if (earlier.Token <= token && (ReferenceEquals(earlier.Departed, source)
                             || ClusterNodeIdentityIndex.EndpointsEqual(earlier.DepartedEndpoint, sourceEndpoint)))
+                    {
                         return true;
+                    }
                 }
             }
         }
+
         return false;
     }
 
@@ -113,15 +131,18 @@ internal sealed class ClusterSlotFences
         ChainLink? fresh = null;
         ChainLink? lastPrevious = null;
         ChainLink? lastExtended = null;
+
         foreach (var slot in slots)
         {
             var prior = _versions[slot];
             var previous = _chains[slot];
+
             if (prior <= token)
             {
                 // Newer than every change so far. Keep the current SMIGRATED chain so a
                 // delayed migration cannot cross after its source leaves and returns.
                 _versions[slot] = token;
+
                 if (previous is null)
                 {
                     _chainStarts[slot] = prior;
@@ -130,7 +151,10 @@ internal sealed class ClusterSlotFences
                 }
             }
 
-            if (previous is null) continue;
+            if (previous is null)
+            {
+                continue;
+            }
 
             // A dependent move crossed the fence, or a newer move extended the chain.
             if (previous.Length >= MaxChainLength)
@@ -138,11 +162,13 @@ internal sealed class ClusterSlotFences
                 _chains[slot] = null;
                 continue;
             }
+
             if (!ReferenceEquals(previous, lastPrevious))
             {
                 lastPrevious = previous;
                 lastExtended = new ChainLink(source, sourceEndpoint, target, targetEndpoint, token, previous);
             }
+
             _chains[slot] = lastExtended;
         }
     }

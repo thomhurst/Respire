@@ -18,6 +18,7 @@ internal sealed class WriteBuffer
     private List<BorrowedPayload>? _borrowedPayloads;
     private List<ArraySegment<byte>>? _sendSegments;
     private GatheredSocketSend? _gatheredSend;
+
     private readonly record struct BorrowedPayload(int Offset, ArraySegment<byte> Payload, GatheredSetWriteLease Lease);
 
     internal bool HasBorrowedPayloads => _borrowedPayloads is { Count: > 0 };
@@ -29,7 +30,12 @@ internal sealed class WriteBuffer
     internal bool PrepareBorrowedPayload()
     {
         var payloads = _borrowedPayloads ??= new(4);
-        if (payloads.Count == 256) return false;
+
+        if (payloads.Count == 256)
+        {
+            return false;
+        }
+
         payloads.EnsureCapacity(payloads.Count + 1);
         return true;
     }
@@ -44,27 +50,42 @@ internal sealed class WriteBuffer
     internal List<ArraySegment<byte>> GetSendSegments(ref int part)
     {
         Debug.Assert(HasBorrowedPayloads, "Gathered segments require accepted borrowed payloads.");
+
 #if DEBUG
         if (_writerGuard.HasUnpublishedBytes)
+        {
             throw new InvalidOperationException("Complete or roll back the RESP writer before consuming its buffer.");
+        }
+
 #endif
         var segments = _sendSegments ??= new(16);
         segments.Clear();
         var payloads = _borrowedPayloads!;
+
         while (part <= payloads.Count * 2 && segments.Count < 16)
         {
             var index = part / 2;
             ArraySegment<byte> segment;
-            if ((part & 1) != 0) segment = payloads[index].Payload;
+
+            if ((part & 1) != 0)
+            {
+                segment = payloads[index].Payload;
+            }
             else
             {
                 var start = index == 0 ? 0 : payloads[index - 1].Offset;
                 var end = index == payloads.Count ? _count : payloads[index].Offset;
                 segment = new(_array, start, end - start);
             }
+
             part++;
-            if (segment.Count != 0) segments.Add(segment);
+
+            if (segment.Count != 0)
+            {
+                segments.Add(segment);
+            }
         }
+
         return segments;
     }
 
@@ -76,6 +97,7 @@ internal sealed class WriteBuffer
             sent -= segments[0].Count;
             segments.RemoveAt(0);
         }
+
         if (sent != 0)
         {
             Debug.Assert(segments.Count != 0, "Socket progress cannot exceed the offered segment bytes.");
@@ -87,23 +109,33 @@ internal sealed class WriteBuffer
     private void ReleaseBorrowedPayloads()
     {
         _sendSegments?.Clear();
-        if (_borrowedPayloads is not { } payloads) return;
+
+        if (_borrowedPayloads is not { } payloads)
+        {
+            return;
+        }
+
         for (var index = 0; index < payloads.Count; index++)
         {
             var lease = payloads[index].Lease;
             payloads[index] = default;
             lease.ReleaseWrite();
         }
+
         payloads.Clear();
     }
 #if DEBUG
     private WriterGuard _writerGuard;
 
     internal long BeginWriter() => _writerGuard.Begin();
+
     internal long WriterMutationVersion => _writerGuard.Version;
+
     internal void ValidateWriter(long sequence, long version, bool publishing)
         => _writerGuard.Validate(sequence, version, publishing);
+
     internal void MarkWriterUnpublished(long sequence) => _writerGuard.MarkUnpublished(sequence);
+
     internal void MarkWriterPublished() => _writerGuard.MarkPublished();
 
     // Keep the helper itself out of Release metadata as well as removing its callers.
@@ -126,9 +158,15 @@ internal sealed class WriteBuffer
         {
 #if DEBUG
             if (HasBorrowedPayloads)
+            {
                 throw new InvalidOperationException("Gathered payloads require the ordered send segments.");
+            }
+
             if (_writerGuard.HasUnpublishedBytes)
+            {
                 throw new InvalidOperationException("Complete or roll back the RESP writer before consuming its buffer.");
+            }
+
 #endif
             return _array.AsMemory(0, _count);
         }
@@ -181,6 +219,7 @@ internal sealed class WriteBuffer
         // Growth copies only committed bytes. Include the unpublished suffix before
         // reserving, then reacquire the span after the old array can return to the pool.
         Advance(uncommittedLength);
+
         try
         {
             GetSpan(checked(position + frameLength - _count));
@@ -193,6 +232,7 @@ internal sealed class WriteBuffer
             _writerGuard.RestoreUnpublished(unpublished);
 #endif
         }
+
         return GetSpan(frameLength);
     }
 
@@ -233,6 +273,7 @@ internal sealed class WriteBuffer
     {
         var required = (long)_count + sizeHint;
         var newSize = (int)Math.Min(Math.Max((long)_array.Length * 2, required), Array.MaxLength);
+
         if (newSize < required)
         {
             throw new InvalidOperationException("Cannot grow write buffer: maximum size reached.");
@@ -255,9 +296,11 @@ internal sealed class WriteBuffer
         var array = _array;
         _array = [];
         _count = 0;
+
 #if DEBUG
         _writerGuard.MarkPublished();
         InvalidateWriters();
+
 #endif
         if (array.Length > 0)
         {
@@ -276,23 +319,32 @@ internal sealed class WriteBuffer
         private long _version;
 
         internal readonly bool HasUnpublishedBytes => _hasUnpublishedBytes;
+
         internal readonly long Version => _version;
 
         internal long Begin()
         {
             if (_hasUnpublishedBytes)
+            {
                 throw new InvalidOperationException("A previous RESP writer left unfinished bytes. Complete it, or roll back with TruncateTo or Reset, before creating another writer.");
+            }
+
             return _nextSequence = unchecked(_nextSequence + 1);
         }
 
         internal readonly void Validate(long sequence, long version, bool publishing)
         {
             if (version != _version)
+            {
                 throw new InvalidOperationException("The RESP writer's cached span was invalidated by buffer mutation.");
+            }
+
             if (_hasUnpublishedBytes && _unpublishedSequence != sequence)
+            {
                 throw new InvalidOperationException(publishing
                     ? "Only the owning RESP writer can publish its unfinished bytes."
                     : "Only the owning RESP writer can change its unfinished bytes.");
+            }
         }
 
         internal void MarkUnpublished(long sequence)
@@ -302,7 +354,9 @@ internal sealed class WriteBuffer
         }
 
         internal void MarkPublished() => _hasUnpublishedBytes = false;
+
         internal void RestoreUnpublished(bool unpublished) => _hasUnpublishedBytes = unpublished;
+
         internal void Invalidate() => _version++;
     }
 #endif

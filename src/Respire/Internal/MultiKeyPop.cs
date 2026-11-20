@@ -11,18 +11,23 @@ internal static class MultiKeyPop
         {
             throw new ArgumentException("At least one key is required.", nameof(keys));
         }
+
         int? slot = null;
+
         for (var index = 0; index < keys.Length; index++)
         {
             var key = client.Key(in keys[index]);
+
             if (client.Core.Cluster is not null && key.TryGetClusterSlot(out var keySlot))
             {
                 if (slot is { } expected && keySlot != expected)
                 {
                     throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, operation, expected, keySlot, key);
                 }
+
                 slot = keySlot;
             }
+
             destination[index] = key;
         }
     }
@@ -38,14 +43,17 @@ internal static class MultiKeyPop
     internal static RespireKey ParsePoppedKey(in RespValue value, ReadOnlySpan<byte> prefix)
     {
         var bytes = value.AsSpan();
+
         if (!prefix.IsEmpty)
         {
             if (!bytes.StartsWith(prefix))
             {
                 throw new RespireProtocolException("Returned key does not start with the client key prefix.");
             }
+
             bytes = bytes[prefix.Length..];
         }
+
         return new RespireKey(bytes.ToArray());
     }
 

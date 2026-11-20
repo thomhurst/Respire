@@ -92,7 +92,11 @@ public class BroadcastClientCacheIntegrationTests(RedisTestContainer fixture)
     internal static async Task UntilAsync(Func<bool> condition)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!condition()) await Task.Delay(10, deadline.Token);
+
+        while (!condition())
+        {
+            await Task.Delay(10, deadline.Token);
+        }
     }
 }
 
@@ -116,17 +120,33 @@ public class BroadcastClientCacheTopologyTests
             .Select(group => group.First()).ToArray();
         await Assert.That(keys.Length).IsEqualTo(3);
         // Seed before enabling BCAST so setup invalidations cannot race the cache assertions.
-        foreach (var key in keys) await writer.SetAsync(key, "old");
+        foreach (var key in keys)
+        {
+            await writer.SetAsync(key, "old");
+        }
+
         await using var reader = await RespireClient.ConnectAsync(options with
         {
             ClientSideCache = BroadcastClientCacheIntegrationTests.Broadcast(["hot:"]),
         });
+
         foreach (var key in keys)
+        {
             await Assert.That(await reader.GetStringAsync(key)).IsEqualTo("old");
+        }
+
         await Assert.That(reader.ClientSideCache!.Count).IsEqualTo(3);
-        foreach (var key in keys) await writer.SetAsync(key, "new");
-        await BroadcastClientCacheIntegrationTests.UntilAsync(() => reader.ClientSideCache.Count == 0);
+
         foreach (var key in keys)
+        {
+            await writer.SetAsync(key, "new");
+        }
+
+        await BroadcastClientCacheIntegrationTests.UntilAsync(() => reader.ClientSideCache.Count == 0);
+
+        foreach (var key in keys)
+        {
             await Assert.That(await reader.GetStringAsync(key)).IsEqualTo("new");
+        }
     }
 }

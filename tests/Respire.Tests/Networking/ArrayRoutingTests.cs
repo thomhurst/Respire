@@ -18,7 +18,9 @@ public class ArrayRoutingTests
     public async Task ClusterMixedArrayPagesUsePrimaryAndRetainQueueOrder(bool typed, bool scanFirst)
     {
         var written = false;
+
         static byte[] Page(string value) => Encoding.ASCII.GetBytes($"*1\r\n*2\r\n:2\r\n$2\r\n{value}\r\n");
+
         await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
         {
             ReplyOverride = (_, command) => command.StartsWith("ARSCAN ", StringComparison.Ordinal) ? Page("11") : FakeRespServer.OkReply,
@@ -29,34 +31,66 @@ public class ArrayRoutingTests
             $"*2\r\n$9\r\n127.0.0.1\r\n:{replica.Port}\r\n");
         primary.ReplyOverride = (_, command) =>
         {
-            if (command == "CLUSTER SLOTS") return topology;
-            if (command == "ARSET key 2 22") { written = true; return ":1\r\n"u8.ToArray(); }
+            if (command == "CLUSTER SLOTS")
+            {
+                return topology;
+            }
+
+            if (command == "ARSET key 2 22")
+            {
+                written = true;
+                return ":1\r\n"u8.ToArray();
+            }
+
             return command.StartsWith("ARSCAN ", StringComparison.Ordinal) ? Page(written ? "22" : "11") : FakeRespServer.OkReply;
         };
 #pragma warning disable RESP010 // This array-routing scenario owns and disposes its client to isolate slot topology and batch ordering.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
         var reads = client.WithReadFrom(RespireReadFrom.Replica);
+
         using (var readOnly = reads.CreateBatch())
         {
             var page = readOnly.Arrays.ScanPage("key", 2, 2);
             await readOnly.ExecuteAsync();
             await Assert.That(page.Result[0].Value).IsEqualTo("11");
         }
+
         using var mixed = reads.CreateBatch();
         RespirePending<ulong>? set = null;
-        if (!scanFirst) set = mixed.Arrays.Set("key", 2, "22");
+
+        if (!scanFirst)
+        {
+            set = mixed.Arrays.Set("key", 2, "22");
+        }
+
         RespirePending<RespireArrayEntry<string>[]>? strings = typed ? null : mixed.Arrays.ScanPage("key", 2, 2);
         RespirePending<RespireArrayEntry<int>[]>? numbers = typed ? mixed.Arrays.ScanPage<int>("key", 2, 2) : null;
-        if (scanFirst) set = mixed.Arrays.Set("key", 2, "22");
+
+        if (scanFirst)
+        {
+            set = mixed.Arrays.Set("key", 2, "22");
+        }
+
         await mixed.ExecuteAsync();
         await Assert.That(set!.Result).IsEqualTo(1UL);
-        if (typed) await Assert.That(numbers!.Result[0]).IsEqualTo(new RespireArrayEntry<int>(2, scanFirst ? 11 : 22));
-        else await Assert.That(strings!.Result[0]).IsEqualTo(new RespireArrayEntry<string>(2, scanFirst ? "11" : "22"));
+
+        if (typed)
+        {
+            await Assert.That(numbers!.Result[0]).IsEqualTo(new RespireArrayEntry<int>(2, scanFirst ? 11 : 22));
+        }
+        else
+        {
+            await Assert.That(strings!.Result[0]).IsEqualTo(new RespireArrayEntry<string>(2, scanFirst ? "11" : "22"));
+        }
+
         var primaryArrays = primary.ReceivedCommands.Where(command => command.StartsWith("AR", StringComparison.Ordinal)).ToArray();
         await Assert.That(primaryArrays).IsEquivalentTo(scanFirst
             ? new[] { "ARSCAN key 2 2", "ARSET key 2 22" }
@@ -88,7 +122,8 @@ public class ArrayRoutingTests
 #pragma warning disable RESP010 // This array-routing scenario owns and disposes its client to isolate slot topology and batch ordering.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
@@ -105,7 +140,12 @@ public class ArrayRoutingTests
         await view.Arrays.AggregateAsync("a", 0, 3, RespireArrayOperation.Used);
         await view.Arrays.GrepAsync("a", RespireArrayBound.First, RespireArrayBound.Last, [new(RespireArrayPredicateKind.Exact, "2")]);
         List<ulong> indexes = [];
-        await foreach (var entry in view.Arrays.ScanAsync("a", 0, 3, pageSize: 1)) indexes.Add(entry.Index);
+
+        await foreach (var entry in view.Arrays.ScanAsync("a", 0, 3, pageSize: 1))
+        {
+            indexes.Add(entry.Index);
+        }
+
         await Assert.That(indexes).IsEquivalentTo(new[] { 0UL, 3UL }, CollectionOrdering.Matching);
         await view.Arrays.SetAsync("a", 2, "2");
         await view.Arrays.SeekAsync("a", 3);

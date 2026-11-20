@@ -7,31 +7,62 @@ internal static class HotKeysParser
 {
     internal static RespireHotKeysSnapshot[]? Parse(in RespValue value)
     {
-        if (value.IsNull) return null;
+        if (value.IsNull)
+        {
+            return null;
+        }
+
         var rows = Array(in value);
         var snapshots = new RespireHotKeysSnapshot[rows.Length];
-        for (var index = 0; index < rows.Length; index++) snapshots[index] = Snapshot(in rows[index]);
+
+        for (var index = 0; index < rows.Length; index++)
+        {
+            snapshots[index] = Snapshot(in rows[index]);
+        }
+
         return snapshots;
     }
 
     private static RespireHotKeysSnapshot Snapshot(in RespValue value)
     {
         if (value.Type is not (RespireDataType.Array or RespireDataType.Map))
+        {
             throw new RespireProtocolException("HOTKEYS snapshot must contain field/value pairs.");
+        }
+
         var pairs = value.AsArray();
-        if (pairs.Length % 2 != 0) throw new RespireProtocolException("HOTKEYS snapshot has an incomplete field.");
+
+        if (pairs.Length % 2 != 0)
+        {
+            throw new RespireProtocolException("HOTKEYS snapshot has an incomplete field.");
+        }
+
         var fields = new Dictionary<string, RespValue>(StringComparer.Ordinal);
+
         for (var index = 0; index < pairs.Length; index += 2)
         {
             RequireString(in pairs[index]);
+
             if (!fields.TryAdd(pairs[index].AsString(), pairs[index + 1]))
+            {
                 throw new RespireProtocolException("HOTKEYS snapshot contains a duplicate field.");
+            }
         }
 
         var active = Number(Take(fields, "tracking-active"));
-        if (active > 1) throw new RespireProtocolException("HOTKEYS tracking-active must be 0 or 1.");
+
+        if (active > 1)
+        {
+            throw new RespireProtocolException("HOTKEYS tracking-active must be 0 or 1.");
+        }
+
         var ratio = Number(Take(fields, "sample-ratio"));
-        if (ratio == 0) throw new RespireProtocolException("HOTKEYS sample-ratio must be positive.");
+
+        if (ratio == 0)
+        {
+            throw new RespireProtocolException("HOTKEYS sample-ratio must be positive.");
+        }
+
         var selected = Slots(Take(fields, "selected-slots"));
         var start = Number(Take(fields, "collection-start-time-unix-ms"));
         var duration = Number(Take(fields, "collection-duration-ms"));
@@ -45,23 +76,38 @@ internal static class HotKeysParser
         var system = OptionalNumber(fields, "total-cpu-time-sys-ms");
         var totalNetwork = OptionalNumber(fields, "total-net-bytes");
         RespireHotKeyCpuEntry[]? cpu = null;
+
         if (fields.Remove("by-cpu-time-us", out var cpuValue))
         {
             var entries = RankedPairs(in cpuValue);
             cpu = new RespireHotKeyCpuEntry[entries.Length / 2];
+
             for (var index = 0; index < cpu.Length; index++)
+            {
                 cpu[index] = new(Key(in entries[index * 2]), Number(in entries[index * 2 + 1]));
+            }
         }
+
         RespireHotKeyNetworkEntry[]? network = null;
+
         if (fields.Remove("by-net-bytes", out var networkValue))
         {
             var entries = RankedPairs(in networkValue);
             network = new RespireHotKeyNetworkEntry[entries.Length / 2];
+
             for (var index = 0; index < network.Length; index++)
+            {
                 network[index] = new(Key(in entries[index * 2]), Number(in entries[index * 2 + 1]));
+            }
         }
+
         var additional = new Dictionary<string, RespireResult>(fields.Count, StringComparer.Ordinal);
-        foreach (var field in fields) additional.Add(field.Key, RespireResult.CreateOwned(field.Value));
+
+        foreach (var field in fields)
+        {
+            additional.Add(field.Key, RespireResult.CreateOwned(field.Value));
+        }
+
         return new(active == 1, ratio, selected, start, duration, allCpu, allNetwork, sampledCpu, selectedCpu,
             sampledNetwork, selectedNetwork, user, system, totalNetwork, cpu, network, additional);
     }
@@ -71,7 +117,10 @@ internal static class HotKeysParser
     internal static bool Ok(in RespValue value)
     {
         if (value.Type != RespireDataType.SimpleString || !value.AsSpan().SequenceEqual("OK"u8))
+        {
             throw new RespireProtocolException("HOTKEYS mutation must return OK.");
+        }
+
         return true;
     }
 
@@ -84,7 +133,10 @@ internal static class HotKeysParser
     private static long Number(in RespValue value)
     {
         if (value.Type != RespireDataType.Integer || value.AsInteger() < 0)
+        {
             throw new RespireProtocolException("HOTKEYS measurement must be a nonnegative integer.");
+        }
+
         return value.AsInteger();
     }
 
@@ -92,15 +144,27 @@ internal static class HotKeysParser
     {
         var rows = Array(in value);
         var ranges = new RespireHotKeysSlotRange[rows.Length];
+
         for (var index = 0; index < rows.Length; index++)
         {
             var row = Array(in rows[index]);
-            if (row.Length is not (1 or 2)) throw new RespireProtocolException("HOTKEYS slot range must have one or two slots.");
+
+            if (row.Length is not (1 or 2))
+            {
+                throw new RespireProtocolException("HOTKEYS slot range must have one or two slots.");
+            }
+
             var start = Number(in row[0]);
             var end = row.Length == 1 ? start : Number(in row[1]);
-            if (start > end || end >= ClusterHash.SlotCount) throw new RespireProtocolException("HOTKEYS slot range is invalid.");
+
+            if (start > end || end >= ClusterHash.SlotCount)
+            {
+                throw new RespireProtocolException("HOTKEYS slot range is invalid.");
+            }
+
             ranges[index] = new((int)start, (int)end);
         }
+
         return ranges;
     }
 
@@ -109,13 +173,22 @@ internal static class HotKeysParser
         // Redis 8.6 emits flat ranking arrays in both RESP2 and RESP3; real-server tests
         // cover both protocols. Only the surrounding snapshot changes to a RESP3 map.
         var pairs = Array(in value);
-        if (pairs.Length % 2 != 0) throw new RespireProtocolException("HOTKEYS ranking has an incomplete key/measurement pair.");
+
+        if (pairs.Length % 2 != 0)
+        {
+            throw new RespireProtocolException("HOTKEYS ranking has an incomplete key/measurement pair.");
+        }
+
         return pairs;
     }
 
     private static ReadOnlySpan<RespValue> Array(in RespValue value)
     {
-        if (value.Type != RespireDataType.Array) throw new RespireProtocolException("HOTKEYS value must be an array.");
+        if (value.Type != RespireDataType.Array)
+        {
+            throw new RespireProtocolException("HOTKEYS value must be an array.");
+        }
+
         return value.AsArray();
     }
 
@@ -128,6 +201,8 @@ internal static class HotKeysParser
     private static void RequireString(in RespValue value)
     {
         if (value.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString or RespireDataType.VerbatimString))
+        {
             throw new RespireProtocolException("HOTKEYS key or field name must be a string.");
+        }
     }
 }

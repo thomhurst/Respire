@@ -20,11 +20,13 @@ public sealed partial class RespireClient
         var cachedCount = 0;
         var key = request.PrimaryKey;
         var generation = _core.Sentinel?.Current;
+
         for (var index = 0; index < fieldCount; index++)
         {
             var field = request.Query.GetArgument(index + 1);
             var fieldRequest = new ClientSideCacheCoordinator.QueryRequest(
                 new ClientCacheCommandKey("HGET", key.AsValue(), field), key);
+
             if (cache.TryGet(in fieldRequest, out var cached))
             {
                 cachedCount++;
@@ -44,6 +46,7 @@ public sealed partial class RespireClient
             missingFields ??= new RespireValue[fieldCount];
             missingIndexes ??= new int[fieldCount];
             missingCount = fieldCount;
+
             for (var index = 0; index < fieldCount; index++)
             {
                 result[index].Dispose();
@@ -51,18 +54,33 @@ public sealed partial class RespireClient
                 missingFields[index] = request.Query.GetArgument(index + 1).Snapshot();
                 missingIndexes[index] = index;
             }
+
             cachedCount = 0;
             generation = _core.Sentinel?.Current;
         }
-        if (missingFields is null) return ValueTask.FromResult(RespValue.Array(result));
-        if (missingCount != missingFields.Length) Array.Resize(ref missingFields, missingCount);
+
+        if (missingFields is null)
+        {
+            return ValueTask.FromResult(RespValue.Array(result));
+        }
+
+        if (missingCount != missingFields.Length)
+        {
+            Array.Resize(ref missingFields, missingCount);
+        }
+
         RespireValue[]? allFields = null;
+
         if (cachedCount != 0)
         {
             allFields = new RespireValue[fieldCount];
+
             for (var index = 0; index < fieldCount; index++)
+            {
                 allFields[index] = request.Query.GetArgument(index + 1).Snapshot();
+            }
         }
+
         return FetchHashFieldsAndCacheAsync(key.Snapshot(), missingFields, missingIndexes!, result,
             cache, cancellationToken, generation, allFields, observation);
     }
@@ -82,10 +100,19 @@ public sealed partial class RespireClient
                 static (state, token, producerObservation) => state.Client.FetchHashFieldsAsync(state.Key, state.Fields, state.Cache, token, producerObservation),
                 cancellationToken, observation)
             : FetchHashFieldsAsync(key, fields, cache, cancellationToken, observation)).ConfigureAwait(false);
+
         for (var index = 0; index < fields.Length; index++)
+        {
             result[missingIndexes[index]] = response.AsArray()[index].ToOwned();
+        }
+
         var combined = RespValue.Array(result);
-        if (allFields is null || IsCacheGenerationCurrent(generation)) return combined;
+
+        if (allFields is null || IsCacheGenerationCurrent(generation))
+        {
+            return combined;
+        }
+
         combined.Dispose();
         return await FetchHashFieldsForCurrentGenerationAsync(key, allFields, cache, cancellationToken, observation).ConfigureAwait(false);
     }
@@ -100,7 +127,12 @@ public sealed partial class RespireClient
         {
             var generation = _core.Sentinel?.Current;
             var response = await FetchHashFieldsAsync(key, fields, cache, cancellationToken, observation).ConfigureAwait(false);
-            if (IsCacheGenerationCurrent(generation)) return response;
+
+            if (IsCacheGenerationCurrent(generation))
+            {
+                return response;
+            }
+
             response.Dispose();
         }
     }
@@ -118,33 +150,46 @@ public sealed partial class RespireClient
         using var queryReads = new HashQueryReadScope(cache, key, fields);
         var tokens = queryReads.Tokens;
         var response = default(RespValue);
+
         try
         {
             Action? onRedirect = null;
+
             if (_core.Cluster is not null || _core.RedirectTargets is not null)
             {
                 onRedirect = () =>
                 {
                     for (var index = 0; index < tokens.Length; index++)
+                    {
                         tokens[index] = cache.RebaseRead(in tokens[index]);
+                    }
                 };
             }
+
             response = await SendTrackedAsync("HMGET", new Cmd1N(Verbs.HMGet, key.AsValue(), fields),
                 cancellationToken, onRedirect, observation: observation).ConfigureAwait(false);
+
             if (response.Type != RespireDataType.Array || response.AsArray().Length != fields.Length)
+            {
                 throw new RespireProtocolException($"HMGET must return an array with {fields.Length} field values.");
+            }
             // Validate the entire reply before publishing any field from an untrusted frame.
             for (var index = 0; index < fields.Length; index++)
             {
                 var value = response.AsArray()[index];
+
                 if (!value.IsNull && value.Type != RespireDataType.BulkString)
+                {
                     throw new RespireProtocolException("HMGET field values must be bulk strings or null.");
+                }
             }
+
             for (var index = 0; index < fields.Length; index++)
             {
                 var value = response.AsArray()[index];
                 cache.CompleteRead(in tokens[index], in value, allowInsert: true);
             }
+
             return response;
         }
         catch
@@ -159,13 +204,18 @@ public sealed partial class RespireClient
     private readonly struct HashQueryReadScope : IDisposable
     {
         private readonly ClientSideCacheCoordinator _cache;
-        internal ClientSideCacheCoordinator.QueryReadToken[] Tokens { get; }
+
+        internal ClientSideCacheCoordinator.QueryReadToken[] Tokens
+        {
+            get;
+        }
 
         internal HashQueryReadScope(ClientSideCacheCoordinator cache, RespireKey key, RespireValue[] fields)
         {
             _cache = cache;
             Tokens = new ClientSideCacheCoordinator.QueryReadToken[fields.Length];
             var registered = 0;
+
             try
             {
                 for (; registered < fields.Length; registered++)
@@ -183,8 +233,11 @@ public sealed partial class RespireClient
         private void Abandon(int registered)
         {
             var unused = default(RespValue);
+
             for (var index = 0; index < registered; index++)
+            {
                 _cache.CompleteRead(in Tokens[index], in unused, allowInsert: false);
+            }
         }
     }
 }

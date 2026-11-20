@@ -9,18 +9,32 @@ public sealed record RespireSortOptions
 {
     private readonly RespireKey? _by;
     private readonly ReadOnlyMemory<RespireKey> _get;
+
     /// <summary>Sort descending instead of ascending.</summary>
-    public bool Descending { get; init; }
+    public bool Descending
+    {
+        get; init;
+    }
+
     /// <summary>Compare members or weights lexicographically rather than numerically.</summary>
-    public bool Alpha { get; init; }
+    public bool Alpha
+    {
+        get; init;
+    }
+
     /// <summary>Return a slice of the sorted entries.</summary>
-    public RespireSortLimit? Limit { get; init; }
+    public RespireSortLimit? Limit
+    {
+        get; init;
+    }
+
     /// <summary>External weight pattern, optionally using ->field. A pattern without * disables sorting.</summary>
     public RespireKey? By
     {
         get => _by;
         init => _by = value?.Snapshot();
     }
+
     /// <summary>Ordered GET patterns. # returns the original member; missing external values become null.</summary>
     /// <remarks>The collection and each binary pattern are copied. A with copy shares the owned snapshots.</remarks>
     public ReadOnlyMemory<RespireKey> Get
@@ -33,13 +47,23 @@ public sealed record RespireSortOptions
                 _get = default;
                 return;
             }
+
             var patterns = new RespireKey[value.Length];
-            for (var i = 0; i < patterns.Length; i++) patterns[i] = value.Span[i].Snapshot();
+
+            for (var i = 0; i < patterns.Length; i++)
+            {
+                patterns[i] = value.Span[i].Snapshot();
+            }
+
             _get = patterns;
         }
     }
+
     /// <summary>Use SORT_RO (Redis 7+). Cannot be combined with SortStore.</summary>
-    public bool ReadOnly { get; init; }
+    public bool ReadOnly
+    {
+        get; init;
+    }
 
     /// <inheritdoc/>
     public bool Equals(RespireSortOptions? other)
@@ -56,7 +80,12 @@ public sealed record RespireSortOptions
         hash.Add(Limit);
         hash.Add(By);
         hash.Add(ReadOnly);
-        foreach (var pattern in Get.Span) hash.Add(pattern);
+
+        foreach (var pattern in Get.Span)
+        {
+            hash.Add(pattern);
+        }
+
         return hash.ToHashCode();
     }
 }

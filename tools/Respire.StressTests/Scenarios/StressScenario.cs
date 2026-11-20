@@ -10,16 +10,30 @@ namespace Respire.StressTests.Scenarios;
 /// </summary>
 internal sealed class StressScenario
 {
-    public required string Name { get; init; }
-    public required string Description { get; init; }
-    public required Func<IStressClient, WorkerContext, ValueTask> Execute { get; init; }
+    public required string Name
+    {
+        get; init;
+    }
+
+    public required string Description
+    {
+        get; init;
+    }
+
+    public required Func<IStressClient, WorkerContext, ValueTask> Execute
+    {
+        get; init;
+    }
 
     public override string ToString() => Name;
 }
 
 internal static class StressScenarios
 {
-    public static IReadOnlyList<StressScenario> All { get; } =
+    public static IReadOnlyList<StressScenario> All
+    {
+        get;
+    } =
     [
         new StressScenario
         {
@@ -74,6 +88,7 @@ internal static class StressScenarios
             Execute = static async (client, ctx) =>
             {
                 var slot = ctx.Iteration++ % 10;
+
                 if (slot < 6)
                 {
                     _ = await client.GetStringAsync(ctx.SeededStringKey).ConfigureAwait(false);
@@ -97,7 +112,9 @@ internal static class StressScenarios
     public static IReadOnlyList<StressScenario> Select(string scenario)
     {
         if (scenario.Equals("all", StringComparison.OrdinalIgnoreCase))
+        {
             return All;
+        }
 
         var match = All.FirstOrDefault(s => s.Name.Equals(scenario, StringComparison.OrdinalIgnoreCase));
         return match is not null

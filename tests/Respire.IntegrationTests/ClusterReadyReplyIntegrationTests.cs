@@ -27,7 +27,9 @@ public class ClusterReadyReplyIntegrationTests(SharedRedisClusterFixture fixture
         var cluster = fixture.Cluster;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Protocol = protocol, Connections = 1,
+            UseCluster = true,
+            Protocol = protocol,
+            Connections = 1,
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new(cluster.Host, cluster.Port(0))],
         });
@@ -37,7 +39,11 @@ public class ClusterReadyReplyIntegrationTests(SharedRedisClusterFixture fixture
         (await client.Strings.SetAsync(key, "payload", cancellationToken: timeout.Token)).Should().BeTrue();
         (await client.Strings.GetStringAsync(key, timeout.Token)).Should().Be("payload");
         await cluster.MoveKeysAsync(slot, source: 0, target: 1);
-        if (!asking) await cluster.FinishMoveAsync(slot, target: 1);
+
+        if (!asking)
+        {
+            await cluster.FinishMoveAsync(slot, target: 1);
+        }
 
         switch (shape)
         {
@@ -50,8 +56,10 @@ public class ClusterReadyReplyIntegrationTests(SharedRedisClusterFixture fixture
             case "integer":
                 (await client.Strings.LengthAsync(key, timeout.Token)).Should().Be(7);
                 break;
-            default: throw new ArgumentOutOfRangeException(nameof(shape));
+            default:
+                throw new ArgumentOutOfRangeException(nameof(shape));
         }
+
         client.Core.Cluster!.GetSlotOwnerEndpoint(slot)!.Value.Port.Should().Be(cluster.Port(asking ? 0 : 1));
     }
 }

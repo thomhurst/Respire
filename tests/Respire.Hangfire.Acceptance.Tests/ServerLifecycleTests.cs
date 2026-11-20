@@ -26,10 +26,12 @@ public class ServerLifecycleTests(RedisTestContainer fixture) : UpstreamRedisTes
         var key = Guid.NewGuid().ToString("N");
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Assert.True(Completions.TryAdd(key, completion));
+
         try
         {
             var client = new BackgroundJobClient(storage);
             var jobId = client.Enqueue(() => CompleteJob(key));
+
             using (var server = new BackgroundJobServer(new BackgroundJobServerOptions
             {
                 WorkerCount = 1,

@@ -4,13 +4,40 @@ namespace Respire.StressTests;
 
 internal sealed class StressTestOptions
 {
-    public int DurationSeconds { get; private init; } = 5 * 60;
-    public int WarmupSeconds { get; private init; } = 10;
-    public string Scenario { get; private init; } = "all";
-    public string Client { get; private init; } = "all";
-    public int Concurrency { get; private init; } = 50;
-    public int ValueSizeBytes { get; private init; } = 1024;
-    public string OutputPath { get; private init; } = "./results";
+    public int DurationSeconds
+    {
+        get; private init;
+    } = 5 * 60;
+
+    public int WarmupSeconds
+    {
+        get; private init;
+    } = 10;
+
+    public string Scenario
+    {
+        get; private init;
+    } = "all";
+
+    public string Client
+    {
+        get; private init;
+    } = "all";
+
+    public int Concurrency
+    {
+        get; private init;
+    } = 50;
+
+    public int ValueSizeBytes
+    {
+        get; private init;
+    } = 1024;
+
+    public string OutputPath
+    {
+        get; private init;
+    } = "./results";
 
     public const string Usage = """
         Respire Stress Test Runner — sustained Respire vs StackExchange.Redis comparison

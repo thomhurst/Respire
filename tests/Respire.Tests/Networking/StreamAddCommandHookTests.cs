@@ -49,9 +49,16 @@ public class StreamAddCommandHookTests
         var fail = false;
         server.ReplyOverride = (_, command) =>
         {
-            if (!command.StartsWith("XADD ", StringComparison.Ordinal)) return null;
+            if (!command.StartsWith("XADD ", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
             if (fallback && command.Contains(" IDMP ", StringComparison.Ordinal))
+            {
                 return "-ERR Invalid stream ID specified as stream command argument\r\n"u8.ToArray();
+            }
+
             return fail ? "-ERR final failure\r\n"u8.ToArray() : "$3\r\n1-0\r\n"u8.ToArray();
         };
 #pragma warning disable RESP010 // This test owns the client so identity fallback and final hook outcomes cannot leak between scenarios.
@@ -123,7 +130,11 @@ public class StreamAddCommandHookTests
         using var canceled = new CancellationTokenSource();
         server.ReplyOverride = (_, command) =>
         {
-            if (!command.StartsWith("XADD ", StringComparison.Ordinal)) return null;
+            if (!command.StartsWith("XADD ", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
             canceled.Cancel();
             return "-ERR Invalid stream ID specified as stream command argument\r\n"u8.ToArray();
         };
@@ -147,14 +158,20 @@ public class StreamAddCommandHookTests
             : command.Contains(" IDMP ", StringComparison.Ordinal)
                 ? "-ERR Invalid stream ID specified as stream command argument\r\n"u8.ToArray()
                 : "$3\r\n1-0\r\n"u8.ToArray();
-        if (timeout) server.SuppressReply = command => command.StartsWith("XADD ", StringComparison.Ordinal)
+
+        if (timeout)
+        {
+            server.SuppressReply = command => command.StartsWith("XADD ", StringComparison.Ordinal)
             && !command.Contains(" IDMP ", StringComparison.Ordinal);
+        }
+
         var hook = new RecordingHook();
 #pragma warning disable RESP010 // This test owns the client and deadline settings to isolate fallback hook completion.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         {
             CommandTimeout = timeout ? TimeSpan.FromMilliseconds(500) : null,
         });
+
 #pragma warning restore RESP010
         if (timeout)
         {
@@ -167,6 +184,7 @@ public class StreamAddCommandHookTests
             await Assert.That(await Add(client, false)).IsEqualTo((RespireStreamId?)"1-0");
             await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
         }
+
         await Assert.That(hook.Completed.Single().Context.CancellationToken).IsEqualTo(CancellationToken.None);
         await Assert.That(AddCount(server)).IsEqualTo(2);
     }
@@ -183,7 +201,10 @@ public class StreamAddCommandHookTests
         var entered = 0;
         hook.Before = _ =>
         {
-            if (Interlocked.Increment(ref entered) == 1) nested = Add(client, true);
+            if (Interlocked.Increment(ref entered) == 1)
+            {
+                nested = Add(client, true);
+            }
         };
         await Add(client, false);
         await nested!;
@@ -225,9 +246,12 @@ public class StreamAddCommandHookTests
 
     private static RespireOptions Options(FakeRespServer server, RecordingHook hook, bool automatic = true) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-        Connections = 1, ThreadPoolMonitoring = false,
-        CommandTimeout = TimeSpan.FromSeconds(3), CommandHook = hook,
+        Endpoints = [new("127.0.0.1", server.Port)],
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromSeconds(3),
+        CommandHook = hook,
         RetryPolicy = automatic ? new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteChecked } : null,
     };
 
@@ -239,15 +263,21 @@ public class StreamAddCommandHookTests
         public Action<RespireCommandContext>? Before;
         public bool ThrowOnCompleted;
         public readonly ConcurrentQueue<(RespireCommandContext Context, RespireCommandOutcome Outcome, Exception? Error)> Completed = new();
+
         public override object? OnExecuting(RespireCommandContext context)
         {
             Before?.Invoke(context);
             return null;
         }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Completed.Enqueue((context, outcome, error));
-            if (ThrowOnCompleted) throw new InvalidOperationException("Ignored observer failure");
+
+            if (ThrowOnCompleted)
+            {
+                throw new InvalidOperationException("Ignored observer failure");
+            }
         }
     }
 }

@@ -67,10 +67,16 @@ public readonly record struct RespireBitFieldEncoding
     }
 
     /// <summary>Whether the field is signed.</summary>
-    public bool IsSigned { get; }
+    public bool IsSigned
+    {
+        get;
+    }
 
     /// <summary>The field width in bits.</summary>
-    public int Width { get; }
+    public int Width
+    {
+        get;
+    }
 
     /// <summary>Creates a signed encoding from 1 through 64 bits.</summary>
     public static RespireBitFieldEncoding Signed(int width)
@@ -108,10 +114,16 @@ public readonly record struct RespireBitFieldOffset
     }
 
     /// <summary>The non-negative bit offset or field index.</summary>
-    public long Value { get; }
+    public long Value
+    {
+        get;
+    }
 
     /// <summary>Whether Redis multiplies the value by the encoding width (the # form).</summary>
-    public bool IsFieldIndex { get; }
+    public bool IsFieldIndex
+    {
+        get;
+    }
 
     /// <summary>Creates an absolute offset measured in bits.</summary>
     public static RespireBitFieldOffset Bits(long offset) => new(offset, false);
@@ -133,11 +145,31 @@ public readonly struct RespireBitFieldOperation
         Overflow = overflow;
     }
 
-    internal string Command { get; }
-    internal RespireBitFieldEncoding Encoding { get; }
-    internal RespireBitFieldOffset Offset { get; }
-    internal long Value { get; }
-    internal RespireBitFieldOverflow? Overflow { get; }
+    internal string Command
+    {
+        get;
+    }
+
+    internal RespireBitFieldEncoding Encoding
+    {
+        get;
+    }
+
+    internal RespireBitFieldOffset Offset
+    {
+        get;
+    }
+
+    internal long Value
+    {
+        get;
+    }
+
+    internal RespireBitFieldOverflow? Overflow
+    {
+        get;
+    }
+
     internal int TokenCount => Command == "OVERFLOW" ? 2 : Command == "GET" ? 3 : 4;
 
     /// <summary>Reads a signed or unsigned field. Redis: BITFIELD GET.</summary>
@@ -248,7 +280,6 @@ internal sealed class BitmapCommands(RespireClient client) : IRespireBitmapComma
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, RespireBitFieldOperation get, CancellationToken cancellationToken)
         => FieldReadOnlyAsync(key, [get], cancellationToken);
-
 
     public ValueTask<bool> GetAsync(RespireKey key, long offset, CancellationToken cancellationToken = default)
     {
@@ -428,8 +459,11 @@ internal readonly struct BitOpCommand(
     RespireValue[] sourceKeys) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
+
     public RespireCommandRetryCategory RetryCategory => verb.RetryCategory;
+
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public bool TryGetClusterSlot(out int slot) => destination.TryGetClusterSlot(out slot);
@@ -440,6 +474,7 @@ internal readonly struct BitOpCommand(
         writer.WriteRaw(verb.Bulk);
         operation.WriteTo(ref writer);
         destination.WriteTo(ref writer);
+
         foreach (var sourceKey in sourceKeys)
         {
             sourceKey.WriteTo(ref writer);
@@ -450,8 +485,11 @@ internal readonly struct BitOpCommand(
 internal readonly struct BitFieldCommand(Verb verb, RespireValue key, RespireBitFieldOperation[] operations) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
+
     public RespireCommandRetryCategory RetryCategory => verb.RetryCategory;
+
     public ReadCommandKind ReadKind => verb.ReadKind;
 
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
@@ -464,6 +502,7 @@ internal readonly struct BitFieldCommand(Verb verb, RespireValue key, RespireBit
     {
         var arguments = new RespireValue[1 + operations.Length * 7];
         arguments[0] = key;
+
         for (var index = 0; index < operations.Length; index++)
         {
             var item = operations[index];
@@ -486,6 +525,7 @@ internal readonly struct BitFieldCommand(Verb verb, RespireValue key, RespireBit
     public void Write(ref RespWriter writer)
     {
         var tokenCount = 1;
+
         foreach (var operation in operations)
         {
             tokenCount += operation.TokenCount;
@@ -502,9 +542,11 @@ internal readonly struct BitFieldCommand(Verb verb, RespireValue key, RespireBit
         // read: only offsetBuffer[..(offsetLength + 1)], the bytes just written; failure: a failed TryFormat
         // reports zero digits, so only the written prefix byte is read.
         Span<byte> offsetBuffer = stackalloc byte[21];
+
         foreach (var operation in operations)
         {
             writer.WriteBulkString(operation.Command);
+
             if (operation.Command == "OVERFLOW")
             {
                 writer.WriteBulkString(operation.Overflow switch

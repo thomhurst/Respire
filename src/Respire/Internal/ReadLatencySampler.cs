@@ -27,6 +27,7 @@ internal sealed class ReadLatencySampler<TConnection>(
     private long _reservationSequence;
 
     internal long SamplesStarted => Volatile.Read(ref _started);
+
     private long Now => clock?.Invoke() ?? Environment.TickCount64;
 
     internal bool HasPendingProbe(TConnection connection)
@@ -44,10 +45,16 @@ internal sealed class ReadLatencySampler<TConnection>(
     {
         reservation = default;
         var sample = _samples.GetValue(connection, static _ => new Sample());
+
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed != 0, this);
-            if (sample.Pending is not null || sample.Reservation != 0) return false;
+
+            if (sample.Pending is not null || sample.Reservation != 0)
+            {
+                return false;
+            }
+
             var identity = ++_reservationSequence;
             sample.BeginUpdate();
             Volatile.Write(ref sample.Reservation, identity);
@@ -78,7 +85,10 @@ internal sealed class ReadLatencySampler<TConnection>(
 
     internal void ConnectionSucceeded(object candidate)
     {
-        if (_connectionFailures.TryGetValue(candidate, out _)) _connectionFailures.Remove(candidate);
+        if (_connectionFailures.TryGetValue(candidate, out _))
+        {
+            _connectionFailures.Remove(candidate);
+        }
     }
 
     // probeDeadline: selection's shared sampling deadline. It is checked under the probe-publication
@@ -93,7 +103,11 @@ internal sealed class ReadLatencySampler<TConnection>(
         // ROLE owns this socket until validation completes. Exclude it without starting
         // a probe or publishing a cached estimate to a concurrent selection. This first read
         // is only an early exit; the versioned snapshot and the locked path below re-check it.
-        if (Volatile.Read(ref sample.Reservation) != 0) return ValueTask.FromResult(ReadLatencyResult.Pending);
+        if (Volatile.Read(ref sample.Reservation) != 0)
+        {
+            return ValueTask.FromResult(ReadLatencyResult.Pending);
+        }
+
         var version = Volatile.Read(ref sample.Version);
         var now = Now;
         var cached = Volatile.Read(ref sample.Measurement);
@@ -103,18 +117,27 @@ internal sealed class ReadLatencySampler<TConnection>(
         // Keep snapshot reads before the final version read. Writers bracket every
         // state change with odd/even versions, including probe publication and ROLE.
         Interlocked.MemoryBarrier();
+
         if ((version & 1) == 0 && version == Volatile.Read(ref sample.Version)
             && reservation == 0 && cachedPending is null && now < nextAttempt)
+        {
             return ValueTask.FromResult(cached is not null && now - cached.MeasuredAt < MaximumAgeMilliseconds
                 ? ReadLatencyResult.Measured(cached.Latency) : ReadLatencyResult.Unknown);
+        }
+
         Task<ReadLatencyResult>? pending;
         Probe? start = null;
+
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed != 0, this);
             // Changed snapshots and probe starts share the ROLE reservation gate.
             // Pending also means ROLE owns the FIFO, not only an outstanding PING.
-            if (sample.Reservation != 0) return ValueTask.FromResult(ReadLatencyResult.Pending);
+            if (sample.Reservation != 0)
+            {
+                return ValueTask.FromResult(ReadLatencyResult.Pending);
+            }
+
             pending = sample.Pending;
             // No queue of health checks: callers without a sample can still select a
             // healthy connection without latency evidence when all four slots are busy.
@@ -129,6 +152,7 @@ internal sealed class ReadLatencySampler<TConnection>(
                 sample.EndUpdate();
                 Interlocked.Increment(ref _started);
             }
+
             if (pending is null)
             {
                 var measurement = sample.Measurement;
@@ -136,7 +160,11 @@ internal sealed class ReadLatencySampler<TConnection>(
                     ? ReadLatencyResult.Measured(measurement.Latency) : ReadLatencyResult.Unknown);
             }
         }
-        if (start is not null) _ = MeasureAsync(connection, sample, start);
+
+        if (start is not null)
+        {
+            _ = MeasureAsync(connection, sample, start);
+        }
         // A fresh estimate cannot bypass an outstanding command in this connection's FIFO.
         return new ValueTask<ReadLatencyResult>(pending.WaitAsync(cancellationToken));
     }
@@ -145,6 +173,7 @@ internal sealed class ReadLatencySampler<TConnection>(
     {
         var latency = Unknown;
         Task<long>? operation = null;
+
         try
         {
             // The deadline bounds selection's wait, not the lifetime of an accepted PING.
@@ -155,6 +184,7 @@ internal sealed class ReadLatencySampler<TConnection>(
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
             deadline.CancelAfter(ReadLatencySampler.SamplingWaitMilliseconds);
             var elapsed = await operation.WaitAsync(deadline.Token).ConfigureAwait(false);
+
             if (elapsed >= 0 && elapsed != Unknown)
             {
                 var previous = Volatile.Read(ref sample.Measurement);
@@ -171,6 +201,7 @@ internal sealed class ReadLatencySampler<TConnection>(
         var result = !_stop.IsCancellationRequested && operation is { IsCompleted: false }
             ? ReadLatencyResult.Pending
             : latency == Unknown ? ReadLatencyResult.Unknown : ReadLatencyResult.Measured(latency);
+
         lock (_gate)
         {
             // Failure deliberately invalidates even a young estimate: do not retain a known-fast
@@ -185,9 +216,13 @@ internal sealed class ReadLatencySampler<TConnection>(
         // underlying wait and then closes the client's connections through its normal lifecycle.
         if (operation is not null)
         {
-            try { await operation.ConfigureAwait(false); }
+            try
+            {
+                await operation.ConfigureAwait(false);
+            }
             catch (Exception) { }
         }
+
         lock (_gate)
         {
             sample.BeginUpdate();
@@ -201,11 +236,17 @@ internal sealed class ReadLatencySampler<TConnection>(
     public async ValueTask DisposeAsync()
     {
         Task[] running;
+
         lock (_gate)
         {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
+
             running = _running.ToArray();
         }
+
         await _stop.CancelAsync().ConfigureAwait(false);
         await Task.WhenAll(running).ConfigureAwait(false);
         _samples.Clear();
@@ -223,6 +264,7 @@ internal sealed class ReadLatencySampler<TConnection>(
         internal long Reservation;
 
         internal void BeginUpdate() => Interlocked.Increment(ref Version);
+
         internal void EndUpdate() => Interlocked.Increment(ref Version);
     }
 

@@ -20,11 +20,19 @@ internal struct RetryCategorySet
     {
         get
         {
-            if (Contains(RespireCommandRetryCategory.Never)) return RespireCommandRetryCategory.Never;
+            if (Contains(RespireCommandRetryCategory.Never))
+            {
+                return RespireCommandRetryCategory.Never;
+            }
+
             for (var category = RespireCommandRetryCategory.ServerAdmin; category > RespireCommandRetryCategory.Never; category--)
             {
-                if (Contains(category)) return category;
+                if (Contains(category))
+                {
+                    return category;
+                }
             }
+
             return RespireCommandRetryCategory.Never;
         }
     }

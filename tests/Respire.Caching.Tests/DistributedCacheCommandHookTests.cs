@@ -42,12 +42,24 @@ public class DistributedCacheCommandHookTests
         {
             switch (route)
             {
-                case "get": await cache.GetAsync(key); break;
-                case "try-get": await cache.TryGetAsync(key, parameter == "destination" ? null! : new ArrayBufferWriter<byte>()); break;
-                case "set": await cache.SetAsync(key, parameter == "value" ? null! : new byte[] { 1 }, options); break;
-                case "set-buffer": await cache.SetAsync(key, ReadOnlySequence<byte>.Empty, options); break;
-                case "refresh": await cache.RefreshAsync(key); break;
-                default: await cache.RemoveAsync(key); break;
+                case "get":
+                    await cache.GetAsync(key);
+                    break;
+                case "try-get":
+                    await cache.TryGetAsync(key, parameter == "destination" ? null! : new ArrayBufferWriter<byte>());
+                    break;
+                case "set":
+                    await cache.SetAsync(key, parameter == "value" ? null! : new byte[] { 1 }, options);
+                    break;
+                case "set-buffer":
+                    await cache.SetAsync(key, ReadOnlySequence<byte>.Empty, options);
+                    break;
+                case "refresh":
+                    await cache.RefreshAsync(key);
+                    break;
+                default:
+                    await cache.RemoveAsync(key);
+                    break;
             }
         }).Throws<ArgumentNullException>();
 
@@ -159,7 +171,9 @@ public class DistributedCacheCommandHookTests
         hook.Before = _ =>
         {
             if (server.CommandsSeen != 0 || codec.Calls != 0)
+            {
                 throw new InvalidOperationException("Admission was late");
+            }
         };
 
         await Execute(cache, route);
@@ -171,11 +185,13 @@ public class DistributedCacheCommandHookTests
         await Assert.That(completion.State).IsSameReferenceAs(completion.Context);
         await Assert.That(completion.Error).IsNull();
         await Assert.That(server.ReceivedCommands.Any(command => command.Contains("cache:key", StringComparison.Ordinal))).IsTrue();
+
         if (route != "remove")
         {
             await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal))).IsTrue();
             await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal))).IsTrue();
         }
+
         await Assert.That(codec.Calls).IsEqualTo(route is "refresh" or "remove" ? 0 : 1);
     }
 
@@ -200,8 +216,11 @@ public class DistributedCacheCommandHookTests
         var completion = hook.Completed.Single();
         await Assert.That(completion.Outcome).IsEqualTo(RespireCommandOutcome.Failed);
         await Assert.That(completion.Error).IsSameReferenceAs(expected);
+
         if (route.StartsWith("set", StringComparison.Ordinal))
+        {
             await Assert.That(server.ReceivedCommands).IsEmpty();
+        }
     }
 
     [Test]
@@ -222,6 +241,7 @@ public class DistributedCacheCommandHookTests
             : ":1\r\n"u8.ToArray();
 
         var pending = cache.GetAsync("key");
+
         try
         {
             await correcting.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -229,6 +249,7 @@ public class DistributedCacheCommandHookTests
             await Assert.That(pending.IsCompleted).IsFalse();
         }
         finally { release.TrySetResult(); }
+
         var result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(result!.AsSpan().SequenceEqual("value"u8)).IsTrue();
         await Assert.That(hook.Completed.Count).IsEqualTo(1);
@@ -245,7 +266,10 @@ public class DistributedCacheCommandHookTests
         Task? nested = null;
         hook.Before = context =>
         {
-            if (context.Command == "GET") nested = client.SetAsync("nested", "value").AsTask();
+            if (context.Command == "GET")
+            {
+                nested = client.SetAsync("nested", "value").AsTask();
+            }
         };
 
         await cache.GetAsync("key");
@@ -274,13 +298,20 @@ public class DistributedCacheCommandHookTests
 
     private static RespireOptions Options(FakeRespServer server, Hook hook) => new()
     {
-        Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
-        Connections = 1, CommandTimeout = TimeSpan.FromSeconds(5), ThreadPoolMonitoring = false, CommandHook = hook,
+        Protocol = RespireProtocol.Resp2,
+        Endpoints = [new("127.0.0.1", server.Port)],
+        Connections = 1,
+        CommandTimeout = TimeSpan.FromSeconds(5),
+        ThreadPoolMonitoring = false,
+        CommandHook = hook,
     };
 
     private static string Command(string route) => route switch
     {
-        "get" or "try-get" => "GET", "set" or "set-buffer" => "SET", "refresh" => "REFRESH", _ => "UNLINK",
+        "get" or "try-get" => "GET",
+        "set" or "set-buffer" => "SET",
+        "refresh" => "REFRESH",
+        _ => "UNLINK",
     };
 
     private static async Task Execute(RespireDistributedCache cache, string route, bool synchronous = false,
@@ -290,23 +321,49 @@ public class DistributedCacheCommandHookTests
         {
             switch (route)
             {
-                case "get": cache.Get("key"); break;
-                case "try-get": cache.TryGet("key", new ArrayBufferWriter<byte>()); break;
-                case "set": cache.Set("key", [1], new()); break;
-                case "set-buffer": cache.Set("key", new ReadOnlySequence<byte>(new byte[] { 1 }), new()); break;
-                case "refresh": cache.Refresh("key"); break;
-                default: cache.Remove("key"); break;
+                case "get":
+                    cache.Get("key");
+                    break;
+                case "try-get":
+                    cache.TryGet("key", new ArrayBufferWriter<byte>());
+                    break;
+                case "set":
+                    cache.Set("key", [1], new());
+                    break;
+                case "set-buffer":
+                    cache.Set("key", new ReadOnlySequence<byte>(new byte[] { 1 }), new());
+                    break;
+                case "refresh":
+                    cache.Refresh("key");
+                    break;
+                default:
+                    cache.Remove("key");
+                    break;
             }
+
             return;
         }
+
         switch (route)
         {
-            case "get": await cache.GetAsync("key", token); break;
-            case "try-get": await cache.TryGetAsync("key", new ArrayBufferWriter<byte>(), token); break;
-            case "set": await cache.SetAsync("key", [1], new(), token); break;
-            case "set-buffer": await cache.SetAsync("key", new ReadOnlySequence<byte>(new byte[] { 1 }), new(), token); break;
-            case "refresh": await cache.RefreshAsync("key", token); break;
-            default: await cache.RemoveAsync("key", token); break;
+            case "get":
+                await cache.GetAsync("key", token);
+                break;
+            case "try-get":
+                await cache.TryGetAsync("key", new ArrayBufferWriter<byte>(), token);
+                break;
+            case "set":
+                await cache.SetAsync("key", [1], new(), token);
+                break;
+            case "set-buffer":
+                await cache.SetAsync("key", new ReadOnlySequence<byte>(new byte[] { 1 }), new(), token);
+                break;
+            case "refresh":
+                await cache.RefreshAsync("key", token);
+                break;
+            default:
+                await cache.RemoveAsync("key", token);
+                break;
         }
     }
 
@@ -314,11 +371,18 @@ public class DistributedCacheCommandHookTests
     {
         public int Calls;
         public Exception? Failure;
+
         public byte[] Encode(ReadOnlySpan<byte> payload) => Decode(payload);
+
         public byte[] Decode(ReadOnlySpan<byte> payload)
         {
             Interlocked.Increment(ref Calls);
-            if (Failure is { } failure) throw failure;
+
+            if (Failure is { } failure)
+            {
+                throw failure;
+            }
+
             return payload.ToArray();
         }
     }
@@ -326,7 +390,9 @@ public class DistributedCacheCommandHookTests
     private sealed class ThrowingWriter(Exception failure) : IBufferWriter<byte>
     {
         public void Advance(int count) => throw failure;
+
         public Memory<byte> GetMemory(int sizeHint = 0) => throw failure;
+
         public Span<byte> GetSpan(int sizeHint = 0) => throw failure;
     }
 
@@ -334,12 +400,26 @@ public class DistributedCacheCommandHookTests
     {
         public Action<RespireCommandContext>? Before;
         public bool ThrowOnCompleted;
-        public ConcurrentQueue<(RespireCommandContext Context, object? State, RespireCommandOutcome Outcome, Exception? Error)> Completed { get; } = new();
-        public override object? OnExecuting(RespireCommandContext context) { Before?.Invoke(context); return context; }
+
+        public ConcurrentQueue<(RespireCommandContext Context, object? State, RespireCommandOutcome Outcome, Exception? Error)> Completed
+        {
+            get;
+        } = new();
+
+        public override object? OnExecuting(RespireCommandContext context)
+        {
+            Before?.Invoke(context);
+            return context;
+        }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? exception)
         {
             Completed.Enqueue((context, state, outcome, exception));
-            if (ThrowOnCompleted) throw new InvalidOperationException("Observer failure");
+
+            if (ThrowOnCompleted)
+            {
+                throw new InvalidOperationException("Observer failure");
+            }
         }
     }
 }

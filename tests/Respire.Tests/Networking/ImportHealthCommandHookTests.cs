@@ -24,16 +24,31 @@ public class ImportHealthCommandHookTests
 #pragma warning restore RESP010
         using var fault = server.InjectFault(command, RespireFakeFault.Loading());
         using var caller = new CancellationTokenSource();
-        if (cancel) caller.Cancel();
-        else hook.Before = _ => throw new InvalidOperationException("rejected");
+
+        if (cancel)
+        {
+            caller.Cancel();
+        }
+        else
+        {
+            hook.Before = _ => throw new InvalidOperationException("rejected");
+        }
+
         await Assert.That(async () =>
         {
             (RespireKey, RespireValue)[] pairs = [("first", "one"), ("second", "two")];
+
             switch (command)
             {
-                case "MSET": await client.Strings.SetManyAsync(pairs, caller.Token); break;
-                case "MSETNX": await client.Strings.SetManyIfNotExistsAsync(pairs, caller.Token); break;
-                case "MSETEX": await client.Strings.SetManyExpireAsync(TimeSpan.FromSeconds(30), pairs, caller.Token); break;
+                case "MSET":
+                    await client.Strings.SetManyAsync(pairs, caller.Token);
+                    break;
+                case "MSETNX":
+                    await client.Strings.SetManyIfNotExistsAsync(pairs, caller.Token);
+                    break;
+                case "MSETEX":
+                    await client.Strings.SetManyExpireAsync(TimeSpan.FromSeconds(30), pairs, caller.Token);
+                    break;
             }
         }).Throws<Exception>();
         await Assert.That(fault.MatchedCount).IsEqualTo(0);
@@ -65,8 +80,16 @@ public class ImportHealthCommandHookTests
 #pragma warning restore RESP010
         var before = connections;
         using var caller = new CancellationTokenSource();
-        if (cancel) caller.Cancel();
-        else hook.Before = _ => throw new InvalidOperationException("rejected");
+
+        if (cancel)
+        {
+            caller.Cancel();
+        }
+        else
+        {
+            hook.Before = _ => throw new InvalidOperationException("rejected");
+        }
+
         await Assert.That(async () => await client.Hashes.CreateImportSessionAsync(caller.Token)).Throws<Exception>();
         await Assert.That(connections).IsEqualTo(before);
         var completion = hook.Completed.Single();
@@ -96,8 +119,16 @@ public class ImportHealthCommandHookTests
         hook.Completed.Clear();
         using var fault = server.InjectFault("HIMPORT", RespireFakeFault.Loading());
         using var caller = new CancellationTokenSource();
-        if (cancel) caller.Cancel();
-        else hook.Before = _ => throw new InvalidOperationException("rejected");
+
+        if (cancel)
+        {
+            caller.Cancel();
+        }
+        else
+        {
+            hook.Before = _ => throw new InvalidOperationException("rejected");
+        }
+
         await Assert.That(async () => await Import(session, command, caller.Token)).Throws<Exception>();
         await Assert.That(fault.MatchedCount).IsEqualTo(0);
         var completion = hook.Completed.Single();
@@ -122,7 +153,10 @@ public class ImportHealthCommandHookTests
         Task<bool>? followup = null;
         hook.After = context =>
         {
-            if (context.Command == "HIMPORT SET") followup = session.DiscardAsync("schema").AsTask();
+            if (context.Command == "HIMPORT SET")
+            {
+                followup = session.DiscardAsync("schema").AsTask();
+            }
         };
         await session.SetAsync("key", "schema", "value");
         await Assert.That(await followup!).IsTrue();
@@ -168,6 +202,7 @@ public class ImportHealthCommandHookTests
         var gate = new RespireFakeGate();
         using var fault = server.InjectFault("HIMPORT", RespireFakeFault.Pause(gate, afterExecution: true));
         var pending = session.SetAsync("key", "schema", ["value"], caller.Token).AsTask();
+
         try
         {
             await fault.Matched.WaitAsync(TimeSpan.FromSeconds(10));
@@ -189,8 +224,11 @@ public class ImportHealthCommandHookTests
 #pragma warning disable RESP010 // This import/health hook scenario owns its client and fault-injected peer state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-            Connections = 1, ThreadPoolMonitoring = false, CommandHook = hook,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            CommandHook = hook,
         });
 #pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
@@ -215,7 +253,10 @@ public class ImportHealthCommandHookTests
         var expiredAtCompletion = false;
         hook.After = _ =>
         {
-            try { session.CreateBatch(); }
+            try
+            {
+                session.CreateBatch();
+            }
             catch (ObjectDisposedException) { expiredAtCompletion = true; }
         };
         using var fault = server.InjectFault("HIMPORT", RespireFakeFault.Disconnect(afterExecution: true));
@@ -239,8 +280,16 @@ public class ImportHealthCommandHookTests
 #pragma warning restore RESP010
         using var fault = server.InjectFault("PING", RespireFakeFault.Loading());
         using var caller = new CancellationTokenSource();
-        if (cancel) caller.Cancel();
-        else hook.Before = _ => throw new InvalidOperationException("rejected");
+
+        if (cancel)
+        {
+            caller.Cancel();
+        }
+        else
+        {
+            hook.Before = _ => throw new InvalidOperationException("rejected");
+        }
+
         await Assert.That(async () => await client.ProbeHealthAsync(cancellationToken: caller.Token)).Throws<Exception>();
         await Assert.That(fault.MatchedCount).IsEqualTo(0);
         var completion = hook.Completed.Single();
@@ -256,13 +305,17 @@ public class ImportHealthCommandHookTests
 #pragma warning disable RESP010 // This import/health hook scenario owns its client and fault-injected peer state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
         {
-            CommandHook = hook, ReplicaEndpoints = [new("unused-replica")],
+            CommandHook = hook,
+            ReplicaEndpoints = [new("unused-replica")],
         });
 #pragma warning restore RESP010
         Task? nested = null;
         hook.Before = context =>
         {
-            if (context.Command == "PROBE HEALTH") nested = client.Strings.SetAsync("nested", "value").AsTask();
+            if (context.Command == "PROBE HEALTH")
+            {
+                nested = client.Strings.SetAsync("nested", "value").AsTask();
+            }
         };
         var results = await ((IRespireHealthProbe)client.WithKeyPrefix("tenant:")).ProbeHealthAsync(new() { ProbeAllNodes = true });
         await nested!;
@@ -288,6 +341,7 @@ public class ImportHealthCommandHookTests
         var gate = new RespireFakeGate();
         using var fault = server.InjectFault("PING", cancel ? RespireFakeFault.Pause(gate) : RespireFakeFault.Loading());
         var task = client.ProbeHealthAsync(cancellationToken: caller.Token).AsTask();
+
         try
         {
             if (cancel)
@@ -301,6 +355,7 @@ public class ImportHealthCommandHookTests
                 var results = await task;
                 await Assert.That(results.Single().Error is RespireServerException).IsTrue();
             }
+
             await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(cancel ? RespireCommandOutcome.Canceled : RespireCommandOutcome.Succeeded);
         }
         finally { gate.Release(); }
@@ -310,25 +365,58 @@ public class ImportHealthCommandHookTests
     {
         switch (command)
         {
-            case "HIMPORT PREPARE": await session.PrepareAsync("schema", ["changed"], token); break;
-            case "HIMPORT SET": await session.SetAsync("key", "schema", ["value"], token); break;
-            case "HIMPORT DISCARD": await session.DiscardAsync("schema", token); break;
-            case "HIMPORT DISCARDALL": await session.DiscardAllAsync(token); break;
+            case "HIMPORT PREPARE":
+                await session.PrepareAsync("schema", ["changed"], token);
+                break;
+            case "HIMPORT SET":
+                await session.SetAsync("key", "schema", ["value"], token);
+                break;
+            case "HIMPORT DISCARD":
+                await session.DiscardAsync("schema", token);
+                break;
+            case "HIMPORT DISCARDALL":
+                await session.DiscardAllAsync(token);
+                break;
         }
     }
 
     private sealed class RecordingHook : RespireCommandHook
     {
-        public Action<RespireCommandContext>? Before { get; set; }
-        public Action<RespireCommandContext>? After { get; set; }
-        public bool ThrowOnCompleted { get; init; }
-        public ConcurrentQueue<(RespireCommandContext Context, RespireCommandOutcome Outcome, Exception? Error)> Completed { get; } = new();
-        public override object? OnExecuting(RespireCommandContext context) { Before?.Invoke(context); return context; }
+        public Action<RespireCommandContext>? Before
+        {
+            get; set;
+        }
+
+        public Action<RespireCommandContext>? After
+        {
+            get; set;
+        }
+
+        public bool ThrowOnCompleted
+        {
+            get; init;
+        }
+
+        public ConcurrentQueue<(RespireCommandContext Context, RespireCommandOutcome Outcome, Exception? Error)> Completed
+        {
+            get;
+        } = new();
+
+        public override object? OnExecuting(RespireCommandContext context)
+        {
+            Before?.Invoke(context);
+            return context;
+        }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Completed.Enqueue((context, outcome, error));
             After?.Invoke(context);
-            if (ThrowOnCompleted) throw new InvalidOperationException("ignored observer error");
+
+            if (ThrowOnCompleted)
+            {
+                throw new InvalidOperationException("ignored observer error");
+            }
         }
     }
 }

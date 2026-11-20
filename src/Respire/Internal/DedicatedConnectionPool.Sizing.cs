@@ -4,7 +4,10 @@ internal sealed partial class DedicatedConnectionPool
 {
     internal int CaptureSize()
     {
-        lock (_gate) return _creating + _connections.Count;
+        lock (_gate)
+        {
+            return _creating + _connections.Count;
+        }
     }
 
     // Broadcast state changes, rather than reserving a permit for a particular lease kind.
@@ -18,7 +21,11 @@ internal sealed partial class DedicatedConnectionPool
 
     private void PauseIdleTimerIfEmptyLocked()
     {
-        if (_idle.Count != 0) return;
+        if (_idle.Count != 0)
+        {
+            return;
+        }
+
         _idleTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         _connectionLifetimeTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
@@ -26,17 +33,28 @@ internal sealed partial class DedicatedConnectionPool
     private void RetireIdle()
     {
         List<Entry>? closing = null;
+
         lock (_gate)
         {
-            if (_stopping || _idle.Count == 0 || options.DedicatedPool.IdleTimeout is not { } timeout) return;
+            if (_stopping || _idle.Count == 0 || options.DedicatedPool.IdleTimeout is not { } timeout)
+            {
+                return;
+            }
             // Pending handshakes and disconnected entries cannot protect the retention floor.
             var live = 0;
+
             foreach (var entry in _connections.Values)
             {
                 entry.CountedForIdleRetention = entry.State != State.Closing && entry.Connection.IsConnected;
-                if (entry.CountedForIdleRetention) live++;
+
+                if (entry.CountedForIdleRetention)
+                {
+                    live++;
+                }
             }
+
             var now = options.DedicatedPool.TimeProvider.GetTimestamp();
+
             for (var index = 0; index < _idle.Count;)
             {
                 var entry = _idle[index];
@@ -48,21 +66,34 @@ internal sealed partial class DedicatedConnectionPool
                     entry.CountedForIdleRetention = false;
                     live--;
                 }
+
                 if ((connected && live <= options.DedicatedPool.MinimumSize)
                     || options.DedicatedPool.TimeProvider.GetElapsedTime(entry.IdleSince, now) < timeout)
                 {
                     index++;
                     continue;
                 }
+
                 _idle.RemoveAt(index);
                 entry.Connection.RequestMetricCloseReason(ConnectionTelemetry.CloseReason.IdleEviction);
                 BeginCloseLocked(entry);
                 (closing ??= []).Add(entry);
-                if (entry.CountedForIdleRetention) live--;
+
+                if (entry.CountedForIdleRetention)
+                {
+                    live--;
+                }
             }
+
             PauseIdleTimerIfEmptyLocked();
         }
+
         if (closing is not null)
-            foreach (var entry in closing) _ = CloseAsync(entry);
+        {
+            foreach (var entry in closing)
+            {
+                _ = CloseAsync(entry);
+            }
+        }
     }
 }

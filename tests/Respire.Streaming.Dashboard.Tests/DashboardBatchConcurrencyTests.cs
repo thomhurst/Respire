@@ -18,25 +18,42 @@ public class DashboardBatchConcurrencyTests
         var reading = DashboardState.ReadBatchesAsync(ids, async (id, token) =>
         {
             var count = Interlocked.Increment(ref active);
-            if (count > 4) Interlocked.Exchange(ref exceededBound, 1);
-            if (count == 4) started.TrySetResult();
+
+            if (count > 4)
+            {
+                Interlocked.Exchange(ref exceededBound, 1);
+            }
+
+            if (count == 4)
+            {
+                started.TrySetResult();
+            }
+
             try
             {
                 await release.Task.WaitAsync(token);
-                if (id == "1") throw new RespireException("unavailable");
+
+                if (id == "1")
+                {
+                    throw new RespireException("unavailable");
+                }
+
                 return null;
             }
             finally { Interlocked.Decrement(ref active); }
         }, timeout.Token);
+
         try
         {
             await started.Task.WaitAsync(timeout.Token);
             await Assert.That(active).IsEqualTo(4);
         }
         finally { release.TrySetResult(); }
+
         var batches = await reading;
         await Assert.That(exceededBound).IsEqualTo(0);
         await Assert.That(batches.Length).IsEqualTo(ids.Length);
+
         for (var i = 0; i < ids.Length; i++)
         {
             await Assert.That(batches[i].Id).IsEqualTo(ids[i]);

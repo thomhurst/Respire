@@ -12,7 +12,10 @@ public abstract class RespireVectorDataMapper<TRecord> where TRecord : class
     public virtual IReadOnlyList<RespireVectorDataTextField> TextFields => [];
 
     /// <summary>Indexed FLOAT32 vectors, with CLR property names or dotted JSON member paths for vector selection.</summary>
-    public abstract IReadOnlyList<RespireVectorDataVectorField> VectorFields { get; }
+    public abstract IReadOnlyList<RespireVectorDataVectorField> VectorFields
+    {
+        get;
+    }
 
     /// <summary>Returns the logical string key.</summary>
     public abstract string GetKey(TRecord record);

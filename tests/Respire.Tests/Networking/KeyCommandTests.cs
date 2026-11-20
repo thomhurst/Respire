@@ -107,6 +107,7 @@ public class KeyCommandTests
     private static async Task<string[]> CollectAsync(IAsyncEnumerable<string> source)
     {
         var values = new List<string>();
+
         await foreach (var value in source)
         {
             values.Add(value);

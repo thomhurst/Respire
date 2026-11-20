@@ -17,6 +17,7 @@ internal readonly struct Verb
     public readonly int CursorArgumentIndex;
     public readonly bool HasOpaqueCursor;
     private readonly ClientCacheCommandMetadata.Cache? _cacheMetadata;
+
     public ClientCacheCommandMetadata CacheMetadata => _cacheMetadata?.Value ?? default;
 
     public Verb(string command, bool allowReadRouting = true)
@@ -53,6 +54,7 @@ internal readonly struct Verb
         Tokens = 0;
         var encodedLength = 0;
         var tokens = new TokenEnumerator(command);
+
         while (tokens.MoveNext())
         {
             var length = tokens.Current.Length;
@@ -64,6 +66,7 @@ internal readonly struct Verb
         var destination = Bulk.AsSpan();
         var offset = 0;
         tokens = new TokenEnumerator(command);
+
         while (tokens.MoveNext())
         {
             var token = tokens.Current;
@@ -87,14 +90,28 @@ internal readonly struct Verb
     private ref struct TokenEnumerator(ReadOnlySpan<char> remaining)
     {
         private ReadOnlySpan<char> _remaining = remaining;
-        internal ReadOnlySpan<char> Current { get; private set; }
+
+        internal ReadOnlySpan<char> Current
+        {
+            get; private set;
+        }
 
         internal bool MoveNext()
         {
             _remaining = _remaining.TrimStart(' ');
-            if (_remaining.IsEmpty) return false;
+
+            if (_remaining.IsEmpty)
+            {
+                return false;
+            }
+
             var end = _remaining.IndexOf(' ');
-            if (end < 0) end = _remaining.Length;
+
+            if (end < 0)
+            {
+                end = _remaining.Length;
+            }
+
             Current = _remaining[..end];
             _remaining = end == _remaining.Length ? [] : _remaining[(end + 1)..];
             return true;
@@ -110,6 +127,7 @@ internal readonly struct Verb
     private static int WritePositiveInteger(int value, Span<byte> destination)
     {
         var digits = DecimalDigits(value);
+
         for (var index = digits - 1; index >= 0; index--)
         {
             destination[index] = (byte)('0' + value % 10);

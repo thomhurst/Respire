@@ -15,15 +15,19 @@ internal static class ResponseReader
     public static long[] IntegerArray(in RespValue value)
     {
         var elements = value.AsArray();
+
         if (elements.IsEmpty)
         {
             return [];
         }
+
         var result = new long[elements.Length];
+
         for (var i = 0; i < elements.Length; i++)
         {
             result[i] = elements[i].AsInteger();
         }
+
         return result;
     }
 
@@ -72,6 +76,7 @@ internal static class ResponseReader
         }
 
         var bytes = value.AsSpan();
+
         if (Utf8Parser.TryParse(bytes, out double parsed, out var consumed) && consumed == bytes.Length)
         {
             return parsed;
@@ -110,27 +115,33 @@ internal static class ResponseReader
     public static bool[] FlagArray(in RespValue value)
     {
         var elements = value.AsArray();
+
         if (elements.IsEmpty)
         {
             return [];
         }
+
         var result = new bool[elements.Length];
+
         for (var index = 0; index < elements.Length; index++)
         {
             result[index] = Flag(in elements[index]);
         }
+
         return result;
     }
 
     public static string[] StringArray(in RespValue value)
     {
         var elements = value.AsArray();
+
         if (elements.Length == 0)
         {
             return [];
         }
 
         var result = new string[elements.Length];
+
         for (var i = 0; i < elements.Length; i++)
         {
             result[i] = elements[i].AsString();
@@ -142,12 +153,14 @@ internal static class ResponseReader
     public static string?[] NullableStringArray(in RespValue value)
     {
         var elements = value.AsArray();
+
         if (elements.Length == 0)
         {
             return [];
         }
 
         var result = new string?[elements.Length];
+
         for (var i = 0; i < elements.Length; i++)
         {
             result[i] = elements[i].IsNull ? null : elements[i].AsString();
@@ -159,12 +172,14 @@ internal static class ResponseReader
     public static long?[] NullableIntegerArray(in RespValue value)
     {
         var elements = value.AsArray();
+
         if (elements.Length == 0)
         {
             return [];
         }
 
         var result = new long?[elements.Length];
+
         for (var i = 0; i < elements.Length; i++)
         {
             result[i] = elements[i].IsNull ? null : elements[i].AsInteger();
@@ -176,12 +191,14 @@ internal static class ResponseReader
     public static double?[] NullableDoubleArray(in RespValue value)
     {
         var elements = value.AsArray();
+
         if (elements.Length == 0)
         {
             return [];
         }
 
         var result = new double?[elements.Length];
+
         for (var i = 0; i < elements.Length; i++)
         {
             result[i] = DoubleOrNull(in elements[i]);
@@ -193,12 +210,14 @@ internal static class ResponseReader
     public static RespireTtlResult[] TtlArray(in RespValue value)
     {
         var elements = value.AsArray();
+
         if (elements.Length == 0)
         {
             return [];
         }
 
         var result = new RespireTtlResult[elements.Length];
+
         for (var i = 0; i < elements.Length; i++)
         {
             result[i] = RespireTtlResult.FromRedisMilliseconds(elements[i].AsInteger());
@@ -210,12 +229,14 @@ internal static class ResponseReader
     public static RespireHashFieldExpiryResult[] HashFieldExpiryResultArray(in RespValue value)
     {
         var elements = value.AsArray();
+
         if (elements.Length == 0)
         {
             return [];
         }
 
         var result = new RespireHashFieldExpiryResult[elements.Length];
+
         for (var i = 0; i < elements.Length; i++)
         {
             result[i] = (RespireHashFieldExpiryResult)elements[i].AsInteger();
@@ -229,6 +250,7 @@ internal static class ResponseReader
     {
         var elements = value.AsArray();
         var result = new Dictionary<string, string>(elements.Length / 2);
+
         for (var i = 0; i + 1 < elements.Length; i += 2)
         {
             result[elements[i].AsString()] = elements[i + 1].AsString();

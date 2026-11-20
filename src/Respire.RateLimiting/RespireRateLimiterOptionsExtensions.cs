@@ -68,7 +68,11 @@ public static class RespireRateLimiterOptionsExtensions
     private static void ValidateKey(RespireRateLimiters rateLimiters, RespireKey key)
     {
         ArgumentNullException.ThrowIfNull(rateLimiters);
-        if (key.IsEmpty) throw new ArgumentException("The rate-limit key must not be empty.", nameof(key));
+
+        if (key.IsEmpty)
+        {
+            throw new ArgumentException("The rate-limit key must not be empty.", nameof(key));
+        }
     }
 
     private sealed class RespirePolicy<TPartitionKey>(RateLimiterOptions options,
@@ -78,7 +82,12 @@ public static class RespireRateLimiterOptionsExtensions
         public RateLimitPartition<TPartitionKey> GetPartition(HttpContext httpContext)
         {
             var key = partitionKeySelector(httpContext);
-            if (key is null) throw new InvalidOperationException("The partition selector must not return null.");
+
+            if (key is null)
+            {
+                throw new InvalidOperationException("The partition selector must not return null.");
+            }
+
             return RateLimitPartition.Get(key, partitionKey =>
             {
                 var lifetime = httpContext.RequestServices.GetRequiredService<IHostApplicationLifetime>();
@@ -91,6 +100,7 @@ public static class RespireRateLimiterOptionsExtensions
         private async ValueTask RejectAsync(OnRejectedContext context, CancellationToken cancellationToken)
         {
             context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+
             if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retryAfter))
             {
                 var seconds = Math.Max(1L, (long)Math.Ceiling(retryAfter.TotalSeconds));
@@ -98,7 +108,9 @@ public static class RespireRateLimiterOptionsExtensions
             }
 
             if (options.OnRejected is { } onRejected)
+            {
                 await onRejected(context, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 
@@ -116,12 +128,18 @@ public static class RespireRateLimiterOptionsExtensions
             _inner = inner ?? throw new InvalidOperationException("The limiter factory must not return null.");
             _stopped = applicationStopped.UnsafeRegister(static state => ((HostOwnedRateLimiter)state!).Dispose(), this);
             // Registration can run synchronously if the host has already stopped.
-            if (Volatile.Read(ref _disposed) != 0) _stopped.Unregister();
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                _stopped.Unregister();
+            }
         }
 
         public override TimeSpan? IdleDuration => _inner.IdleDuration;
+
         public override RateLimiterStatistics? GetStatistics() => _inner.GetStatistics();
+
         protected override RateLimitLease AttemptAcquireCore(int permitCount) => _inner.AttemptAcquire(permitCount);
+
         protected override ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
             => _inner.AcquireAsync(permitCount, cancellationToken);
 
@@ -132,6 +150,7 @@ public static class RespireRateLimiterOptionsExtensions
                 _stopped.Unregister();
                 _inner.Dispose();
             }
+
             base.Dispose(disposing);
         }
 

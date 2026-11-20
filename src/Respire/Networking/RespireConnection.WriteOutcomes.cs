@@ -31,11 +31,16 @@ internal sealed partial class RespireConnection
         where TCommand : struct, IRespCommand
     {
         var observation = new CommandWriteObservation();
+
         try
         {
             ArgumentOutOfRangeException.ThrowIfNegative(repliesBeforeFinal);
+
             if (repliesBeforeFinal >= _inflight.Capacity)
+            {
                 throw new InvalidOperationException("The command frame needs more in-flight slots than this connection permits.");
+            }
+
             var pending = repliesBeforeFinal == 0
                 ? SendCoreAsync(in command, discardRepliesBefore: 0, throwOnError, cancellationToken,
                     commandName, commandDeadline: commandDeadline, pinToConnection: pinToConnection,
@@ -63,8 +68,13 @@ internal sealed partial class RespireConnection
     {
         // Capacity preflight submits nothing, so a rejection clears any endpoint retained from routing.
         var skipTracking = ClientTrackingEnabled && transaction.HasOptOutBypass;
-        try { ValidateTransactionCapacity(commandCount + (skipTracking ? 1 : 0)); }
+
+        try
+        {
+            ValidateTransactionCapacity(commandCount + (skipTracking ? 1 : 0));
+        }
         catch { observation.UseEndpoint(null); throw; }
+
         observation.UseEndpoint(new(Host, Port), cancellationToken);
         var prefixReplies = skipTracking ? 2 : 1;
         return SendAttemptAsync(new TransactionCommand(serializedCommands, includeMulti: true, transaction, mutationFence, onAccepted, skipTracking),
@@ -82,6 +92,7 @@ internal sealed partial class RespireConnection
         CommandDeadline commandDeadline, DedicatedStreamRoute streamingRoute)
     {
         var observation = new CommandWriteObservation();
+
         try
         {
             var response = await SendStreamedSetAsync(command, cancellationToken, commandDeadline,
@@ -118,6 +129,7 @@ internal sealed partial class RespireConnection
                 _multipleFrames = true;
                 return;
             }
+
             _connection = connection;
             _start = start;
             _end = end;
@@ -127,10 +139,17 @@ internal sealed partial class RespireConnection
         // leave the frame queued: an open connection must therefore remain ambiguous.
         internal CommandWriteOutcome CaptureCompletedOutcome()
         {
-            if (_connection is null) return CommandWriteOutcome.DefinitelyUnwritten;
+            if (_connection is null)
+            {
+                return CommandWriteOutcome.DefinitelyUnwritten;
+            }
             // An ASKING upload spans independently scheduled frames. Keep the entire logical
             // attempt conservative instead of attributing only its first frame.
-            if (_multipleFrames) return CommandWriteOutcome.EffectMayHaveReachedServer;
+            if (_multipleFrames)
+            {
+                return CommandWriteOutcome.EffectMayHaveReachedServer;
+            }
+
             return _connection.CaptureWriteOutcome(_start, _end);
         }
     }
@@ -140,8 +159,11 @@ internal sealed partial class RespireConnection
         lock (_writeGate)
         {
             var claimed = _flushProgress.ClaimedWriteEnd;
+
             if (start < 0 || end <= start || claimed < 0)
+            {
                 return CommandWriteOutcome.Unknown;
+            }
             // Abort and sender selection share this gate. An unselected active buffer cannot
             // be sent after Abort. A selected buffer may already have entered an ambiguous
             // socket/TLS write, even when its successful-byte counter has not advanced.

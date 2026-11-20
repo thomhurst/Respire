@@ -18,13 +18,20 @@ public class ServerNodeIntegrationTests
     public async Task ReadCommandsReturnOwnedNodeLocalResults(string image, int protocol, bool keyFlagsSupported, bool backupSupported)
     {
         string[] command = ["redis-server", "--latency-monitor-threshold", "1"];
-        if (keyFlagsSupported) command = [.. command, "--enable-debug-command", "yes"];
+
+        if (keyFlagsSupported)
+        {
+            command = [.. command, "--enable-debug-command", "yes"];
+        }
+
         await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image).WithCommand(command).WithPortBinding(6379, true)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
         var endpoint = new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(6379));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [endpoint], Connections = 1, AllowAdmin = true,
+            Endpoints = [endpoint],
+            Connections = 1,
+            AllowAdmin = true,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         });
         var node = client.WithKeyPrefix("ignored:").Server.OnNode(endpoint);
@@ -38,6 +45,7 @@ public class ServerNodeIntegrationTests
         var keys = await node.KeysAsync("*");
         keys.Should().ContainSingle().Which.Should().Equal(key);
         RespireCommandKeyFlags[] flags = [];
+
         if (keyFlagsSupported)
         {
             flags = await node.CommandGetKeysAndFlagsAsync("MGET", [key, "missing"]);
@@ -45,8 +53,13 @@ public class ServerNodeIntegrationTests
             flags[0].Key.Should().Equal(key);
             flags[0].Flags.Should().Contain("RO").And.Contain("access");
         }
-        using (var result = await client.ExecuteAsync(RespireCommands.Server.DEBUG, "SLEEP", "0.02")) { }
+
+        using (var result = await client.ExecuteAsync(RespireCommands.Server.DEBUG, "SLEEP", "0.02"))
+        {
+        }
+
         (await node.LatencyGraphAsync("command")).Should().Contain("command");
+
         if (backupSupported)
         {
             var status = await node.BackupStatusAsync();
@@ -56,9 +69,14 @@ public class ServerNodeIntegrationTests
             status.EndTime.Should().BeNull();
             (await node.BackupListAsync()).Should().BeEmpty();
         }
+
         await client.DisposeAsync();
         keys[0].Should().Equal(key);
-        if (keyFlagsSupported) flags[0].Key.Should().Equal(key);
+
+        if (keyFlagsSupported)
+        {
+            flags[0].Key.Should().Equal(key);
+        }
     }
 
     [Test]
@@ -79,29 +97,53 @@ public class ServerNodeIntegrationTests
         var endpoint = new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(6379));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [endpoint], Connections = 1, AllowAdmin = true, Database = 2, ClientName = "busy-origin",
-            Username = "default", Password = password, CommandTimeout = TimeSpan.FromSeconds(40),
+            Endpoints = [endpoint],
+            Connections = 1,
+            AllowAdmin = true,
+            Database = 2,
+            ClientName = "busy-origin",
+            Username = "default",
+            Password = password,
+            CommandTimeout = TimeSpan.FromSeconds(40),
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         });
+
         if (function)
+        {
             await client.Functions.LoadAsync("#!lua name=busycontrol\nredis.register_function('busycontrol', function() while true do end end)");
+        }
+
         var running = function
             ? client.ExecuteAsync("FCALL", ["busycontrol", 0]).AsTask()
             : client.ExecuteAsync("EVAL", ["while true do end", 0]).AsTask();
+
         try
         {
             var elapsed = Stopwatch.StartNew();
+
             while (true)
             {
                 var probe = await container.ExecAsync(["redis-cli", "--no-auth-warning", "-a", password, "PING"]);
-                if (probe.Stdout.Contains("BUSY", StringComparison.Ordinal)) break;
-                if (elapsed.Elapsed > TimeSpan.FromSeconds(20)) throw new TimeoutException("Owned Redis did not enter BUSY.");
+
+                if (probe.Stdout.Contains("BUSY", StringComparison.Ordinal))
+                {
+                    break;
+                }
+
+                if (elapsed.Elapsed > TimeSpan.FromSeconds(20))
+                {
+                    throw new TimeoutException("Owned Redis did not enter BUSY.");
+                }
+
                 await Task.Delay(25);
             }
             // Construct after BUSY to prove no prior control handshake or reserved socket is needed.
             var node = client.Server.OnNode(endpoint);
             await (function ? node.FunctionKillAsync() : node.ScriptKillAsync()).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
-            Func<Task> killed = async () => { using var result = await running; };
+            Func<Task> killed = async () =>
+            {
+                using var result = await running;
+            };
             await killed.Should().ThrowAsync<RespireServerException>().WithMessage("*killed*");
             await client.Strings.SetAsync("after-kill", "healthy");
             (await client.Strings.GetAsync<string>("after-kill")).Should().Be("healthy");
@@ -110,7 +152,11 @@ public class ServerNodeIntegrationTests
         {
             // Cleanup targets only this fixture. The external socket also frees a failed client path.
             await container.ExecAsync(["redis-cli", "--no-auth-warning", "-a", password, function ? "FUNCTION" : "SCRIPT", "KILL"]);
-            try { using var result = await running.WaitAsync(TimeSpan.FromSeconds(10)); }
+
+            try
+            {
+                using var result = await running.WaitAsync(TimeSpan.FromSeconds(10));
+            }
             catch (Exception error) when (error is RespireServerException or RespireConnectionException or TimeoutException) { }
         }
     }

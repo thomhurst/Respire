@@ -19,20 +19,26 @@ public partial class StreamWorkerTests
     {
         // Keep malformed UTF-16 out of discovery metadata, which uses replacement fallback.
         foreach (var stream in new[] { $"events{(char)surrogate}", $"{(char)surrogate}events" })
-        foreach (var typed in new[] { false, true })
         {
-            var services = new ServiceCollection().AddSingleton(new State());
-            var original = services.ToArray();
-            await Assert.That(() =>
+            foreach (var typed in new[] { false, true })
             {
-                if (typed)
-                    services.AddRespireStreamWorker<TypedHandler, int>(stream, "workers", _ => 0);
-                else
-                    services.AddRespireStreamWorker<EntryHandler>(stream, "workers");
-            }).Throws<EncoderFallbackException>();
-            await Assert.That(services.SequenceEqual(original)).IsTrue();
-            // Reuse the telemetry name to prove rejection did not reserve it.
-            services.AddRespireStreamWorker<EntryHandler>("events", "workers");
+                var services = new ServiceCollection().AddSingleton(new State());
+                var original = services.ToArray();
+                await Assert.That(() =>
+                {
+                    if (typed)
+                    {
+                        services.AddRespireStreamWorker<TypedHandler, int>(stream, "workers", _ => 0);
+                    }
+                    else
+                    {
+                        services.AddRespireStreamWorker<EntryHandler>(stream, "workers");
+                    }
+                }).Throws<EncoderFallbackException>();
+                await Assert.That(services.SequenceEqual(original)).IsTrue();
+                // Reuse the telemetry name to prove rejection did not reserve it.
+                services.AddRespireStreamWorker<EntryHandler>("events", "workers");
+            }
         }
     }
 
@@ -57,24 +63,37 @@ public partial class StreamWorkerTests
             var services = new ServiceCollection().AddSingleton(state).AddScoped<ScopeProbe>()
                 .AddSingleton<IRespireClient>(client);
             var streams = new[] { "events-" + first, "events-" + second };
+
             for (var i = 0; i < streams.Length; i++)
             {
                 await client.Streams.AddAsync(streams[i], ("payload", i.ToString()));
                 var options = new RespireStreamWorkerOptions { TelemetryName = $"stream-{i}" };
+
                 if (typed)
+                {
                     services.AddRespireStreamWorker<EntryHandler, RespireStreamEntry>(streams[i], "workers", entry => entry, options);
+                }
                 else
+                {
                     services.AddRespireStreamWorker<EntryHandler>(streams[i], "workers", options);
+                }
             }
+
             await using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
             var workers = provider.GetServices<IHostedService>().ToArray();
+
             try
             {
-                foreach (var worker in workers) await worker.StartAsync(CancellationToken.None);
+                foreach (var worker in workers)
+                {
+                    await worker.StartAsync(CancellationToken.None);
+                }
+
                 var delivery = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
                 var otherDelivery = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
                 var payloads = new[] { delivery.GetString("payload"), otherDelivery.GetString("payload") };
                 await Assert.That(payloads.Order().SequenceEqual(new[] { "0", "1" })).IsTrue();
+
                 foreach (var stream in streams)
                 {
                     await UntilAsync(async () => (await client.Streams.PendingSummaryAsync(stream, "workers")).Count == 0);
@@ -85,7 +104,11 @@ public partial class StreamWorkerTests
             finally
             {
                 using var deadline = new CancellationTokenSource(Deadline);
-                foreach (var worker in workers) await worker.StopAsync(deadline.Token);
+
+                foreach (var worker in workers)
+                {
+                    await worker.StopAsync(deadline.Token);
+                }
             }
         }
     }
@@ -99,23 +122,31 @@ public partial class StreamWorkerTests
     {
         // Construct malformed strings at runtime so test discovery does not serialize them with replacement fallback.
         foreach (var name in new[] { $"worker{(char)surrogate}", $"{(char)surrogate}worker" })
-        foreach (var group in new[] { false, true })
-        foreach (var typed in new[] { false, true })
         {
-            var services = new ServiceCollection().AddSingleton(new State());
-            var original = services.ToArray();
-            var options = new RespireStreamWorkerOptions { ConsumerName = group ? null : name };
-            var groupName = group ? name : "workers";
-            await Assert.That(() =>
+            foreach (var group in new[] { false, true })
             {
-                if (typed)
-                    services.AddRespireStreamWorker<TypedHandler, int>("events", groupName, _ => 0, options);
-                else
-                    services.AddRespireStreamWorker<EntryHandler>("events", groupName, options);
-            }).Throws<EncoderFallbackException>();
-            await Assert.That(services.SequenceEqual(original)).IsTrue();
-            // A failed registration must not reserve the default telemetry name either.
-            services.AddRespireStreamWorker<EntryHandler>("events", "workers");
+                foreach (var typed in new[] { false, true })
+                {
+                    var services = new ServiceCollection().AddSingleton(new State());
+                    var original = services.ToArray();
+                    var options = new RespireStreamWorkerOptions { ConsumerName = group ? null : name };
+                    var groupName = group ? name : "workers";
+                    await Assert.That(() =>
+                    {
+                        if (typed)
+                        {
+                            services.AddRespireStreamWorker<TypedHandler, int>("events", groupName, _ => 0, options);
+                        }
+                        else
+                        {
+                            services.AddRespireStreamWorker<EntryHandler>("events", groupName, options);
+                        }
+                    }).Throws<EncoderFallbackException>();
+                    await Assert.That(services.SequenceEqual(original)).IsTrue();
+                    // A failed registration must not reserve the default telemetry name either.
+                    services.AddRespireStreamWorker<EntryHandler>("events", "workers");
+                }
+            }
         }
     }
 
@@ -152,12 +183,22 @@ public partial class StreamWorkerTests
             });
             await using var fixture = await Fixture.CreateAsync(protocol, group: group, options: new()
             {
-                ConsumerName = consumer, MinimumIdleTime = TimeSpan.FromHours(1),
+                ConsumerName = consumer,
+                MinimumIdleTime = TimeSpan.FromHours(1),
             });
-            for (var i = 0; i < 3; i++) await fixture.AddAsync(i);
+
+            for (var i = 0; i < 3; i++)
+            {
+                await fixture.AddAsync(i);
+            }
+
             await fixture.View.Streams.CreateGroupAsync("events", group, RespireStreamId.Beginning);
+
             if (distinctGroups)
+            {
                 await fixture.View.Streams.CreateGroupAsync("events", otherGroup, RespireStreamId.Beginning);
+            }
+
             await fixture.View.Streams.ReadGroupOnceAsync("events", group, consumer + "-0", new() { Count = 1 });
             var other = (await fixture.View.Streams.ReadGroupOnceAsync("events", otherGroup, otherConsumer,
                 new() { Count = 1 })).Single();
@@ -169,11 +210,13 @@ public partial class StreamWorkerTests
             await fixture.StartAsync();
             var replay = await fixture.State.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
             await Assert.That(replay.GetString("payload")).IsEqualTo("0");
+
             for (var i = distinctGroups ? 1 : 2; i < 3; i++)
             {
                 var fresh = await fixture.State.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
                 await Assert.That(fresh.GetString("payload")).IsEqualTo(i.ToString());
             }
+
             await UntilAsync(async () => (await fixture.View.Streams.PendingSummaryAsync("events", group)).Count
                 == (distinctGroups ? 0 : 1));
             await fixture.StopAsync();

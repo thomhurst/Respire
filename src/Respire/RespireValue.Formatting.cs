@@ -17,6 +17,7 @@ public readonly partial struct RespireValue
     public bool TryFormat(Span<char> destination, out int charsWritten, ReadOnlySpan<char> format = default, IFormatProvider? provider = null)
     {
         ArgumentFormatting.ValidateFormat(format);
+
         switch (_kind)
         {
             case Kind.String:
@@ -27,16 +28,25 @@ public readonly partial struct RespireValue
             case Kind.Prefixed:
                 charsWritten = 0;
                 if (_string is null)
+                {
                     return ArgumentFormatting.TryDecode(_prefix!.Bytes, _bytes.Span, destination, out charsWritten);
+                }
                 if (_prefix!.Text is { } prefix)
                 {
                     if (!ArgumentFormatting.TryCopy(prefix, destination, out var first)
-                        || !ArgumentFormatting.TryCopy(_string, destination[first..], out var last)) return false;
+                        || !ArgumentFormatting.TryCopy(_string, destination[first..], out var last))
+                    {
+                        return false;
+                    }
+
                     charsWritten = first + last;
                     return true;
                 }
                 if (!ArgumentFormatting.TryDecode(_prefix.Bytes, default, destination, out var prefixWritten)
-                    || !ArgumentFormatting.TryNormalize(_string.AsSpan(), destination[prefixWritten..], out var suffixWritten)) return false;
+                    || !ArgumentFormatting.TryNormalize(_string.AsSpan(), destination[prefixWritten..], out var suffixWritten))
+                {
+                    return false;
+                }
                 charsWritten = prefixWritten + suffixWritten;
                 return true;
             case Kind.Integer:
@@ -57,19 +67,37 @@ public readonly partial struct RespireValue
     public bool TryFormat(Span<byte> utf8Destination, out int bytesWritten, ReadOnlySpan<char> format = default, IFormatProvider? provider = null)
     {
         ArgumentFormatting.ValidateFormat(format);
+
         if (_kind is Kind.String or Kind.PreEncoded)
+        {
             return ArgumentFormatting.TryEncode(_string, utf8Destination, out bytesWritten);
+        }
+
         if (_kind == Kind.Prefixed && _prefix!.Text is { } prefix && _string is not null)
+        {
             return ArgumentFormatting.TryEncode(prefix, _string, utf8Destination, out bytesWritten);
+        }
+
         if (_kind == Kind.Bytes)
+        {
             return ArgumentFormatting.TryNormalize(_bytes.Span, default, utf8Destination, out bytesWritten);
+        }
+
         if (_kind == Kind.Prefixed && (_string is null || _prefix!.Text is null))
         {
             if (_string is null)
+            {
                 return ArgumentFormatting.TryNormalize(_prefix!.Bytes, _bytes.Span, utf8Destination, out bytesWritten);
+            }
+
             bytesWritten = 0;
+
             if (!ArgumentFormatting.TryNormalize(_prefix!.Bytes, default, utf8Destination, out var first)
-                || !ArgumentFormatting.TryEncode(_string, utf8Destination[first..], out var last)) return false;
+                || !ArgumentFormatting.TryEncode(_string, utf8Destination[first..], out var last))
+            {
+                return false;
+            }
+
             bytesWritten = first + last;
             return true;
         }
@@ -87,7 +115,10 @@ public readonly partial struct RespireValue
                 return Utf8Formatter.TryFormat(BitConverter.Int64BitsToDouble(_number), utf8Destination, out bytesWritten);
             case Kind.Boolean:
                 bytesWritten = 0;
-                if (utf8Destination.IsEmpty) return false;
+                if (utf8Destination.IsEmpty)
+                {
+                    return false;
+                }
                 utf8Destination[0] = _number != 0 ? (byte)'1' : (byte)'0';
                 bytesWritten = 1;
                 return true;

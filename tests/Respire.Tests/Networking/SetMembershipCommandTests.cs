@@ -63,10 +63,15 @@ public class SetMembershipCommandTests
         var limited = queue.Sets.IntersectCount(2, keys);
         requestedMembers[0] = "changed";
         keys[0] = "changed";
+
         if (transaction is not null)
+        {
             await transaction.CommitAsync();
+        }
         else
+        {
             await batch!.ExecuteAsync();
+        }
 
         await Assert.That(members.Result).IsEquivalentTo([true, false, true], CollectionOrdering.Matching);
         await Assert.That(moved.Result).IsFalse();
@@ -107,6 +112,7 @@ public class SetMembershipCommandTests
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         long result;
+
         if (path == "immediate")
         {
             result = await view.Sets.IntersectCountAsync(1, "{sets}:first", "{sets}:second");
@@ -125,6 +131,7 @@ public class SetMembershipCommandTests
             await transaction.CommitAsync();
             result = pending.Result;
         }
+
         await Assert.That(result).IsEqualTo(1);
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         await Assert.That(owner.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC"))
@@ -178,7 +185,11 @@ public class SetMembershipCommandTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();

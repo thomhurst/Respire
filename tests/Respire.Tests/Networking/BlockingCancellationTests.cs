@@ -27,7 +27,8 @@ public class BlockingCancellationTests
 #pragma warning disable RESP010 // Test-owned client isolates HELLO identity negotiation from dedicated cancellation settings.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = protocol, Connections = 1,
+            Protocol = protocol,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             DedicatedPool = new() { UnblockOnCancel = enabled },
         });
@@ -46,6 +47,7 @@ public class BlockingCancellationTests
         await using var client = await ConnectAsync(server.Port, enabled: true);
         var pool = await client.Core.GetDedicatedPoolAsync(default, observation: default);
         var borrowed = await pool.RentAsync(default);
+
         try
         {
             await pool.MovingOwner!.RetireAsync().WaitAsync(TimeSpan.FromSeconds(10));
@@ -96,22 +98,39 @@ public class BlockingCancellationTests
         server.ReplyOverride = (id, command) =>
         {
             if (command.StartsWith("HELLO", StringComparison.Ordinal))
+            {
                 return Encoding.ASCII.GetBytes($"%2\r\n+proto\r\n:3\r\n+id\r\n:{id + 100}\r\n");
-            if (command == "CLIENT ID") return Encoding.ASCII.GetBytes($":{id + 100}\r\n");
-            if (command.StartsWith("CLIENT UNBLOCK", StringComparison.Ordinal)) return ":1\r\n"u8.ToArray();
-            if (command.StartsWith("BLPOP", StringComparison.Ordinal)) return "*-1\r\n"u8.ToArray();
+            }
+
+            if (command == "CLIENT ID")
+            {
+                return Encoding.ASCII.GetBytes($":{id + 100}\r\n");
+            }
+
+            if (command.StartsWith("CLIENT UNBLOCK", StringComparison.Ordinal))
+            {
+                return ":1\r\n"u8.ToArray();
+            }
+
+            if (command.StartsWith("BLPOP", StringComparison.Ordinal))
+            {
+                return "*-1\r\n"u8.ToArray();
+            }
+
             return null;
         };
 #pragma warning disable RESP010 // Test-owned client exercises cleanup expiry on a drained dedicated socket.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = protocol, Connections = 1,
+            Protocol = protocol,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             DedicatedPool = new() { UnblockOnCancel = true },
         });
 #pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var pending = client.Lists.LeftPopAsync("jobs", waitFor: null, cancellation.Token).AsTask();
+
         try
         {
             await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -153,20 +172,39 @@ public class BlockingCancellationTests
         server.ReplyOverride = (id, command) =>
         {
             if (command.StartsWith("HELLO", StringComparison.Ordinal))
+            {
                 return Encoding.ASCII.GetBytes($"%2\r\n+proto\r\n:3\r\n+id\r\n:{id + 100}\r\n");
-            if (command == "ROLE") return "*3\r\n+master\r\n:0\r\n*0\r\n"u8.ToArray();
+            }
+
+            if (command == "ROLE")
+            {
+                return "*3\r\n+master\r\n:0\r\n*0\r\n"u8.ToArray();
+            }
+
             if (command == "CLUSTER SLOTS")
+            {
                 return Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n");
-            if (command == "CLIENT ID") return Encoding.ASCII.GetBytes($":{id + 100}\r\n");
+            }
+
+            if (command == "CLIENT ID")
+            {
+                return Encoding.ASCII.GetBytes($":{id + 100}\r\n");
+            }
+
             if (command.StartsWith("CLIENT UNBLOCK", StringComparison.Ordinal))
             {
                 unblock = server.SendRawAsync("*-1\r\n"u8.ToArray(), blockedId);
                 return ":1\r\n"u8.ToArray();
             }
+
             return null;
         };
+
         if (interleaveRole)
+        {
             server.GateCommand("BLPOP", releasePopCallback.Task, () => popRecorded.TrySetResult());
+        }
+
         server.GateCommand("BLPOP", Task.CompletedTask, id =>
         {
             blockedId = id;
@@ -181,17 +219,21 @@ public class BlockingCancellationTests
 #pragma warning disable RESP010 // Test-owned client pins the dedicated connection and control route across cancelled pops.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = protocol, Connections = 1,
+            Protocol = protocol,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", mode == "sentinel" ? sentinel.Port : server.Port)],
-            UseCluster = mode == "cluster", SentinelPrimaryName = mode == "sentinel" ? "primary" : null,
+            UseCluster = mode == "cluster",
+            SentinelPrimaryName = mode == "sentinel" ? "primary" : null,
             DedicatedPool = new() { UnblockOnCancel = true },
         });
+
 #pragma warning restore RESP010
         for (var index = 0; index < iterations; index++)
         {
             received = NewSignal();
             using var cancellation = new CancellationTokenSource();
             var pending = client.Lists.LeftPopAsync("jobs", waitFor: null, cancellation.Token).AsTask();
+
             if (interleaveRole && index == 0)
             {
                 try
@@ -205,6 +247,7 @@ public class BlockingCancellationTests
                 }
                 finally { releasePopCallback.TrySetResult(); }
             }
+
             await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
             cancellation.Cancel();
             var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
@@ -212,6 +255,7 @@ public class BlockingCancellationTests
             await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
             await unblock;
         }
+
         using var pong = await client.ExecuteAsync("PING");
         await Assert.That(pong.AsString()).IsEqualTo("PONG");
         await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(2);
@@ -283,7 +327,9 @@ public class BlockingCancellationTests
 #pragma warning disable RESP010 // Test-owned client controls Sentinel failover while an old-primary pop is outstanding.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, SentinelPrimaryName = "primary",
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            SentinelPrimaryName = "primary",
             Endpoints = [new("127.0.0.1", sentinel.Port)],
             DedicatedPool = new() { UnblockOnCancel = true },
         });
@@ -325,18 +371,25 @@ public class BlockingCancellationTests
         });
         target.ReplyOverride = (_, command) =>
         {
-            if (command == "CLIENT ID") return ":202\r\n"u8.ToArray();
+            if (command == "CLIENT ID")
+            {
+                return ":202\r\n"u8.ToArray();
+            }
+
             if (command == "CLIENT UNBLOCK 202 TIMEOUT")
             {
                 drain = target.SendRawAsync("*-1\r\n"u8.ToArray(), blockedId);
                 return ":1\r\n"u8.ToArray();
             }
+
             return null;
         };
 #pragma warning disable RESP010 // Test-owned client isolates the redirected pop and its target-node unblock identity.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = true,
             Endpoints = [new("127.0.0.1", source.Port)],
             DedicatedPool = new() { UnblockOnCancel = true },
         });
@@ -403,6 +456,7 @@ public class BlockingCancellationTests
         await using var client = await ConnectAsync(server.Port, enabled: true);
         using var cancellation = new CancellationTokenSource();
         var pending = client.Lists.LeftPopAsync("jobs", waitFor: null, cancellation.Token).AsTask();
+
         try
         {
             await received.Task.WaitAsync(TimeSpan.FromSeconds(10));

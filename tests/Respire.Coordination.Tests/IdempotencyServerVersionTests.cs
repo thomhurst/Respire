@@ -19,16 +19,21 @@ public class IdempotencyServerVersionTests(IdempotencyRedis62 fixture)
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
-            Connections = 1, Protocol = (RespireProtocol)protocol,
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            Database = fixture.IsolatedDatabase,
+            Connections = 1,
+            Protocol = (RespireProtocol)protocol,
         });
         var store = new RespireIdempotency(client);
         var key = Guid.NewGuid().ToString("N");
         var error = await Assert.That(async () => await store.TryBeginAsync(key, TimeSpan.FromMinutes(1)))
             .Throws<RespireServerException>();
         await Assert.That(error!.Message).Contains("Redis 7.0+");
+
         using (var exists = await client.ExecuteAsync("EXISTS", key))
+        {
             await Assert.That(exists.AsInteger()).IsEqualTo(0L);
+        }
 
         // An existing claim can still be inspected; an eligible completion must fail before writing.
         (await client.ExecuteAsync("HSET", key, "state", "pending", "owner", "owner", "fingerprint", "0", "ttl", "60000")).Dispose();
@@ -39,11 +44,20 @@ public class IdempotencyServerVersionTests(IdempotencyRedis62 fixture)
         error = await Assert.That(async () => await store.CompleteAsync(key, "owner", new byte[] { 1 }))
             .Throws<RespireServerException>();
         await Assert.That(error!.Message).Contains("Redis 7.0+");
+
         using (var state = await client.ExecuteAsync("HGET", key, "state"))
+        {
             await Assert.That(state.AsString()).IsEqualTo("pending");
+        }
+
         using (var owner = await client.ExecuteAsync("HGET", key, "owner"))
+        {
             await Assert.That(owner.AsString()).IsEqualTo("owner");
+        }
+
         using (var result = await client.ExecuteAsync("HGET", key, "result"))
+        {
             await Assert.That(result.IsNull).IsTrue();
+        }
     }
 }

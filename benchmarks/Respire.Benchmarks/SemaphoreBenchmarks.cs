@@ -19,7 +19,10 @@ public class SemaphoreBenchmarks
     private long _operations;
 
     [ParamsSource(nameof(Modes))]
-    public bool Semaphore { get; set; }
+    public bool Semaphore
+    {
+        get; set;
+    }
 
     public IEnumerable<bool> Modes =>
         Environment.GetEnvironmentVariable("RESPIRE_BENCH_BASELINE") == "1" ? [false] : [false, true];
@@ -31,7 +34,8 @@ public class SemaphoreBenchmarks
         {
             Endpoints = [new(Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1",
                 int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379"))],
-            Connections = 1, Protocol = RespireProtocol.Resp3,
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
         });
         _key = $"{{{Guid.NewGuid():N}}}:semaphore";
         _semaphore = new RespireSemaphore(_client, _key, capacity: 1);
@@ -52,13 +56,21 @@ public class SemaphoreBenchmarks
     private async Task AcquireStandardAsync()
     {
         await using var standard = await _client.Locks.AcquireAsync(_key, _duration);
-        if (!standard.Acquired) throw new InvalidOperationException("Uncontended benchmark lease was not acquired.");
+
+        if (!standard.Acquired)
+        {
+            throw new InvalidOperationException("Uncontended benchmark lease was not acquired.");
+        }
     }
 
     private async Task AcquireSemaphoreAsync()
     {
         await using var attempt = await _semaphore.TryAcquireAsync(_duration);
-        if (!attempt.Acquired) throw new InvalidOperationException("Uncontended benchmark permit was not acquired.");
+
+        if (!attempt.Acquired)
+        {
+            throw new InvalidOperationException("Uncontended benchmark permit was not acquired.");
+        }
     }
 
     [GlobalCleanup]
@@ -67,7 +79,8 @@ public class SemaphoreBenchmarks
         _process.Refresh();
         Console.WriteLine("SEMAPHORE_PROCESS_METRICS " + JsonSerializer.Serialize(new
         {
-            Semaphore, operations = _operations,
+            Semaphore,
+            operations = _operations,
             cpuMilliseconds = (_process.TotalProcessorTime - _cpu).TotalMilliseconds,
             elapsedSeconds = Stopwatch.GetElapsedTime(_started).TotalSeconds,
         }));

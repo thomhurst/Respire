@@ -24,11 +24,18 @@ internal sealed partial class RespireCoherentHybridCache
     internal long TagGapsConsumed => Interlocked.Read(ref _tagGapsConsumed);
 
     /// <summary>Delays the tag marker reads that Microsoft's contexts issue, so tests can hold them pending.</summary>
-    internal Func<CancellationToken, Task>? TagMarkerReadDelayForTesting { get; set; }
+    internal Func<CancellationToken, Task>? TagMarkerReadDelayForTesting
+    {
+        get; set;
+    }
 
     private void StartTagPropagation(RespireHybridCacheCoherenceOptions options)
     {
-        if (options.TagInvalidationChannel is null) return;
+        if (options.TagInvalidationChannel is null)
+        {
+            return;
+        }
+
         _tagChannel = options.TagInvalidationChannel;
         _maxTagsPerEntry = options.MaxTagsPerEntry;
         _tagMessage = new(options.TagInvalidationNamespace!, options.MaxTagInvalidationMessageBytes);
@@ -44,11 +51,13 @@ internal sealed partial class RespireCoherentHybridCache
                 new RespireSubscriptionOptions(options.TagInvalidationBufferSize, RespireSubscriptionOverflow.DropOldest)
                 { MaxPayloadBytes = options.MaxTagInvalidationMessageBytes }, _tagLifetime.Token).ConfigureAwait(false);
             subscription.DeliveryGap += TagDeliveryGap;
+
             try
             {
                 // An acknowledgment must not overwrite a newer reconnect transition.
                 Interlocked.CompareExchange(ref _tagReady, 1, 0);
                 _tagStarted.TrySetResult(true);
+
                 await foreach (var message in subscription.WithCancellation(_tagLifetime.Token).ConfigureAwait(false))
                 {
                     if (message.Kind == RespireMessageKind.Gap)
@@ -59,24 +68,40 @@ internal sealed partial class RespireCoherentHybridCache
                         Interlocked.Increment(ref _tagGapsConsumed);
                         continue;
                     }
+
                     if (!_tagMessage!.TryDecode(message.Payload.Span, out var sender, out var tag, out var timestamp)
-                        || sender == _tagSender) continue;
+                        || sender == _tagSender)
+                    {
+                        continue;
+                    }
+
                     Task[]? updates = null;
+
                     try
                     {
                         lock (_gate)
                         {
-                            if (_disposed != 0) return;
+                            if (_disposed != 0)
+                            {
+                                return;
+                            }
+
                             ResetTagContinuityUnderGate();
                             updates = ApplyLocalTagInvalidation(tag, timestamp);
                         }
                     }
                     finally
                     {
-                        try { DrainRetiredObservations(); }
+                        try
+                        {
+                            DrainRetiredObservations();
+                        }
                         catch (Exception error) when (updates is not null)
-                        { updates = [.. updates, Task.FromException(error)]; }
+                        {
+                            updates = [.. updates, Task.FromException(error)];
+                        }
                     }
+
                     await Task.WhenAll(updates).ConfigureAwait(false);
                 }
             }
@@ -98,14 +123,24 @@ internal sealed partial class RespireCoherentHybridCache
 
     private void TagConnectionStateChanged(RespireConnectionStateChange change)
     {
-        if (change.ReconnectSource != RespireReconnectSource.PubSub) return;
+        if (change.ReconnectSource != RespireReconnectSource.PubSub)
+        {
+            return;
+        }
+
         var ready = (change.SourceState ?? change.State) == RespireConnectionState.Connected;
         int previous;
+
         do
         {
             previous = Volatile.Read(ref _tagReady);
-            if (previous == 3) return;
+
+            if (previous == 3)
+            {
+                return;
+            }
         } while (Interlocked.CompareExchange(ref _tagReady, ready ? 1 : 2, previous) != previous);
+
         if (!ready)
         {
             SignalTagContinuityLoss();
@@ -115,18 +150,28 @@ internal sealed partial class RespireCoherentHybridCache
     // Receive-path callbacks only fence local admission/publication. Cleanup runs on a cache
     // request or the consumer, never on the socket's receive loop or under its routing gate.
     private void TagDeliveryGap(RespireSubscriptionGap _) => SignalTagContinuityLoss();
+
     private void SignalTagContinuityLoss() => Interlocked.Exchange(ref _tagContinuityLost, 1);
 
     private void ResetTagContinuity()
     {
         SignalTagContinuityLoss();
-        lock (_gate) ResetTagContinuityUnderGate();
+
+        lock (_gate)
+        {
+            ResetTagContinuityUnderGate();
+        }
+
         DrainRetiredObservations();
     }
 
     private void ResetTagContinuityUnderGate()
     {
-        if (Interlocked.Exchange(ref _tagContinuityLost, 0) == 0) return;
+        if (Interlocked.Exchange(ref _tagContinuityLost, 0) == 0)
+        {
+            return;
+        }
+
         _removedTags.Clear();
         RetireAll();
         // New contexts refetch authoritative L2 tag metadata after an unreplayable gap.
@@ -139,9 +184,18 @@ internal sealed partial class RespireCoherentHybridCache
     private async ValueTask<HybridCache> FallbackCacheAsync(IEnumerable<string>? tags, bool reads,
         CancellationToken cancellationToken)
     {
-        if (_tagMessage is null) return _unobserved;
+        if (_tagMessage is null)
+        {
+            return _unobserved;
+        }
+
         var cache = CreateContext(null, new TagReplayBackend(this));
-        if (reads) await SeedTagMetadataAsync(cache, tags).WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        if (reads)
+        {
+            await SeedTagMetadataAsync(cache, tags).WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         return cache;
     }
 
@@ -156,6 +210,7 @@ internal sealed partial class RespireCoherentHybridCache
         string[] seeded = [WildcardTag, .. (tags ?? []).Where(tag => tag != WildcardTag).Distinct(StringComparer.Ordinal)];
         var markers = await Task.WhenAll(seeded.Select(ReadTagMarkerAsync)).ConfigureAwait(false);
         var replays = new Task[seeded.Length];
+
         lock (_gate)
         {
             for (var i = 0; i < seeded.Length; i++)
@@ -163,10 +218,16 @@ internal sealed partial class RespireCoherentHybridCache
                 // A replay overwrites the context's time for its tag. Under the gate, a newer remembered
                 // invalidation (recorded before the worker or a local removal replays it) is never lost.
                 var timestamp = markers[i];
-                if (_removedTags.TryGetValue(seeded[i], out var remembered) && remembered > timestamp) timestamp = remembered;
+
+                if (_removedTags.TryGetValue(seeded[i], out var remembered) && remembered > timestamp)
+                {
+                    timestamp = remembered;
+                }
+
                 replays[i] = ReplayTagAsync(cache, seeded[i], timestamp);
             }
         }
+
         await Task.WhenAll(replays).ConfigureAwait(false);
     }
 
@@ -175,12 +236,20 @@ internal sealed partial class RespireCoherentHybridCache
         try
         {
             var marker = await _distributed.GetAsync(TagMarkerPrefix + tag).ConfigureAwait(false);
-            if (marker is null) return DateTimeOffset.MinValue;
+
+            if (marker is null)
+            {
+                return DateTimeOffset.MinValue;
+            }
+
             if (marker.Length == sizeof(long))
             {
                 var ticks = BinaryPrimitives.ReadInt64LittleEndian(marker);
+
                 if (ticks >= DateTimeOffset.MinValue.UtcTicks && ticks <= DateTimeOffset.MaxValue.UtcTicks)
+                {
                     return new DateTimeOffset(ticks, TimeSpan.Zero);
+                }
             }
         }
         catch (Exception)
@@ -193,21 +262,34 @@ internal sealed partial class RespireCoherentHybridCache
 
     private IEnumerable<string>? PrepareTags(IEnumerable<string>? tags)
     {
-        if (_tagMessage is null || tags is null) return tags;
+        if (_tagMessage is null || tags is null)
+        {
+            return tags;
+        }
+
         var snapshot = new List<string>();
+
         foreach (var tag in tags)
         {
             if (snapshot.Count == _maxTagsPerEntry)
+            {
                 throw new ArgumentException("The entry exceeds MaxTagsPerEntry.", nameof(tags));
+            }
+
             _tagMessage.ValidateTag(tag);
             snapshot.Add(tag);
         }
+
         return snapshot.ToArray();
     }
 
     private Task[] ApplyLocalTagInvalidation(string tag, DateTimeOffset timestamp)
     {
-        if (_removedTags.TryGetValue(tag, out var previous) && previous >= timestamp) return [];
+        if (_removedTags.TryGetValue(tag, out var previous) && previous >= timestamp)
+        {
+            return [];
+        }
+
         if (!_tagHistoryExhausted)
         {
             if (!_removedTags.ContainsKey(tag) && _removedTags.Count >= _maxRememberedTags)
@@ -216,18 +298,29 @@ internal sealed partial class RespireCoherentHybridCache
                 _removedTags.Clear();
                 RetireAll();
             }
-            else _removedTags[tag] = timestamp;
+            else
+            {
+                _removedTags[tag] = timestamp;
+            }
         }
+
         var observations = _observations.Values.ToArray();
         var updates = observations.Select(observation => ReplayTagAsync(observation.Cache, tag, timestamp)).ToArray();
+
         if (_tagMessage is not null)
         {
             // The public HybridCache API keeps stored tags opaque. Retire all active fills
             // conservatively, including callers whose tag list differs from the stored L2 tags.
             // Idle unrelated L1 entries remain available through their updated tag metadata.
             foreach (var observation in observations)
-                if (tag == "*" || observation.ActiveCalls != 0) Retire(observation);
+            {
+                if (tag == "*" || observation.ActiveCalls != 0)
+                {
+                    Retire(observation);
+                }
+            }
         }
+
         return updates;
     }
 
@@ -236,9 +329,15 @@ internal sealed partial class RespireCoherentHybridCache
     {
         // A fresh, L1-disabled writer avoids retaining an unbounded second tag dictionary.
         var writer = _tagMessage is null ? _unobserved : CreateContext(null, _distributed);
+
         using (_clock.Replay(timestamp))
+        {
             await writer.RemoveByTagAsync(tag, cancellationToken).ConfigureAwait(false);
+        }
+
         if (message is not null)
+        {
             await TrackingClient.PublishAsync(_tagChannel!, message, cancellationToken).ConfigureAwait(false);
+        }
     }
 }

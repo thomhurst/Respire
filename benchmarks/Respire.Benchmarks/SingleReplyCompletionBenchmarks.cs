@@ -17,7 +17,9 @@ public class SingleReplyCompletionBenchmarks
         if (CallerReleasesFirst() != 42 || ReceiverReleasesFirst() != 42
             || MultiReply3CallerFirst() != 42 || MultiReply3ReceiverFirst() != 42
             || MultiReply64CallerFirst() != 42 || MultiReply64ReceiverFirst() != 42)
+        {
             throw new InvalidOperationException("Completion fixture lost or changed a reply.");
+        }
     }
 
     [Benchmark]
@@ -66,11 +68,22 @@ public class SingleReplyCompletionBenchmarks
             source.TrySetResult(in _reply);
             completion.ReleaseRef();
         }
+
         source.TrySetResult(in _reply);
-        if (!callerFirst) completion.ReleaseRef();
+
+        if (!callerFirst)
+        {
+            completion.ReleaseRef();
+        }
+
         using var reply = pending.GetAwaiter().GetResult();
         var result = reply.AsInteger();
-        if (callerFirst) completion.ReleaseRef();
+
+        if (callerFirst)
+        {
+            completion.ReleaseRef();
+        }
+
         return result;
     }
 }

@@ -20,7 +20,8 @@ public class GeoPolygonIntegrationTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
-            Protocol = (RespireProtocol)protocol, Connections = 1,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
         }, token);
         var geo = client.WithKeyPrefix("prefix:");
         await geo.Geo.AddAsync("{places}:source", [new(1, 0.5, "inside"), new(3, 3, "outside")], token);
@@ -29,8 +30,11 @@ public class GeoPolygonIntegrationTests
         var closed = RespireGeoSearchShape.Polygon(new(0, 0), new(2, 0), new(2, 2), new(0, 2), new(0, 0));
         var details = new RespireGeoSearchOptions
         {
-            Sort = RespireGeoSortOrder.Ascending, Count = 1,
-            IncludeDistance = true, IncludeHash = true, IncludeCoordinates = true,
+            Sort = RespireGeoSortOrder.Ascending,
+            Count = 1,
+            IncludeDistance = true,
+            IncludeHash = true,
+            IncludeCoordinates = true,
         };
         var expected = await geo.Geo.SearchAsync("{places}:source", open, details, token);
         expected.Should().ContainSingle();
@@ -52,6 +56,7 @@ public class GeoPolygonIntegrationTests
             search.Result.Should().Equal(expected);
             store.Result.Should().Be(1);
         }
+
         await using (var transaction = geo.CreateTransaction())
         {
             var search = transaction.Geo.Search("{places}:source", closed, details);
@@ -60,6 +65,7 @@ public class GeoPolygonIntegrationTests
             search.Result.Should().Equal(expected);
             store.Result.Should().Be(1);
         }
+
         foreach (var key in new[] { "{places}:batch", "{places}:transaction" })
         {
             var stored = await geo.Geo.SearchAsync(key, open, cancellationToken: token);
@@ -83,7 +89,8 @@ public class GeoPolygonIntegrationTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
-            Protocol = (RespireProtocol)protocol, Connections = 1,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
         }, token);
         await client.Geo.AddAsync("places", new RespireGeoEntry(1, 1, "inside"), token);
         var polygon = RespireGeoSearchShape.Polygon(new(0, 0), new(2, 0), new(2, 2), new(0, 2));
@@ -91,12 +98,14 @@ public class GeoPolygonIntegrationTests
         await search.Should().ThrowAsync<RespireServerException>().WithMessage("*BYPOLYGON requires Valkey 9.0+*");
         var store = async () => await client.Geo.SearchStoreAsync("dest", "places", polygon, cancellationToken: token);
         await store.Should().ThrowAsync<RespireServerException>().WithMessage("*BYPOLYGON requires Valkey 9.0+*");
+
         using (var batch = client.CreateBatch())
         {
             var pending = batch.Geo.Search("places", polygon);
             await batch.TryExecuteAsync(token);
             pending.Error.Should().BeOfType<RespireServerException>().Which.Message.Should().Contain("Valkey 9.0+");
         }
+
         await using (var transaction = client.CreateTransaction())
         {
             var pending = transaction.Geo.SearchStore("dest", "places", polygon);

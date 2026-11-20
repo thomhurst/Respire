@@ -55,5 +55,7 @@ var value = await redis.ExecuteAsync((client, token) =>
 });
 
 if (attempts != 3 || fault.MatchedCount != 2 || value is not null)
+{
     throw new InvalidOperationException("Expected two rejected GETs and one successful GET through one retry layer.");
+}
 Console.WriteLine($"GET attempts: {attempts}; injected failures: {fault.MatchedCount}; circuit: {breakerState.CircuitState}");

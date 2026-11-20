@@ -72,6 +72,7 @@ public partial class TopologyCommandRetryTests
         // Another operation owns one of the two recovery probes. The first attempt takes the other;
         // its TRYAGAIN reply proves health, so all recovery capacity is spoken for at the retry.
         var held = client.Core.Circuits!.Acquire(new("127.0.0.1", server.Port), default);
+
         try
         {
             Volatile.Write(ref failing, 1);
@@ -145,7 +146,12 @@ public partial class TopologyCommandRetryTests
         });
 #pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("warm")).IsEqualTo("value");
-        if (targetOpen) OpenCircuit(client, target);
+
+        if (targetOpen)
+        {
+            OpenCircuit(client, target);
+        }
+
         if (targetOpen)
         {
             var error = await Failure(async () => await client.GetStringAsync("key"));
@@ -165,6 +171,7 @@ public partial class TopologyCommandRetryTests
             await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(1L);
             await Assert.That(events.GetValueOrDefault("succeeded")).IsEqualTo(1L);
         }
+
         await Assert.That(reads).IsEqualTo(2);
     }
 
@@ -189,6 +196,7 @@ public partial class TopologyCommandRetryTests
         });
         // Both nodes report the split map until the owner fails; a moved slot then names the survivor.
         byte[] Map() => Volatile.Read(ref failedOver) == 0 || !slotMoves ? SplitSlots(survivor.Port, owner.Port) : Slots(survivor.Port);
+
         var survivorReply = survivor.ReplyOverride!;
         survivor.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map() : survivorReply(id, command);
         var ownerReply = owner.ReplyOverride!;
@@ -202,19 +210,31 @@ public partial class TopologyCommandRetryTests
         });
 #pragma warning restore RESP010
         var decisive = UnitCommand(shape);
+
         if (!slotMoves)
         {
             // Without a topology change, the open owner rejects the retry after the refresh window.
             var error = await Failure(async () => await ReadCircuitUnitAsync(client, shape, default));
-            if (stopping is not null) await stopping;
+
+            if (stopping is not null)
+            {
+                await stopping;
+            }
+
             await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
             await Assert.That(((RespireCircuitOpenException)error).Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", owner.Port));
             await Assert.That(owner.ReceivedCommands.Count(command => command == decisive)).IsEqualTo(1);
             await Assert.That(survivor.ReceivedCommands.Contains(decisive)).IsFalse();
             return;
         }
+
         await Assert.That(await ReadCircuitUnitAsync(client, shape, default)).IsEqualTo("value");
-        if (stopping is not null) await stopping;
+
+        if (stopping is not null)
+        {
+            await stopping;
+        }
+
         await Assert.That(owner.ReceivedCommands.Count(command => command == decisive)).IsEqualTo(1);
         await Assert.That(survivor.ReceivedCommands.Count(command => command == decisive)).IsEqualTo(1);
         await Assert.That(CircuitOf(client, owner).Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
@@ -247,6 +267,7 @@ public partial class TopologyCommandRetryTests
         survivor.ReadGate = refresh.Task;
         server.ReadGate = handshake.Task;
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         try
         {
             await owner.GetConnection().DisposeAsync();
@@ -278,10 +299,12 @@ public partial class TopologyCommandRetryTests
         await using var stale = CircuitUnitServer("immediate", _ => Value);
         await using var survivor = CircuitUnitServer("immediate", _ => Value);
         await using var server = CircuitUnitServer("immediate", _ => Value);
+
         byte[] Map(int highPort) => Encoding.ASCII.GetBytes(
             $"*3\r\n*3\r\n:0\r\n:4095\r\n*2\r\n$9\r\n127.0.0.1\r\n:{stale.Port}\r\n"
             + $"*3\r\n:4096\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{survivor.Port}\r\n"
             + $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{highPort}\r\n");
+
         var staleReply = stale.ReplyOverride!;
         var omittedMap = Encoding.ASCII.GetBytes(
             $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{stale.Port}\r\n"
@@ -289,9 +312,16 @@ public partial class TopologyCommandRetryTests
         ClusterRouter? router = null;
         stale.ReplyOverride = (id, command) =>
         {
-            if (command != "CLUSTER SLOTS") return staleReply(id, command);
+            if (command != "CLUSTER SLOTS")
+            {
+                return staleReply(id, command);
+            }
+
             if (redirectDuringRefresh)
+            {
                 router!.SetSlotOwner(12539, router.GetMultiplexer(new("127.0.0.1", survivor.Port)));
+            }
+
             return omitSurvivor ? omittedMap : Map(server.Port);
         };
         var survivorReply = survivor.ReplyOverride!;
@@ -306,6 +336,7 @@ public partial class TopologyCommandRetryTests
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.ReadGate = handshake.Task;
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         try
         {
             OpenCircuit(client, server);
@@ -338,8 +369,16 @@ public partial class TopologyCommandRetryTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (command == "PING" && Volatile.Read(ref down) == 1) return "-ERR down\r\n"u8.ToArray();
-                if (command != "GET key") return null;
+                if (command == "PING" && Volatile.Read(ref down) == 1)
+                {
+                    return "-ERR down\r\n"u8.ToArray();
+                }
+
+                if (command != "GET key")
+                {
+                    return null;
+                }
+
                 primaryServer!.CloseConnections();
                 return null;
             },
@@ -352,12 +391,18 @@ public partial class TopologyCommandRetryTests
             { RetryPolicy = new() { MaxAttempts = 3, InitialBackoff = TimeSpan.Zero } });
         var clients = new List<RespireClient>();
         var secondarySamples = -1;
+
         static int Samples(IRespireClient client, FakeRespServer server)
             => ((RespireClient)client).Core.Circuits!.GetForTests(new("127.0.0.1", server.Port)).Snapshot().SampleCount;
+
         ValueTask<string?> Execute() => group.ExecuteAsync(async (client, token) =>
         {
             clients.Add((RespireClient)client);
-            try { return await client.GetStringAsync("key", token); }
+
+            try
+            {
+                return await client.GetStringAsync("key", token);
+            }
             catch (RespireConnectionException) when (switchMember && clients.Count == 1)
             {
                 // The probe moves the group while this attempt still holds the failed member.
@@ -368,7 +413,9 @@ public partial class TopologyCommandRetryTests
                 throw;
             }
         }, RespireCommandRetryCategory.ReadOnly);
+
         var primaryEndpoint = new RespireEndpoint("127.0.0.1", primary.Port);
+
         if (switchMember)
         {
             await Assert.That(await Execute()).IsEqualTo("value");
@@ -415,10 +462,18 @@ public partial class TopologyCommandRetryTests
         RespireClient? client = null;
         Func<string, FakeRespServer, byte[]?> reply = (command, current) =>
         {
-            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return null;
+            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
             if (Interlocked.Increment(ref sends) == 1)
             {
-                if (rejectFallback) return TryAgain;
+                if (rejectFallback)
+                {
+                    return TryAgain;
+                }
+
                 current.CloseConnections();
                 return null;
             }
@@ -433,6 +488,7 @@ public partial class TopologyCommandRetryTests
         var error = await Failure(async () => await client.Scripts.ExecuteIntegerAsync(script, ["key"]));
         await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal))).IsFalse();
+
         if (rejectFallback || cluster)
         {
             // The resend ran EVALSHA before its fallback was rejected, so it counts as attempted. Cluster
@@ -452,7 +508,10 @@ public partial class TopologyCommandRetryTests
 
     private static RespireCircuitBreakerOptions CircuitOptions() => new()
     {
-        MinimumFailureCount = 1, FailureRateThreshold = 0.01, HalfOpenProbeCount = 2, OpenDuration = TimeSpan.FromMinutes(1),
+        MinimumFailureCount = 1,
+        FailureRateThreshold = 0.01,
+        HalfOpenProbeCount = 2,
+        OpenDuration = TimeSpan.FromMinutes(1),
     };
 
     private static RespireOptions CircuitRetryOptions(FakeRespServer server, bool cluster)
@@ -475,11 +534,16 @@ public partial class TopologyCommandRetryTests
     private static void OpenCircuit(RespireClient client, FakeRespServer server)
     {
         var admission = client.Core.Circuits!.Acquire(new("127.0.0.1", server.Port), default);
-        try { admission.Failed(new RespireConnectionException("Injected endpoint failure."), default); }
+
+        try
+        {
+            admission.Failed(new RespireConnectionException("Injected endpoint failure."), default);
+        }
         finally { admission.Dispose(); }
     }
 
     private static string UnitCommand(string shape) => shape == "transaction" ? "EXEC" : "GET key";
+
     private static byte[] UnitValue(string shape) => shape == "transaction" ? "*1\r\n$5\r\nvalue\r\n"u8.ToArray() : Value;
 
     // Serves standalone, Sentinel-primary and single-node Cluster roles. The unit's decisive command
@@ -490,13 +554,43 @@ public partial class TopologyCommandRetryTests
         var transactions = new ConcurrentDictionary<int, bool>();
         server.ReplyOverride = (id, command) =>
         {
-            if (command == "CLIENT ID") return ":1\r\n"u8.ToArray();
-            if (command == "CLUSTER SLOTS") return Slots(server.Port);
-            if (command == "ROLE") return RoleReply(role?.Invoke() ?? "master");
-            if (command == "MULTI") { transactions[id] = true; return FakeRespServer.OkReply; }
-            if (command == "EXEC") { transactions[id] = false; return reply(server); }
-            if (transactions.GetValueOrDefault(id)) return "+QUEUED\r\n"u8.ToArray();
-            if (command == "GET key") return shape == "transaction" ? Value : reply(server);
+            if (command == "CLIENT ID")
+            {
+                return ":1\r\n"u8.ToArray();
+            }
+
+            if (command == "CLUSTER SLOTS")
+            {
+                return Slots(server.Port);
+            }
+
+            if (command == "ROLE")
+            {
+                return RoleReply(role?.Invoke() ?? "master");
+            }
+
+            if (command == "MULTI")
+            {
+                transactions[id] = true;
+                return FakeRespServer.OkReply;
+            }
+
+            if (command == "EXEC")
+            {
+                transactions[id] = false;
+                return reply(server);
+            }
+
+            if (transactions.GetValueOrDefault(id))
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
+            if (command == "GET key")
+            {
+                return shape == "transaction" ? Value : reply(server);
+            }
+
             return command.StartsWith("GET ", StringComparison.Ordinal) ? Value : null;
         };
         return server;
@@ -511,8 +605,11 @@ public partial class TopologyCommandRetryTests
     private sealed class CircuitClock : TimeProvider
     {
         private long _timestamp = TimeProvider.System.GetTimestamp();
+
         public override long GetTimestamp() => Interlocked.Read(ref _timestamp);
+
         public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
+
         internal void Advance(TimeSpan duration) => Interlocked.Add(ref _timestamp, (long)(duration.TotalSeconds * TimestampFrequency));
     }
 }

@@ -92,10 +92,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<bool> SetAsync(RespireKey key, RespireKey path, RespireKey field, RespireValue value, RespireSetWhen when = RespireSetWhen.Always, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<bool>(cancellationToken));
+            }
+
             var args = PathHashCodec.Set(path, [(field, value)], when);
             return owner.Attach(client.ConvertResponseAsync("PHSET",
                 new Cmd1N(RespireCommands.PathHash.PHSET.Verb, client.Key(in key), args), cancellationToken,
@@ -107,10 +111,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<bool> SetFieldsAsync(RespireKey key, RespireKey path, ReadOnlySpan<(RespireKey Field, RespireValue Value)> fields, RespireSetWhen when = RespireSetWhen.Always, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<bool>(cancellationToken));
+            }
+
             var args = PathHashCodec.Set(path, fields, when);
             return owner.Attach(client.ConvertResponseAsync("PHSET",
                 new Cmd1N(RespireCommands.PathHash.PHSET.Verb, client.Key(in key), args), cancellationToken,
@@ -122,10 +130,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<bool> SetManyAsync(RespireKey key, ReadOnlySpan<RespirePathHashWrite> paths, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<bool>(cancellationToken));
+            }
+
             var args = PathHashCodec.SetMany(paths);
             return owner.Attach(client.ConvertResponseAsync("PHMSET",
                 new Cmd1N(RespireCommands.PathHash.PHMSET.Verb, client.Key(in key), args), cancellationToken,
@@ -137,10 +149,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, RespireKey path, RespireKey field, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<byte[]?>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<byte[]?>(cancellationToken));
+            }
+
             var args = PathHashCodec.Get(path, [field]);
             return owner.Attach(client.ConvertResponseAsync("PHGET",
                 new Cmd1N(RespireCommands.PathHash.PHGET.Verb, client.Key(in key), args), cancellationToken,
@@ -152,10 +168,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<string?> GetStringAsync(RespireKey key, RespireKey path, RespireKey field, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<string?>(cancellationToken));
+            }
+
             var args = PathHashCodec.Get(path, [field]);
             return owner.Attach(client.ConvertResponseAsync("PHGET",
                 new Cmd1N(RespireCommands.PathHash.PHGET.Verb, client.Key(in key), args), cancellationToken,
@@ -167,10 +187,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<byte[]?[]> GetFieldsAsync(RespireKey key, RespireKey path, ReadOnlySpan<RespireKey> fields, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<byte[]?[]>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<byte[]?[]>(cancellationToken));
+            }
+
             var args = PathHashCodec.Get(path, fields);
             return owner.Attach(client.ConvertResponseAsync("PHGET",
                 new Cmd1N(RespireCommands.PathHash.PHGET.Verb, client.Key(in key), args), cancellationToken,
@@ -182,10 +206,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<byte[]?[]> GetManyAsync(RespireKey key, ReadOnlySpan<RespirePathHashRead> paths, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<byte[]?[]>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<byte[]?[]>(cancellationToken));
+            }
+
             var args = PathHashCodec.GetMany(paths);
             return owner.Attach(client.ConvertResponseAsync("PHMGET",
                 new Cmd1N(RespireCommands.PathHash.PHMGET.Verb, client.Key(in key), args), cancellationToken,
@@ -197,10 +225,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<RespirePathHashField[]> GetAllAsync(RespireKey key, RespireKey path, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespirePathHashField[]>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<RespirePathHashField[]>(cancellationToken));
+            }
+
             RespireValue[] args = [path.AsValue()];
             return owner.Attach(client.ConvertResponseAsync("PHGETALL",
                 new Cmd1N(RespireCommands.PathHash.PHGETALL.Verb, client.Key(in key), args), cancellationToken,
@@ -212,10 +244,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<bool> ExistsAsync(RespireKey key, RespireKey path, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<bool>(cancellationToken));
+            }
+
             RespireValue[] args = [path.AsValue()];
             return owner.Attach(client.ConvertResponseAsync("PHEXISTS",
                 new Cmd1N(RespireCommands.PathHash.PHEXISTS.Verb, client.Key(in key), args), cancellationToken,
@@ -227,10 +263,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<long>(cancellationToken));
+            }
+
             var args = Array.Empty<RespireValue>();
             return owner.Attach(client.ConvertResponseAsync("PHCARD",
                 new Cmd1N(RespireCommands.PathHash.PHCARD.Verb, client.Key(in key), args), cancellationToken,
@@ -242,10 +282,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<long> RemoveAsync(RespireKey key, RespireKey path, ReadOnlySpan<RespireKey> fields = default, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<long>(cancellationToken));
+            }
+
             var args = PathHashCodec.Get(path, fields, allowEmpty: true);
             return owner.Attach(client.ConvertResponseAsync("PHDEL",
                 new Cmd1N(RespireCommands.PathHash.PHDEL.Verb, client.Key(in key), args), cancellationToken,
@@ -257,10 +301,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<long> RemovePrefixAsync(RespireKey key, RespireKey prefix, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<long>(cancellationToken));
+            }
+
             RespireValue[] args = [prefix.AsValue()];
             return owner.Attach(client.ConvertResponseAsync("PHDELPREFIX",
                 new Cmd1N(RespireCommands.PathHash.PHDELPREFIX.Verb, client.Key(in key), args), cancellationToken,
@@ -272,10 +320,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<RespirePathHashEntry?> LongestPrefixAsync(RespireKey key, RespireKey query, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespirePathHashEntry?>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<RespirePathHashEntry?>(cancellationToken));
+            }
+
             RespireValue[] args = [query.AsValue(), "WITHVALUES"];
             return owner.Attach(client.ConvertResponseAsync("PHLONGEST",
                 new Cmd1N(RespireCommands.PathHash.PHLONGEST.Verb, client.Key(in key), args), cancellationToken,
@@ -287,10 +339,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<RespirePathHashEntry[]> PrefixesAsync(RespireKey key, RespireKey query, long? count = null, long? maxPathLength = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespirePathHashEntry[]>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<RespirePathHashEntry[]>(cancellationToken));
+            }
+
             var args = PathHashCodec.Prefixes(query, count, maxPathLength);
             return owner.Attach(client.ConvertResponseAsync("PHPREFIXES",
                 new Cmd1N(RespireCommands.PathHash.PHPREFIXES.Verb, client.Key(in key), args), cancellationToken,
@@ -302,10 +358,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<RespirePathHashPage> ScanPageAsync(RespireKey key, ReadOnlyMemory<byte> cursor = default, RespireKey? prefix = null, int count = 100, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespirePathHashPage>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<RespirePathHashPage>(cancellationToken));
+            }
+
             var args = PathHashCodec.Scan(cursor, prefix, count);
             return owner.Attach(client.ConvertResponseAsync("PHSCAN",
                 new Cmd1N(RespireCommands.PathHash.PHSCAN.Verb, client.Key(in key), args), cancellationToken,
@@ -320,10 +380,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<bool> SetAsync<T>(RespireKey key, RespireKey path, RespireKey field, T value, RespireSetWhen when = RespireSetWhen.Always, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<bool>(cancellationToken));
+            }
+
             var args = PathHashCodec.Set(path, [(field, client.SerializeRawCompatible(value))], when);
             return owner.Attach(client.ConvertResponseAsync("PHSET",
                 new Cmd1N(RespireCommands.PathHash.PHSET.Verb, client.Key(in key), args), cancellationToken,
@@ -337,10 +401,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<T?> GetAsync<T>(RespireKey key, RespireKey path, RespireKey field, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T?>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<T?>(cancellationToken));
+            }
+
             var args = PathHashCodec.Get(path, [field]);
             return owner.Attach(client.ConvertResponseAsync("PHGET",
                 new Cmd1N(RespireCommands.PathHash.PHGET.Verb, client.Key(in key), args), cancellationToken,
@@ -354,10 +422,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     public ValueTask<RespireGetResult<T>> TryGetAsync<T>(RespireKey key, RespireKey path, RespireKey field, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireGetResult<T>>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<RespireGetResult<T>>(cancellationToken));
+            }
+
             var args = PathHashCodec.Get(path, [field]);
             return owner.Attach(client.ConvertResponseAsync("PHGET",
                 new Cmd1N(RespireCommands.PathHash.PHGET.Verb, client.Key(in key), args), cancellationToken,
@@ -371,10 +443,17 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
     {
         ReadOnlyMemory<byte> cursor = default;
         var affinity = new ReadAffinity();
+
         do
         {
             var page = await ReadScanPageAsync(key, cursor, prefix, count, affinity, cancellationToken).ConfigureAwait(false);
-            foreach (var entry in page.Entries) { CollectionScan.CheckCancellation(cancellationToken); yield return entry; }
+
+            foreach (var entry in page.Entries)
+            {
+                CollectionScan.CheckCancellation(cancellationToken);
+                yield return entry;
+            }
+
             cursor = page.Cursor;
         } while (!cursor.Span.SequenceEqual("0"u8));
     }
@@ -383,10 +462,14 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
         ReadAffinity affinity, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<RespirePathHashPage>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<RespirePathHashPage>(cancellationToken));
+            }
+
             var args = PathHashCodec.Scan(cursor, prefix, count);
             return owner.Attach(client.ConvertCursorPageAsync("PHSCAN",
                 new Cmd1N(RespireCommands.PathHash.PHSCAN.Verb, client.Key(in key), args), affinity, cancellationToken,

@@ -24,12 +24,18 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
         internal ChannelMetadata(RespireSubscriptionKind kind, RespireChannelRoutingScope scope, int? database, int? slot)
             : this((byte)kind | ((ulong)(byte)scope << ScopeShift)
                 | ((ulong)(slot is { } value ? checked((ushort)(value + 1)) : (ushort)0) << SlotShift)
-                | ((ulong)(database is { } number ? (uint)number + 1 : 0) << DatabaseShift)) { }
+                | ((ulong)(database is { } number ? (uint)number + 1 : 0) << DatabaseShift))
+        {
+        }
 
         internal RespireSubscriptionKind Kind => (RespireSubscriptionKind)(byte)_bits;
+
         internal RespireChannelRoutingScope Scope => (RespireChannelRoutingScope)(byte)(_bits >> ScopeShift);
+
         internal int? Slot => (ushort)(_bits >> SlotShift) is 0 ? null : (ushort)(_bits >> SlotShift) - 1;
+
         internal int? Database => (uint)(_bits >> DatabaseShift) is 0 ? null : (int)((uint)(_bits >> DatabaseShift) - 1);
+
         internal ChannelMetadata WithKind(RespireSubscriptionKind kind) => new((_bits & ~0xffUL) | (byte)kind);
     }
 
@@ -62,10 +68,13 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
 
     /// <summary>Whether this is a server-owned notification descriptor that cannot be published.</summary>
     public bool IsNotification => RoutingScope != RespireChannelRoutingScope.Global;
+
     /// <summary>The explicit routing scope; arbitrary reserved-looking bytes remain ordinary channels.</summary>
     public RespireChannelRoutingScope RoutingScope => _metadata.Scope;
+
     /// <summary>The physical key's slot for KeyOwner descriptors; null otherwise.</summary>
     public int? RoutingSlot => _metadata.Slot;
+
     /// <summary>The notification database, or null for all databases/ordinary channels.</summary>
     public int? NotificationDatabase => _metadata.Database;
 
@@ -127,10 +136,15 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
     internal RespireChannel WithKind(RespireSubscriptionKind kind)
     {
         if (IsNotification && kind != Kind)
+        {
             throw new ArgumentException("Notification descriptors retain their subscription kind; construct an ordinary channel to override it.", nameof(kind));
+        }
+
         return new(_bytes, _metadata.WithKind(kind));
     }
+
     private RespireChannel(byte[]? bytes, ChannelMetadata metadata) => (_bytes, _metadata) = (bytes, metadata);
+
     internal RespireValue AsValue() => new(Bytes);
 
     internal RespireChannel Prepend(ReadOnlySpan<byte> prefix)

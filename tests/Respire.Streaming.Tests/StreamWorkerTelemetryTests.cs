@@ -25,19 +25,31 @@ public partial class StreamWorkerTests
         var children = new ConcurrentQueue<ActivitySpanId>();
         var stopped = new ConcurrentQueue<Activity>();
         using var tracing = ListenToWorker(stopped.Enqueue);
-        var state = new State { Handle = (_, _) =>
+        var state = new State
+        {
+            Handle = (_, _) =>
         {
             contexts.Enqueue(Activity.Current!.Context);
             using var child = new Activity("handler child").Start();
             children.Enqueue(child.ParentSpanId);
-            if (handlerThrows) throw new InvalidOperationException("private payload");
+
+            if (handlerThrows)
+            {
+                throw new InvalidOperationException("private payload");
+            }
+
             return ValueTask.FromResult(RespireStreamWorkerResult.Nack);
-        } };
+        }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state, keyPrefix: "{worker}tenant:", options: new()
         {
-            TelemetryName = WorkerName, DeadLetterStream = "dlq", DeliveryLimit = 3,
-            TraceParentField = "parent", TraceStateField = "state",
-            MinimumIdleTime = TimeSpan.FromMilliseconds(20), RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
+            TelemetryName = WorkerName,
+            DeadLetterStream = "dlq",
+            DeliveryLimit = 3,
+            TraceParentField = "parent",
+            TraceStateField = "state",
+            MinimumIdleTime = TimeSpan.FromMilliseconds(20),
+            RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
         });
         await fixture.View.Streams.AddAsync("events", ("payload", "private payload"), ("parent", Parent), ("state", "vendor=value"));
         await fixture.StartAsync();
@@ -45,6 +57,7 @@ public partial class StreamWorkerTests
         await fixture.StopAsync();
         await Assert.That(contexts.Count).IsEqualTo(3);
         await Assert.That(contexts.Select(context => context.SpanId).Distinct().Count()).IsEqualTo(3);
+
         foreach (var activity in stopped)
         {
             await Assert.That(activity.TraceId.ToHexString()).IsEqualTo("0123456789abcdef0123456789abcdef");
@@ -56,6 +69,7 @@ public partial class StreamWorkerTests
             await Assert.That(activity.Status).IsEqualTo(handlerThrows ? ActivityStatusCode.Error : ActivityStatusCode.Unset);
             await Assert.That(activity.StatusDescription).IsNull();
         }
+
         await Assert.That(stopped.Select(activity => activity.GetTagItem("respire.worker.outcome")))
             .IsEquivalentTo(new object?[] { "nack", "nack", "dead-letter" });
         await Assert.That(metrics.Duration.Select(sample => sample.Tags["respire.worker.outcome"]))
@@ -66,6 +80,7 @@ public partial class StreamWorkerTests
         await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(0);
         await Assert.That(await fixture.View.Streams.CountAsync("dlq")).IsEqualTo(1);
         await Assert.That(state.DisposedScopes).IsEqualTo(3);
+
         foreach (var sample in metrics.Duration.Concat(metrics.DeadLetters))
         {
             await Assert.That(sample.Value).IsGreaterThanOrEqualTo(0);
@@ -82,18 +97,23 @@ public partial class StreamWorkerTests
         using var tracing = ListenToWorker(stopped.Enqueue);
         await using var fixture = await Fixture.CreateAsync(deserializeFailure: true, keyPrefix: "{worker}tenant:", options: new()
         {
-            TelemetryName = WorkerName, DeadLetterStream = "dlq", DeliveryLimit = 3,
-            MinimumIdleTime = TimeSpan.FromMilliseconds(20), RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
+            TelemetryName = WorkerName,
+            DeadLetterStream = "dlq",
+            DeliveryLimit = 3,
+            MinimumIdleTime = TimeSpan.FromMilliseconds(20),
+            RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
         });
         await fixture.AddAsync(0);
         await fixture.StartAsync();
         await UntilAsync(() => Task.FromResult(metrics.Duration.Count == 3 && stopped.Count == 3));
         await fixture.StopAsync();
+
         foreach (var activity in stopped)
         {
             await Assert.That(activity.Status).IsEqualTo(ActivityStatusCode.Error);
             await Assert.That(activity.StatusDescription).IsNull();
         }
+
         await Assert.That(stopped.Select(activity => activity.GetTagItem("respire.worker.outcome")))
             .IsEquivalentTo(new object?[] { "nack", "nack", "dead-letter" });
         await Assert.That(metrics.Duration.Select(sample => sample.Tags["respire.worker.outcome"]))
@@ -115,11 +135,15 @@ public partial class StreamWorkerTests
         var stopped = new ConcurrentQueue<Activity>();
         using var tracing = ListenToWorker(stopped.Enqueue);
         var failure = new InvalidOperationException("private cleanup payload");
-        var state = new State { DisposeScope = () => cleanupThrows
-            ? ValueTask.FromException(failure) : ValueTask.CompletedTask };
+        var state = new State
+        {
+            DisposeScope = () => cleanupThrows
+            ? ValueTask.FromException(failure) : ValueTask.CompletedTask
+        };
         await using var fixture = await Fixture.CreateAsync(state: state, options: new() { TelemetryName = WorkerName });
         await fixture.AddAsync(0);
         await fixture.StartAsync();
+
         if (cleanupThrows)
         {
             var actual = await Assert.That(async () => await fixture.Service.ExecuteTask!.WaitAsync(Deadline))
@@ -132,6 +156,7 @@ public partial class StreamWorkerTests
             await fixture.StopAsync();
             await Assert.That(fixture.Service.ExecuteTask!.IsCompletedSuccessfully).IsTrue();
         }
+
         var activity = stopped.Single();
         await Assert.That(activity.Status).IsEqualTo(cleanupThrows ? ActivityStatusCode.Error : ActivityStatusCode.Unset);
         await Assert.That(activity.StatusDescription).IsNull();
@@ -203,13 +228,16 @@ public partial class StreamWorkerTests
         ActivitySource.AddActivityListener(tracing);
         var contexts = new ConcurrentQueue<Activity?>();
         var children = new ConcurrentQueue<Activity>();
-        var state = new State { Handle = (_, _) =>
+        var state = new State
+        {
+            Handle = (_, _) =>
         {
             contexts.Enqueue(Activity.Current);
             using var child = childSource.StartActivity("handler child");
             children.Enqueue(child!);
             return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
-        } };
+        }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state, options: new() { TelemetryName = WorkerName });
         await fixture.View.Streams.AddAsync("events", ("payload", "0"), ("traceparent", Parent));
         await fixture.StartAsync();
@@ -218,13 +246,16 @@ public partial class StreamWorkerTests
         var context = contexts.Single();
         // TUnit's HTML reporter can independently sample all sources; without it these attempts have no activity.
         if (context is null)
+        {
             await Assert.That(children.Single().ParentSpanId).IsEqualTo(default(ActivitySpanId));
+        }
         else
         {
             await Assert.That(context.Source.Name).IsEqualTo(RespireStreamWorkerTelemetry.ActivitySourceName);
             await Assert.That(context.ParentSpanId.ToHexString()).IsEqualTo("0123456789abcdef");
             await Assert.That(children.Single().ParentSpanId).IsEqualTo(context.SpanId);
         }
+
         await Assert.That(children.Single().TraceId == host.TraceId).IsFalse();
         await Assert.That(Activity.Current).IsSameReferenceAs(host);
         await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(0);
@@ -243,12 +274,35 @@ public partial class StreamWorkerTests
         using var meter = new MeterListener();
         meter.InstrumentPublished = (instrument, listener) =>
         {
-            if (instrument.Meter.Name != RespireStreamWorkerTelemetry.MeterName) return;
-            if (failure == "published") throw new InvalidOperationException("listener failure");
-            if (failure != "disabled") listener.EnableMeasurementEvents(instrument);
+            if (instrument.Meter.Name != RespireStreamWorkerTelemetry.MeterName)
+            {
+                return;
+            }
+
+            if (failure == "published")
+            {
+                throw new InvalidOperationException("listener failure");
+            }
+
+            if (failure != "disabled")
+            {
+                listener.EnableMeasurementEvents(instrument);
+            }
         };
-        meter.SetMeasurementEventCallback<double>((_, _, _, _) => { if (failure == "metrics") throw new InvalidOperationException(); });
-        meter.SetMeasurementEventCallback<long>((_, _, _, _) => { if (failure == "metrics") throw new InvalidOperationException(); });
+        meter.SetMeasurementEventCallback<double>((_, _, _, _) =>
+        {
+            if (failure == "metrics")
+            {
+                throw new InvalidOperationException();
+            }
+        });
+        meter.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        {
+            if (failure == "metrics")
+            {
+                throw new InvalidOperationException();
+            }
+        });
         meter.Start();
         var handlerContexts = new ConcurrentQueue<Activity?>();
         var listenerRegistered = false;
@@ -256,29 +310,54 @@ public partial class StreamWorkerTests
         {
             ShouldListenTo = source =>
             {
-                if (source.Name != RespireStreamWorkerTelemetry.ActivitySourceName) return false;
+                if (source.Name != RespireStreamWorkerTelemetry.ActivitySourceName)
+                {
+                    return false;
+                }
                 // A process-wide job producer source may already exist. Inject failure only when
                 // the worker creates its source, not while this test registers its own listener.
-                if (failure == "source" && listenerRegistered) throw new InvalidOperationException();
+                if (failure == "source" && listenerRegistered)
+                {
+                    throw new InvalidOperationException();
+                }
+
                 return true;
             },
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => failure == "sample"
                 ? throw new InvalidOperationException() : failure == "disabled" ? ActivitySamplingResult.None : ActivitySamplingResult.AllData,
-            ActivityStarted = _ => { if (failure == "started") throw new InvalidOperationException(); },
-            ActivityStopped = _ => { if (failure == "stopped") throw new InvalidOperationException(); },
+            ActivityStarted = _ =>
+            {
+                if (failure == "started")
+                {
+                    throw new InvalidOperationException();
+                }
+            },
+            ActivityStopped = _ =>
+            {
+                if (failure == "stopped")
+                {
+                    throw new InvalidOperationException();
+                }
+            },
         };
         ActivitySource.AddActivityListener(tracing);
         listenerRegistered = true;
         var ambient = Activity.Current;
-        var state = new State { Handle = (_, _) =>
+        var state = new State
+        {
+            Handle = (_, _) =>
         {
             handlerContexts.Enqueue(Activity.Current);
             throw new InvalidOperationException("private payload");
-        } };
+        }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state, keyPrefix: "{worker}tenant:", options: new()
         {
-            TelemetryName = WorkerName, DeadLetterStream = "dlq", DeliveryLimit = 2,
-            MinimumIdleTime = TimeSpan.FromMilliseconds(20), RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
+            TelemetryName = WorkerName,
+            DeadLetterStream = "dlq",
+            DeliveryLimit = 2,
+            MinimumIdleTime = TimeSpan.FromMilliseconds(20),
+            RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
         });
         await fixture.AddAsync(0);
         await fixture.StartAsync();
@@ -288,12 +367,23 @@ public partial class StreamWorkerTests
         await Assert.That(state.WarningCount).IsEqualTo(2);
         await Assert.That(fixture.Service.ExecuteTask!.IsCompletedSuccessfully).IsTrue();
         await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(0);
+
         if (failure is "started" or "sample" or "source")
+        {
             await Assert.That(handlerContexts.All(context => context is null)).IsTrue();
+        }
+
         if (failure == "disabled")
+        {
             foreach (var activity in handlerContexts)
+            {
                 if (!ReferenceEquals(activity, ambient) && activity is not null)
+                {
                     await Assert.That(activity.Duration).IsGreaterThan(TimeSpan.Zero);
+                }
+            }
+        }
+
         await Assert.That(ReferenceEquals(Activity.Current, ambient)).IsTrue();
     }
 
@@ -308,7 +398,8 @@ public partial class StreamWorkerTests
         using var tracing = ListenToWorker(stopped.Enqueue);
         await using var fixture = await Fixture.CreateAsync(options: new()
         {
-            TelemetryName = WorkerName, TraceParentField = field == "extraction-disabled" ? null : "traceparent",
+            TelemetryName = WorkerName,
+            TraceParentField = field == "extraction-disabled" ? null : "traceparent",
         });
         var fields = new List<(string, RespireValue)> { ("payload", "0"), ("traceparent", field switch
         {
@@ -316,7 +407,12 @@ public partial class StreamWorkerTests
             "binary" => Parent[..54] + "\n",
             _ => Parent,
         }) };
-        if (field == "duplicate") fields.Add(("traceparent", Parent));
+
+        if (field == "duplicate")
+        {
+            fields.Add(("traceparent", Parent));
+        }
+
         await fixture.View.Streams.AddAsync("events", fields.ToArray());
         await fixture.StartAsync();
         await UntilAsync(() => Task.FromResult(stopped.Count == 1));
@@ -365,8 +461,12 @@ public partial class StreamWorkerTests
     public async Task TelemetryNamesAcceptPatternBoundariesAndRemainLocalToServiceCollection()
     {
         var services = new ServiceCollection();
+
         foreach (var name in new[] { "a", "A", "Az09._-", new string('z', 128) })
+        {
             services.AddRespireStreamWorker<EntryHandler>("s", "g", new() { TelemetryName = name });
+        }
+
         var other = new ServiceCollection();
         other.AddRespireStreamWorker<EntryHandler>("s", "g", new() { TelemetryName = "a" });
         await Assert.That(services.Count(descriptor => descriptor.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService)))
@@ -391,12 +491,25 @@ public partial class StreamWorkerTests
     {
         using var metrics = new WorkerMetrics();
         var release = NewSignal();
-        var state = new State { Handle = async (_, _) => { await release.Task; return RespireStreamWorkerResult.Ack; } };
+        var state = new State
+        {
+            Handle = async (_, _) =>
+            {
+                await release.Task;
+                return RespireStreamWorkerResult.Ack;
+            }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state, options: new()
         {
-            TelemetryName = WorkerName, MetricsPollInterval = TimeSpan.FromMilliseconds(20),
+            TelemetryName = WorkerName,
+            MetricsPollInterval = TimeSpan.FromMilliseconds(20),
         });
-        for (var i = 0; i < 4; i++) await fixture.AddAsync(i);
+
+        for (var i = 0; i < 4; i++)
+        {
+            await fixture.AddAsync(i);
+        }
+
         try
         {
             await fixture.StartAsync();
@@ -406,8 +519,12 @@ public partial class StreamWorkerTests
                 metrics.Listener.RecordObservableInstruments();
                 return Task.FromResult(metrics.Lag.Any(sample => sample.Value == 3) && metrics.Pending.Any(sample => sample.Value == 1));
             });
+
             foreach (var sample in metrics.Lag.Concat(metrics.Pending))
+            {
                 await Assert.That(sample.Tags.Keys).IsEquivalentTo(new[] { "respire.worker.name" });
+            }
+
             var stopping = fixture.Service.StopAsync(CancellationToken.None);
             metrics.Lag.Clear();
             metrics.Pending.Clear();
@@ -425,13 +542,20 @@ public partial class StreamWorkerTests
         using var metrics = new WorkerMetrics();
         await using var fixture = await Fixture.CreateAsync(options: new()
         {
-            TelemetryName = WorkerName, CreateGroup = false, MetricsPollInterval = TimeSpan.FromMilliseconds(20),
+            TelemetryName = WorkerName,
+            CreateGroup = false,
+            MetricsPollInterval = TimeSpan.FromMilliseconds(20),
         });
+
         for (var i = 1; i <= 3; i++)
+        {
             await fixture.View.Streams.AddAsync("events", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", "body"));
+        }
+
         await fixture.View.Streams.CreateGroupAsync("events", "workers", "2-0");
         var gate = new RespireFakeGate();
         using var fault = fixture.Server.InjectFault("XREADGROUP", RespireFakeFault.Pause(gate));
+
         try
         {
             await fixture.StartAsync();
@@ -455,11 +579,13 @@ public partial class StreamWorkerTests
         using var metrics = new WorkerMetrics();
         await using var fixture = await Fixture.CreateAsync(options: new()
         {
-            TelemetryName = WorkerName, MetricsPollInterval = TimeSpan.FromMinutes(1),
+            TelemetryName = WorkerName,
+            MetricsPollInterval = TimeSpan.FromMinutes(1),
             MetricsPollTimeout = TimeSpan.FromMilliseconds(expire ? 20 : 5000),
         });
         var gate = new RespireFakeGate();
         using var fault = fixture.Server.InjectFault("XINFO", RespireFakeFault.Pause(gate, afterExecution: true));
+
         try
         {
             await fixture.StartAsync();
@@ -496,19 +622,28 @@ public partial class StreamWorkerTests
     {
         using var metrics = new WorkerMetrics();
         Fixture? fixture = null;
-        var state = new State { Handle = async (entry, _) =>
+        var state = new State
         {
-            if (deleted) await fixture!.View.Streams.RemoveAsync("events", [entry.Id]);
+            Handle = async (entry, _) =>
+        {
+            if (deleted)
+            {
+                await fixture!.View.Streams.RemoveAsync("events", [entry.Id]);
+            }
             else
             {
                 using var claim = await fixture!.View.Scripts.ExecuteAsync(StreamWorkerScripts.Claim, ["events"],
                     ["workers", "other", 0, "0-0", 1]);
             }
+
             return RespireStreamWorkerResult.DeadLetter;
-        } };
+        }
+        };
         fixture = await Fixture.CreateAsync(state: state, keyPrefix: "{worker}tenant:", options: new()
         {
-            TelemetryName = WorkerName, DeadLetterStream = "dlq", RecoveryPollInterval = TimeSpan.FromMinutes(1),
+            TelemetryName = WorkerName,
+            DeadLetterStream = "dlq",
+            RecoveryPollInterval = TimeSpan.FromMinutes(1),
         });
         await using var owned = fixture;
         await fixture.AddAsync(0);
@@ -561,31 +696,48 @@ public partial class StreamWorkerTests
             {
                 if (instrument.Meter.Name == RespireStreamWorkerTelemetry.MeterName && instrument.Name ==
                     (deadLetter ? "respire.stream.worker.dead_letters" : "respire.stream.worker.processing.duration"))
+                {
                     meter.EnableMeasurementEvents(instrument);
+                }
             },
         };
+
         void Block()
         {
             entered.TrySetResult();
             release.Wait();
         }
+
         listener.SetMeasurementEventCallback<double>((_, _, _, _) => Block());
         listener.SetMeasurementEventCallback<long>((_, _, _, _) => Block());
         listener.Start();
-        var state = new State { Handle = async (entry, token) =>
+        var state = new State
+        {
+            Handle = async (entry, token) =>
         {
             if (entry.GetString("payload") == "0")
+            {
                 return deadLetter ? RespireStreamWorkerResult.DeadLetter : RespireStreamWorkerResult.Ack;
-            try { await Task.Delay(Timeout.Infinite, token); }
+            }
+
+            try
+            {
+                await Task.Delay(Timeout.Infinite, token);
+            }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { canceled.TrySetResult(); throw; }
+
             return RespireStreamWorkerResult.Ack;
-        } };
+        }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state, keyPrefix: "{worker}tenant:", options: new()
         {
-            TelemetryName = WorkerName, ConsumerCount = 2, DeadLetterStream = "dlq",
+            TelemetryName = WorkerName,
+            ConsumerCount = 2,
+            DeadLetterStream = "dlq",
             MetricsPollInterval = TimeSpan.FromMilliseconds(20),
         });
         Task? stopping = null;
+
         try
         {
             await fixture.AddAsync(0);
@@ -606,8 +758,13 @@ public partial class StreamWorkerTests
         finally
         {
             release.Set();
-            if (stopping is not null) await stopping.WaitAsync(Deadline);
+
+            if (stopping is not null)
+            {
+                await stopping.WaitAsync(Deadline);
+            }
         }
+
         await fixture.Service.ExecuteTask!.WaitAsync(Deadline);
         await Assert.That(fixture.Service.ExecuteTask.IsCompletedSuccessfully).IsTrue();
         await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(1);
@@ -626,7 +783,9 @@ public partial class StreamWorkerTests
             {
                 if (instrument.Meter.Name == RespireStreamWorkerTelemetry.MeterName
                     && instrument.Name == "respire.stream.worker.processing.duration")
+                {
                     meter.EnableMeasurementEvents(instrument);
+                }
             },
             MeasurementsCompleted = (_, _) =>
             {
@@ -635,17 +794,27 @@ public partial class StreamWorkerTests
             },
         };
         listener.Start();
-        var state = new State { Handle = async (_, token) =>
+        var state = new State
         {
-            try { await Task.Delay(Timeout.Infinite, token); }
+            Handle = async (_, token) =>
+        {
+            try
+            {
+                await Task.Delay(Timeout.Infinite, token);
+            }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { canceled.TrySetResult(); throw; }
+
             return RespireStreamWorkerResult.Ack;
-        } };
+        }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state, options: new()
         {
-            TelemetryName = WorkerName, ConsumerCount = 2, MetricsPollInterval = TimeSpan.FromMilliseconds(20),
+            TelemetryName = WorkerName,
+            ConsumerCount = 2,
+            MetricsPollInterval = TimeSpan.FromMilliseconds(20),
         });
         Task? disposing = null;
+
         try
         {
             await fixture.AddAsync(0);
@@ -673,7 +842,11 @@ public partial class StreamWorkerTests
         finally
         {
             release.Set();
-            if (disposing is not null) await disposing.WaitAsync(Deadline);
+
+            if (disposing is not null)
+            {
+                await disposing.WaitAsync(Deadline);
+            }
         }
     }
 
@@ -687,25 +860,33 @@ public partial class StreamWorkerTests
             {
                 if (instrument.Meter.Name == RespireStreamWorkerTelemetry.MeterName
                     && instrument.Name == "respire.stream.worker.processing.duration")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             },
             MeasurementsCompleted = (_, _) => Interlocked.Increment(ref completed),
         };
         meter.Start();
-        using var tracing = ListenToWorker(_ => { });
+        using var tracing = ListenToWorker(_ =>
+        {
+        });
         var entered = NewSignal();
         var release = NewSignal();
         var failure = new InvalidOperationException("callback failure");
         ActivitySource? source = null;
-        var state = new State { Handle = async (_, token) =>
+        var state = new State
+        {
+            Handle = async (_, token) =>
         {
             using var callback = token.Register(() => throw failure);
             source = Activity.Current!.Source;
             entered.TrySetResult();
             await release.Task;
             return RespireStreamWorkerResult.Ack;
-        } };
+        }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state, options: new() { TelemetryName = WorkerName });
+
         try
         {
             await fixture.AddAsync(0);
@@ -734,7 +915,9 @@ public partial class StreamWorkerTests
             InstrumentPublished = (instrument, listener) =>
             {
                 if (instrument.Meter.Name == RespireStreamWorkerTelemetry.MeterName)
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             },
         };
         meter.SetMeasurementEventCallback<double>((_, _, _, _) => throw new InvalidOperationException("listener failure"));
@@ -754,11 +937,19 @@ public partial class StreamWorkerTests
     {
         using var metrics = new WorkerMetrics();
         var release = NewSignal();
-        var state = new State { Handle = async (_, _) => { await release.Task; return RespireStreamWorkerResult.Ack; } };
+        var state = new State
+        {
+            Handle = async (_, _) =>
+            {
+                await release.Task;
+                return RespireStreamWorkerResult.Ack;
+            }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state, options: new() { TelemetryName = WorkerName });
         await fixture.AddAsync(0);
         await fixture.StartAsync();
         await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+
         try
         {
             fixture.Service.Dispose();
@@ -777,7 +968,8 @@ public partial class StreamWorkerTests
         using var metrics = new WorkerMetrics();
         await using var fixture = await Fixture.CreateAsync(options: new()
         {
-            TelemetryName = WorkerName, MetricsPollInterval = TimeSpan.FromMilliseconds(20),
+            TelemetryName = WorkerName,
+            MetricsPollInterval = TimeSpan.FromMilliseconds(20),
             MetricsPollTimeout = TimeSpan.FromMilliseconds(20),
         });
         await fixture.StartAsync();
@@ -788,6 +980,7 @@ public partial class StreamWorkerTests
         });
         var gate = new RespireFakeGate();
         using var fault = fixture.Server.InjectFault("XINFO", RespireFakeFault.Pause(gate, afterExecution: true));
+
         try
         {
             await fault.Matched.WaitAsync(Deadline);
@@ -820,7 +1013,8 @@ public partial class StreamWorkerTests
         var state = new State { Handle = (_, _) => ValueTask.FromResult(result) };
         await using var fixture = await Fixture.CreateAsync(state: state, keyPrefix: "{worker}tenant:", options: new()
         {
-            TelemetryName = WorkerName, DeadLetterStream = "dlq",
+            TelemetryName = WorkerName,
+            DeadLetterStream = "dlq",
         });
         var source = result switch
         {
@@ -831,6 +1025,7 @@ public partial class StreamWorkerTests
         var gate = new RespireFakeGate();
         using var fault = fixture.Server.InjectFault("EVAL", RespireFakeFault.Pause(gate),
             firstArgument: System.Text.Encoding.UTF8.GetBytes(source));
+
         try
         {
             await fixture.AddAsync(0);
@@ -841,6 +1036,7 @@ public partial class StreamWorkerTests
             await fixture.Service.ExecuteTask!.WaitAsync(Deadline);
         }
         finally { gate.Release(); }
+
         await UntilAsync(() => Task.FromResult(metrics.Duration.Count == 1 && stopped.Count == 1));
         await Assert.That(fixture.Service.ExecuteTask.IsCompletedSuccessfully).IsTrue();
         await Assert.That(metrics.Duration.Single().Tags["respire.worker.outcome"]).IsEqualTo("canceled");
@@ -901,17 +1097,39 @@ public partial class StreamWorkerTests
 
     private sealed class WorkerMetrics : IDisposable
     {
-        internal MeterListener Listener { get; } = new();
-        internal ConcurrentQueue<WorkerSample> Duration { get; } = new();
-        internal ConcurrentQueue<WorkerSample> DeadLetters { get; } = new();
-        internal ConcurrentQueue<WorkerSample> Lag { get; } = new();
-        internal ConcurrentQueue<WorkerSample> Pending { get; } = new();
+        internal MeterListener Listener
+        {
+            get;
+        } = new();
+
+        internal ConcurrentQueue<WorkerSample> Duration
+        {
+            get;
+        } = new();
+
+        internal ConcurrentQueue<WorkerSample> DeadLetters
+        {
+            get;
+        } = new();
+
+        internal ConcurrentQueue<WorkerSample> Lag
+        {
+            get;
+        } = new();
+
+        internal ConcurrentQueue<WorkerSample> Pending
+        {
+            get;
+        } = new();
 
         internal WorkerMetrics()
         {
             Listener.InstrumentPublished = (instrument, listener) =>
             {
-                if (instrument.Meter.Name == RespireStreamWorkerTelemetry.MeterName) listener.EnableMeasurementEvents(instrument);
+                if (instrument.Meter.Name == RespireStreamWorkerTelemetry.MeterName)
+                {
+                    listener.EnableMeasurementEvents(instrument);
+                }
             };
             Listener.SetMeasurementEventCallback<double>((_, value, tags, _) => Capture(Duration, value, tags));
             Listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) => Capture(instrument.Name switch
@@ -926,7 +1144,11 @@ public partial class StreamWorkerTests
         private static void Capture(ConcurrentQueue<WorkerSample> target, double value, ReadOnlySpan<KeyValuePair<string, object?>> tags)
         {
             var values = tags.ToArray().ToDictionary(pair => pair.Key, pair => pair.Value);
-            if (values.GetValueOrDefault("respire.worker.name") as string == WorkerName) target.Enqueue(new(value, values));
+
+            if (values.GetValueOrDefault("respire.worker.name") as string == WorkerName)
+            {
+                target.Enqueue(new(value, values));
+            }
         }
 
         public void Dispose() => Listener.Dispose();

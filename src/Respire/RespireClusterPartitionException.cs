@@ -4,10 +4,16 @@ namespace Respire;
 public sealed class RespireClusterPartitionException : RespireException
 {
     /// <summary>The command being split.</summary>
-    public string CommandName { get; }
+    public string CommandName
+    {
+        get;
+    }
 
     /// <summary>The hash slot of the failed group.</summary>
-    public int Slot { get; }
+    public int Slot
+    {
+        get;
+    }
 
     /// <summary>Creates a failure for one slot group, retaining the underlying error.</summary>
     public RespireClusterPartitionException(string commandName, int slot, RespireEndpoint? endpoint, Exception innerException)

@@ -16,10 +16,19 @@ internal sealed class ClientCachePrefixSet : IReadOnlyList<RespireKey>
     internal static ClientCachePrefixSet Create(IReadOnlyList<RespireKey> prefixes)
     {
         // This sealed type already owns immutable byte snapshots; sharing it is safe.
-        if (prefixes is ClientCachePrefixSet owned) return owned;
-        if (prefixes.Count == 0) return Empty;
+        if (prefixes is ClientCachePrefixSet owned)
+        {
+            return owned;
+        }
+
+        if (prefixes.Count == 0)
+        {
+            return Empty;
+        }
+
         var keys = new RespireKey[prefixes.Count];
         var sorted = new ReadOnlyMemory<byte>[prefixes.Count];
+
         for (var index = 0; index < keys.Length; index++)
         {
             var argument = prefixes[index].AsValue();
@@ -28,11 +37,15 @@ internal sealed class ClientCachePrefixSet : IReadOnlyList<RespireKey>
             keys[index] = new RespireKey(bytes);
             sorted[index] = bytes;
         }
+
         Array.Sort(sorted, static (left, right) => left.Span.SequenceCompareTo(right.Span));
+
         for (var index = 1; index < sorted.Length; index++)
         {
             if (sorted[index].Span.StartsWith(sorted[index - 1].Span))
+            {
                 throw new RespireConfigurationException("RespireOptions.ClientSideCache.KeyPrefixes must not overlap or repeat.");
+            }
         }
         // Preserve caller order on the wire; both arrays refer to the same owned bytes.
         return new ClientCachePrefixSet(keys, sorted);
@@ -45,14 +58,27 @@ internal sealed class ClientCachePrefixSet : IReadOnlyList<RespireKey>
     {
         var low = 0;
         var high = _sortedPrefixes.Length - 1;
+
         while (low <= high)
         {
             var middle = low + ((high - low) / 2);
             var prefix = _sortedPrefixes[middle].Span;
-            if (key.StartsWith(prefix)) return true;
-            if (key.SequenceCompareTo(prefix) < 0) high = middle - 1;
-            else low = middle + 1;
+
+            if (key.StartsWith(prefix))
+            {
+                return true;
+            }
+
+            if (key.SequenceCompareTo(prefix) < 0)
+            {
+                high = middle - 1;
+            }
+            else
+            {
+                low = middle + 1;
+            }
         }
+
         return false;
     }
 
@@ -66,7 +92,10 @@ internal sealed class ClientCachePrefixSet : IReadOnlyList<RespireKey>
     }
 
     public int Count => _wirePrefixes.Length;
+
     public RespireKey this[int index] => _wirePrefixes[index];
+
     public IEnumerator<RespireKey> GetEnumerator() => ((IEnumerable<RespireKey>)_wirePrefixes).GetEnumerator();
+
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }

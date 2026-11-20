@@ -20,6 +20,7 @@ public class IncrementExtendedIntegrationTests
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
         var options = fake?.CreateOptions() ?? RespireOptions.Parse($"redis://{container!.Hostname}:{container.GetMappedPublicPort(6379)}");
         await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
+
         foreach (var mode in new[] { "immediate", "batch", "transaction" })
         {
             await client.SetAsync("zero", "-1");
@@ -66,9 +67,13 @@ public class IncrementExtendedIntegrationTests
             return lease.IsAcquired;
         }));
         accepted.Count(value => value).Should().Be(7);
+
         if (image.Contains(":7.4", StringComparison.Ordinal))
         {
-            Func<Task> typed = async () => { await client.Strings.IncrementExtendedAsync("unsupported"); };
+            Func<Task> typed = async () =>
+            {
+                await client.Strings.IncrementExtendedAsync("unsupported");
+            };
             await typed.Should().ThrowAsync<RespireServerException>().WithMessage("*unknown command*");
             (await client.ExistsAsync("unsupported")).Should().BeFalse();
         }
@@ -86,6 +91,7 @@ public class IncrementExtendedIntegrationTests
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
         var options = fake?.CreateOptions() ?? RespireOptions.Parse($"redis://{container!.Hostname}:{container.GetMappedPublicPort(6379)}");
         await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
+
         foreach (var mode in new[] { "immediate", "batch", "transaction" })
         {
             var view = client.WithKeyPrefix(mode + ":");
@@ -113,7 +119,10 @@ public class IncrementExtendedIntegrationTests
             (await Integer(view, mode, key, -1)).Should().Be(new RespireIncrementResult<long>(long.MaxValue - 1, -1));
             (await Integer(view, mode, key, 2, new() { Saturate = true })).Should().Be(new RespireIncrementResult<long>(long.MaxValue, 1));
             await view.SetAsync(key, long.MinValue.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            Func<Task> overflow = async () => { await Integer(view, mode, key, 0, new() { LowerBound = long.MaxValue, Saturate = true }); };
+            Func<Task> overflow = async () =>
+            {
+                await Integer(view, mode, key, 0, new() { LowerBound = long.MaxValue, Saturate = true });
+            };
             await overflow.Should().ThrowAsync<RespireServerException>();
             (await view.GetStringAsync(key)).Should().Be(long.MinValue.ToString(System.Globalization.CultureInfo.InvariantCulture));
             await view.Keys.DeleteAsync(key);
@@ -122,12 +131,18 @@ public class IncrementExtendedIntegrationTests
             (await Floating(view, mode, key, 5.0, new() { UpperBound = 3.5 })).Should().Be(new RespireIncrementResult<double>(2.5, 0));
             (await Floating(view, mode, key, 5.0, new() { UpperBound = 3.5, Saturate = true })).Should().Be(new RespireIncrementResult<double>(3.5, 1));
             (await Floating(view, mode, key, -10, new() { LowerBound = -0.5, Saturate = true })).Should().Be(new RespireIncrementResult<double>(-0.5, -4));
-            Func<Task> wrongInteger = async () => { await Integer(view, mode, key, 1); };
+            Func<Task> wrongInteger = async () =>
+            {
+                await Integer(view, mode, key, 1);
+            };
             await wrongInteger.Should().ThrowAsync<RespireServerException>();
             (await view.GetStringAsync(key)).Should().Be("-0.5");
             await view.Keys.DeleteAsync(key);
             await view.Lists.RightPushAsync(key, "item");
-            Func<Task> wrongType = async () => { await Floating(view, mode, key, 1); };
+            Func<Task> wrongType = async () =>
+            {
+                await Floating(view, mode, key, 1);
+            };
             await wrongType.Should().ThrowAsync<RespireServerException>().WithMessage("*WRONGTYPE*");
         }
 
@@ -140,12 +155,17 @@ public class IncrementExtendedIntegrationTests
             result.Count.Should().Be(2);
             (await client.Keys.ExpiryAsync("raw-expiry")).TimeToLive.Should().BeGreaterThan(TimeSpan.FromMinutes(9));
         }
+
         RespireValue[][] invalid = [["BYINT", 1, "BYFLOAT", 1], ["BYINT", 1, "BYINT", 1],
             ["PERSIST", "ENX"], ["ENX"], ["PX", 0], ["PX", 1, "EX", 1], ["LBOUND", 2, "UBOUND", 1],
             ["BYFLOAT", "nan"], ["BYFLOAT", "inf"], ["BYFLOAT", 1, "LBOUND", "nan"]];
+
         foreach (var arguments in invalid)
         {
-            Func<Task> rejected = async () => { using var result = await client.ExecuteAsync("INCREX", ["raw-expiry", .. arguments]); };
+            Func<Task> rejected = async () =>
+            {
+                using var result = await client.ExecuteAsync("INCREX", ["raw-expiry", .. arguments]);
+            };
             await rejected.Should().ThrowAsync<RespireServerException>();
         }
     }
@@ -153,26 +173,50 @@ public class IncrementExtendedIntegrationTests
     private static async Task<RespireIncrementResult<long>> Integer(IRespireClient client, string mode, RespireKey key, long by,
         RespireIntegerIncrementOptions options = default)
     {
-        if (mode == "immediate") return await client.Strings.IncrementExtendedAsync(key, by, options);
+        if (mode == "immediate")
+        {
+            return await client.Strings.IncrementExtendedAsync(key, by, options);
+        }
+
         using var batch = mode == "batch" ? client.CreateBatch() : null;
         await using var transaction = mode == "transaction" ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = queue.Strings.IncrementExtended(key, by, options);
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         return pending.Result;
     }
 
     private static async Task<RespireIncrementResult<double>> Floating(IRespireClient client, string mode, RespireKey key, double by,
         RespireFloatIncrementOptions options = default)
     {
-        if (mode == "immediate") return await client.Strings.IncrementExtendedAsync(key, by, options);
+        if (mode == "immediate")
+        {
+            return await client.Strings.IncrementExtendedAsync(key, by, options);
+        }
+
         using var batch = mode == "batch" ? client.CreateBatch() : null;
         await using var transaction = mode == "transaction" ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = queue.Strings.IncrementExtended(key, by, options);
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         return pending.Result;
     }
 }

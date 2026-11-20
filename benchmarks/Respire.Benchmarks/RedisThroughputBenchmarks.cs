@@ -19,14 +19,20 @@ public class RedisThroughputBenchmarks
     private RespireClient _kevaClient = null!;
     private ConnectionMultiplexer _stackExchangeRedis = null!;
     private IDatabase _stackExchangeDb = null!;
-    
+
     // BenchmarkDotNet has no command-line override for [Params], so the workflow
     // passes its inputs through RESPIRE_THROUGHPUT_CLIENTS and RESPIRE_THROUGHPUT_OPERATIONS.
     [ParamsSource(nameof(ConcurrentClientCounts))]
-    public int ConcurrentClients { get; set; }
-    
+    public int ConcurrentClients
+    {
+        get; set;
+    }
+
     [ParamsSource(nameof(OperationCounts))]
-    public int OperationsPerClient { get; set; }
+    public int OperationsPerClient
+    {
+        get; set;
+    }
 
     public static IEnumerable<int> ConcurrentClientCounts() => ReadCounts("RESPIRE_THROUGHPUT_CLIENTS", "1,10,50");
 
@@ -56,7 +62,7 @@ public class RedisThroughputBenchmarks
 
         return counts;
     }
-    
+
     private class Config : ManualConfig
     {
         public Config()
@@ -69,27 +75,36 @@ public class RedisThroughputBenchmarks
             AddColumn(new ThroughputColumn());
         }
     }
-    
+
     private class ThroughputColumn : IColumn
     {
         public string Id => nameof(ThroughputColumn);
+
         public string ColumnName => "Ops/sec";
+
         public bool AlwaysShow => true;
+
         public ColumnCategory Category => ColumnCategory.Custom;
+
         public int PriorityInCategory => 0;
+
         public bool IsNumeric => true;
+
         public UnitType UnitType => UnitType.Dimensionless;
+
         public string Legend => "Operations per second";
-        
+
         public string GetValue(Summary summary, BenchmarkCase benchmarkCase)
         {
             var report = summary[benchmarkCase];
+
             if (report == null || !report.Success)
             {
                 return "N/A";
             }
 
             var meanNs = report.ResultStatistics?.Mean ?? 0;
+
             if (meanNs == 0)
             {
                 return "N/A";
@@ -98,28 +113,29 @@ public class RedisThroughputBenchmarks
             var opsPerSec = 1_000_000_000.0 / meanNs;
             return $"{opsPerSec:N0}";
         }
-        
-        public string GetValue(Summary summary, BenchmarkCase benchmarkCase, SummaryStyle style) 
+
+        public string GetValue(Summary summary, BenchmarkCase benchmarkCase, SummaryStyle style)
             => GetValue(summary, benchmarkCase);
-        
+
         public bool IsDefault(Summary summary, BenchmarkCase benchmarkCase) => false;
+
         public bool IsAvailable(Summary summary) => true;
     }
-    
+
     [GlobalSetup]
     public async Task Setup()
     {
         await _redisContainer.StartAsync();
-        
+
         var port = _redisContainer.GetMappedPublicPort(6379);
-        
+
         // Setup Respire client with one multiplexed connection, matching StackExchange.Redis
         _kevaClient = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("localhost", port) },
             Connections = 1
         });
-        
+
         // Setup StackExchange.Redis with similar configuration
         var options = ConfigurationOptions.Parse($"localhost:{port}");
         options.ConnectTimeout = 5000;
@@ -127,14 +143,14 @@ public class RedisThroughputBenchmarks
         options.AsyncTimeout = 5000;
         _stackExchangeRedis = await ConnectionMultiplexer.ConnectAsync(options);
         _stackExchangeDb = _stackExchangeRedis.GetDatabase();
-        
+
         // Warm up
         for (var i = 0; i < 100; i++)
         {
             await _kevaClient.SetAsync($"warmup_{i}", $"value_{i}");
         }
     }
-    
+
     [GlobalCleanup]
     public async Task Cleanup()
     {
@@ -143,12 +159,12 @@ public class RedisThroughputBenchmarks
         await _redisContainer.StopAsync();
         await _redisContainer.DisposeAsync();
     }
-    
+
     [Benchmark(Baseline = true)]
     public async Task Respire_Concurrent_SetGet()
     {
         var tasks = new Task[ConcurrentClients];
-        
+
         for (var client = 0; client < ConcurrentClients; client++)
         {
             var clientId = client;
@@ -162,15 +178,15 @@ public class RedisThroughputBenchmarks
                 }
             });
         }
-        
+
         await Task.WhenAll(tasks);
     }
-    
+
     [Benchmark]
     public async Task StackExchange_Concurrent_SetGet()
     {
         var tasks = new Task[ConcurrentClients];
-        
+
         for (var client = 0; client < ConcurrentClients; client++)
         {
             var clientId = client;
@@ -184,49 +200,51 @@ public class RedisThroughputBenchmarks
                 }
             });
         }
-        
+
         await Task.WhenAll(tasks);
     }
-    
+
     [Benchmark]
     public async Task Respire_Concurrent_Incr()
     {
         var tasks = new Task[ConcurrentClients];
-        
+
         for (var client = 0; client < ConcurrentClients; client++)
         {
             var clientId = client;
             tasks[client] = Task.Run(async () =>
             {
                 var key = $"counter_{clientId}";
+
                 for (var op = 0; op < OperationsPerClient; op++)
                 {
                     await _kevaClient.IncrementAsync(key);
                 }
             });
         }
-        
+
         await Task.WhenAll(tasks);
     }
-    
+
     [Benchmark]
     public async Task StackExchange_Concurrent_Incr()
     {
         var tasks = new Task[ConcurrentClients];
-        
+
         for (var client = 0; client < ConcurrentClients; client++)
         {
             var clientId = client;
             tasks[client] = Task.Run(async () =>
             {
                 var key = $"counter_{clientId}";
+
                 for (var op = 0; op < OperationsPerClient; op++)
                 {
                     await _stackExchangeDb.StringIncrementAsync(key);
                 }
             });
         }
-        
+
         await Task.WhenAll(tasks);
     }
 }

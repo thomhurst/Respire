@@ -10,139 +10,138 @@ using Hangfire.Redis.Tests.Utils;
 using TUnit.Core;
 using Assert = Xunit.Assert;
 
-namespace Hangfire.Redis.Tests
+namespace Hangfire.Redis.Tests;
+
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+[NotInParallel]
+public class FetchedJobsWatcherFacts : UpstreamRedisTest
 {
-    [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-    [NotInParallel]
-    public class FetchedJobsWatcherFacts : UpstreamRedisTest
+    private static readonly TimeSpan InvisibilityTimeout = TimeSpan.FromSeconds(10);
+
+    private readonly RedisStorage _storage;
+    private readonly CancellationTokenSource _cts;
+
+    [After(Test)]
+    public void DisposeCancellation() => _cts.Dispose();
+
+    public FetchedJobsWatcherFacts(RedisTestContainer fixture) : base(fixture)
     {
-        private static readonly TimeSpan InvisibilityTimeout = TimeSpan.FromSeconds(10);
+        var options = new RedisStorageOptions() { Db = RedisUtils.GetDb() };
+        _storage = new RedisStorage(RedisUtils.Connection, options);
+        _cts = new CancellationTokenSource();
+        _cts.Cancel();
+    }
 
-        private readonly RedisStorage _storage;
-        private readonly CancellationTokenSource _cts;
+    [Test]
+    public void Ctor_ThrowsAnException_WhenStorageIsNull()
+    {
+        Assert.Throws<ArgumentNullException>("storage",
+            () => new FetchedJobsWatcher(null, InvisibilityTimeout));
+    }
 
-        [After(Test)]
-        public void DisposeCancellation() => _cts.Dispose();
+    [Test]
+    public void Ctor_ThrowsAnException_WhenInvisibilityTimeoutIsZero()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>("invisibilityTimeout",
+            () => new FetchedJobsWatcher(_storage, TimeSpan.Zero));
+    }
 
-        public FetchedJobsWatcherFacts(RedisTestContainer fixture) : base(fixture)
-        {
-            var options = new RedisStorageOptions() {Db = RedisUtils.GetDb()};
-            _storage = new RedisStorage(RedisUtils.Connection, options);
-            _cts = new CancellationTokenSource();
-            _cts.Cancel();
-        }
+    [Test]
+    public void Ctor_ThrowsAnException_WhenInvisibilityTimeoutIsNegative()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>("invisibilityTimeout",
+            () => new FetchedJobsWatcher(_storage, TimeSpan.FromSeconds(-1)));
+    }
 
-        [Test]
-        public void Ctor_ThrowsAnException_WhenStorageIsNull()
-        {
-            Assert.Throws<ArgumentNullException>("storage",
-                () => new FetchedJobsWatcher(null, InvisibilityTimeout));
-        }
+    [Test]
+    public void Execute_EnqueuesTimedOutJobs_AndDeletesThemFromFetchedList()
+    {
+        var redis = RedisUtils.CreateClient();
+        // Arrange
+        redis.SetAdd("{hangfire}:queues", "my-queue");
+        redis.ListRightPush("{hangfire}:queue:my-queue:dequeued", "my-job");
+        redis.HashSet("{hangfire}:job:my-job", "Fetched",
+            JobHelper.SerializeDateTime(DateTime.UtcNow.AddDays(-1)));
 
-        [Test]
-        public void Ctor_ThrowsAnException_WhenInvisibilityTimeoutIsZero()
-        {
-            Assert.Throws<ArgumentOutOfRangeException>("invisibilityTimeout",
-                () => new FetchedJobsWatcher(_storage, TimeSpan.Zero));
-        }
+        var watcher = CreateWatcher();
 
-        [Test]
-        public void Ctor_ThrowsAnException_WhenInvisibilityTimeoutIsNegative()
-        {
-            Assert.Throws<ArgumentOutOfRangeException>("invisibilityTimeout",
-                () => new FetchedJobsWatcher(_storage, TimeSpan.FromSeconds(-1)));
-        }
+        // Act
+        watcher.Execute(_cts.Token);
 
-        [Test]
-        public void Execute_EnqueuesTimedOutJobs_AndDeletesThemFromFetchedList()
-        {
-            var redis = RedisUtils.CreateClient();
-            // Arrange
-            redis.SetAdd("{hangfire}:queues", "my-queue");
-            redis.ListRightPush("{hangfire}:queue:my-queue:dequeued", "my-job");
-            redis.HashSet("{hangfire}:job:my-job", "Fetched",
-                JobHelper.SerializeDateTime(DateTime.UtcNow.AddDays(-1)));
+        // Assert
+        Assert.Equal(0, redis.ListLength("{hangfire}:queue:my-queue:dequeued"));
 
-            var watcher = CreateWatcher();
+        var listEntry = (string)redis.ListRightPop("{hangfire}:queue:my-queue");
+        Assert.Equal("my-job", listEntry);
 
-            // Act
-            watcher.Execute(_cts.Token);
+        var job = redis.HashGetAll("{hangfire}:job:my-job");
+        Assert.DoesNotContain(job, x => x.Name == "Fetched");
+    }
 
-            // Assert
-            Assert.Equal(0, redis.ListLength("{hangfire}:queue:my-queue:dequeued"));
+    [Test]
+    public void Execute_MarksDequeuedJobAsChecked_IfItHasNoFetchedFlagSet()
+    {
+        var redis = RedisUtils.CreateClient();
+        // Arrange
+        redis.SetAdd("{hangfire}:queues", "my-queue");
+        redis.ListRightPush("{hangfire}:queue:my-queue:dequeued", "my-job");
 
-            var listEntry = (string) redis.ListRightPop("{hangfire}:queue:my-queue");
-            Assert.Equal("my-job", listEntry);
+        var watcher = CreateWatcher();
 
-            var job = redis.HashGetAll("{hangfire}:job:my-job");
-            Assert.DoesNotContain(job, x => x.Name == "Fetched");
-        }
+        // Act
+        watcher.Execute(_cts.Token);
 
-        [Test]
-        public void Execute_MarksDequeuedJobAsChecked_IfItHasNoFetchedFlagSet()
-        {
-            var redis = RedisUtils.CreateClient();
-            // Arrange
-            redis.SetAdd("{hangfire}:queues", "my-queue");
-            redis.ListRightPush("{hangfire}:queue:my-queue:dequeued", "my-job");
+        Assert.NotNull(JobHelper.DeserializeNullableDateTime(
+            redis.HashGet("{hangfire}:job:my-job", "Checked")));
+    }
 
-            var watcher = CreateWatcher();
+    [Test]
+    public void Execute_EnqueuesCheckedAndTimedOutJob_IfNoFetchedFlagSet()
+    {
+        var redis = RedisUtils.CreateClient();
+        // Arrange
+        redis.SetAdd("{hangfire}:queues", "my-queue");
+        redis.ListRightPush("{hangfire}:queue:my-queue:dequeued", "my-job");
+        redis.HashSet("{hangfire}:job:my-job", "Checked",
+            JobHelper.SerializeDateTime(DateTime.UtcNow.AddDays(-1)));
 
-            // Act
-            watcher.Execute(_cts.Token);
+        var watcher = CreateWatcher();
 
-            Assert.NotNull(JobHelper.DeserializeNullableDateTime(
-                redis.HashGet("{hangfire}:job:my-job", "Checked")));
-        }
+        // Act
+        watcher.Execute(_cts.Token);
 
-        [Test]
-        public void Execute_EnqueuesCheckedAndTimedOutJob_IfNoFetchedFlagSet()
-        {
-            var redis = RedisUtils.CreateClient();
-            // Arrange
-            redis.SetAdd("{hangfire}:queues", "my-queue");
-            redis.ListRightPush("{hangfire}:queue:my-queue:dequeued", "my-job");
-            redis.HashSet("{hangfire}:job:my-job", "Checked",
-                JobHelper.SerializeDateTime(DateTime.UtcNow.AddDays(-1)));
+        // Arrange
+        Assert.Equal(0, redis.ListLength("{hangfire}:queue:my-queue:dequeued"));
+        Assert.Equal(1, redis.ListLength("{hangfire}:queue:my-queue"));
 
-            var watcher = CreateWatcher();
+        var job = redis.HashGetAll("{hangfire}:job:my-job");
+        Assert.DoesNotContain(job, x => x.Name == "Checked");
+    }
 
-            // Act
-            watcher.Execute(_cts.Token);
+    [Test]
+    public void Execute_DoesNotEnqueueTimedOutByCheckedFlagJob_IfFetchedFlagSet()
+    {
+        var redis = RedisUtils.CreateClient();
 
-            // Arrange
-            Assert.Equal(0, redis.ListLength("{hangfire}:queue:my-queue:dequeued"));
-            Assert.Equal(1, redis.ListLength("{hangfire}:queue:my-queue"));
+        // Arrange
+        redis.SetAdd("{hangfire}:queues", "my-queue");
+        redis.ListRightPush("{hangfire}:queue:my-queue:dequeued", "my-job");
+        redis.HashSet("{hangfire}:job:my-job", "Checked",
+            JobHelper.SerializeDateTime(DateTime.UtcNow.AddDays(-1)));
+        redis.HashSet("{hangfire}:job:my-job", "Fetched",
+            JobHelper.SerializeDateTime(DateTime.UtcNow));
 
-            var job = redis.HashGetAll("{hangfire}:job:my-job");
-            Assert.DoesNotContain(job, x => x.Name == "Checked");
-        }
+        var watcher = CreateWatcher();
 
-        [Test]
-        public void Execute_DoesNotEnqueueTimedOutByCheckedFlagJob_IfFetchedFlagSet()
-        {
-            var redis = RedisUtils.CreateClient();
+        // Act
+        watcher.Execute(_cts.Token);
 
-            // Arrange
-            redis.SetAdd("{hangfire}:queues", "my-queue");
-            redis.ListRightPush("{hangfire}:queue:my-queue:dequeued", "my-job");
-            redis.HashSet("{hangfire}:job:my-job", "Checked",
-                JobHelper.SerializeDateTime(DateTime.UtcNow.AddDays(-1)));
-            redis.HashSet("{hangfire}:job:my-job", "Fetched",
-                JobHelper.SerializeDateTime(DateTime.UtcNow));
+        // Assert
+        Assert.Equal(1, redis.ListLength("{hangfire}:queue:my-queue:dequeued"));
+    }
 
-            var watcher = CreateWatcher();
-
-            // Act
-            watcher.Execute(_cts.Token);
-
-            // Assert
-            Assert.Equal(1, redis.ListLength("{hangfire}:queue:my-queue:dequeued"));
-        }
-
-        private FetchedJobsWatcher CreateWatcher()
-        {
-            return new FetchedJobsWatcher(_storage, InvisibilityTimeout);
-        }
+    private FetchedJobsWatcher CreateWatcher()
+    {
+        return new FetchedJobsWatcher(_storage, InvisibilityTimeout);
     }
 }

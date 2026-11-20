@@ -17,13 +17,18 @@ public class SynchronizationGateArchitectureTests
             .Where(name => name.StartsWith("LibrarySource/", StringComparison.Ordinal)).ToArray();
         await Assert.That(sources).IsNotEmpty();
         var violations = new List<string>();
+
         foreach (var source in sources)
         {
             using var stream = assembly.GetManifestResourceStream(source)!;
             using var reader = new StreamReader(stream);
+
             foreach (var gate in FindObjectGates(await reader.ReadToEndAsync()))
+            {
                 violations.Add($"{source}: {gate}");
+            }
         }
+
         await Assert.That(violations).IsEmpty();
     }
 

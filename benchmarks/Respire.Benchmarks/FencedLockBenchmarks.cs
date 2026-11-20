@@ -23,12 +23,18 @@ public class FencedLockBenchmarks
     private RespireCoordination _coordination = null!;
 #endif
     [ParamsSource(nameof(Modes))]
-    public bool Fenced { get; set; }
+    public bool Fenced
+    {
+        get; set;
+    }
+
     public IEnumerable<bool> Modes =>
 #if FENCED_LOCKS
         Environment.GetEnvironmentVariable("RESPIRE_BENCH_BASELINE") == "1" ? [false] : [false, true];
 #else
-        [false];
+        [
+            false
+        ];
 #endif
 
     [GlobalSetup]
@@ -38,7 +44,8 @@ public class FencedLockBenchmarks
         {
             Endpoints = [new(Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1",
                 int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379"))],
-            Connections = 1, Protocol = RespireProtocol.Resp3,
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
         });
         var tag = Guid.NewGuid().ToString("N");
         _key = $"{{{tag}}}:lease";
@@ -57,8 +64,13 @@ public class FencedLockBenchmarks
     public Task<long> AcquireRelease()
     {
         _operations++;
+
 #if FENCED_LOCKS
-        if (Fenced) return AcquireFencedAsync();
+        if (Fenced)
+        {
+            return AcquireFencedAsync();
+        }
+
 #endif
         return AcquireStandardAsync();
     }
@@ -68,7 +80,12 @@ public class FencedLockBenchmarks
     private async Task<long> AcquireStandardAsync()
     {
         await using var standard = await _client.Locks.AcquireAsync(_key, _duration);
-        if (!standard.Acquired) throw new InvalidOperationException("Uncontended benchmark lease was not acquired.");
+
+        if (!standard.Acquired)
+        {
+            throw new InvalidOperationException("Uncontended benchmark lease was not acquired.");
+        }
+
         return 1;
     }
 
@@ -86,7 +103,8 @@ public class FencedLockBenchmarks
         _process.Refresh();
         Console.WriteLine("FENCED_LOCK_PROCESS_METRICS " + JsonSerializer.Serialize(new
         {
-            Fenced, operations = _operations,
+            Fenced,
+            operations = _operations,
             cpuMilliseconds = (_process.TotalProcessorTime - _cpu).TotalMilliseconds,
             elapsedSeconds = Stopwatch.GetElapsedTime(_started).TotalSeconds,
         }));

@@ -16,23 +16,34 @@ public class CommandCatalogTests
     public async Task BuiltInReadVerbsRequireAuditedReadOnlyCatalogMetadata()
     {
         var catalog = RespireCommands.All.ToArray().ToDictionary(command => command.Name);
+
         foreach (var field in typeof(Verbs).GetFields(BindingFlags.Public | BindingFlags.Static))
         {
-            if (field.FieldType != typeof(Verb)) continue;
+            if (field.FieldType != typeof(Verb))
+            {
+                continue;
+            }
+
             var verb = (Verb)field.GetValue(null)!;
             var words = System.Text.Encoding.ASCII.GetString(verb.Bulk).Split("\r\n")
                 .Where((_, index) => (index & 1) != 0);
             var name = string.Join(' ', words);
+
             if (!catalog.TryGetValue(name, out var descriptor))
             {
                 // Some pre-encoded verbs include options, such as SCRIPT FLUSH SYNC.
                 await Assert.That(verb.ReadKind).IsEqualTo(ReadCommandKind.None);
                 continue;
             }
+
             await Assert.That(descriptor.ReadKind).IsEqualTo(verb.ReadKind);
+
             if (verb.ReadKind != ReadCommandKind.None)
+            {
                 await Assert.That(descriptor.IsReadOnly).IsTrue();
+            }
         }
+
         await Assert.That(Verbs.Touch.ReadKind).IsEqualTo(ReadCommandKind.None);
         await Assert.That(catalog["TOUCH"].ReadKind).IsEqualTo(ReadCommandKind.None);
         await Assert.That(Verbs.MemoryUsage.ReadKind).IsEqualTo(ReadCommandKind.Read);
@@ -53,6 +64,7 @@ public class CommandCatalogTests
             await Assert.That(RespireCommand.Create(descriptor.Name.Split(' ')[0]).ReadKind)
                 .IsEqualTo(ReadCommandKind.None);
         }
+
         await Assert.That(new Verb("CUSTOM.READ").ReadKind).IsEqualTo(ReadCommandKind.None);
         await Assert.That(new Verb(2, "EVAL_RO").RoutingKeyIndex).IsEqualTo(2);
         await Assert.That(new Verb(1, "SINTERCARD").RoutingKeyIndex).IsEqualTo(1);
@@ -80,6 +92,7 @@ public class CommandCatalogTests
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
         var total = 0;
+
         for (var index = 0; index < 1_000; index++)
         {
             total += (int)command.ReadKind;
@@ -87,8 +100,13 @@ public class CommandCatalogTests
             total += (int)CommandReadMetadata.Get("HSCAN").Kind;
             total += CommandReadMetadata.Get("HSCAN").CursorArgumentIndex;
             total += (int)Internal.RawCommandDescriptorLookup.GetReadKind("CUSTOM.READ");
-            if (allocate) GC.KeepAlive(new byte[37]);
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return (GC.GetAllocatedBytesForCurrentThread() - before, total);
     }
 
@@ -198,6 +216,7 @@ public class CommandCatalogTests
     public async Task NumericScanCursorsKeepNumericZeroSemantics(string name)
     {
         var descriptor = RespireCommands.All.ToArray().Single(command => command.Name == name);
+
         foreach (var token in new[] { "0", "00", "+0", "17" })
         {
             RespireValue cursor = System.Text.Encoding.ASCII.GetBytes(token);
@@ -217,6 +236,7 @@ public class CommandCatalogTests
     public async Task OpaqueCursorMetadataSurvivesRawCommandsAndWrappers(bool binary)
     {
         var descriptor = RespireCommands.PathHash.PHSCAN;
+
         foreach (var token in new[] { "0", "00", "+0", "opaque" })
         {
             RespireValue cursor = binary ? System.Text.Encoding.ASCII.GetBytes(token) : (RespireValue)token;
@@ -332,12 +352,14 @@ public class CommandCatalogTests
             RespireCommands.Dragonfly.SCRIPT_LIST, RespireCommands.Dragonfly.SCRIPT_LATENCY,
             RespireCommands.Dragonfly.JSON_DEBUG_HELP,
         ];
+
         foreach (var descriptor in unkeyed)
         {
             var command = new CatalogCommand(descriptor, ["not-a-key"]);
             await Assert.That(command.TryGetPrimaryKey(out _)).IsFalse();
             await Assert.That(command.TryGetClusterSlot(out _)).IsFalse();
         }
+
         RespireCommand[] keyed =
         [
             RespireCommands.Dragonfly.CL_THROTTLE, RespireCommands.Dragonfly.SADDEX,
@@ -346,6 +368,7 @@ public class CommandCatalogTests
             RespireCommands.KeyDb.PEXPIREMEMBERAT, RespireCommands.KeyDb.KEYDB_HRENAME,
             RespireCommands.KeyDb.KEYDB_MEXISTS, RespireCommands.KeyDb.KEYDB_NHGET, RespireCommands.KeyDb.KEYDB_NHSET,
         ];
+
         foreach (var descriptor in keyed)
         {
             var command = new CatalogCommand(descriptor, ["{key}:data", "value"]);
@@ -361,21 +384,37 @@ public class CommandCatalogTests
     {
         RespireValue[] arguments = [new string('é', textLength - 1) + "\uD800",
             long.MinValue, new byte[] { 0, 255, 13, 10 }];
+
         foreach (var descriptor in RespireCommands.All.ToArray())
         {
             var command = new CatalogCommand(descriptor, arguments);
             var bound = command.GetWriteSizeHint();
-            if (textLength == 1024) await Assert.That(bound).IsGreaterThan(0);
-            else await Assert.That(bound).IsEqualTo(0);
+
+            if (textLength == 1024)
+            {
+                await Assert.That(bound).IsGreaterThan(0);
+            }
+            else
+            {
+                await Assert.That(bound).IsEqualTo(0);
+            }
+
             var buffer = new WriteBuffer(16);
+
             try
             {
                 var writer = new RespWriter(buffer, bound);
                 command.Write(ref writer);
                 writer.Complete();
-                if (bound > 0) await Assert.That(buffer.Count).IsLessThanOrEqualTo(bound);
+
+                if (bound > 0)
+                {
+                    await Assert.That(buffer.Count).IsLessThanOrEqualTo(bound);
+                }
+
                 var position = 0;
                 var status = RespParser.TryParseValue(buffer.WrittenMemory.Span, ref position, out var frame);
+
                 using (frame)
                 {
                     await Assert.That(status).IsEqualTo(RespParseStatus.Done);
@@ -383,8 +422,12 @@ public class CommandCatalogTests
                     var elements = frame.AsArray().ToArray();
                     var words = descriptor.Name.Split(' ');
                     await Assert.That(elements.Length).IsEqualTo(words.Length + arguments.Length);
+
                     for (var index = 0; index < words.Length; index++)
+                    {
                         await Assert.That(elements[index].AsString()).IsEqualTo(words[index]);
+                    }
+
                     for (var index = 0; index < arguments.Length; index++)
                     {
                         var expected = new byte[arguments[index].GetWireLength()];
@@ -401,9 +444,11 @@ public class CommandCatalogTests
     public async Task EveryCatalogCommand_SerializesItsExactCommandWords()
     {
         var commands = RespireCommands.All.ToArray();
+
         foreach (var command in commands)
         {
             var buffer = new WriteBuffer(64);
+
             try
             {
                 var writer = new RespWriter(buffer);
@@ -411,12 +456,14 @@ public class CommandCatalogTests
                 writer.Complete();
                 var position = 0;
                 var status = RespParser.TryParseValue(buffer.WrittenMemory.Span, ref position, out var frame);
+
                 try
                 {
                     await Assert.That(status).IsEqualTo(RespParseStatus.Done);
                     await Assert.That(position).IsEqualTo(buffer.Count);
                     var elements = frame.AsArray();
                     var actualWords = new string[elements.Length];
+
                     for (var index = 0; index < elements.Length; index++)
                     {
                         actualWords[index] = elements[index].AsString();
@@ -424,6 +471,7 @@ public class CommandCatalogTests
 
                     var words = command.Name.Split(' ');
                     await Assert.That(actualWords.Length).IsEqualTo(words.Length);
+
                     for (var index = 0; index < words.Length; index++)
                     {
                         await Assert.That(actualWords[index]).IsEqualTo(words[index]);
@@ -634,6 +682,7 @@ public class CommandCatalogTests
                 .IsEqualTo(4);
             await Assert.That(stringForwarders).IsEmpty();
         }
+
         await Assert.That(Enum.GetNames<RespireCommandFlags>()).IsEquivalentTo(["None", "NoRedirect"]);
         var noRedirect = Enum.GetValues<RespireCommandFlags>()
             .Single(static value => value.ToString() == "NoRedirect");
@@ -955,6 +1004,7 @@ public class CommandCatalogTests
     private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (server.CommandsSeen < count)
         {
             await Task.Delay(10, timeout.Token);

@@ -133,11 +133,19 @@ internal readonly partial record struct SentinelNotificationState
         in SentinelNotificationContext context = default)
     {
         if (notification.Kind == SentinelNotificationEventKind.Dispose)
+        {
             return new(Complete() with { IsDisposed = true }, SentinelNotificationAction.Stop);
+        }
         // A cancelled lookup still releases its retained record after disposal.
         if (notification.Kind == SentinelNotificationEventKind.EndSourceResolution)
+        {
             return new(EndSourceResolution(notification.ResolutionId), SentinelNotificationAction.None);
-        if (IsDisposed) return new(this, SentinelNotificationAction.Stop);
+        }
+
+        if (IsDisposed)
+        {
+            return new(this, SentinelNotificationAction.Stop);
+        }
 
         switch (notification.Kind)
         {
@@ -145,21 +153,32 @@ internal readonly partial record struct SentinelNotificationState
                 var targetIsCurrent = notification.TargetIsCurrent || notification.Hint.Target is { } target
                     && context.CurrentEvidence?.ConfirmsTarget(target) == true;
                 var offered = Offer(notification.Hint, targetIsCurrent, out var start);
-                if (start) offered = offered with { RetryAttempts = 0, ConsecutiveFailures = 0 };
+                if (start)
+                {
+                    offered = offered with { RetryAttempts = 0, ConsecutiveFailures = 0 };
+                }
                 return new(offered, start ? SentinelNotificationAction.RunNext : SentinelNotificationAction.None,
                     RetireGeneration: RetirementFor(notification.Hint, in context));
             case SentinelNotificationEventKind.PrepareAttempt:
-                if (Active is null) return new(this, SentinelNotificationAction.Stop);
+                if (Active is null)
+                {
+                    return new(this, SentinelNotificationAction.Stop);
+                }
                 if (context.NowMilliseconds < DiscoveryNotBefore)
+                {
                     return new(this, SentinelNotificationAction.RetryAfter,
                         TimeSpan.FromMilliseconds(DiscoveryNotBefore - context.NowMilliseconds));
+                }
                 var prepared = this with
                 {
                     DiscoveryNotBefore = context.NowMilliseconds + MinimumDiscoveryIntervalMilliseconds,
                 };
                 // Evidence arriving during backoff spends the existing retry budget.
                 var takePending = RetryAttempts > 0 && Pending is not null;
-                if (takePending) prepared = prepared.TakePending(true, null, null, out _);
+                if (takePending)
+                {
+                    prepared = prepared.TakePending(true, null, null, out _);
+                }
                 return new(prepared, SentinelNotificationAction.RunNext,
                     ReplacePendingSignal: takePending,
                     RetireGeneration: takePending ? RetirementFor(prepared.Active!.Value, in context) : null);
@@ -179,7 +198,11 @@ internal readonly partial record struct SentinelNotificationState
 
     private SentinelNotificationTransition FinishAttempt(bool succeeded, in SentinelNotificationContext context)
     {
-        if (Active is null) return new(this, SentinelNotificationAction.Stop);
+        if (Active is null)
+        {
+            return new(this, SentinelNotificationAction.Stop);
+        }
+
         var recovered = succeeded ? ConsecutiveFailures : 0;
         var state = this with
         {
@@ -193,28 +216,43 @@ internal readonly partial record struct SentinelNotificationState
             return new(state, state.Active is null ? SentinelNotificationAction.Stop : SentinelNotificationAction.RunNext,
                 ReplacePendingSignal: state.Active is not null, RecoveredFailures: recovered);
         }
+
         if (!succeeded)
         {
             if (context.Policy?.IsExhausted(RetryAttempts) == true)
+            {
                 return new(state.Complete(), SentinelNotificationAction.Stop);
+            }
+
             state = state with { RetryAttempts = IncrementSaturated(RetryAttempts) };
         }
-        else state = state with { RetryAttempts = 0 };
+        else
+        {
+            state = state with { RetryAttempts = 0 };
+        }
 
         state = state.TakePending(!succeeded, context.ValidatedPrimary?.Endpoint,
             context.ValidatedPrimary?.Peer, out var next);
+
         if (next is null)
         {
             if (succeeded)
+            {
                 return new(state.Complete(), SentinelNotificationAction.Stop, RecoveredFailures: recovered);
+            }
+
             var delay = context.Policy?.GetDelay(state.RetryAttempts, context.RandomUnit)
                 ?? TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(state.RetryAttempts - 1, 5)));
             return new(state, SentinelNotificationAction.RetryAfter, delay,
                 Interruptible: true, ReplacePendingSignal: true);
         }
+
         if (!next.Value.MustRediscover && next.Value.Target is { } target
             && context.CurrentEvidence?.ConfirmsTarget(target) == true)
+        {
             return new(state.Complete(), SentinelNotificationAction.Stop, RecoveredFailures: recovered);
+        }
+
         return new(state, SentinelNotificationAction.RunNext, ReplacePendingSignal: true,
             RecoveredFailures: recovered, RetireGeneration: RetirementFor(next.Value, in context));
     }

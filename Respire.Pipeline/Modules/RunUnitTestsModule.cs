@@ -25,7 +25,14 @@ public class RunUnitTestsModule : Module<CommandResult[]>
     internal static string[] CreateDiagnosticsArguments() =>
         // Suspended async waits live on the managed heap. Mini dumps can name the running
         // test but omit the state machines needed to inspect its outstanding operations.
-        ["--hangdump", "--hangdump-timeout", HangDumpInactivityTimeout, "--hangdump-type", "Heap", "--report-trx"];
+        [
+            "--hangdump",
+            "--hangdump-timeout",
+            HangDumpInactivityTimeout,
+            "--hangdump-type",
+            "Heap",
+            "--report-trx"
+        ];
 
     protected override async Task<CommandResult[]> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
@@ -40,7 +47,7 @@ public class RunUnitTestsModule : Module<CommandResult[]>
         var results = new List<CommandResult>();
         var resultsDirectory = Path.GetFullPath("../artifacts/unit-tests");
         Directory.CreateDirectory(resultsDirectory);
-        
+
         foreach (var project in testProjects)
         {
             var projectResultsDirectory = Path.Combine(resultsDirectory, Path.GetFileNameWithoutExtension(project));
@@ -56,7 +63,7 @@ public class RunUnitTestsModule : Module<CommandResult[]>
                 // outer timeout terminates the process without useful diagnostics.
                 Arguments = CreateDiagnosticsArguments()
             }, cancellationToken: cancellationToken);
-            
+
             results.Add(result);
         }
 

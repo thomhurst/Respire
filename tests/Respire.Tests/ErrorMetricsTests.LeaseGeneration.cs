@@ -18,11 +18,16 @@ public partial class ErrorMetricsTests
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         using var capture = new Capture(throwOnMeasurement: true);
         var held = new List<RespireTelemetry.ErrorObservation>();
+
         try
         {
             // Leave exactly one returned object available, proving reuse rather than merely
             // checking a stale alias while the next caller happens to own different storage.
-            for (var i = 0; i < 4096; i++) held.Add(RespireTelemetry.ErrorObservation.Rent(force: true));
+            for (var i = 0; i < 4096; i++)
+            {
+                held.Add(RespireTelemetry.ErrorObservation.Rent(force: true));
+            }
+
             var returned = held[^1];
             held.RemoveAt(held.Count - 1);
             returned.Dispose();
@@ -38,9 +43,17 @@ public partial class ErrorMetricsTests
                 "complete" => () => returned.DisposeAndGetAttempts(),
                 _ => returned.Dispose,
             };
+
 #if DEBUG
-            if (operation is not ("dispose" or "complete")) await Assert.That(staleCall).ThrowsExactly<InvalidOperationException>();
-            else staleCall();
+            if (operation is not ("dispose" or "complete"))
+            {
+                await Assert.That(staleCall).ThrowsExactly<InvalidOperationException>();
+            }
+            else
+            {
+                staleCall();
+            }
+
 #else
             staleCall();
 #endif
@@ -58,7 +71,7 @@ public partial class ErrorMetricsTests
             await Assert.That(capture.Items.Count).IsEqualTo(2);
             await Assert.That(capture.Items.Last().Tags["redis.client.operation.retry_attempts"]).IsEqualTo(23);
         }
-        finally { foreach (var lease in held) lease.Dispose(); }
+        finally { foreach (var lease in held) { lease.Dispose(); } }
     }
 
     [Test]
@@ -84,7 +97,7 @@ public partial class ErrorMetricsTests
     public async Task DeferredOwnerCapturesAttemptsBeforeReturningStorage(bool enabled)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         using var capture = new Capture();
         var owner = RespireTelemetry.ErrorObservation.Rent(force: true);
         var borrower = owner;

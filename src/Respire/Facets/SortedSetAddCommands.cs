@@ -41,7 +41,6 @@ internal sealed partial class SortedSetCommands
     public ValueTask<long> AddAsync(RespireKey key, RespireSortedSetAddOptions options, (RespireValue Member, double Score) entry, CancellationToken cancellationToken)
         => AddAsync(key, options, [entry], cancellationToken);
 
-
     public ValueTask<bool> AddAsync(RespireKey key, RespireSortedSetAddOptions options, RespireValue member, double score,
         CancellationToken cancellationToken = default)
         => client.FlagAsync("ZADD", AddCommand(client, key, options, member, score), cancellationToken);
@@ -81,7 +80,12 @@ internal sealed partial class SortedSetCommands
         RespireSortedSetAddOptions options, ReadOnlySpan<(RespireValue Member, double Score)> entries)
     {
         SortedSetAddCommand.Validate(options);
-        if (entries.IsEmpty) throw new ArgumentException("At least one member is required.", nameof(entries));
+
+        if (entries.IsEmpty)
+        {
+            throw new ArgumentException("At least one member is required.", nameof(entries));
+        }
+
         return new(client.Key(in key), options, member: default, score: default, pairs: ScoreMemberPairs(entries));
     }
 }

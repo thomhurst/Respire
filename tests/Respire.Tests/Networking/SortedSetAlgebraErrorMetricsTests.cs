@@ -31,8 +31,11 @@ public class SortedSetAlgebraErrorMetricsTests
 #pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
         });
 #pragma warning restore RESP010
         var measurements = new ConcurrentQueue<(long Value, Dictionary<string, object?> Tags)>();
@@ -40,32 +43,55 @@ public class SortedSetAlgebraErrorMetricsTests
         listener.InstrumentPublished = (instrument, current) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+            {
                 current.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
             measurements.Enqueue((value, tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value))));
         listener.Start();
         RespireKey[] keys = ["{same}:one", outcome == "cross-slot" ? "{other}:two" : "{same}:two"];
+
         async Task Execute()
         {
             switch (operation)
             {
-                case "ZINTER": await client.SortedSets.IntersectAsync(keys); break;
-                case "ZUNION": await client.SortedSets.UnionAsync(keys); break;
-                case "ZDIFF": await client.SortedSets.DifferenceAsync(keys); break;
-                case "ZINTERSTORE": await client.SortedSets.IntersectStoreAsync("{same}:dest", keys); break;
-                case "ZUNIONSTORE": await client.SortedSets.UnionStoreAsync("{same}:dest", keys); break;
-                case "ZDIFFSTORE": await client.SortedSets.DifferenceStoreAsync("{same}:dest", keys); break;
+                case "ZINTER":
+                    await client.SortedSets.IntersectAsync(keys);
+                    break;
+                case "ZUNION":
+                    await client.SortedSets.UnionAsync(keys);
+                    break;
+                case "ZDIFF":
+                    await client.SortedSets.DifferenceAsync(keys);
+                    break;
+                case "ZINTERSTORE":
+                    await client.SortedSets.IntersectStoreAsync("{same}:dest", keys);
+                    break;
+                case "ZUNIONSTORE":
+                    await client.SortedSets.UnionStoreAsync("{same}:dest", keys);
+                    break;
+                case "ZDIFFSTORE":
+                    await client.SortedSets.DifferenceStoreAsync("{same}:dest", keys);
+                    break;
             }
         }
+
         if (outcome == "cross-slot")
+        {
             await Assert.That(Execute).ThrowsExactly<RespireCrossSlotException>();
+        }
         else if (outcome == "server")
+        {
             await Assert.That(Execute).ThrowsExactly<RespireServerException>();
+        }
         else
+        {
             await Execute();
+        }
 
         await Assert.That(measurements.Count).IsEqualTo(enabled && outcome != "success" ? 1 : 0);
+
         if (enabled && outcome != "success")
         {
             var measurement = measurements.Single();
@@ -73,13 +99,21 @@ public class SortedSetAlgebraErrorMetricsTests
             await Assert.That((bool)measurement.Tags["redis.client.errors.internal"]!).IsFalse();
             await Assert.That(measurement.Tags["error.type"]).IsEqualTo(
                 (outcome == "cross-slot" ? typeof(RespireCrossSlotException) : typeof(RespireServerException)).FullName);
+
             if (outcome == "cross-slot")
+            {
                 await Assert.That(measurement.Tags["redis.client.errors.category"]).IsEqualTo("validation");
+            }
         }
+
         if (outcome == "cross-slot")
+        {
             await Assert.That(server.ReceivedCommands.Count).IsEqualTo(0);
+        }
         else
+        {
             await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith(operation + " ", StringComparison.Ordinal)))
                 .IsEqualTo(1);
+        }
     }
 }

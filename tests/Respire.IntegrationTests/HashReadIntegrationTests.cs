@@ -37,16 +37,19 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
             var expectedCount = count == 0 ? 0 : count > 0 ? 2 : 5;
             fields.Should().HaveCount(expectedCount).And.OnlyContain(f => f == "a" || f == "b");
             pairs.Should().HaveCount(expectedCount);
+
             foreach (var pair in pairs)
             {
                 pair.Key.Should().BeOneOf("a", "b");
                 pair.Value.Should().Be(pair.Key == "a" ? "first" : "second");
             }
+
             if (count > 0)
             {
                 fields.Should().OnlyHaveUniqueItems();
                 pairs.Select(p => p.Key).Should().OnlyHaveUniqueItems();
             }
+
             (await ExecuteAsync(client, mode,
                 () => client.Hashes.RandomFieldsAsync(missing, count), h => h.RandomFields(missing, count)))
                 .Should().BeEmpty();
@@ -69,11 +72,13 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
         var client = root.WithKeyPrefix("typed-hash:");
         var key = $"hash-length:{Guid.NewGuid():N}";
         await client.Hashes.SetAsync(key, ("text", "é🙂"), ("empty", ""), ("binary", new byte[] { 0, 255, 128 }));
+
         foreach (var (field, expected) in new[] { ("text", 6L), ("binary", 3L), ("empty", 0L), ("missing", 0L) })
         {
             (await ExecuteAsync(client, mode,
                 () => client.Hashes.LengthAsync(key, field), h => h.Length(key, field))).Should().Be(expected);
         }
+
         (await ExecuteAsync(client, mode,
             () => client.Hashes.LengthAsync(key + ":missing", "text"), h => h.Length(key + ":missing", "text")))
             .Should().Be(0);
@@ -100,6 +105,7 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
             () => client.Hashes.ExpiryTimeAsync(key, fields), h => h.ExpiryTime(key, fields));
         defaultPrecision[1].UnixTimeMilliseconds.Should().Be(expires.ToUnixTimeMilliseconds());
         defaultPrecision[1].GetExpiresAt().Should().Be(expires);
+
         foreach (var precision in new[] { RespireExpiryTimePrecision.Milliseconds, RespireExpiryTimePrecision.Seconds })
         {
             var result = await ExecuteAsync(client, mode,
@@ -144,6 +150,7 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
             () => client.Hashes.RandomFieldsWithValuesAsync(key, 1), h => h.RandomFieldsWithValues(key, 1)));
         await AssertWrongType(() => ExecuteAsync(client, mode,
             () => client.Hashes.LengthAsync(key, "f"), h => h.Length(key, "f")));
+
         foreach (var precision in new[] { RespireExpiryTimePrecision.Milliseconds, RespireExpiryTimePrecision.Seconds })
         {
             await AssertWrongType(() => ExecuteAsync(client, mode,
@@ -161,7 +168,10 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
 
     private static async Task AssertWrongType<T>(Func<Task<T>> action)
     {
-        Func<Task> run = async () => { _ = await action(); };
+        Func<Task> run = async () =>
+        {
+            _ = await action();
+        };
         await run.Should().ThrowAsync<RespireServerException>().WithMessage("*WRONGTYPE*");
     }
 
@@ -172,6 +182,7 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
         {
             return await immediate();
         }
+
         if (mode == 1)
         {
             using var batch = client.CreateBatch();
@@ -179,6 +190,7 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
             await batch.TryExecuteAsync();
             return pending.Result;
         }
+
         await using var transaction = client.CreateTransaction();
         var transactionPending = enqueue(transaction.Hashes);
         await transaction.CommitAsync();

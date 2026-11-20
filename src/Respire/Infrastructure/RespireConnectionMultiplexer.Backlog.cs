@@ -15,13 +15,25 @@ internal sealed partial class RespireConnectionMultiplexer
     internal ReconnectBacklog GetReconnectBacklog(int capacity)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
+
         lock (_lifecycleGate)
         {
             ThrowIfUnavailable();
-            if (!_connected) throw new InvalidOperationException("Initialize the multiplexer before using its reconnect backlog.");
-            if (_backlog is null) _backlog = new ReconnectBacklog(this, capacity);
+
+            if (!_connected)
+            {
+                throw new InvalidOperationException("Initialize the multiplexer before using its reconnect backlog.");
+            }
+
+            if (_backlog is null)
+            {
+                _backlog = new ReconnectBacklog(this, capacity);
+            }
             else if (_backlog.Capacity != capacity)
+            {
                 throw new InvalidOperationException("A multiplexer has one fixed reconnect backlog capacity.");
+            }
+
             return _backlog;
         }
     }
@@ -44,8 +56,14 @@ internal sealed partial class RespireConnectionMultiplexer
             // Capture before selection: a replacement can publish synchronously while
             // GetConnection schedules it. Capturing afterwards would lose that wakeup.
             lock (_lifecycleGate)
+            {
                 changed = (_backlogConnectionChanged ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
-            try { return GetConnection(); }
+            }
+
+            try
+            {
+                return GetConnection();
+            }
             catch (RespireConnectionException error) when (error is not RespireReconnectLimitException)
             {
                 await changed.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -53,7 +71,10 @@ internal sealed partial class RespireConnectionMultiplexer
                 ThrowIfRecoveryExhausted();
                 // Null/zero-delay policies can fail synchronously (for example connection
                 // refused). Bound the on-demand retry rate while the queue owns demand.
-                if (!IsConnected) await Task.Delay(25, cancellationToken).ConfigureAwait(false);
+                if (!IsConnected)
+                {
+                    await Task.Delay(25, cancellationToken).ConfigureAwait(false);
+                }
             }
         }
     }
@@ -75,9 +96,23 @@ internal sealed partial class RespireConnectionMultiplexer
         private volatile bool _running;
         private Exception? _stopped;
 
-        internal int Capacity { get; }
+        internal int Capacity
+        {
+            get;
+        }
+
         // Includes the head waiting for recovery, excludes the dispatched unit.
-        internal int Count { get { lock (_gate) return _pending.Count; } }
+        internal int Count
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _pending.Count;
+                }
+            }
+        }
+
         internal bool IsRunning => _running;
 
         internal ReconnectBacklog(RespireConnectionMultiplexer owner, int capacity,
@@ -112,10 +147,16 @@ internal sealed partial class RespireConnectionMultiplexer
             cancellationToken.ThrowIfCancellationRequested();
             var entry = new Entry<T>(dispatch, cancellationToken, waitForConnection);
             bool start;
+
             lock (_gate)
             {
-                if (_stopped is { } stopped) throw stopped;
+                if (_stopped is { } stopped)
+                {
+                    throw stopped;
+                }
+
                 _throwIfUnavailable();
+
                 if (_pending.Count >= Capacity)
                 {
                     var endpoint = _getEndpoint();
@@ -124,14 +165,25 @@ internal sealed partial class RespireConnectionMultiplexer
                         : $"Read backlog capacity {Capacity} reached while waiting for an eligible read connection.")
                     { Endpoint = endpoint };
                 }
+
                 entry.Node = _pending.AddLast(entry);
                 start = !_running;
                 _running = true;
             }
+
             using var registration = cancellationToken.UnsafeRegister(
-                static state => { var (queue, pending) = ((ReconnectBacklog, Entry))state!; queue.Cancel(pending); },
+                static state =>
+                {
+                    var (queue, pending) = ((ReconnectBacklog, Entry))state!;
+                    queue.Cancel(pending);
+                },
                 (this, (Entry)entry));
-            if (start) _ = DrainAsync();
+
+            if (start)
+            {
+                _ = DrainAsync();
+            }
+
             return await entry.Completion.Task.ConfigureAwait(false);
         }
 
@@ -139,7 +191,11 @@ internal sealed partial class RespireConnectionMultiplexer
         {
             lock (_gate)
             {
-                if (entry.Node is null) return; // Dispatch now owns cancellation and outcome.
+                if (entry.Node is null)
+                {
+                    return; // Dispatch now owns cancellation and outcome.
+                }
+
                 _pending.Remove(entry.Node);
                 entry.Node = null;
                 entry.Cancel();
@@ -149,8 +205,14 @@ internal sealed partial class RespireConnectionMultiplexer
         private void Stop()
         {
             Exception error;
-            try { _throwIfUnavailable(); error = new RespireConnectionException("Connection recovery stopped."); }
+
+            try
+            {
+                _throwIfUnavailable();
+                error = new RespireConnectionException("Connection recovery stopped.");
+            }
             catch (Exception unavailable) { error = unavailable; }
+
             lock (_gate)
             {
                 _stopped = error;
@@ -173,21 +235,38 @@ internal sealed partial class RespireConnectionMultiplexer
             while (true)
             {
                 Entry entry;
+
                 lock (_gate)
                 {
-                    if (_pending.First is not { } first) { _running = false; return; }
+                    if (_pending.First is not { } first)
+                    {
+                        _running = false;
+                        return;
+                    }
+
                     entry = first.Value;
                 }
+
                 try
                 {
                     using var wait = CancellationTokenSource.CreateLinkedTokenSource(entry.Token, _lifetime);
                     var connection = await (entry.WaitForConnection ?? _waitForConnection)(wait.Token).ConfigureAwait(false);
+
                     lock (_gate)
                     {
-                        if (entry.Node is null) continue;
+                        if (entry.Node is null)
+                        {
+                            continue;
+                        }
+
                         _pending.Remove(entry.Node);
                         entry.Node = null;
-                        if (entry.Token.IsCancellationRequested) { entry.Cancel(); continue; }
+
+                        if (entry.Token.IsCancellationRequested)
+                        {
+                            entry.Cancel();
+                            continue;
+                        }
                     }
                     // No queue or lifecycle lock surrounds application/transport code.
                     // ExecuteAsync captures its own errors, so an accepted failure cannot
@@ -204,7 +283,10 @@ internal sealed partial class RespireConnectionMultiplexer
                 }
                 catch (RespireReconnectLimitException error) when (_failAllOnTerminal)
                 {
-                    lock (_gate) FailPendingLocked(error);
+                    lock (_gate)
+                    {
+                        FailPendingLocked(error);
+                    }
                 }
                 catch (Exception error)
                 {
@@ -212,7 +294,11 @@ internal sealed partial class RespireConnectionMultiplexer
                     // entries may still recover; only terminal exhaustion fails them all.
                     lock (_gate)
                     {
-                        if (entry.Node is null) continue;
+                        if (entry.Node is null)
+                        {
+                            continue;
+                        }
+
                         _pending.Remove(entry.Node);
                         entry.Node = null;
                         entry.Fail(error);
@@ -224,11 +310,25 @@ internal sealed partial class RespireConnectionMultiplexer
         private abstract class Entry(CancellationToken token,
             Func<CancellationToken, ValueTask<RespireConnection>>? waitForConnection)
         {
-            internal CancellationToken Token { get; } = token;
-            internal Func<CancellationToken, ValueTask<RespireConnection>>? WaitForConnection { get; } = waitForConnection;
-            internal LinkedListNode<Entry>? Node { get; set; }
+            internal CancellationToken Token
+            {
+                get;
+            } = token;
+
+            internal Func<CancellationToken, ValueTask<RespireConnection>>? WaitForConnection
+            {
+                get;
+            } = waitForConnection;
+
+            internal LinkedListNode<Entry>? Node
+            {
+                get; set;
+            }
+
             internal abstract void Cancel();
+
             internal abstract void Fail(Exception error);
+
             internal abstract ValueTask ExecuteAsync(RespireConnection connection);
         }
 
@@ -236,14 +336,25 @@ internal sealed partial class RespireConnectionMultiplexer
             CancellationToken token, Func<CancellationToken, ValueTask<RespireConnection>>? waitForConnection)
             : Entry(token, waitForConnection)
         {
-            internal TaskCompletionSource<T> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            internal TaskCompletionSource<T> Completion
+            {
+                get;
+            } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
             internal override void Cancel() => Completion.TrySetCanceled(Token);
+
             internal override void Fail(Exception error) => Completion.TrySetException(error);
+
             internal override async ValueTask ExecuteAsync(RespireConnection connection)
             {
-                try { Completion.TrySetResult(await dispatch(connection, Token).ConfigureAwait(false)); }
+                try
+                {
+                    Completion.TrySetResult(await dispatch(connection, Token).ConfigureAwait(false));
+                }
                 catch (OperationCanceledException error) when (error.CancellationToken == Token && Token.IsCancellationRequested)
-                { Cancel(); }
+                {
+                    Cancel();
+                }
                 catch (Exception error) { Fail(error); }
             }
         }

@@ -12,9 +12,15 @@ namespace Respire;
 public sealed class RespireCommandAttribute(string name) : Attribute
 {
     /// <summary>The command name, such as <c>JSON.GET</c> or <c>FT.CURSOR READ</c>.</summary>
-    public string Name { get; } = name;
+    public string Name
+    {
+        get;
+    } = name;
 
     /// <summary>Declares how this command affects keys tracked by client-side caching.</summary>
     /// <remarks>Unknown commands invalidate the full local cache.</remarks>
-    public RespireCacheMutation Mutation { get; set; }
+    public RespireCacheMutation Mutation
+    {
+        get; set;
+    }
 }

@@ -59,18 +59,33 @@ public class DispatchResponseObservationTests
     internal static int? RunIsolatedNativeDispatchProbe()
     {
         var mode = Environment.GetEnvironmentVariable(NativeProbe);
-        if (mode is null) return RunIsolatedBurstProbe();
+
+        if (mode is null)
+        {
+            return RunIsolatedBurstProbe();
+        }
+
         try
         {
 #pragma warning disable RESP009 // The child entry point completes its probe before starting the test runner.
-            if (mode == "converter") NativeConverterProbeAsync().GetAwaiter().GetResult();
-            else if (mode == "capacity") NativeCapacityProbeAsync().GetAwaiter().GetResult();
-            else if (mode.StartsWith("retirement:", StringComparison.Ordinal)) NativeRetirementProbeAsync(mode.Split(':')[1]).GetAwaiter().GetResult();
+            if (mode == "converter")
+            {
+                NativeConverterProbeAsync().GetAwaiter().GetResult();
+            }
+            else if (mode == "capacity")
+            {
+                NativeCapacityProbeAsync().GetAwaiter().GetResult();
+            }
+            else if (mode.StartsWith("retirement:", StringComparison.Ordinal))
+            {
+                NativeRetirementProbeAsync(mode.Split(':')[1]).GetAwaiter().GetResult();
+            }
             else
             {
                 var parts = mode.Split(':');
                 NativeDispatchProbeAsync(parts[0], parts[1]).GetAwaiter().GetResult();
             }
+
 #pragma warning restore RESP009
             return 0;
         }
@@ -87,8 +102,14 @@ public class DispatchResponseObservationTests
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
-        if (mode == "pre-cancelled") cancellation.Cancel();
+
+        if (mode == "pre-cancelled")
+        {
+            cancellation.Cancel();
+        }
+
         var command = new Cmd1(Verbs.Get, "held");
+
         switch (shape)
         {
             case "raw":
@@ -117,25 +138,46 @@ public class DispatchResponseObservationTests
         var sourceField = typeof(ValueTask<T>).GetField("_obj", BindingFlags.Instance | BindingFlags.NonPublic)!;
         await Assert.That(sourceField.GetValue(response)!.GetType()).IsEqualTo(expectedSource);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!server.ReceivedCommands.Contains("GET held")) await Task.Delay(1, deadline.Token);
+
+        while (!server.ReceivedCommands.Contains("GET held"))
+        {
+            await Task.Delay(1, deadline.Token);
+        }
         // Enable the listener after admission: native ownership must not depend on it
         // being enabled when the operation starts.
         using var capture = new Capture();
-        if (mode is "cancelled" or "pre-cancelled") cancellation.Cancel();
-        else await server.SendRawAsync(mode == "error" ? "-WRONGTYPE native error\r\n"u8.ToArray() : "$2\r\n42\r\n"u8.ToArray());
+
+        if (mode is "cancelled" or "pre-cancelled")
+        {
+            cancellation.Cancel();
+        }
+        else
+        {
+            await server.SendRawAsync(mode == "error" ? "-WRONGTYPE native error\r\n"u8.ToArray() : "$2\r\n42\r\n"u8.ToArray());
+        }
+
         Exception? failure = null;
+
         try
         {
             var result = await response.AsTask().WaitAsync(deadline.Token);
+
             if (result is RespValue raw)
             {
                 await Assert.That(ResponseReader.StringOrNull(in raw)).IsEqualTo("42");
                 raw.Dispose();
             }
-            else if (result is byte[] bytes) await Assert.That(bytes).IsEquivalentTo("42"u8.ToArray());
-            else await Assert.That(result).IsEqualTo((T)(object)"42");
+            else if (result is byte[] bytes)
+            {
+                await Assert.That(bytes).IsEquivalentTo("42"u8.ToArray());
+            }
+            else
+            {
+                await Assert.That(result).IsEqualTo((T)(object)"42");
+            }
         }
         catch (Exception error) { failure = error; }
+
         if (mode == "success")
         {
             await Assert.That(failure).IsNull();
@@ -149,7 +191,11 @@ public class DispatchResponseObservationTests
                 await Assert.That(((OperationCanceledException)failure!).CancellationToken).IsEqualTo(cancellation.Token);
                 await server.SendRawAsync("$2\r\n42\r\n"u8.ToArray());
             }
-            else await Assert.That(failure is RespireServerException { Code: "WRONGTYPE" }).IsTrue();
+            else
+            {
+                await Assert.That(failure is RespireServerException { Code: "WRONGTYPE" }).IsTrue();
+            }
+
             await Assert.That(capture.Items.ToArray()).IsEquivalentTo(new[] { (false, 0) });
         }
     }
@@ -171,20 +217,42 @@ public class DispatchResponseObservationTests
         var failure = new InvalidOperationException("native converter failure");
         var converted = false;
         var response = client.ConvertResponseAsync<Cmd1, int, int>("GET", new Cmd1(Verbs.Get, "held"), default, 0,
-            (int _, in RespValue _) => { converted = true; throw failure; });
+            (int _, in RespValue _) =>
+            {
+                converted = true;
+                throw failure;
+            });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!response.IsCompleted) await Task.Delay(1, deadline.Token);
+
+        while (!response.IsCompleted)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         await Assert.That(converted).IsFalse();
         using var listener = new MeterListener();
         var publications = 0;
         listener.InstrumentPublished = (instrument, owner) =>
         {
-            if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors") owner.EnableMeasurementEvents(instrument);
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+            {
+                owner.EnableMeasurementEvents(instrument);
+            }
         };
-        listener.SetMeasurementEventCallback<long>((_, _, _, _) => { publications++; throw new IOException("listener failure"); });
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        {
+            publications++;
+            throw new IOException("listener failure");
+        });
         listener.Start();
         Exception? actual = null;
-        try { _ = await response; } catch (Exception error) { actual = error; }
+
+        try
+        {
+            _ = await response;
+        }
+        catch (Exception error) { actual = error; }
+
         await Assert.That(ReferenceEquals(actual, failure)).IsTrue();
         await Assert.That(converted).IsTrue();
         await Assert.That(publications).IsEqualTo(1);
@@ -204,22 +272,40 @@ public class DispatchResponseObservationTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            MaxInflightCommands = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var first = client.GetStringAsync("first");
-        while (!server.ReceivedCommands.Contains("GET first")) await Task.Delay(1, deadline.Token);
+
+        while (!server.ReceivedCommands.Contains("GET first"))
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         var second = client.GetStringAsync("second");
         var source = typeof(ValueTask<string?>).GetField("_obj", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(second);
         await Assert.That(source is DispatchResponseSource<string?>).IsTrue();
         using var capture = new Capture();
         await server.SendRawAsync("$2\r\n42\r\n"u8.ToArray());
         await Assert.That(await first).IsEqualTo("42");
-        while (!server.ReceivedCommands.Contains("GET second")) await Task.Delay(1, deadline.Token);
+
+        while (!server.ReceivedCommands.Contains("GET second"))
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         await server.SendRawAsync("-WRONGTYPE capacity fallback\r\n"u8.ToArray());
         Exception? actual = null;
-        try { _ = await second; } catch (Exception error) { actual = error; }
+
+        try
+        {
+            _ = await second;
+        }
+        catch (Exception error) { actual = error; }
+
         await Assert.That(actual is RespireServerException { Code: "WRONGTYPE" }).IsTrue();
         await Assert.That(capture.Items.ToArray()).IsEquivalentTo(new[] { (false, 0) });
     }
@@ -236,6 +322,7 @@ public class DispatchResponseObservationTests
     private static async Task NativeRetirementProbeAsync(string shape)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+
         static byte[]? Reply(int _, string command) => command switch
         {
             _ when command.StartsWith("HELLO", StringComparison.Ordinal) => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
@@ -243,12 +330,16 @@ public class DispatchResponseObservationTests
             "GET raced" => "-WRONGTYPE retirement fallback\r\n"u8.ToArray(),
             _ => null,
         };
+
         await using var origin = new FakeRespServer(FakeRespServer.OkReply) { ReplyOverride = Reply };
         await using var target = new FakeRespServer(FakeRespServer.OkReply) { ReplyOverride = Reply };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
-            CommandTimeout = TimeSpan.FromSeconds(15), Endpoints = [new("127.0.0.1", origin.Port)],
+            Protocol = RespireProtocol.Resp3,
+            Connections = 1,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            CommandTimeout = TimeSpan.FromSeconds(15),
+            Endpoints = [new("127.0.0.1", origin.Port)],
         });
         var connection = client.Core.Multiplexer.GetConnection();
         using var entered = new ManualResetEventSlim();
@@ -256,38 +347,71 @@ public class DispatchResponseObservationTests
         var first = 1;
         var command = new RetirementRaceCommand(() =>
         {
-            if (Interlocked.Exchange(ref first, 0) != 1) return;
+            if (Interlocked.Exchange(ref first, 0) != 1)
+            {
+                return;
+            }
+
             entered.Set();
-            if (!released.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Retirement race was not released.");
+
+            if (!released.Wait(TimeSpan.FromSeconds(10)))
+            {
+                throw new TimeoutException("Retirement race was not released.");
+            }
         });
         using var capture = new Capture();
+
         switch (shape)
         {
-            case "raw": await Race(() => connection.SendNativeCheckedAsync(command, default, "GET")); break;
-            case "string": await Race(() => connection.SendNativeStringAsync(command, default, "GET")); break;
-            case "bytes": await Race(() => connection.SendNativeBytesAsync(command, default, "GET")); break;
-            default: await Race(() => connection.SendNativeConvertedAsync(command, default, "GET", 0,
-                static (int _, in RespValue response) => ResponseReader.StringOrNull(in response), false)); break;
+            case "raw":
+                await Race(() => connection.SendNativeCheckedAsync(command, default, "GET"));
+                break;
+            case "string":
+                await Race(() => connection.SendNativeStringAsync(command, default, "GET"));
+                break;
+            case "bytes":
+                await Race(() => connection.SendNativeBytesAsync(command, default, "GET"));
+                break;
+            default:
+                await Race(() => connection.SendNativeConvertedAsync(command, default, "GET", 0,
+                static (int _, in RespValue response) => ResponseReader.StringOrNull(in response), false));
+                break;
         }
+
         await Assert.That(capture.Items.ToArray()).IsEquivalentTo(new[] { (true, 0), (false, 1) });
 
         async Task Race<T>(Func<ValueTask<T>> send)
         {
             var dispatch = Task.Run(send);
+
             try
             {
-                if (!entered.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Native serialization did not start.");
+                if (!entered.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    throw new TimeoutException("Native serialization did not start.");
+                }
+
                 await origin.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
                 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
                 while (connection.IsAcceptingCommands || ReferenceEquals(client.Core.Multiplexer.GetConnection(), connection))
+                {
                     await Task.Delay(1, deadline.Token);
+                }
             }
             finally { released.Set(); }
+
             var response = await dispatch;
             var source = typeof(ValueTask<T>).GetField("_obj", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(response);
             await Assert.That(source is DispatchResponseSource<T>).IsTrue();
             Exception? actual = null;
-            try { _ = await response; } catch (Exception error) { actual = error; }
+
+            try
+            {
+                _ = await response;
+            }
+            catch (Exception error) { actual = error; }
+
             await Assert.That(actual is RespireServerException { Code: "WRONGTYPE" }).IsTrue();
         }
     }
@@ -295,7 +419,9 @@ public class DispatchResponseObservationTests
     private readonly struct RetirementRaceCommand(Action beforeWrite) : IRespCommand
     {
         public int GetWriteSizeHint() => 0;
+
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer)
         {
             beforeWrite();
@@ -316,7 +442,9 @@ public class DispatchResponseObservationTests
         listener.InstrumentPublished = (instrument, owner) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+            {
                 owner.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
         {
@@ -330,22 +458,33 @@ public class DispatchResponseObservationTests
         var completion = new TaskCompletionSource<ThrowingListenerResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         RespireTelemetry.ErrorObservation original = default;
         Exception? actual = null;
+
         try
         {
             var response = DispatchResponseSource<ThrowingListenerResult>.Run(mode, (mode, observation) =>
             {
                 original = observation;
                 observation.Handled(new IOException("recovered dispatch failure"));
-                if (mode == "synchronous") throw failure;
+
+                if (mode == "synchronous")
+                {
+                    throw failure;
+                }
+
                 return new(completion.Task);
             });
             var pending = response.AsTask();
+
             if (mode == "cancelled")
             {
                 cancellation.Cancel();
                 completion.SetCanceled(cancellation.Token);
             }
-            else completion.SetException(failure);
+            else
+            {
+                completion.SetException(failure);
+            }
+
             _ = await pending;
         }
         catch (Exception error) { actual = error; }
@@ -355,7 +494,11 @@ public class DispatchResponseObservationTests
             await Assert.That(actual is OperationCanceledException).IsTrue();
             await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
         }
-        else await Assert.That(ReferenceEquals(actual, failure)).IsTrue();
+        else
+        {
+            await Assert.That(ReferenceEquals(actual, failure)).IsTrue();
+        }
+
         await Assert.That(publications).IsEqualTo(2);
 
         // This private result type has only one outstanding source, so the next rent
@@ -367,6 +510,7 @@ public class DispatchResponseObservationTests
             reused = observation;
             return new ValueTask<ThrowingListenerResult>(default(ThrowingListenerResult));
         });
+
         try
         {
             await Assert.That(ReferenceEquals(identity, reused.InspectForTests().StorageIdentity)).IsTrue();
@@ -427,19 +571,30 @@ public class DispatchResponseObservationTests
         var handshake = Path.Combine(Path.GetTempPath(), $"respire-burst-{Guid.NewGuid():N}");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var activityCompleted = false;
+
         async Task RunActivityWhenChildRegionIsOpen()
         {
             while (!File.Exists(handshake + ".ready"))
+            {
                 await Task.Delay(10, deadline.Token);
+            }
             // The child has entered WithoutConcurrentGc and cannot measure until we
             // release it. Both activities invalidate a region in the runner process.
-            if (activity == "collection") GC.Collect(2, GCCollectionMode.Forced, blocking: true);
-            else ExhaustBurstRegionBudget();
+            if (activity == "collection")
+            {
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+            }
+            else
+            {
+                ExhaustBurstRegionBudget();
+            }
+
             activityCompleted = true;
             await File.WriteAllTextAsync(handshake + ".continue", "", deadline.Token);
         }
 
         var activityTask = RunActivityWhenChildRegionIsOpen();
+
         try
         {
             await RunBurstProbeAsync("normal", handshake);
@@ -449,8 +604,13 @@ public class DispatchResponseObservationTests
         finally
         {
             deadline.Cancel();
-            try { await activityTask; }
+
+            try
+            {
+                await activityTask;
+            }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+
             File.Delete(handshake + ".ready");
             File.Delete(handshake + ".continue");
         }
@@ -462,18 +622,31 @@ public class DispatchResponseObservationTests
             Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(DispatchResponseObservationTests).Assembly.Location);
         start.Environment[BurstProbe] = mode;
         start.Environment[BurstRuntime] = Environment.Version.ToString();
-        if (handshake is not null) start.Environment[BurstHandshake] = handshake;
+
+        if (handshake is not null)
+        {
+            start.Environment[BurstHandshake] = handshake;
+        }
+
         await AsyncFlushSignalTests.RunProbeAsync(start, TimeSpan.FromSeconds(30));
     }
 
     private static int? RunIsolatedBurstProbe()
     {
         var mode = Environment.GetEnvironmentVariable(BurstProbe);
-        if (mode is null) return null;
+
+        if (mode is null)
+        {
+            return null;
+        }
+
         try
         {
             if (Environment.GetEnvironmentVariable(BurstRuntime) != Environment.Version.ToString())
+            {
                 throw new InvalidOperationException("Burst probe runtime differs from parent.");
+            }
+
             MeasureIsolatedBurst(mode, Environment.GetEnvironmentVariable(BurstHandshake));
             return 0;
         }
@@ -486,47 +659,82 @@ public class DispatchResponseObservationTests
         // coverage collector or background work left by the suite. Own the process
         // as well as the region; never retry or ignore a lost region in this child.
         var pending = new ValueTask<BurstResult>[10000];
+
         for (var index = 0; index < 4; index++)
         {
             _ = MeasureBurst(pending, false);
             _ = MeasureBurst(pending, true);
         }
+
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
         {
             if (handshake is not null)
             {
                 File.WriteAllText(handshake + ".ready", "");
+
                 if (!SpinWait.SpinUntil(() => File.Exists(handshake + ".continue"), TimeSpan.FromSeconds(10)))
+                {
                     throw new TimeoutException("Parent did not release the burst measurement.");
+                }
+
                 if (GCSettings.LatencyMode != GCLatencyMode.NoGCRegion)
+                {
                     throw new InvalidOperationException("Parent activity interrupted the child region.");
+                }
             }
-            if (mode == "lost-region") GC.Collect(2, GCCollectionMode.Forced, blocking: true);
-            if (mode == "allocation-budget") ExhaustBurstRegionBudget();
+
+            if (mode == "lost-region")
+            {
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+            }
+
+            if (mode == "allocation-budget")
+            {
+                ExhaustBurstRegionBudget();
+            }
+
             return (MeasureBurst(pending, mode == "allocating"), MeasureBurst(pending, true));
         });
         Console.WriteLine($"Burst: {measured.Item1} bytes; positive control: {measured.Item2} bytes.");
+
         if (measured.Item1 != 0 || measured.Item2 < 37L * pending.Length)
+        {
             throw new InvalidOperationException($"Expected zero burst allocations and a positive control of at least " +
                 $"{37L * pending.Length} bytes; observed {measured.Item1} and {measured.Item2} bytes.");
+        }
     }
 
     private static void ExhaustBurstRegionBudget()
     {
-        for (var index = 0; index < 1024; index++) GC.KeepAlive(new byte[64 * 1024]);
+        for (var index = 0; index < 1024; index++)
+        {
+            GC.KeepAlive(new byte[64 * 1024]);
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static long MeasureBurst(ValueTask<BurstResult>[] pending, bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var index = 0; index < pending.Length; index++)
-            pending[index] = DispatchResponseSource<BurstResult>.Run(42, static (value, _) => new(new BurstResult(value)));
+
         for (var index = 0; index < pending.Length; index++)
         {
-            if (pending[index].GetAwaiter().GetResult().Value != 42) throw new InvalidOperationException("Unexpected response.");
-            if (control) GC.KeepAlive(new byte[37]);
+            pending[index] = DispatchResponseSource<BurstResult>.Run(42, static (value, _) => new(new BurstResult(value)));
         }
+
+        for (var index = 0; index < pending.Length; index++)
+        {
+            if (pending[index].GetAwaiter().GetResult().Value != 42)
+            {
+                throw new InvalidOperationException("Unexpected response.");
+            }
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
+        }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -540,6 +748,7 @@ public class DispatchResponseObservationTests
         using var capture = new Capture();
         var state = new PendingState();
         var failure = new IOException("send failure after borrow");
+
         try
         {
             _ = DispatchResponseSource<int>.Run(state, (state, observation) =>
@@ -553,6 +762,7 @@ public class DispatchResponseObservationTests
         {
             await Assert.That(ReferenceEquals(error, failure)).IsTrue();
         }
+
         var old = state.Observation;
         var next = DispatchResponseSource<int>.Run(state, static (state, observation) =>
         {
@@ -583,7 +793,13 @@ public class DispatchResponseObservationTests
         state.Completion.SetException(failure);
         await Assert.That(capture.Items.Count).IsEqualTo(2);
         Exception? actual = null;
-        try { _ = await response; } catch (Exception error) { actual = error; }
+
+        try
+        {
+            _ = await response;
+        }
+        catch (Exception error) { actual = error; }
+
         await Assert.That(ReferenceEquals(actual, failure)).IsTrue();
         await Assert.That(capture.Items.Select(item => item.Attempts).ToArray()).IsEquivalentTo(new[] { 0, 1, 2 });
         await Assert.That(capture.Items.Last().Internal).IsFalse();
@@ -607,7 +823,11 @@ public class DispatchResponseObservationTests
             state.Observation = observation;
             observation.Handled(new IOException("retired connection"));
             native = ConvertedPendingResponseSource<PendingState, int>.Rent(state,
-                (PendingState state, in RespValue _) => { state.Converted = true; throw failure; },
+                (PendingState state, in RespValue _) =>
+                {
+                    state.Converted = true;
+                    throw failure;
+                },
                 false, "GET", observeErrors: false);
             return native.Task;
         });
@@ -637,7 +857,13 @@ public class DispatchResponseObservationTests
         });
         await Assert.That(response.IsCanceled).IsTrue();
         OperationCanceledException? actual = null;
-        try { _ = await response; } catch (OperationCanceledException error) { actual = error; }
+
+        try
+        {
+            _ = await response;
+        }
+        catch (OperationCanceledException error) { actual = error; }
+
         await Assert.That(actual!.CancellationToken).IsEqualTo(cancellation.Token);
         await Assert.That(capture.Items.Last().Attempts).IsEqualTo(1);
         await Assert.That(capture.Items.Count).IsEqualTo(2);
@@ -654,22 +880,34 @@ public class DispatchResponseObservationTests
         await using var server = new FakeRespServer(1, FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var capture = new Capture();
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
+
         try
         {
-            if (shape == "string") _ = await client.GetStringAsync("key", cancellation.Token);
-            else if (shape == "bytes") _ = await client.GetBytesAsync("key", cancellation.Token);
-            else _ = await client.IntegerAsync("STRLEN", new Cmd1(Verbs.StrLen, "key"), cancellation.Token);
+            if (shape == "string")
+            {
+                _ = await client.GetStringAsync("key", cancellation.Token);
+            }
+            else if (shape == "bytes")
+            {
+                _ = await client.GetBytesAsync("key", cancellation.Token);
+            }
+            else
+            {
+                _ = await client.IntegerAsync("STRLEN", new Cmd1(Verbs.StrLen, "key"), cancellation.Token);
+            }
         }
         catch (OperationCanceledException error)
         {
             await Assert.That(error.CancellationToken).IsEqualTo(cancellation.Token);
         }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         await Assert.That(capture.Items.Single().Attempts).IsEqualTo(0);
         await Assert.That(capture.Items.Single().Internal).IsFalse();
@@ -689,7 +927,8 @@ public class DispatchResponseObservationTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -704,15 +943,27 @@ public class DispatchResponseObservationTests
                 new Cmd1(Verbs.Get, "held"), cancellation.Token, "GET", observation: observation);
         });
         var identity = old.InspectForTests().StorageIdentity;
-        while (!server.ReceivedCommands.Contains("GET held")) await Task.Delay(1, deadline.Token);
+
+        while (!server.ReceivedCommands.Contains("GET held"))
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         cancellation.Cancel();
         OperationCanceledException? actual = null;
-        try { _ = await pending; } catch (OperationCanceledException error) { actual = error; }
+
+        try
+        {
+            _ = await pending;
+        }
+        catch (OperationCanceledException error) { actual = error; }
+
         await Assert.That(actual!.CancellationToken).IsEqualTo(cancellation.Token);
         await Assert.That(capture.Items.Single()).IsEqualTo((false, 2));
 
         var rentals = new List<(RawPendingState State, ValueTask<RespValue> Response)>();
         RawPendingState? reused = null;
+
         try
         {
             // Retain every rental so actual reuse is proved independently of pool ordering.
@@ -725,10 +976,16 @@ public class DispatchResponseObservationTests
                     return new(state.Completion.Task);
                 });
                 rentals.Add((state, response));
-                if (!ReferenceEquals(identity, state.Observation.InspectForTests().StorageIdentity)) continue;
+
+                if (!ReferenceEquals(identity, state.Observation.InspectForTests().StorageIdentity))
+                {
+                    continue;
+                }
+
                 reused = state;
                 break;
             }
+
             await Assert.That(reused).IsNotNull();
             reused!.Observation.SetAttempts(9);
             old.Handled(new IOException("stale generation"));
@@ -754,14 +1011,21 @@ public class DispatchResponseObservationTests
     {
         using var configuration = new MetricConfigurationScope();
         using var capture = new Capture();
+
         foreach (var groups in new[] { RespireMetricGroups.None, RespireMetricGroups.Resiliency })
         {
             RespireMetrics.Configure(new() { Groups = groups });
-            for (var index = 0; index < 10; index++) _ = MeasureSuccess(false);
+
+            for (var index = 0; index < 10; index++)
+            {
+                _ = MeasureSuccess(false);
+            }
+
             var measured = AllocationMeasurement.WithoutConcurrentGc(() => (MeasureSuccess(false), MeasureSuccess(true)));
             await Assert.That(measured.Item1).IsEqualTo(0L);
             await Assert.That(measured.Item2).IsGreaterThan(0L);
         }
+
         await Assert.That(capture.Items).IsEmpty();
     }
 
@@ -769,14 +1033,24 @@ public class DispatchResponseObservationTests
     private static long MeasureSuccess(bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
 #pragma warning disable RESP009 // This synchronous result is consumed on the thread whose allocations are measured.
             var result = DispatchResponseSource<int>.Run(42, static (value, _) => new ValueTask<int>(value)).GetAwaiter().GetResult();
+
 #pragma warning restore RESP009
-            if (result != 42) throw new InvalidOperationException("Unexpected response.");
-            if (control) GC.KeepAlive(new byte[37]);
+            if (result != 42)
+            {
+                throw new InvalidOperationException("Unexpected response.");
+            }
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -794,14 +1068,22 @@ public class DispatchResponseObservationTests
         internal ValueTaskSourceStatus Status;
         internal int StatusCalls;
         internal bool CompleteAfterFirstQuery;
+
         public int GetResult(short token) => 42;
+
         public ValueTaskSourceStatus GetStatus(short token)
         {
             StatusCalls++;
             var status = Status;
-            if (CompleteAfterFirstQuery) Status = ValueTaskSourceStatus.Succeeded;
+
+            if (CompleteAfterFirstQuery)
+            {
+                Status = ValueTaskSourceStatus.Succeeded;
+            }
+
             return status;
         }
+
         public void OnCompleted(Action<object?> continuation, object? state, short token,
             ValueTaskSourceOnCompletedFlags flags) => throw new InvalidOperationException("Unexpected continuation registration.");
     }
@@ -823,7 +1105,9 @@ public class DispatchResponseObservationTests
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
@@ -831,7 +1115,11 @@ public class DispatchResponseObservationTests
                 var item = ((bool)values["redis.client.errors.internal"]!,
                     (int)values["redis.client.operation.retry_attempts"]!);
                 Items.Enqueue(item);
-                if (item.Item1) InternalSeen.TrySetResult(item);
+
+                if (item.Item1)
+                {
+                    InternalSeen.TrySetResult(item);
+                }
             });
             _listener.Start();
         }

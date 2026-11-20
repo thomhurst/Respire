@@ -15,21 +15,34 @@ public class CompletionBufferRetentionTests
     public async Task WarmDeepDrainsReuseBuffersWithoutAllocations(bool largeBatchesFirst)
     {
         var scheduler = new CompletionScheduler();
+
         if (largeBatchesFirst)
         {
             var initial = Enumerable.Range(0, 4 * 255).Select(_ => new PendingResponseSource()).ToArray();
+
             for (var index = 0; index < initial.Length; index++)
             {
                 initial[index].PrepareForUse();
                 scheduler.Add(initial[index], RespValue.Integer(index));
-                if ((index + 1) % 255 == 0) _ = scheduler.FlushDeferred();
+
+                if ((index + 1) % 255 == 0)
+                {
+                    _ = scheduler.FlushDeferred();
+                }
             }
+
             scheduler.Execute();
-            foreach (var source in initial) { using var reply = source.Task.GetAwaiter().GetResult(); }
+
+            foreach (var source in initial)
+            {
+                using var reply = source.Task.GetAwaiter().GetResult();
+            }
+
             var cached = scheduler.InspectSpareStorageForTests().BufferLengths;
             await Assert.That(cached.Length).IsEqualTo(4);
             await Assert.That(cached.All(length => length == 256)).IsTrue();
         }
+
         var sources = Enumerable.Range(0, 12).Select(_ => new PendingResponseSource()).ToArray();
         _ = MeasureDrains(scheduler, sources, false);
         _ = MeasureDrains(scheduler, sources, true);
@@ -47,6 +60,7 @@ public class CompletionBufferRetentionTests
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
         long sum = 0;
+
         for (var drain = 0; drain < 32; drain++)
         {
             for (var index = 0; index < sources.Length; index++)
@@ -55,14 +69,21 @@ public class CompletionBufferRetentionTests
                 scheduler.Add(sources[index], RespValue.Integer(index));
                 _ = scheduler.FlushDeferred(); // The test owns the runner; no pool dispatch.
             }
+
             scheduler.Execute();
+
             foreach (var source in sources)
             {
                 using var reply = source.Task.GetAwaiter().GetResult();
                 sum += reply.AsInteger();
             }
-            if (allocate) GC.KeepAlive(new byte[37]);
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return (GC.GetAllocatedBytesForCurrentThread() - before, sum);
     }
 
@@ -73,23 +94,32 @@ public class CompletionBufferRetentionTests
     public async Task DeepBurstsBoundRetentionAndClearEveryEntry(int repliesPerBatch, int batches)
     {
         var scheduler = new CompletionScheduler();
+
         for (var cycle = 0; cycle < 2; cycle++)
         {
             var sources = new PendingResponseSource[repliesPerBatch * batches];
+
             for (var index = 0; index < sources.Length; index++)
             {
                 var source = sources[index] = new PendingResponseSource();
                 source.PrepareForUse();
                 scheduler.Add(source, RespValue.Integer(index));
-                if ((index + 1) % repliesPerBatch == 0) _ = scheduler.FlushDeferred();
+
+                if ((index + 1) % repliesPerBatch == 0)
+                {
+                    _ = scheduler.FlushDeferred();
+                }
             }
+
             await Assert.That(scheduler.WaitingReplyCount).IsEqualTo(sources.Length);
             scheduler.Execute();
+
             for (var index = 0; index < sources.Length; index++)
             {
                 using var reply = sources[index].Task.GetAwaiter().GetResult();
                 await Assert.That(reply.AsInteger()).IsEqualTo((long)index);
             }
+
             await Assert.That(scheduler.WaitForIdleAsync().IsCompletedSuccessfully).IsTrue();
             await AssertClearedAndBoundedAsync(scheduler);
         }
@@ -106,8 +136,11 @@ public class CompletionBufferRetentionTests
         await Assert.That(snapshot.TrackedEntryCount).IsEqualTo(slots);
         await Assert.That(snapshot.EntriesCleared).IsTrue();
         Console.WriteLine($"Completion spares: {buffers.Length} arrays, {slots} entry slots, {slots * snapshot.EntrySize} entry bytes (array headers excluded).");
+
         foreach (var length in buffers)
+        {
             await Assert.That(length).IsLessThanOrEqualTo(256);
+        }
     }
 
     [Test]
@@ -118,31 +151,49 @@ public class CompletionBufferRetentionTests
         var scheduler = new CompletionScheduler();
         var sources = Enumerable.Range(0, 24).Select(_ => new PendingResponsePool(1).Rent()).ToArray();
         var replies = sources.Select(source => source.Task.AsTask()).ToArray();
+
         for (var index = 0; index < sources.Length; index++)
         {
             if (index % 2 == 0)
             {
-                if (cancel) _ = sources[index].TrySetCanceled(new CancellationToken(true));
-                else _ = sources[index].TrySetException(new InvalidOperationException("connection failure"));
+                if (cancel)
+                {
+                    _ = sources[index].TrySetCanceled(new CancellationToken(true));
+                }
+                else
+                {
+                    _ = sources[index].TrySetException(new InvalidOperationException("connection failure"));
+                }
             }
+
             scheduler.Add(sources[index], RespValue.Integer(index));
             _ = scheduler.FlushDeferred();
         }
+
         scheduler.Execute();
+
         for (var index = 0; index < sources.Length; index++)
         {
             if (index % 2 == 0)
             {
-                if (cancel) await Assert.That(async () => await replies[index]).Throws<OperationCanceledException>();
-                else await Assert.That(async () => await replies[index]).Throws<InvalidOperationException>();
+                if (cancel)
+                {
+                    await Assert.That(async () => await replies[index]).Throws<OperationCanceledException>();
+                }
+                else
+                {
+                    await Assert.That(async () => await replies[index]).Throws<InvalidOperationException>();
+                }
             }
             else
             {
                 using var value = await replies[index];
                 await Assert.That(value.AsInteger()).IsEqualTo((long)index);
             }
+
             await Assert.That(sources[index].State).IsEqualTo(2);
         }
+
         await AssertClearedAndBoundedAsync(scheduler);
     }
 
@@ -161,39 +212,66 @@ public class CompletionBufferRetentionTests
             {
                 using var value = first.GetResult();
                 entered.TrySetResult();
-                if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Old runner was not released.");
+
+                if (!release.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    throw new TimeoutException("Old runner was not released.");
+                }
             }
             catch (Exception error) { finished.TrySetException(error); }
         });
-        for (var index = 0; index < sources.Length; index++) scheduler.Add(sources[index], RespValue.Integer(index));
+
+        for (var index = 0; index < sources.Length; index++)
+        {
+            scheduler.Add(sources[index], RespValue.Integer(index));
+        }
+
         await Assert.That(scheduler.FlushDeferred()).IsTrue();
         var runner = new Thread(() =>
         {
-            try { scheduler.Execute(); finished.TrySetResult(); }
+            try
+            {
+                scheduler.Execute();
+                finished.TrySetResult();
+            }
             catch (Exception error) { finished.TrySetException(error); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         runner.Start();
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(scheduler.RescueStalledRunner(0, 500)).IsFalse();
             await Assert.That(scheduler.RescueStalledRunner(500, 500)).IsTrue();
+
             for (var index = 1; index < sources.Length; index++)
             {
                 using var value = await sources[index].Task;
                 await Assert.That(value.AsInteger()).IsEqualTo((long)index);
             }
+
             await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
             await AssertClearedAndBoundedAsync(scheduler);
             var seed = new PendingResponsePool(1).Rent();
             scheduler.Add(seed, RespValue.Integer(1));
             _ = scheduler.FlushDeferred(); // Pops the cleared 127-entry rescued tail.
             var growth = Enumerable.Range(0, 255).Select(_ => new PendingResponsePool(1).Rent()).ToArray();
-            foreach (var source in growth) scheduler.Add(source, RespValue.Integer(2));
+
+            foreach (var source in growth)
+            {
+                scheduler.Add(source, RespValue.Integer(2));
+            }
+
             _ = scheduler.FlushDeferred();
             scheduler.Execute();
             using var seedValue = await seed.Task;
-            foreach (var source in growth) { using var value = await source.Task; }
+
+            foreach (var source in growth)
+            {
+                using var value = await source.Task;
+            }
+
             await AssertClearedAndBoundedAsync(scheduler);
         }
         finally
@@ -201,6 +279,7 @@ public class CompletionBufferRetentionTests
             release.Set();
             await Assert.That(runner.Join(TimeSpan.FromSeconds(5))).IsTrue();
         }
+
         await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await AssertClearedAndBoundedAsync(scheduler);
     }

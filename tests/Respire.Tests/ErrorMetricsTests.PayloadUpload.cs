@@ -37,11 +37,17 @@ public partial class ErrorMetricsTests
     private static long MeasurePayloadReads(Stream stream, byte[] buffer, bool allocate)
     {
         var start = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
             _ = stream.Read(buffer, 0, 1);
-            if (allocate) GC.KeepAlive(new byte[32]);
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[32]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - start;
     }
 
@@ -59,6 +65,7 @@ public partial class ErrorMetricsTests
         source.ErrorAttempts = attempts;
         var cleanup = RespireConnection.ObserveStreamedSetResponseAsync(source);
         var reply = RespValue.Error("NOPERM private-payload"u8.ToArray());
+
         if (deferred)
         {
             var scheduler = new CompletionScheduler();
@@ -71,6 +78,7 @@ public partial class ErrorMetricsTests
             source.TrySetResult(in reply);
             source.ReleaseRef();
         }
+
         await cleanup;
         var item = capture.Items.Single();
         await Assert.That((bool)item.Tags["redis.client.errors.internal"]!).IsTrue();
@@ -128,11 +136,13 @@ public partial class ErrorMetricsTests
         await Assert.That(read.IsCanceled).IsTrue();
         var failure = new RespireProtocolException("broken payload");
         pipe.Complete(failure);
+
         for (var index = 0; index < 2; index++)
         {
             var observed = await Assert.That(async () => await stream.ReadAsync(buffer)).Throws<RespireProtocolException>();
             await Assert.That(ReferenceEquals(observed, failure)).IsTrue();
         }
+
         var items = capture.Items.ToArray();
         await Assert.That(items.Length).IsEqualTo(2);
         await Assert.That(items.All(item => !(bool)item.Tags["redis.client.errors.internal"]!)).IsTrue();
@@ -153,21 +163,41 @@ public partial class ErrorMetricsTests
         owner.Observation.SetAttempts(attempts);
         var pending = owner.Attach(source.Task).AsTask();
         var scheduler = new CompletionScheduler();
+
         async Task Deliver(string code)
         {
             var reply = RespValue.Error(Encoding.ASCII.GetBytes(code + " private-key"));
-            if (code == "WRONGTYPE") source.ObservePrefix(in reply);
+
+            if (code == "WRONGTYPE")
+            {
+                source.ObservePrefix(in reply);
+            }
+
             if (deferred)
             {
                 scheduler.Add(source, in reply);
                 scheduler.Flush();
                 await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
             }
-            else { source.TrySetResult(in reply); source.ReleaseRef(); }
+            else
+            {
+                source.TrySetResult(in reply);
+                source.ReleaseRef();
+            }
         }
-        if (cancelBeforePrefix) source.TrySetCanceled(cancellation.Token);
+
+        if (cancelBeforePrefix)
+        {
+            source.TrySetCanceled(cancellation.Token);
+        }
+
         await Deliver("WRONGTYPE");
-        if (!cancelBeforePrefix) source.TrySetCanceled(cancellation.Token);
+
+        if (!cancelBeforePrefix)
+        {
+            source.TrySetCanceled(cancellation.Token);
+        }
+
         var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
         await Assert.That(pending.IsCanceled).IsTrue();
@@ -205,22 +235,40 @@ public partial class ErrorMetricsTests
     private sealed class FailingUploadStream(Exception failure, bool laterChunk) : Stream
     {
         private bool _read;
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (!laterChunk || _read) return ValueTask.FromException<int>(failure);
+            if (!laterChunk || _read)
+            {
+                return ValueTask.FromException<int>(failure);
+            }
+
             _read = true;
             buffer.Span.Clear();
             return new(buffer.Length);
         }
+
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

@@ -36,9 +36,16 @@ public sealed class RespireVectorStore : VectorStore
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(mapper);
+
         if (mapper is not RespireVectorDataHashMapper<TRecord> and not RespireVectorDataJsonMapper<TRecord>)
+        {
             throw new ArgumentException("Use a hash or JSON mapper.", nameof(mapper));
-        if (!_mappers.TryAdd(typeof(TRecord), mapper)) throw new InvalidOperationException("A mapper is already registered for this record type.");
+        }
+
+        if (!_mappers.TryAdd(typeof(TRecord), mapper))
+        {
+            throw new InvalidOperationException("A mapper is already registered for this record type.");
+        }
     }
 
     /// <inheritdoc />
@@ -47,8 +54,17 @@ public sealed class RespireVectorStore : VectorStore
     public override VectorStoreCollection<TKey, TRecord> GetCollection<TKey, TRecord>(string name, VectorStoreCollectionDefinition? definition = null)
     {
         ThrowIfDisposed();
-        if (typeof(TKey) != typeof(string)) throw new NotSupportedException("Collections support string keys.");
-        if (definition is not null) throw new NotSupportedException("Register an explicit mapper; reflection-based collection definitions are not supported.");
+
+        if (typeof(TKey) != typeof(string))
+        {
+            throw new NotSupportedException("Collections support string keys.");
+        }
+
+        if (definition is not null)
+        {
+            throw new NotSupportedException("Register an explicit mapper; reflection-based collection definitions are not supported.");
+        }
+
         return (VectorStoreCollection<TKey, TRecord>)(object)CreateCollection<TRecord>(name);
     }
 
@@ -63,9 +79,17 @@ public sealed class RespireVectorStore : VectorStore
     private RespireVectorStoreCollection<TRecord> CreateCollection<TRecord>(string name, bool? json = null) where TRecord : class
     {
         ThrowIfDisposed();
-        if (!_mappers.TryGetValue(typeof(TRecord), out var mapper)) throw new InvalidOperationException("Register a mapper for this record type before creating a collection.");
+
+        if (!_mappers.TryGetValue(typeof(TRecord), out var mapper))
+        {
+            throw new InvalidOperationException("Register a mapper for this record type before creating a collection.");
+        }
+
         if (json is { } requested && requested != (mapper is RespireVectorDataJsonMapper<TRecord>))
+        {
             throw new InvalidOperationException("The registered mapper uses a different storage kind.");
+        }
+
         return new(_client, name, IndexName(name), DocumentPrefix(name), (RespireVectorDataMapper<TRecord>)mapper);
     }
 
@@ -80,11 +104,15 @@ public sealed class RespireVectorStore : VectorStore
         var prefix = _namespace + "i:";
         var indexes = await RespireVectorDataOperations.ExecuteAsync(
             _client.Search.ListIndexesAsync(cancellationToken), nameof(ListCollectionNamesAsync)).ConfigureAwait(false);
+
         foreach (var name in indexes)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
             if (name.StartsWith(prefix, StringComparison.Ordinal))
+            {
                 yield return RespireVectorDataOperations.DecodeName(name[prefix.Length..], nameof(ListCollectionNamesAsync));
+            }
         }
     }
 
@@ -111,13 +139,27 @@ public sealed class RespireVectorStore : VectorStore
     public override object? GetService(Type serviceType, object? serviceKey = null)
     {
         ArgumentNullException.ThrowIfNull(serviceType);
-        if (serviceKey is not null) return null;
-        if (serviceType == typeof(VectorStoreMetadata)) return new VectorStoreMetadata { VectorStoreSystemName = "redis" };
-        if (serviceType == typeof(IRespireClient)) return _client;
+
+        if (serviceKey is not null)
+        {
+            return null;
+        }
+
+        if (serviceType == typeof(VectorStoreMetadata))
+        {
+            return new VectorStoreMetadata { VectorStoreSystemName = "redis" };
+        }
+
+        if (serviceType == typeof(IRespireClient))
+        {
+            return _client;
+        }
+
         return serviceType.IsInstanceOfType(this) ? this : null;
     }
 
     internal string IndexName(string name) => _namespace + "i:" + EncodeName(name);
+
     internal string DocumentPrefix(string name) => _namespace + "d:" + EncodeName(name) + ":";
 
     internal static string EncodeName(string name)

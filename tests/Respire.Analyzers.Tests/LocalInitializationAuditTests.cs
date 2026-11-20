@@ -57,7 +57,11 @@ public class LocalInitializationAuditTests
         var sites = sources.Sum(source => FindSites(source.Path, source.Text, configurations).Length);
         // The audit found 39 sites when it was introduced; a sudden zero means the scan broke.
         await Assert.That(sites).IsGreaterThan(30);
-        if (errors.Length != 0) throw new InvalidOperationException(string.Join('\n', errors));
+
+        if (errors.Length != 0)
+        {
+            throw new InvalidOperationException(string.Join('\n', errors));
+        }
     }
 
     [Test]
@@ -75,36 +79,63 @@ public class LocalInitializationAuditTests
             .ToArray();
         var errors = new List<string>();
         var imported = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var path in assemblies.Order(StringComparer.Ordinal))
         {
             var framework = Path.GetFileName(Path.GetDirectoryName(path)!);
             var (compiled, skipTargets) = InspectAssembly(path, framework);
             var assembly = Path.GetFileNameWithoutExtension(path);
+
             foreach (var target in skipTargets)
+            {
                 if (!ReviewedSkipLocalsInitScopes.Contains(assembly + "|" + target))
+                {
                     errors.Add($"{assembly} ({framework}): unreviewed SkipLocalsInit on {target}.");
+                }
+            }
+
             foreach (var site in compiled.Where(site => !site.InitLocals))
+            {
                 errors.Add($"{assembly} ({framework}): {site.Method} executes localloc without local initialization.");
+            }
+
             var own = compiled.Where(site => !IsImported(site.Method)).Sum(site => site.Count);
             var expected = sourceSites.Count(entry => entry.Package == assembly
                 && entry.Site.Configurations.Contains(framework + "/" + Flavor, StringComparer.Ordinal));
             // The shipped analyzer has one netstandard2.0 build, with no framework-specific stack sites.
             if (assembly == "Respire.Analyzers")
+            {
                 expected = sourceSites.Count(entry => entry.Package == assembly);
+            }
+
             if (own != expected)
+            {
                 errors.Add($"{assembly} ({framework}): {own} compiled localloc site(s) in repository code but {expected} audited source site(s). "
                     + "Generated or imported code may allocate on the stack:\n    "
                     + string.Join("\n    ", compiled.Where(site => !IsImported(site.Method)).Select(site => $"{site.Method} x{site.Count}")));
+            }
+
             foreach (var site in compiled.Where(site => IsImported(site.Method)))
             {
                 var key = $"{assembly}|{framework}|{site.Method}|{site.Count}";
                 imported.Add(key);
-                if (!ReviewedImportedSites.ContainsKey(key)) errors.Add("Unreviewed imported stack allocation: " + key);
+
+                if (!ReviewedImportedSites.ContainsKey(key))
+                {
+                    errors.Add("Unreviewed imported stack allocation: " + key);
+                }
             }
         }
+
         foreach (var stale in ReviewedImportedSites.Keys.Except(imported, StringComparer.Ordinal))
+        {
             errors.Add("Stale imported stack allocation review: " + stale);
-        if (errors.Count != 0) throw new InvalidOperationException(string.Join('\n', errors));
+        }
+
+        if (errors.Count != 0)
+        {
+            throw new InvalidOperationException(string.Join('\n', errors));
+        }
     }
 
     /// <summary>
@@ -278,6 +309,7 @@ public class LocalInitializationAuditTests
             }
             """;
         var path = Path.Combine(Path.GetTempPath(), $"local-init-probe-{Guid.NewGuid():N}.dll");
+
         try
         {
             var compilation = TestInspectionSource.CreateCompilation([CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Preview))])

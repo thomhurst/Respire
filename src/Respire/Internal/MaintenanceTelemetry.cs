@@ -25,11 +25,18 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
                 _pending.Dequeue();
                 _dropped++;
             }
+
             _pending.Enqueue((new(notification.Kind, notification.SequenceId, notification.Seconds, notification.Target),
                 DateTimeOffset.UtcNow));
-            if (_dispatching) return;
+
+            if (_dispatching)
+            {
+                return;
+            }
+
             _dispatching = true;
         }
+
         ThreadPool.UnsafeQueueUserWorkItem(static state => state.Drain(), this, preferLocal: false);
     }
 
@@ -39,6 +46,7 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
         {
             (DiagnosticNotification Notification, DateTimeOffset Received) item;
             long dropped;
+
             lock (_gate)
             {
                 if (!_pending.TryDequeue(out item))
@@ -51,7 +59,9 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
                 // counter emission stays pending until a later item is delivered.
                 dropped = _dropped;
             }
+
             var notification = item.Notification;
+
             try
             {
                 var tags = new ActivityTagsCollection
@@ -89,7 +99,11 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
                     RespireTelemetry.MaintenanceNotificationsDropped.Add(dropped,
                         new KeyValuePair<string, object?>("server.address", host),
                         new KeyValuePair<string, object?>("server.port", port));
-                    lock (_gate) _dropped -= dropped;
+
+                    lock (_gate)
+                    {
+                        _dropped -= dropped;
+                    }
                 }
                 catch (Exception error)
                 {
@@ -110,7 +124,10 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
 
     private void LogFailure(Exception error)
     {
-        try { logger?.MaintenanceDiagnosticObserverFailed(error); }
+        try
+        {
+            logger?.MaintenanceDiagnosticObserverFailed(error);
+        }
         catch { /* A failing logger is also an isolated diagnostic listener. */ }
     }
 }

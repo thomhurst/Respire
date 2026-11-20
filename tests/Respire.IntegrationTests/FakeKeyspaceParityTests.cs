@@ -33,14 +33,22 @@ public class FakeKeyspaceParityTests(RedisTestContainer fixture)
             using var keys = await client.ExecuteAsync("KEYS", pattern);
             keys.Select(value => value.AsString()).Should().BeEquivalentTo(expected, $"KEYS pattern '{pattern}'");
             var found = new HashSet<string>();
+
             await foreach (var key in client.Keys.ScanAsync(pattern, countHint: 1))
+            {
                 found.Add(key);
+            }
+
             found.Should().BeEquivalentTo(expected, $"SCAN MATCH pattern '{pattern}'");
         }
 
         var unfiltered = new HashSet<string>();
+
         await foreach (var key in client.Keys.ScanAsync(countHint: 1))
+        {
             unfiltered.Add(key);
+        }
+
         unfiltered.Should().BeEquivalentTo(new[] { "", "nonempty" });
         await client.DeleteAsync("");
         await client.DeleteAsync("nonempty");
@@ -57,8 +65,11 @@ public class FakeKeyspaceParityTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(
             (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString)) with { Protocol = (RespireProtocol)protocol });
         var prefix = Guid.NewGuid().ToString("N") + ":";
+
         foreach (var suffix in new[] { "a", "-", "z", "b" })
+        {
             await client.SetAsync(prefix + suffix, "value");
+        }
 
         foreach (var negate in new[] { false, true })
         {
@@ -68,12 +79,19 @@ public class FakeKeyspaceParityTests(RedisTestContainer fixture)
             using var keys = await client.ExecuteAsync("KEYS", pattern);
             keys.Select(value => value.AsString()).Should().BeEquivalentTo(expected);
             var found = new HashSet<string>();
+
             await foreach (var key in client.Keys.ScanAsync(pattern, countHint: 1))
+            {
                 found.Add(key);
+            }
+
             found.Should().BeEquivalentTo(expected);
         }
+
         foreach (var suffix in new[] { "a", "-", "z", "b" })
+        {
             await client.DeleteAsync(prefix + suffix);
+        }
     }
 
     [Test]
@@ -96,15 +114,22 @@ public class FakeKeyspaceParityTests(RedisTestContainer fixture)
 
         var prefix = Guid.NewGuid().ToString("N") + ":";
         var expected = Enumerable.Range(0, 30).Select(i => prefix + i).ToArray();
-        foreach (var key in expected) await client.SetAsync(key, "value");
+
+        foreach (var key in expected)
+        {
+            await client.SetAsync(key, "value");
+        }
+
         using var keys = await client.ExecuteAsync("KEYS", prefix + "*");
         keys.Select(value => value.AsString()).Should().BeEquivalentTo(expected);
         var found = new HashSet<string>();
+
         await foreach (var key in client.Keys.ScanAsync(prefix + "*", countHint: 1))
         {
             found.Add(key);
             await client.DeleteAsync(key);
         }
+
         found.Should().BeEquivalentTo(expected);
         using var remaining = await client.ExecuteAsync("KEYS", prefix + "*");
         remaining.Count.Should().Be(0);
@@ -123,6 +148,7 @@ public class FakeKeyspaceParityTests(RedisTestContainer fixture)
         var prefix = System.Text.Encoding.ASCII.GetBytes(Guid.NewGuid().ToString("N") + ":");
         byte[] key = [.. prefix, 0, 255, (byte)'c', (byte)'*'];
         using var set = await client.ExecuteAsync("SET", key, "value");
+
         foreach (byte[] suffix in new byte[][]
         {
             [0, 255, (byte)'?', (byte)'\\', (byte)'*'],
@@ -136,14 +162,17 @@ public class FakeKeyspaceParityTests(RedisTestContainer fixture)
             keys[0].AsBytes().Should().Equal(key);
             var cursor = "0";
             var found = new List<string>();
+
             do
             {
                 using var page = await client.ExecuteAsync("SCAN", cursor, "MATCH", pattern, "COUNT", 10);
                 cursor = page[0].AsString();
                 found.AddRange(page[1].Select(value => Convert.ToHexString(value.AsBytes())));
             } while (cursor != "0");
+
             found.Distinct().Should().Equal(Convert.ToHexString(key));
         }
+
         using var deleted = await client.ExecuteAsync("DEL", key);
     }
 }

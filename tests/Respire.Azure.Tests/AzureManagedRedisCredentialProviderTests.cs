@@ -218,8 +218,16 @@ public class AzureManagedRedisCredentialProviderTests
     private sealed class PendingCredential : TokenCredential
     {
         private int _calls;
-        public TaskCompletionSource<AccessToken> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource<AccessToken> Second { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<AccessToken> First
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<AccessToken> Second
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
             => throw new NotSupportedException();
@@ -244,10 +252,25 @@ public class AzureManagedRedisCredentialProviderTests
 
         public RecordingCredential(Exception failure) => _failure = failure;
 
-        public int Calls { get; private set; }
-        public TokenRequestContext? RequestContext { get; private set; }
-        public CancellationToken CancellationToken { get; private set; }
-        public bool CancelOnRequest { get; init; }
+        public int Calls
+        {
+            get; private set;
+        }
+
+        public TokenRequestContext? RequestContext
+        {
+            get; private set;
+        }
+
+        public CancellationToken CancellationToken
+        {
+            get; private set;
+        }
+
+        public bool CancelOnRequest
+        {
+            get; init;
+        }
 
         public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
             => throw new NotSupportedException("The adapter must use asynchronous token acquisition.");

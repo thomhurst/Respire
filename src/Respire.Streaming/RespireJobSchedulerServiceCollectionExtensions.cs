@@ -18,13 +18,24 @@ public static class RespireJobSchedulerServiceCollectionExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
         var interval = pollInterval ?? TimeSpan.FromSeconds(1);
         JobQueueScheduling.ValidateDuration(interval, nameof(pollInterval));
-        if (maximumTicksPerPass is < 1 or > 256) throw new ArgumentOutOfRangeException(nameof(maximumTicksPerPass));
+
+        if (maximumTicksPerPass is < 1 or > 256)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maximumTicksPerPass));
+        }
+
         if (!services.Any(service => service.IsKeyedService && service.ServiceType == typeof(RespireJobQueue<T>)
             && Equals(service.ServiceKey, queueName)))
+        {
             throw new ArgumentException("Register the named typed job queue before its scheduler.", nameof(queueName));
+        }
+
         if (services.Any(service => service.IsKeyedService && service.ServiceType == typeof(RespireJobScheduler<T>)
             && Equals(service.ServiceKey, queueName)))
+        {
             throw new ArgumentException("Each job queue can have only one scheduler registration per host.", nameof(queueName));
+        }
+
         services.AddKeyedSingleton<RespireJobScheduler<T>>(queueName, (provider, _) =>
             provider.GetRequiredKeyedService<RespireJobQueue<T>>(queueName)
                 .CreateScheduler(provider.GetService<TimeProvider>()));
@@ -55,6 +66,7 @@ internal sealed partial class RecurringJobWorker<T>(RespireJobScheduler<T> sched
                 {
                     LogPassFailure(logger, exception);
                 }
+
                 await Task.Delay(pollInterval, clock, stoppingToken).ConfigureAwait(false);
             }
         }

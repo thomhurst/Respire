@@ -22,13 +22,18 @@ public class LockCommandTests
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         await using var connection = await Respire.Networking.RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+
         using (await connection.SendAsync(new Respire.Commands.RawCommand(FakeRespServer.PingFrame)))
         {
         }
 
         server.CloseConnections();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (connection.IsConnected) await Task.Delay(10, timeout.Token);
+
+        while (connection.IsConnected)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
 
         // The connection is already dead when the command reaches the write gate, so nothing was
         // appended. Lock release relies on this type to keep ownership retryable.
@@ -48,7 +53,11 @@ public class LockCommandTests
         await using var connection = await Respire.Networking.RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         var pending = connection.SendAsync(new Respire.Commands.RawCommand(FakeRespServer.PingFrame)).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
 
         server.CloseConnections();
 
@@ -70,6 +79,7 @@ public class LockCommandTests
         var sends = Enumerable.Range(0, 256).Select(_ => Task.Run(async () =>
         {
             await start.Task;
+
             try
             {
                 using var reply = await connection.SendAsync(
@@ -382,6 +392,7 @@ public class LockCommandTests
         await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.NotOwned);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (!keepAlive.CancellationToken.IsCancellationRequested)
         {
             await Task.Delay(10, timeout.Token);
@@ -498,6 +509,7 @@ public class LockCommandTests
         await cancellation.CancelAsync();
 
         OperationCanceledException? caught = null;
+
         try
         {
             await get.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1016,7 +1028,12 @@ public class LockCommandTests
 
         var extension = mutex.ResetExpiryAsync(TimeSpan.FromMinutes(5)).AsTask();
         await commands.FirstExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var renewal = mutex.RenewAsync(static () => { }, CancellationToken.None).AsTask();
+        var renewal = mutex.RenewAsync(
+            static () =>
+            {
+            },
+            CancellationToken.None
+        ).AsTask();
 
         await Assert.That(commands.ExtensionCount).IsEqualTo(1);
         commands.CompleteFirstExtension();
@@ -1035,6 +1052,7 @@ public class LockCommandTests
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromMilliseconds(200));
 
         await using var keepAlive = await mutex.KeepAliveAsync();
+
         try
         {
             await Task.Delay(TimeSpan.FromSeconds(5), keepAlive.CancellationToken);
@@ -1078,6 +1096,7 @@ public class LockCommandTests
 
         var keepAlive = await mutex.KeepAliveAsync();
         Task? disposal = null;
+
         try
         {
             await renewalStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -1147,6 +1166,7 @@ public class LockCommandTests
         await using var keepAlive = await mutex.KeepAliveAsync();
 
         await commands.FirstExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
         try
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, keepAlive.CancellationToken)
@@ -1206,6 +1226,7 @@ public class LockCommandTests
             clock.GetTimestamp(),
             clock);
         var keepAlive = await mutex.KeepAliveAsync();
+
         try
         {
             var renewal = await clock.Scheduled.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1334,6 +1355,7 @@ public class LockCommandTests
             clock.GetTimestamp(),
             clock);
         var keepAlive = await mutex.KeepAliveAsync();
+
         try
         {
             var renewal = await clock.Scheduled.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1351,6 +1373,7 @@ public class LockCommandTests
             commands.CompleteFence();
             await keepAlive.DisposeAsync();
         }
+
         await Assert.That(keepAlive.Failure).IsTypeOf<RespireConnectionException>();
     }
 
@@ -1368,6 +1391,7 @@ public class LockCommandTests
 
         var extension = mutex.ResetExpiryAsync(TimeSpan.FromSeconds(5)).AsTask();
         await commands.FenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         try
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, keepAlive.CancellationToken)
@@ -1376,6 +1400,7 @@ public class LockCommandTests
         catch (OperationCanceledException)
         {
         }
+
         await Assert.That(keepAlive.OwnershipLost).IsTrue();
         await Assert.That(commands.FenceCompleted.Task.IsCompleted).IsFalse();
 
@@ -1420,6 +1445,7 @@ public class LockCommandTests
         await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (!keepAlive.CancellationToken.IsCancellationRequested)
         {
             await Task.Delay(10, timeout.Token);
@@ -1506,8 +1532,11 @@ public class LockCommandTests
         await Assert.That(attempt.Acquired).IsFalse();
         await Assert.That(Stopwatch.GetElapsedTime(started)).IsGreaterThanOrEqualTo(wait);
         await Assert.That(server.ReceivedCommands.Count).IsGreaterThanOrEqualTo(1);
+
         if (firstReplyDelay > wait.TotalMilliseconds)
+        {
             await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+        }
     }
 
     [Test]
@@ -1579,6 +1608,7 @@ public class LockCommandTests
     private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (server.CommandsSeen < count)
         {
             await Task.Delay(10, timeout.Token);
@@ -1589,10 +1619,26 @@ public class LockCommandTests
     // Null keeps the scripted reply (+OK).
     private static byte[]? LockReply(string command)
     {
-        if (command == "CLIENT ID") return ":41\r\n"u8.ToArray();
-        if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal)) return ":0\r\n"u8.ToArray();
-        if (command == "PING") return "+PONG\r\n"u8.ToArray();
-        if (command.StartsWith("DELEX ", StringComparison.Ordinal)) return ":1\r\n"u8.ToArray();
+        if (command == "CLIENT ID")
+        {
+            return ":41\r\n"u8.ToArray();
+        }
+
+        if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal))
+        {
+            return ":0\r\n"u8.ToArray();
+        }
+
+        if (command == "PING")
+        {
+            return "+PONG\r\n"u8.ToArray();
+        }
+
+        if (command.StartsWith("DELEX ", StringComparison.Ordinal))
+        {
+            return ":1\r\n"u8.ToArray();
+        }
+
         return null;
     }
 
@@ -1616,20 +1662,41 @@ public class LockCommandTests
 
         public IReadOnlyList<Exception?> Warnings
         {
-            get { lock (_warnings) return _warnings.ToArray(); }
+            get
+            {
+                lock (_warnings)
+                {
+                    return _warnings.ToArray();
+                }
+            }
         }
 
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
             Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            if (logLevel != LogLevel.Warning) return;
-            lock (_warnings) _warnings.Add(exception);
+            if (logLevel != LogLevel.Warning)
+            {
+                return;
+            }
+
+            lock (_warnings)
+            {
+                _warnings.Add(exception);
+            }
         }
     }
 
@@ -1640,8 +1707,11 @@ public class LockCommandTests
     private static async Task WaitForCommandAsync(FakeRespServer server, string prefix)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (!server.ReceivedCommands.Any(command => command.StartsWith(prefix, StringComparison.Ordinal)))
+        {
             await Task.Delay(10, timeout.Token);
+        }
     }
 
     private sealed class GatedLockClock : TimeProvider
@@ -1649,7 +1719,12 @@ public class LockCommandTests
         // This case tests uncertainty ordering, not elapsed-time expiry. Only explicit timer
         // release advances the loop; a busy runner cannot expire the lease before renewal.
         public override long GetTimestamp() => 0;
-        internal TaskCompletionSource<LockTimer> Scheduled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource<LockTimer> Scheduled
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = new LockTimer(callback, state, dueTime);
@@ -1661,11 +1736,20 @@ public class LockCommandTests
     private sealed class LockTimer(TimerCallback callback, object? state, TimeSpan dueTime) : ITimer
     {
         private TimerCallback? _callback = callback;
+
         internal TimeSpan DueTime => dueTime;
+
         internal void Fire() => Interlocked.Exchange(ref _callback, null)?.Invoke(state);
+
         public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException("This test clock supports one-shot delays only.");
+
         public void Dispose() => Interlocked.Exchange(ref _callback, null);
-        public ValueTask DisposeAsync() { Dispose(); return default; }
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return default;
+        }
     }
 
     private sealed class CoordinatedLockCommands : IRespireLockCommands, IManagedLockCommands
@@ -1701,25 +1785,46 @@ public class LockCommandTests
             _waitForRelease = waitForRelease;
         }
 
-        public TaskCompletionSource FirstExtensionStarted { get; } =
+        public TaskCompletionSource FirstExtensionStarted
+        {
+            get;
+        } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public TaskCompletionSource SecondExtensionStarted { get; } =
+        public TaskCompletionSource SecondExtensionStarted
+        {
+            get;
+        } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public TaskCompletionSource FenceStarted { get; } =
+        public TaskCompletionSource FenceStarted
+        {
+            get;
+        } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public TaskCompletionSource FenceCompleted { get; } =
+        public TaskCompletionSource FenceCompleted
+        {
+            get;
+        } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public TaskCompletionSource ReleaseStarted { get; } =
+        public TaskCompletionSource ReleaseStarted
+        {
+            get;
+        } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public TaskCompletionSource RaceExtensionStarted { get; } =
+        public TaskCompletionSource RaceExtensionStarted
+        {
+            get;
+        } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public TaskCompletionSource RaceReleaseStarted { get; } =
+        public TaskCompletionSource RaceReleaseStarted
+        {
+            get;
+        } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public int ExtensionCount
@@ -1804,6 +1909,7 @@ public class LockCommandTests
             CancellationToken cancellationToken = default)
         {
             int call;
+
             lock (_expiries)
             {
                 _expiries.Add(expiry);

@@ -31,28 +31,54 @@ public partial class ReplicaRedirectTests
 #pragma warning disable RESP010 // Each matrix case owns its policy, credentials and retained-target state.
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(), Username = "user", Password = "secret",
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
+            Username = "user",
+            Password = "secret",
             CommandTimeout = TimeSpan.FromSeconds(10),
             RetryPolicy = retry ? new() { RetryableErrors = RespireRetryableErrors.ConnectionLoss } : null,
             ReplicaRedirectValidator = _ =>
             {
                 calls++;
-                if (allowed) return true;
-                if (throws) throw cause;
+
+                if (allowed)
+                {
+                    return true;
+                }
+
+                if (throws)
+                {
+                    throw cause;
+                }
+
                 return false;
             },
         });
+
 #pragma warning restore RESP010
-        if (retained) await Assert.That(await client.GetStringAsync("seed")).IsEqualTo("7");
+        if (retained)
+        {
+            await Assert.That(await client.GetStringAsync("seed")).IsEqualTo("7");
+        }
+
         allowed = false;
         var commands = target.ReceivedCommands.Count;
         var before = client.ClientSideCache!.GetStatistics().ContinuityFlushes;
         var error = await Assert.That(async () =>
         {
-            if (operation == "GET") await client.GetStringAsync("key");
-            else if (operation == "MGET") await client.Strings.GetManyAsync("key", "other");
-            else await client.Scripts.ExecuteIntegerAsync(
+            if (operation == "GET")
+            {
+                await client.GetStringAsync("key");
+            }
+            else if (operation == "MGET")
+            {
+                await client.Strings.GetManyAsync("key", "other");
+            }
+            else
+            {
+                await client.Scripts.ExecuteIntegerAsync(
                 RespireScript.Create("return 7").WithRetryCategory(RespireCommandRetryCategory.ReadOnly), "key");
+            }
         }).ThrowsExactly<RespireException>();
         await Assert.That(error!.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", target.Port));
         await Assert.That(error.IsCommandNotSubmitted).IsTrue();
@@ -85,7 +111,9 @@ public partial class ReplicaRedirectTests
 #pragma warning disable RESP010 // This case owns both hop identities and its destination policy.
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(), RetryPolicy = retry ? new() : null,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
+            RetryPolicy = retry ? new() : null,
             ReplicaRedirectValidator = endpoint =>
             {
                 destinations.Add(endpoint);

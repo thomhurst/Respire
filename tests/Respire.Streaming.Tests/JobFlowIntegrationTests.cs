@@ -39,6 +39,7 @@ public partial class JobQueueIntegrationTests
         var worker = provider.GetServices<IHostedService>().Single();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await worker.StartAsync(deadline.Token);
+
         try
         {
             await UntilAsync(async () => (await queue.GetFlowResultsAsync("flow"))[0].Status is "completed" or "failed", deadline.Token);
@@ -46,14 +47,19 @@ public partial class JobQueueIntegrationTests
             var failsParent = fail && policy == RespireJobFlowFailurePolicy.FailParent;
             await Assert.That(results[0].Status).IsEqualTo(failsParent ? "failed" : "completed");
             await Assert.That(state.Children.ContainsKey("root")).IsEqualTo(!failsParent);
+
             if (!failsParent)
             {
                 var children = state.Children["branch"];
                 await Assert.That(children.Count).IsEqualTo(fail && policy == RespireJobFlowFailurePolicy.Ignore ? 1 : 2);
                 var sibling = children.Single(child => child.Id == "sibling");
                 await Assert.That(sibling.Result!).IsEquivalentTo(new byte[] { 0, 255, 13, 10 });
+
                 if (fail && policy == RespireJobFlowFailurePolicy.Continue)
+                {
                     await Assert.That(children.Single(child => child.Id == "leaf").Status).IsEqualTo("failed");
+                }
+
                 await Assert.That(state.Children["root"].Single().Status).IsEqualTo("completed");
             }
             else
@@ -62,11 +68,13 @@ public partial class JobQueueIntegrationTests
                 await Assert.That(events.Count(entry => entry.GetString("reason") == "child-failed")).IsEqualTo(2);
                 await using var reader = queue.ReadEventsAsync(cancellationToken: deadline.Token).GetAsyncEnumerator();
                 RespireJobEvent terminal;
+
                 do
                 {
                     await Assert.That(await reader.MoveNextAsync()).IsTrue();
                     terminal = reader.Current;
                 } while (terminal.JobId != "root");
+
                 await Assert.That(terminal.Kind).IsEqualTo("dead-letter");
                 await Assert.That(terminal.Reason).IsEqualTo("child-failed");
                 await Assert.That(terminal.EntryId.Value).IsEqualTo("0-0");
@@ -131,7 +139,11 @@ public partial class JobQueueIntegrationTests
             if flow.version == 0 then flow.version = nil end
             return redis.call('SET', KEYS[1], cmsgpack.pack(flow))
             """);
-        using (await client.Scripts.ExecuteAsync(changeVersion, [key], [version])) { }
+
+        using (await client.Scripts.ExecuteAsync(changeVersion, [key], [version]))
+        {
+        }
+
         await Assert.That(async () => await queue.GetFlowResultsAsync("flow")).Throws<RespireServerException>();
         await Assert.That(async () => await queue.EnqueueFlowAsync("flow", tree)).Throws<RespireServerException>();
         await Assert.That(async () => await queue.RemoveFlowAsync("flow")).Throws<RespireServerException>();
@@ -143,7 +155,11 @@ public partial class JobQueueIntegrationTests
         await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(1);
         await Assert.That((await client.Streams.PendingSummaryAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup)).Count)
             .IsEqualTo(1);
-        using (await client.Scripts.ExecuteAsync(changeVersion, [key], [1])) { }
+
+        using (await client.Scripts.ExecuteAsync(changeVersion, [key], [1]))
+        {
+        }
+
         await Assert.That((await queue.GetFlowResultsAsync("flow"))[0].Status).IsEqualTo("waiting");
         await Assert.That(await client.Scripts.ExecuteIntegerAsync(JobScript("Complete"), keys, args)).IsEqualTo(1);
     }
@@ -161,17 +177,23 @@ public partial class JobQueueIntegrationTests
             "crashed", new() { Count = 1 })).Single();
         // Simulate a consumer crash before completion, then reclaim with the same name.
         using (var claimed = await client.ExecuteAsync("XCLAIM", [queue.StreamKey, RespireJobQueue<string>.ConsumerGroup,
-            "crashed", 0, leaf.Id.Value])) { }
+            "crashed", 0, leaf.Id.Value]))
+        {
+        }
+
         RespireKey[] keys = [queue.StreamKey, queue.EventsStreamKey, queue.DeadLetterStreamKey, leaf.GetString("_respire.job.flow")!];
         var script = JobScript(delete ? "CompleteAndDelete" : "Complete");
         await Assert.That(await client.Scripts.ExecuteIntegerAsync(script, keys,
             [RespireJobQueue<string>.ConsumerGroup, "crashed", leaf.Id.Value, 1, "completed", "", "", 1, "stale"]))
             .IsEqualTo(0);
         await Assert.That((await queue.GetFlowResultsAsync("flow"))[0].Status).IsEqualTo("waiting");
+
         await using (var recovered = await ConnectAsync(protocol))
+        {
             await Assert.That(await recovered.Scripts.ExecuteIntegerAsync(script, keys,
                 [RespireJobQueue<string>.ConsumerGroup, "crashed", leaf.Id.Value, 2, "completed", "", "", 1, new byte[] { 0, 255 }]))
                 .IsEqualTo(1);
+        }
         // No client-side follow-up is needed to activate the parent, even if the reply is lost.
         await Assert.That(await client.Scripts.ExecuteIntegerAsync(script, keys,
             [RespireJobQueue<string>.ConsumerGroup, "crashed", leaf.Id.Value, 2, "completed"]))
@@ -202,10 +224,12 @@ public partial class JobQueueIntegrationTests
         await admin.Server.AclSetUserAsync(username, ["on", ">flow-password", "~*", "+@all", "-" + denied]);
         RespireKey[] keys = [queue.StreamKey, queue.EventsStreamKey, queue.DeadLetterStreamKey, leaf.GetString("_respire.job.flow")!];
         RespireValue[] args = [RespireJobQueue<string>.ConsumerGroup, "consumer", leaf.Id.Value, 1, "completed"];
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = username, Password = "flow-password" });
+                with
+            { Username = username, Password = "flow-password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(JobScript("Complete"), keys, args))
                 .Throws<RespireServerException>();
             await Assert.That((await queue.GetFlowResultsAsync("flow"))[0].Status).IsEqualTo("waiting");
@@ -226,10 +250,12 @@ public partial class JobQueueIntegrationTests
         await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var username = "flow-enqueue-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">flow-password", "~*", "+@all", "-" + denied]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = username, Password = "flow-password" });
+                with
+            { Username = username, Password = "flow-password" });
             var tree = new RespireJobFlow<string>("parent", "parent") { Children = [new("leaf", "leaf")] };
             await Assert.That(async () => await Queue(restricted).EnqueueFlowAsync("flow", tree)).Throws<RespireServerException>();
             var queue = Queue(admin);
@@ -246,7 +272,12 @@ public partial class JobQueueIntegrationTests
         await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var info = await admin.Server.InfoAsync("server");
         var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
-        if (Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]) < new Version(8, 2)) return;
+
+        if (Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]) < new Version(8, 2))
+        {
+            return;
+        }
+
         var queue = Queue(admin);
         await queue.EnqueueFlowAsync("flow", new("parent", "parent") { Children = [new("leaf", "leaf")] });
         await admin.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
@@ -256,10 +287,12 @@ public partial class JobQueueIntegrationTests
         await admin.Server.AclSetUserAsync(username, ["on", ">flow-password", "~*", "+@all", "-xackdel"]);
         RespireKey[] keys = [queue.StreamKey, queue.EventsStreamKey, queue.DeadLetterStreamKey, leaf.GetString("_respire.job.flow")!];
         RespireValue[] args = [RespireJobQueue<string>.ConsumerGroup, "consumer", leaf.Id.Value, 1, "completed", "", "", 1, "result"];
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = username, Password = "flow-password" });
+                with
+            { Username = username, Password = "flow-password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(JobScript("CompleteAndDelete"), keys, args))
                 .Throws<RespireServerException>();
             var results = await queue.GetFlowResultsAsync("flow");
@@ -299,10 +332,21 @@ public partial class JobQueueIntegrationTests
 
     public sealed class FlowHandlerState
     {
-        public bool Fail { get; init; }
-        public bool Retry { get; init; }
+        public bool Fail
+        {
+            get; init;
+        }
+
+        public bool Retry
+        {
+            get; init;
+        }
         public int LeafAttempts;
-        public ConcurrentDictionary<string, IReadOnlyList<RespireJobFlowResult>> Children { get; } = new();
+
+        public ConcurrentDictionary<string, IReadOnlyList<RespireJobFlowResult>> Children
+        {
+            get;
+        } = new();
     }
 
     public sealed class FlowHandler(FlowHandlerState state) : IRespireStreamHandler<RespireJob<string>>
@@ -310,7 +354,10 @@ public partial class JobQueueIntegrationTests
         public async ValueTask<RespireStreamWorkerResult> HandleAsync(RespireJob<string> job, CancellationToken cancellationToken)
         {
             if (job.Id == "leaf" && state.Retry && Interlocked.Increment(ref state.LeafAttempts) == 1)
+            {
                 return job.RetryAfter(TimeSpan.FromMilliseconds(20));
+            }
+
             state.Children[job.Id] = await job.GetChildResultsAsync(cancellationToken);
             return state.Fail && job.Id == "leaf" ? RespireStreamWorkerResult.DeadLetter : job.Complete([0, 255, 13, 10]);
         }

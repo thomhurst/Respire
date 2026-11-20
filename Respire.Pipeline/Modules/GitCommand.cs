@@ -45,7 +45,9 @@ internal static class GitCommand
             // Preserve the caller's environment for source discovery, but never let
             // repository-selection variables redirect writes from temporary metadata.
             foreach (var name in RepositoryEnvironmentVariables)
+            {
                 process.StartInfo.Environment.Remove(name);
+            }
         }
 
         foreach (var argument in arguments)
@@ -68,11 +70,20 @@ internal static class GitCommand
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // Join this owned process before the caller removes its temporary repository.
-            try { process.Kill(entireProcessTree: true); }
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
             catch (InvalidOperationException) { /* The process already exited. */ }
+
             await process.WaitForExitAsync(CancellationToken.None);
-            try { await Task.WhenAll(stdoutTask, stderrTask); }
+
+            try
+            {
+                await Task.WhenAll(stdoutTask, stderrTask);
+            }
             catch (OperationCanceledException) { }
+
             throw;
         }
 

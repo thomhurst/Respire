@@ -25,7 +25,9 @@ public class ClusterStreamUploadIntegrationTests(SharedRedisClusterFixture fixtu
         var cluster = fixture.Cluster;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Protocol = protocol, Connections = 1,
+            UseCluster = true,
+            Protocol = protocol,
+            Connections = 1,
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new(cluster.Host, cluster.Port(0))],
         });
@@ -33,11 +35,16 @@ public class ClusterStreamUploadIntegrationTests(SharedRedisClusterFixture fixtu
         var slot = ClusterHash.GetSlot(key);
         client.Core.Cluster!.GetSlotOwnerEndpoint(slot)!.Value.Port.Should().Be(cluster.Port(0));
         await cluster.MoveKeysAsync(slot, source: 0, target: 1);
-        if (!asking) await cluster.FinishMoveAsync(slot, target: 1);
+
+        if (!asking)
+        {
+            await cluster.FinishMoveAsync(slot, target: 1);
+        }
 
         await using var directSource = RespireClient.Create(new RespireOptions
         {
-            Protocol = protocol, Endpoints = [new(cluster.Host, cluster.Port(0))],
+            Protocol = protocol,
+            Endpoints = [new(cluster.Host, cluster.Port(0))],
         });
         Func<Task> rejectedRead = async () => await directSource.Strings.GetBytesAsync(key);
         var rejection = await rejectedRead.Should().ThrowAsync<RespireServerException>();
@@ -46,6 +53,7 @@ public class ClusterStreamUploadIntegrationTests(SharedRedisClusterFixture fixtu
         // Larger than several upload chunks, including binary bytes and a nonzero stream origin.
         var payload = Enumerable.Range(0, 96 * 1024 + 7).Select(index => (byte)(index % 251)).ToArray();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
         if (sequence)
         {
             (await client.Strings.SetAsync(key, new ReadOnlySequence<byte>(payload),
@@ -68,13 +76,21 @@ public class ClusterStreamUploadIntegrationTests(SharedRedisClusterFixture fixtu
 
     private sealed class ReplayCountingStream(byte[] bytes) : MemoryStream(bytes)
     {
-        internal int Rewinds { get; private set; }
+        internal int Rewinds
+        {
+            get; private set;
+        }
+
         public override long Position
         {
             get => base.Position;
             set
             {
-                if (value < base.Position) Rewinds++;
+                if (value < base.Position)
+                {
+                    Rewinds++;
+                }
+
                 base.Position = value;
             }
         }

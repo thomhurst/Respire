@@ -43,6 +43,7 @@ public class FakeTests
         var gate = new RespireFakeGate();
         using var fault = server.InjectFault("SET", RespireFakeFault.Pause(gate, afterExecution: true));
         var pending = client.SetAsync("accepted", "value").AsTask();
+
         try
         {
             await fault.Matched.WaitAsync(TimeSpan.FromSeconds(10));
@@ -56,6 +57,7 @@ public class FakeTests
             gate.Release();
             await pending.WaitAsync(TimeSpan.FromSeconds(10));
         }
+
         await Assert.That(await pending).IsTrue();
     }
 
@@ -66,6 +68,7 @@ public class FakeTests
     {
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = protocol });
+
         using (var fault = server.InjectFault("SET", RespireFakeFault.Loading(), occurrences: null))
         {
             var error = await Assert.That(async () => await client.SetAsync("key", "rejected")).Throws<RespireServerException>();
@@ -74,6 +77,7 @@ public class FakeTests
             await Assert.That(fault.ExecutionCount).IsEqualTo(0);
             await Assert.That(await client.GetStringAsync("key")).IsNull();
         }
+
         await client.SetAsync("key", "after scope");
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("after scope");
     }

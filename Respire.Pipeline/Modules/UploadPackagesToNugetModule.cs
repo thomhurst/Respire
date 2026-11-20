@@ -21,7 +21,7 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
     {
         var packageFiles = await context.GetModule<PackagePathsParserModule>();
         var packages = packageFiles.ValueOrDefault ?? Array.Empty<FileInfo>();
-        
+
         if (packages.Length == 0)
         {
             context.Logger.LogWarning("No packages found to upload");
@@ -35,25 +35,25 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
         }
 
         context.Logger.LogInformation("Uploading {Count} packages to NuGet.org", packages.Length);
-        
+
         var results = new List<CommandResult>();
 
         foreach (var packageFile in packages)
         {
             context.Logger.LogInformation("Uploading {PackageName}...", packageFile.Name);
-            
+
             var result = await context.Tools.DotNet.NuGet.PushAsync(new DotNetNuGetPushOptions([packageFile.FullName])
             {
                 Source = "https://api.nuget.org/v3/index.json",
                 ApiKey = _nugetSettings.Value.ApiKey,
                 SkipDuplicate = true
             }, cancellationToken: cancellationToken);
-            
+
             results.Add(result);
         }
 
         context.Logger.LogInformation("Completed uploading packages to NuGet.org");
-        
+
         return results.ToArray();
     }
 }

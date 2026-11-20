@@ -30,17 +30,36 @@ public sealed partial class RespireJobQueue<T>
 public sealed class RespireJobGroupOptions
 {
     /// <summary>Maximum live delivery leases across workers. Null means unlimited.</summary>
-    public int? MaxConcurrency { get; init; }
+    public int? MaxConcurrency
+    {
+        get; init;
+    }
+
     /// <summary>GCRA rate policy: PermitLimit is the burst capacity, replenished over Window. Null means unlimited.</summary>
-    public RespireJobRateLimit? RateLimit { get; init; }
+    public RespireJobRateLimit? RateLimit
+    {
+        get; init;
+    }
+
     /// <summary>Renewable delivery lease lifetime. Defaults to one minute; must be at least 100 milliseconds.</summary>
-    public TimeSpan LeaseDuration { get; init; } = TimeSpan.FromMinutes(1);
+    public TimeSpan LeaseDuration
+    {
+        get; init;
+    } = TimeSpan.FromMinutes(1);
 
     internal void Validate()
     {
-        if (MaxConcurrency is { } maximum) ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximum);
+        if (MaxConcurrency is { } maximum)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximum);
+        }
+
         RateLimit?.Validate();
         JobQueueScheduling.ValidateDuration(LeaseDuration, nameof(LeaseDuration));
-        if (LeaseDuration < TimeSpan.FromMilliseconds(100)) throw new ArgumentOutOfRangeException(nameof(LeaseDuration));
+
+        if (LeaseDuration < TimeSpan.FromMilliseconds(100))
+        {
+            throw new ArgumentOutOfRangeException(nameof(LeaseDuration));
+        }
     }
 }

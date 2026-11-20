@@ -29,7 +29,8 @@ public class HashImportTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
         {
-            Protocol = (RespireProtocol)protocol, MaxInflightCommands = 2,
+            Protocol = (RespireProtocol)protocol,
+            MaxInflightCommands = 2,
             CommandTimeout = TimeSpan.FromSeconds(2),
         });
 #pragma warning restore RESP010
@@ -48,6 +49,7 @@ public class HashImportTests
         await pause.Matched.WaitAsync(limit);
         await Assert.That(session.Connection.InspectForTests().Inflight.Count).IsEqualTo(2);
         using var caller = new CancellationTokenSource();
+
         try
         {
             await using var multi = transaction ? session.CreateTransaction() : null;
@@ -55,13 +57,18 @@ public class HashImportTests
             Task operation = multi is null
                 ? session.SetAsync("unsent", "schema", ["value"], caller.Token).AsTask()
                 : multi.CommitAsync(caller.Token).AsTask();
+
             if (cancelCaller)
             {
                 caller.Cancel();
                 var error = await Assert.That(async () => await operation.WaitAsync(limit))
                     .Throws<RespireCommandNotSubmittedException>();
                 await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
-                if (pending is not null) await Assert.That(pending.Error).IsSameReferenceAs(error);
+
+                if (pending is not null)
+                {
+                    await Assert.That(pending.Error).IsSameReferenceAs(error);
+                }
             }
             else
             {
@@ -70,17 +77,26 @@ public class HashImportTests
                 await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.WaitingForCapacity);
                 await Assert.That(error.Diagnostics.InflightCount).IsEqualTo(2);
                 await Assert.That(error.IsCommandNotSubmitted).IsTrue();
-                if (pending is not null) await Assert.That(pending.Error).IsSameReferenceAs(error);
+
+                if (pending is not null)
+                {
+                    await Assert.That(pending.Error).IsSameReferenceAs(error);
+                }
             }
         }
         finally
         {
             gate.Release();
+
             foreach (var reply in await Task.WhenAll(blockers).WaitAsync(limit))
             {
-                using (reply) await Assert.That(reply.AsString()).IsEqualTo("PONG");
+                using (reply)
+                {
+                    await Assert.That(reply.AsString()).IsEqualTo("PONG");
+                }
             }
         }
+
         await Assert.That(multiProbe.MatchedCount).IsEqualTo(0);
         await Assert.That(importProbe.MatchedCount).IsEqualTo(0);
         importProbe.Dispose();
@@ -102,7 +118,8 @@ public class HashImportTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
         {
-            Protocol = (RespireProtocol)protocol, CommandTimeout = TimeSpan.FromSeconds(2),
+            Protocol = (RespireProtocol)protocol,
+            CommandTimeout = TimeSpan.FromSeconds(2),
         });
 #pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
@@ -113,13 +130,19 @@ public class HashImportTests
         await using var multi = transaction ? session.CreateTransaction() : null;
         var pending = multi?.Hashes.Import("key", "schema", "value");
         Task operation = multi is null ? session.SetAsync("key", "schema", "value").AsTask() : multi.CommitAsync().AsTask();
+
         try
         {
             await pause.Matched.WaitAsync(limit);
             var error = await Assert.That(async () => await operation.WaitAsync(limit))
                 .ThrowsExactly<RespireTimeoutException>();
             await Assert.That(error!.IsCommandNotSubmitted).IsFalse();
-            if (pending is not null) await Assert.That(pending.Error).IsSameReferenceAs(error);
+
+            if (pending is not null)
+            {
+                await Assert.That(pending.Error).IsSameReferenceAs(error);
+            }
+
             await Assert.That(async () => await session.SetAsync("later", "schema", "value"))
                 .Throws<ObjectDisposedException>();
             await Assert.That(pause.MatchedCount).IsEqualTo(1);
@@ -137,18 +160,20 @@ public class HashImportTests
         await using var server = new RespireFakeServer();
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
-            { Protocol = (RespireProtocol)protocol, Connections = 3 });
+        { Protocol = (RespireProtocol)protocol, Connections = 3 });
 #pragma warning restore RESP010
         await using var first = await client.Hashes.CreateImportSessionAsync();
         await using var second = await client.Hashes.CreateImportSessionAsync();
         await first.PrepareAsync("schema", "z", "a");
         await Assert.That(async () => await second.SetAsync("absent", "schema", "x", "y")).Throws<RespireServerException>();
         await second.PrepareAsync("schema", "different");
+
         for (var index = 0; index < 10; index++)
         {
             using var pong = await client.ExecuteAsync("PING");
             await first.SetAsync($"first:{index}", "schema", "z-value", "a-value");
         }
+
         await second.SetAsync("second", "schema", "other");
         await Assert.That(await client.Hashes.GetStringAsync("first:9", "z")).IsEqualTo("z-value");
         await Assert.That(await client.Hashes.GetStringAsync("first:9", "a")).IsEqualTo("a-value");
@@ -184,8 +209,16 @@ public class HashImportTests
         Array.Fill(name, (byte)2);
         Array.Fill(field, (byte)3);
         Array.Fill(value, (byte)4);
-        if (multi is not null) await multi.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (multi is not null)
+        {
+            await multi.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         await Assert.That(prepared.Result).IsTrue();
         await Assert.That(imported.Result).IsTrue();
         var result = await client.Hashes.GetBytesAsync(new RespireKey(new byte[] { 0, 255 }), new RespireKey(new byte[] { 255, 0 }));
@@ -206,27 +239,34 @@ public class HashImportTests
         await using var server = new RespireFakeServer();
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
-            { MaxInflightCommands = capacity, Protocol = (RespireProtocol)protocol });
+        { MaxInflightCommands = capacity, Protocol = (RespireProtocol)protocol });
 #pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         using var batch = session.CreateBatch();
+
         for (var index = 0; index < 32; index++)
         {
             _ = batch.Hashes.PrepareImport("schema", $"field:{index}");
             _ = batch.Hashes.Import($"key:{index}", "schema", $"value:{index}");
             _ = batch.Hashes.DiscardImport("schema");
         }
+
         var gate = new RespireFakeGate();
         using var pause = server.InjectFault("HIMPORT", RespireFakeFault.Pause(gate));
         var execute = batch.ExecuteAsync().AsTask();
+
         try
         {
             await pause.Matched.WaitAsync(TimeSpan.FromSeconds(5));
             gate.Release();
             await execute.WaitAsync(TimeSpan.FromSeconds(10));
+
             for (var index = 0; index < 32; index++)
+            {
                 await Assert.That(await client.Hashes.GetStringAsync($"key:{index}", $"field:{index}"))
                     .IsEqualTo($"value:{index}");
+            }
+
             await Assert.That(await session.DiscardAllAsync()).IsEqualTo(0);
         }
         finally { gate.Release(); }
@@ -243,25 +283,42 @@ public class HashImportTests
         var inMulti = false;
         server.ReplyOverride = (_, command) =>
         {
-            if (command == "CLUSTER SLOTS") return topology;
-            if (command == "MULTI") { inMulti = true; return FakeRespServer.OkReply; }
+            if (command == "CLUSTER SLOTS")
+            {
+                return topology;
+            }
+
+            if (command == "MULTI")
+            {
+                inMulti = true;
+                return FakeRespServer.OkReply;
+            }
+
             if (command == "EXEC")
             {
                 inMulti = false;
                 return "*2\r\n-ERR unknown fieldset\r\n-READONLY demoted primary\r\n"u8.ToArray();
             }
-            if (inMulti) return "+QUEUED\r\n"u8.ToArray();
+
+            if (inMulti)
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
             return command.StartsWith("HIMPORT SET", StringComparison.Ordinal)
                 ? "-READONLY demoted primary\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
-            { UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+        { UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
 #pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync("{one}:anchor");
         await session.PrepareAsync("schema", "field");
+
         if (mode == "immediate")
+        {
             await Assert.That(async () => await session.SetAsync("{one}:key", "schema", "value")).Throws<RespireServerException>();
+        }
         else if (mode == "batch")
         {
             using var batch = session.CreateBatch();
@@ -276,6 +333,7 @@ public class HashImportTests
             await transaction.CommitAsync();
             await Assert.That(rejected.Error is RespireServerException { Code: RespireErrorCodes.ReadOnly }).IsTrue();
         }
+
         await Assert.That(server.ReceivedCommands.Count(command => command == "HIMPORT SET {one}:key schema value")).IsEqualTo(1);
         await Assert.That(async () => await session.SetAsync("{one}:later", "schema", "value")).Throws<ObjectDisposedException>();
         await Assert.That(client.Core.Cluster!.GetKnownSlotOwner(session.ClusterSlot!.Value)).IsNull();
@@ -318,11 +376,20 @@ public class HashImportTests
         {
             if (command == "MULTI")
             {
-                if (!denyExec) return "-NOPERM MULTI denied\r\n"u8.ToArray();
+                if (!denyExec)
+                {
+                    return "-NOPERM MULTI denied\r\n"u8.ToArray();
+                }
+
                 inMulti = true;
                 return FakeRespServer.OkReply;
             }
-            if (command == "EXEC") return "-NOPERM EXEC denied\r\n"u8.ToArray();
+
+            if (command == "EXEC")
+            {
+                return "-NOPERM EXEC denied\r\n"u8.ToArray();
+            }
+
             return inMulti ? "+QUEUED\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
@@ -332,8 +399,11 @@ public class HashImportTests
         var pending = transaction.Hashes.Import("key", "schema", "value");
         await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireServerException>();
         await Assert.That(pending.Status).IsEqualTo(RespirePendingStatus.Faulted);
+
         if (denyExec)
+        {
             await Assert.That(async () => await session.PrepareAsync("later", "field")).Throws<ObjectDisposedException>();
+        }
         else
         {
             await Assert.That(server.ReceivedCommands.Contains("HIMPORT SET key schema value")).IsFalse();
@@ -356,8 +426,16 @@ public class HashImportTests
         server.ReplyOverride = (_, command) =>
         {
             if (command.StartsWith("HELLO ", StringComparison.Ordinal))
+            {
                 return "%1\r\n+proto\r\n:3\r\n"u8.ToArray();
-            if (command == "MULTI") { inMulti = true; return FakeRespServer.OkReply; }
+            }
+
+            if (command == "MULTI")
+            {
+                inMulti = true;
+                return FakeRespServer.OkReply;
+            }
+
             if (command == "EXEC")
             {
                 inMulti = false;
@@ -368,11 +446,12 @@ public class HashImportTests
                     _ => "+OK\r\n"u8.ToArray(),
                 };
             }
+
             return inMulti ? "-NOPERM HIMPORT SET denied\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
-            { Protocol = (RespireProtocol)protocol, Endpoints = [new("127.0.0.1", server.Port)] });
+        { Protocol = (RespireProtocol)protocol, Endpoints = [new("127.0.0.1", server.Port)] });
 #pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
@@ -381,10 +460,15 @@ public class HashImportTests
         var error = await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireServerException>();
         await Assert.That(error?.Code).IsEqualTo("NOPERM");
         await Assert.That(pending.Status).IsEqualTo(RespirePendingStatus.Faulted);
+
         if (outcome == "aborted")
+        {
             await Assert.That(await session.SetAsync("later", "schema", "retained")).IsTrue();
+        }
         else
+        {
             await Assert.That(async () => await session.SetAsync("later", "schema", "retained")).Throws<ObjectDisposedException>();
+        }
     }
 
     [Test]
@@ -418,9 +502,13 @@ public class HashImportTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 128,
-            Endpoints = [new("127.0.0.1", server.Port)], CredentialProvider = provider,
-            CredentialTimeProvider = clock, CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            MaxInflightCommands = 128,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            CredentialProvider = provider,
+            CredentialTimeProvider = clock,
+            CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
         });
 #pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
@@ -428,18 +516,31 @@ public class HashImportTests
         var commands = server.ReceivedCommands.ToArray();
         var connectionId = server.ReceivedConnectionIds[Array.IndexOf(commands, "HIMPORT PREPARE bootstrap field")];
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!clock.HasDelay(TimeSpan.FromSeconds(20))) await Task.Delay(5, deadline.Token);
+
+        while (!clock.HasDelay(TimeSpan.FromSeconds(20)))
+        {
+            await Task.Delay(5, deadline.Token);
+        }
+
         provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
         clock.Advance(TimeSpan.FromSeconds(20));
+
         while (true)
         {
             commands = server.ReceivedCommands.ToArray();
+
             if (commands.Select((command, index) => (command, index)).Any(item => item.command == "AUTH user second"
-                && server.ReceivedConnectionIds[item.index] == connectionId)) break;
+                && server.ReceivedConnectionIds[item.index] == connectionId))
+            {
+                break;
+            }
+
             await Task.Delay(5, deadline.Token);
         }
+
         using var batch = session.CreateBatch();
         var expected = new List<string> { "HIMPORT PREPARE bootstrap field" };
+
         for (var index = 0; index < 32; index++)
         {
             _ = batch.Hashes.PrepareImport($"schema:{index}", "field");
@@ -449,6 +550,7 @@ public class HashImportTests
             expected.Add($"HIMPORT SET key:{index} schema:{index} value");
             expected.Add($"HIMPORT DISCARD schema:{index}");
         }
+
         var execute = batch.ExecuteAsync(deadline.Token).AsTask();
         await Assert.That(execute.IsCompleted).IsFalse();
         await server.SendRawAsync(FakeRespServer.OkReply, connectionId);
@@ -461,6 +563,7 @@ public class HashImportTests
     {
         public RespireCredentials Current = current;
         public int Calls;
+
         public ValueTask<RespireCredentials> GetCredentialsAsync(CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref Calls);
@@ -483,19 +586,34 @@ public class HashImportTests
         using var batch = transaction ? null : session.CreateBatch();
         await using var multi = transaction ? session.CreateTransaction() : null;
         RespirePending<bool>? unsent = null;
+
         if (!empty)
+        {
             unsent = transaction
                 ? multi!.Hashes.Import("unsent", "schema", "value")
                 : batch!.Hashes.Import("unsent", "schema", "value");
+        }
+
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         var error = await Assert.That(async () =>
         {
-            if (transaction) await multi!.CommitAsync(cancellation.Token);
-            else await batch!.ExecuteAsync(cancellation.Token);
+            if (transaction)
+            {
+                await multi!.CommitAsync(cancellation.Token);
+            }
+            else
+            {
+                await batch!.ExecuteAsync(cancellation.Token);
+            }
         }).Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
-        if (unsent is not null) await Assert.That(unsent.Status).IsEqualTo(RespirePendingStatus.Faulted);
+
+        if (unsent is not null)
+        {
+            await Assert.That(unsent.Status).IsEqualTo(RespirePendingStatus.Faulted);
+        }
+
         await Assert.That(await client.ExistsAsync("unsent")).IsFalse();
         await session.SetAsync("later", "schema", "retained");
         await Assert.That(await client.Hashes.GetStringAsync("later", "field")).IsEqualTo("retained");
@@ -511,8 +629,11 @@ public class HashImportTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
-            CredentialProvider = provider, CredentialTimeProvider = clock,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            CredentialProvider = provider,
+            CredentialTimeProvider = clock,
             CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
         });
 #pragma warning restore RESP010
@@ -521,12 +642,21 @@ public class HashImportTests
         var commands = server.ReceivedCommands.ToArray();
         var connectionId = server.ReceivedConnectionIds[Array.IndexOf(commands, "HIMPORT PREPARE schema field")];
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!clock.HasDelay(TimeSpan.FromSeconds(20))) await Task.Delay(5, deadline.Token);
+
+        while (!clock.HasDelay(TimeSpan.FromSeconds(20)))
+        {
+            await Task.Delay(5, deadline.Token);
+        }
+
         provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
         clock.Advance(TimeSpan.FromSeconds(20));
+
         while (!server.ReceivedCommands.Select((command, index) => (command, index)).Any(item =>
                    item.command == "AUTH user second" && server.ReceivedConnectionIds[item.index] == connectionId))
+        {
             await Task.Delay(5, deadline.Token);
+        }
+
         using var batch = session.CreateBatch();
         _ = batch.Hashes.Import("unsent", "schema", "value");
         using var cancel = new CancellationTokenSource();
@@ -551,43 +681,74 @@ public class HashImportTests
         var importConnection = 0;
         server.SuppressReply = command =>
         {
-            if (command != "MULTI") return false;
+            if (command != "MULTI")
+            {
+                return false;
+            }
+
             inMulti = true;
             return true;
         };
         server.ReplyOverride = (connectionId, command) =>
         {
-            if (connectionId != importConnection) return FakeRespServer.OkReply;
-            if (command == "EXEC") { inMulti = false; return "*1\r\n+OK\r\n"u8.ToArray(); }
+            if (connectionId != importConnection)
+            {
+                return FakeRespServer.OkReply;
+            }
+
+            if (command == "EXEC")
+            {
+                inMulti = false;
+                return "*1\r\n+OK\r\n"u8.ToArray();
+            }
+
             return inMulti ? "+QUEUED\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
-            CredentialProvider = provider, CredentialTimeProvider = clock,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            CredentialProvider = provider,
+            CredentialTimeProvider = clock,
             CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
         });
 #pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!clock.HasDelay(TimeSpan.FromSeconds(20))) await Task.Delay(5, deadline.Token);
+
+        while (!clock.HasDelay(TimeSpan.FromSeconds(20)))
+        {
+            await Task.Delay(5, deadline.Token);
+        }
+
         await using var transaction = session.CreateTransaction();
         var imported = transaction.Hashes.Import("key", "schema", "value");
         var commit = transaction.CommitAsync(deadline.Token).AsTask();
-        while (!server.ReceivedCommands.Contains("MULTI")) await Task.Delay(5, deadline.Token);
+
+        while (!server.ReceivedCommands.Contains("MULTI"))
+        {
+            await Task.Delay(5, deadline.Token);
+        }
+
         var commands = server.ReceivedCommands.ToArray();
         var connectionId = server.ReceivedConnectionIds[Array.IndexOf(commands, "MULTI")];
         importConnection = connectionId;
         var previousCalls = Volatile.Read(ref provider.Calls);
         provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
         clock.Advance(TimeSpan.FromSeconds(20));
-        while (Volatile.Read(ref provider.Calls) == previousCalls) await Task.Delay(5, deadline.Token);
+
+        while (Volatile.Read(ref provider.Calls) == previousCalls)
+        {
+            await Task.Delay(5, deadline.Token);
+        }
         // Leave MULTI's reply withheld while the independent refresh worker runs.
         await Task.Delay(100, deadline.Token);
         await Assert.That(server.ReceivedCommands.Select((command, index) => (command, index)).Any(item =>
             item.command == "AUTH user second" && server.ReceivedConnectionIds[item.index] == connectionId)).IsFalse();
+
         if (expireCredentials)
         {
             clock.Advance(TimeSpan.FromSeconds(10));
@@ -595,12 +756,17 @@ public class HashImportTests
             await Assert.That(async () => await session.SetAsync("later", "schema", "value")).Throws<ObjectDisposedException>();
             return;
         }
+
         await server.SendRawAsync(FakeRespServer.OkReply, connectionId);
         await commit.WaitAsync(deadline.Token);
         await Assert.That(imported.Result).IsTrue();
+
         while (!server.ReceivedCommands.Select((command, index) => (command, index)).Any(item =>
                    item.command == "AUTH user second" && server.ReceivedConnectionIds[item.index] == connectionId))
+        {
             await Task.Delay(5, deadline.Token);
+        }
+
         commands = server.ReceivedCommands.Select((command, index) => (command, index))
             .Where(item => server.ReceivedConnectionIds[item.index] == connectionId)
             .Select(item => item.command).ToArray();
@@ -677,8 +843,16 @@ public class HashImportTests
         IRespireCommandQueue queue = multi ?? (IRespireCommandQueue)batch!;
         var failed = queue.Hashes.Import("not-written", "unknown", "value");
         var applied = queue.Hashes.Import("written", "schema", "value");
-        if (multi is not null) await multi.CommitAsync();
-        else await Assert.That(async () => await batch!.ExecuteAsync()).Throws<RespireServerException>();
+
+        if (multi is not null)
+        {
+            await multi.CommitAsync();
+        }
+        else
+        {
+            await Assert.That(async () => await batch!.ExecuteAsync()).Throws<RespireServerException>();
+        }
+
         await Assert.That(failed.Status).IsEqualTo(RespirePendingStatus.Faulted);
         await Assert.That(failed.Error is RespireServerException).IsTrue();
         await Assert.That(applied.Result).IsTrue();
@@ -711,16 +885,30 @@ public class HashImportTests
         using var fault = server.InjectFault(mode == "transaction" ? "EXEC" : "HIMPORT",
             RespireFakeFault.Disconnect(afterExecution), occurrences: null,
             firstArgument: mode == "transaction" ? null : (ReadOnlyMemory<byte>?)"SET"u8.ToArray());
+
         async Task Send()
         {
-            if (mode == "immediate") { await session.SetAsync("key", "schema", "value"); return; }
+            if (mode == "immediate")
+            {
+                await session.SetAsync("key", "schema", "value");
+                return;
+            }
+
             using var batch = mode == "batch" ? session.CreateBatch() : null;
             await using var multi = mode == "transaction" ? session.CreateTransaction() : null;
             IRespireCommandQueue queue = multi ?? (IRespireCommandQueue)batch!;
             _ = queue.Hashes.Import("key", "schema", "value");
-            if (multi is not null) await multi.CommitAsync();
-            else await batch!.ExecuteAsync();
+
+            if (multi is not null)
+            {
+                await multi.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
         }
+
         await Assert.That(Send).Throws<RespireException>();
         await Assert.That(fault.MatchedCount).IsEqualTo(1);
         await Assert.That(await client.Hashes.GetStringAsync("key", "field")).IsEqualTo(afterExecution ? "value" : null);
@@ -769,7 +957,8 @@ public class HashImportTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
             CircuitBreaker = circuits ? new() : null,
         });
 #pragma warning restore RESP010
@@ -790,7 +979,11 @@ public class HashImportTests
             ActivityStarted = activity =>
             {
                 if (closed || activity.GetTagItem("server.port") is not int port || port != server.Port
-                    || !activity.OperationName.StartsWith(transaction ? "MULTI" : "PIPELINE", StringComparison.Ordinal)) return;
+                    || !activity.OperationName.StartsWith(transaction ? "MULTI" : "PIPELINE", StringComparison.Ordinal))
+                {
+                    return;
+                }
+
                 closed = true;
                 // The queue has entered its session usage but has not dispatched yet.
                 // Complete a real protocol close here so ClosedBeforeEnqueue marks its copy.
@@ -802,8 +995,14 @@ public class HashImportTests
         ActivitySource.AddActivityListener(listener);
         var error = await Assert.That(async () =>
         {
-            if (multi is not null) await multi.CommitAsync();
-            else await batch!.ExecuteAsync();
+            if (multi is not null)
+            {
+                await multi.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
         }).Throws<RespireProtocolException>();
 
         await Assert.That(closed).IsTrue();
@@ -818,8 +1017,12 @@ public class HashImportTests
 
         async Task BreakConnectionAsync()
         {
-            try { using var reply = await session.Connection.SendAsync(ping); }
+            try
+            {
+                using var reply = await session.Connection.SendAsync(ping);
+            }
             catch (RespireProtocolException) { }
+
             await session.Connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));
         }
     }
@@ -883,9 +1086,13 @@ public class HashImportTests
             RespireFakeFault.Pause(gate, afterExecution),
             firstArgument: mode == "transaction" ? null : (ReadOnlyMemory<byte>?)"SET"u8.ToArray());
         using var cancellation = new CancellationTokenSource();
+
         async Task Send()
         {
-            if (mode == "immediate") await session.SetAsync("key", "schema", ["value"], cancellation.Token);
+            if (mode == "immediate")
+            {
+                await session.SetAsync("key", "schema", ["value"], cancellation.Token);
+            }
             else if (mode == "batch")
             {
                 using var batch = session.CreateBatch();
@@ -899,7 +1106,9 @@ public class HashImportTests
                 await transaction.CommitAsync(cancellation.Token);
             }
         }
+
         var send = Send();
+
         try
         {
             await fault.Matched.WaitAsync(TimeSpan.FromSeconds(5));
@@ -932,7 +1141,7 @@ public class HashImportTests
             ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply;
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
-            { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
+        { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
 #pragma warning restore RESP010
         await using var session = await root.WithKeyPrefix("prefix:").Hashes.CreateImportSessionAsync();
         byte[] name = [0, 255];
@@ -951,11 +1160,15 @@ public class HashImportTests
         ];
         var commands = server.ReceivedArguments.Where(args => args[0].AsSpan().SequenceEqual("HIMPORT"u8)).ToArray();
         await Assert.That(commands.Length).IsEqualTo(expected.Length);
+
         for (var index = 0; index < expected.Length; index++)
         {
             await Assert.That(commands[index].Length).IsEqualTo(expected[index].Length);
+
             for (var argument = 0; argument < expected[index].Length; argument++)
+            {
                 await Assert.That(commands[index][argument]).IsEquivalentTo(expected[index][argument]);
+            }
         }
     }
 
@@ -975,7 +1188,7 @@ public class HashImportTests
         server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : FakeRespServer.OkReply;
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create(new RespireOptions
-            { UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+        { UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
 #pragma warning restore RESP010
         var client = root.WithKeyPrefix("tenant:");
         await Assert.That(async () => await client.Hashes.CreateImportSessionAsync()).Throws<InvalidOperationException>();
@@ -997,18 +1210,35 @@ public class HashImportTests
         var inMulti = false;
         server.ReplyOverride = (_, command) =>
         {
-            if (command == "CLUSTER SLOTS") return topology;
-            if (command == "MULTI") { inMulti = true; return FakeRespServer.OkReply; }
+            if (command == "CLUSTER SLOTS")
+            {
+                return topology;
+            }
+
+            if (command == "MULTI")
+            {
+                inMulti = true;
+                return FakeRespServer.OkReply;
+            }
+
             if (command == "EXEC")
             {
                 inMulti = false;
                 return mode == "transaction-item" ? "*1\r\n"u8.ToArray().Concat(redirect).ToArray() : redirect;
             }
-            if (inMulti) return "+QUEUED\r\n"u8.ToArray();
+
+            if (inMulti)
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
             return command.StartsWith("HIMPORT SET", StringComparison.Ordinal) ? redirect : FakeRespServer.OkReply;
         };
+
         if (mode == "immediate")
+        {
             await Assert.That(async () => await session.SetAsync("{one}:redirect", "schema", "value")).Throws<RespireServerException>();
+        }
         else if (mode == "batch")
         {
             using var rejectedBatch = session.CreateBatch();
@@ -1020,10 +1250,19 @@ public class HashImportTests
         {
             await using var rejectedTransaction = session.CreateTransaction();
             var pending = rejectedTransaction.Hashes.Import("{one}:redirect", "schema", "value");
-            if (mode == "transaction-item") await rejectedTransaction.CommitAsync();
-            else await Assert.That(async () => await rejectedTransaction.CommitAsync()).Throws<RespireServerException>();
+
+            if (mode == "transaction-item")
+            {
+                await rejectedTransaction.CommitAsync();
+            }
+            else
+            {
+                await Assert.That(async () => await rejectedTransaction.CommitAsync()).Throws<RespireServerException>();
+            }
+
             await Assert.That(pending.Error is RespireServerException).IsTrue();
         }
+
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("HIMPORT SET tenant:{one}:redirect", StringComparison.Ordinal))).IsEqualTo(1);
         await Assert.That(async () => await session.SetAsync("{one}:later", "schema", "value")).Throws<ObjectDisposedException>();
     }
@@ -1044,8 +1283,11 @@ public class HashImportTests
         // Keep the socket alive to exercise the admission rejection, not CheckUsable's
         // disconnected-session guard. The queue must not acquire a replacement connection.
         session.Connection.StopAcceptingCommands();
+
         if (mode == "immediate")
+        {
             await Assert.That(async () => await session.SetAsync("key", "schema", "value")).Throws<RespireConnectionRetiredException>();
+        }
         else if (mode == "batch")
         {
             using var batch = session.CreateBatch();
@@ -1060,6 +1302,7 @@ public class HashImportTests
             await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireConnectionRetiredException>();
             await Assert.That(pending.Error is RespireConnectionRetiredException).IsTrue();
         }
+
         await Assert.That(probe.MatchedCount).IsEqualTo(0);
         await Assert.That(await client.Hashes.GetStringAsync("key", "field")).IsNull();
         await Assert.That(async () => await session.SetAsync("later", "schema", "value")).Throws<ObjectDisposedException>();
@@ -1077,15 +1320,20 @@ public class HashImportTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1,
+            UseCluster = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync("{one}:anchor");
         await session.PrepareAsync("schema", "field");
         session.Connection.StopAcceptingCommands();
+
         if (mode == "immediate")
+        {
             await Assert.That(async () => await session.SetAsync("{one}:key", "schema", "value")).Throws<RespireConnectionRetiredException>();
+        }
         else if (mode == "batch")
         {
             using var batch = session.CreateBatch();
@@ -1100,6 +1348,7 @@ public class HashImportTests
             await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireConnectionRetiredException>();
             await Assert.That(pending.Error is RespireConnectionRetiredException).IsTrue();
         }
+
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("HIMPORT SET", StringComparison.Ordinal))).IsEqualTo(0);
         await Assert.That(server.ReceivedCommands.Count(command => command == "MULTI")).IsEqualTo(0);
         await Assert.That(async () => await session.SetAsync("{one}:later", "schema", "value")).Throws<ObjectDisposedException>();
@@ -1125,21 +1374,39 @@ public class HashImportTests
         };
         server.ReplyOverride = (_, command) =>
         {
-            if (command == "MULTI") { inMulti = true; return FakeRespServer.OkReply; }
-            if (command == "EXEC") { inMulti = false; return Encoding.ASCII.GetBytes(reply); }
+            if (command == "MULTI")
+            {
+                inMulti = true;
+                return FakeRespServer.OkReply;
+            }
+
+            if (command == "EXEC")
+            {
+                inMulti = false;
+                return Encoding.ASCII.GetBytes(reply);
+            }
+
             return inMulti ? "+QUEUED\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
-            { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
+        { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
 #pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         await using var multi = session.CreateTransaction();
         var first = multi.Hashes.Import("first", "schema", "value");
         var second = multi.Hashes.Import("second", "schema", "value");
-        if (shape == "mixed-errors") await multi.CommitAsync();
-        else await Assert.That(async () => await multi.CommitAsync()).Throws<RespireProtocolException>();
+
+        if (shape == "mixed-errors")
+        {
+            await multi.CommitAsync();
+        }
+        else
+        {
+            await Assert.That(async () => await multi.CommitAsync()).Throws<RespireProtocolException>();
+        }
+
         await Assert.That(first.Status).IsEqualTo(RespirePendingStatus.Faulted);
         await Assert.That(second.Status).IsEqualTo(RespirePendingStatus.Faulted);
         await Assert.That(async () => await session.SetAsync("later", "schema", "value")).Throws<ObjectDisposedException>();
@@ -1157,19 +1424,29 @@ public class HashImportTests
         await using var server = new FakeRespServer(20, Encoding.ASCII.GetBytes(reply));
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
-            { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
+        { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
 #pragma warning restore RESP010
         await using var session = await client.Hashes.CreateImportSessionAsync();
+
         async Task Send()
         {
             switch (subcommand)
             {
-                case "PREPARE": await session.PrepareAsync("schema", "field"); break;
-                case "SET": await session.SetAsync("key", "schema", "value"); break;
-                case "DISCARD": await session.DiscardAsync("schema"); break;
-                default: await session.DiscardAllAsync(); break;
+                case "PREPARE":
+                    await session.PrepareAsync("schema", "field");
+                    break;
+                case "SET":
+                    await session.SetAsync("key", "schema", "value");
+                    break;
+                case "DISCARD":
+                    await session.DiscardAsync("schema");
+                    break;
+                default:
+                    await session.DiscardAllAsync();
+                    break;
             }
         }
+
         await Assert.That(Send).Throws<RespireException>();
         await Assert.That(async () => await session.DiscardAllAsync()).Throws<ObjectDisposedException>();
     }

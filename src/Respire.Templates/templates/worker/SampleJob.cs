@@ -7,7 +7,9 @@ namespace RespireWorker;
 public sealed record SampleJob(string Message);
 
 [JsonSerializable(typeof(SampleJob))]
-internal partial class JobJson : JsonSerializerContext { }
+internal partial class JobJson : JsonSerializerContext
+{
+}
 
 public sealed class SampleJobHandler(IRespireClient redis, ILogger<SampleJobHandler> logger)
     : IRespireStreamHandler<RespireJob<SampleJob>>

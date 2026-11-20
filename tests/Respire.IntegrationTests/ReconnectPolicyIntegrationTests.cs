@@ -17,7 +17,9 @@ public class ReconnectPolicyIntegrationTests
         var options = new RespireOptions
         {
             Endpoints = { new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(6379)) },
-            Connections = 1, Protocol = (RespireProtocol)protocol, AllowAdmin = true,
+            Connections = 1,
+            Protocol = (RespireProtocol)protocol,
+            AllowAdmin = true,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(25), JitterRatio = 0, MaxAttempts = 1 },
         };
         await using var client = await RespireClient.ConnectAsync(options);
@@ -25,9 +27,13 @@ public class ReconnectPolicyIntegrationTests
         var attempts = new ConcurrentQueue<RespireConnectionStateChange>();
         client.ConnectionStateChanged += change =>
         {
-            if (change.NextReconnectDelay is not null) attempts.Enqueue(change);
+            if (change.NextReconnectDelay is not null)
+            {
+                attempts.Enqueue(change);
+            }
         };
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         for (var index = 0; index < 2; index++)
         {
             var identity = await client.Server.GetClientConnectionAsync(deadline.Token);
@@ -39,6 +45,7 @@ public class ReconnectPolicyIntegrationTests
             (await client.GetAsync<int>("reconnect:verified", deadline.Token)).Should().Be(index);
             (await client.Server.GetClientConnectionAsync(deadline.Token)).Id.Should().NotBe(identity.Id);
         }
+
         attempts.Select(change => change.ReconnectAttempt).Should().Equal(1, 1);
         attempts.Should().OnlyContain(change => change.ConnectionSlot == 0
             && change.NextReconnectDelay == TimeSpan.FromMilliseconds(25));

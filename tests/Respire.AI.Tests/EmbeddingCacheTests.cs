@@ -77,11 +77,13 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
     {
         await using var redis = await Connect(protocol);
         var provider = new Generator();
+
         foreach (var name in new[] { "\uD800", "\uD801", "\uDC00", "prefix\uD800suffix", "\uDC00\uD800", "\uD800\uD800" })
         {
             Action build = () => Build(provider, redis, new() { CacheName = name });
             build.Should().Throw<ArgumentException>().Which.ParamName.Should().Be("CacheName");
         }
+
         provider.Batches.Should().BeEmpty();
         (await Keys(redis)).Should().BeEmpty();
     }
@@ -98,12 +100,17 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
         var provider = new Generator();
         using var cache = Build(provider, redis, new() { CacheName = "identity" });
         var options = new EmbeddingGenerationOptions();
+
         void SetIdentity(string identity)
         {
             switch (component)
             {
-                case "provider": provider.Provider = identity; break;
-                case "uri": provider.Uri = new(identity, UriKind.Relative); break;
+                case "provider":
+                    provider.Provider = identity;
+                    break;
+                case "uri":
+                    provider.Uri = new(identity, UriKind.Relative);
+                    break;
                 case "absolute-uri":
                     var originalUri = "https://provider.example/" + identity;
                     provider.Uri = new(originalUri, UriKind.Absolute);
@@ -112,8 +119,12 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
                     // can expose the malformed identity to the cache scope guard.
                     provider.Uri.ToString().Any(char.IsSurrogate).Should().BeFalse();
                     break;
-                case "default-model": provider.Model = identity; break;
-                case "request-model": options.ModelId = identity; break;
+                case "default-model":
+                    provider.Model = identity;
+                    break;
+                case "request-model":
+                    options.ModelId = identity;
+                    break;
             }
         }
 
@@ -121,10 +132,12 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
         await cache.GenerateAsync(["same"], options);
         var key = (await Keys(redis)).Single();
         var original = await redis.Strings.GetBytesAsync(key);
+
         foreach (var identity in new[] { "\uD800", "\uD801", "\uDC00", "prefix\uD800suffix", "\uDC00\uD800", "\uD800\uD800" })
         {
             SetIdentity(identity);
             var previousCount = provider.Batches.Count;
+
             for (var i = 0; i < 2; i++)
             {
                 await cache.GenerateAsync(["same", "same"], options);
@@ -132,9 +145,11 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
                 provider.Batches[^1].Should().Equal("same", "same");
                 provider.LastOptions.Should().BeSameAs(options);
             }
+
             (await Keys(redis)).Should().Equal(key);
             (await redis.Strings.GetBytesAsync(key)).Should().Equal(original!);
         }
+
         SetIdentity("\uFFFD");
         var calls = provider.Batches.Count;
         await cache.GenerateAsync(["same"], options);
@@ -153,6 +168,7 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
     {
         await using var redis = await Connect(protocol);
         var provider = new Generator();
+
         foreach (var identity in new[] { "plain", "\uFFFD", "\uD800\uDC00" })
         {
             provider.Provider = identity;
@@ -174,6 +190,7 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
             var inputHash = Convert.ToHexString(SHA256.HashData(new byte[] { 115, 0, 97, 0, 109, 0, 101, 0 }));
             (await Keys(redis)).Should().Contain($"respire:embedding:v1:{scopeHash}:{inputHash}");
         }
+
         (await Keys(redis)).Should().HaveCount(3);
     }
 
@@ -301,6 +318,7 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
         await using var redis = await Connect(protocol);
         var provider = new Generator();
         using var cache = Build(provider, redis);
+
         foreach (var options in new EmbeddingGenerationOptions[]
         {
             new() { AdditionalProperties = new() { ["task"] = "query" } },
@@ -312,6 +330,7 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
             await cache.GenerateAsync(["custom"], options);
             provider.LastOptions.Should().BeSameAs(options);
         }
+
         provider.Properties = new() { ["custom"] = "value" };
         (await cache.GenerateAsync(["custom"]))[0].AdditionalProperties!["custom"].Should().Be("value");
         await cache.GenerateAsync(["custom"]);
@@ -342,7 +361,11 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
         await wrong.Should().ThrowAsync<InvalidOperationException>();
         provider.WrongDimensions = false;
         using var afterProvider = new CancellationTokenSource();
-        provider.BeforeReturn = () => { afterProvider.Cancel(); return Task.CompletedTask; };
+        provider.BeforeReturn = () =>
+        {
+            afterProvider.Cancel();
+            return Task.CompletedTask;
+        };
         Func<Task> cancelAfter = () => cache.GenerateAsync(["cancel-after"], cancellationToken: afterProvider.Token);
         await cancelAfter.Should().ThrowAsync<OperationCanceledException>();
         (await Keys(redis)).Should().BeEmpty();
@@ -379,7 +402,10 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meterListener) =>
         {
-            if (instrument.Meter.Name == "Respire.AI") meterListener.EnableMeasurementEvents(instrument);
+            if (instrument.Meter.Name == "Respire.AI")
+            {
+                meterListener.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
         {
@@ -396,7 +422,11 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
         await fail.Should().ThrowAsync<InvalidOperationException>();
         provider.Error = null;
         using var cancellation = new CancellationTokenSource();
-        provider.BeforeReturn = () => { cancellation.Cancel(); return Task.CompletedTask; };
+        provider.BeforeReturn = () =>
+        {
+            cancellation.Cancel();
+            return Task.CompletedTask;
+        };
         Func<Task> cancel = () => cache.GenerateAsync(["a", "cancel"], cancellationToken: cancellation.Token);
         await cancel.Should().ThrowAsync<OperationCanceledException>();
         counts["respire.ai.embedding_cache.hits"].Should().Be(4);
@@ -411,6 +441,7 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
         var cache = Build(provider, redis);
         (await cache.GenerateAsync(Array.Empty<string>())).Should().BeEmpty();
         provider.Batches.Should().BeEmpty();
+
         foreach (var invalid in new RespireEmbeddingCacheOptions[]
         {
             new() { CacheName = " " }, new() { TimeToLive = TimeSpan.Zero },
@@ -420,6 +451,7 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
             Action build = () => Build(provider, redis, invalid);
             build.Should().Throw<ArgumentException>();
         }
+
         cache.GetService(typeof(EmbeddingGeneratorMetadata)).Should().BeOfType<EmbeddingGeneratorMetadata>();
         cache.Dispose();
         provider.Disposed.Should().BeTrue();
@@ -440,7 +472,12 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
     private static async Task<string[]> Keys(IRespireClient redis)
     {
         var keys = new List<string>();
-        await foreach (var key in redis.Keys.ScanAsync(match: "respire:embedding:v1:*")) keys.Add(key.ToString());
+
+        await foreach (var key in redis.Keys.ScanAsync(match: "respire:embedding:v1:*"))
+        {
+            keys.Add(key.ToString());
+        }
+
         return keys.ToArray();
     }
 
@@ -448,29 +485,90 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
 
     private sealed class Generator : IEmbeddingGenerator<string, Embedding<float>>
     {
-        public List<string[]> Batches { get; } = [];
-        public string Model { get; set; } = "model";
-        public string Provider { get; set; } = "provider";
-        public Uri Uri { get; set; } = new("https://provider.example");
-        public bool Empty { get; set; }
-        public bool WrongDimensions { get; set; }
-        public int? DefaultDimensions { get; set; } = 2;
-        public int AlternateDimensions { get; set; } = 2;
-        public bool Disposed { get; private set; }
-        public Exception? Error { get; set; }
-        public AdditionalPropertiesDictionary? Properties { get; set; }
-        public EmbeddingGenerationOptions? LastOptions { get; private set; }
-        public Func<Task>? BeforeReturn { get; set; }
+        public List<string[]> Batches
+        {
+            get;
+        } = [];
+
+        public string Model
+        {
+            get; set;
+        } = "model";
+
+        public string Provider
+        {
+            get; set;
+        } = "provider";
+
+        public Uri Uri
+        {
+            get; set;
+        } = new("https://provider.example");
+
+        public bool Empty
+        {
+            get; set;
+        }
+
+        public bool WrongDimensions
+        {
+            get; set;
+        }
+
+        public int? DefaultDimensions
+        {
+            get; set;
+        } = 2;
+
+        public int AlternateDimensions
+        {
+            get; set;
+        } = 2;
+
+        public bool Disposed
+        {
+            get; private set;
+        }
+
+        public Exception? Error
+        {
+            get; set;
+        }
+
+        public AdditionalPropertiesDictionary? Properties
+        {
+            get; set;
+        }
+
+        public EmbeddingGenerationOptions? LastOptions
+        {
+            get; private set;
+        }
+
+        public Func<Task>? BeforeReturn
+        {
+            get; set;
+        }
 
         public async Task<GeneratedEmbeddings<Embedding<float>>> GenerateAsync(IEnumerable<string> values,
             EmbeddingGenerationOptions? options = null, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (Error is { } error) throw error;
+
+            if (Error is { } error)
+            {
+                throw error;
+            }
+
             var inputs = values.ToArray();
             Batches.Add(inputs);
             LastOptions = options;
-            if (BeforeReturn is { } before) await before();
+
+            if (BeforeReturn is { } before)
+            {
+                await before();
+            }
+
             return new(Empty ? [] : inputs.Select(input => new Embedding<float>(
                 Enumerable.Repeat((float)input.Length, WrongDimensions ? 1 : options?.Dimensions
                     ?? (options?.ModelId is { } model && model != Model ? AlternateDimensions : 2)).ToArray())
@@ -478,7 +576,8 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
                 ModelId = options?.ModelId ?? Model,
                 CreatedAt = new DateTimeOffset(2026, 10, 17, 12, 0, 0, TimeSpan.FromHours(2)),
                 AdditionalProperties = Properties,
-            })) { Usage = new() { InputTokenCount = inputs.Length } };
+            }))
+            { Usage = new() { InputTokenCount = inputs.Length } };
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => serviceType == typeof(EmbeddingGeneratorMetadata)

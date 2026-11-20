@@ -45,10 +45,17 @@ public class FakeListServerTests
         await client.Lists.SetAsync("list", -1, "changed");
         await client.Lists.InsertAfterAsync("list", "a", "inserted");
         await Number(client, "LREM", "list", 1, "inserted");
-        using (var trim = await client.ExecuteAsync("LTRIM", "list", 1, -1)) { }
+
+        using (var trim = await client.ExecuteAsync("LTRIM", "list", 1, -1))
+        {
+        }
+
         await client.Lists.LeftPopAsync("list");
         // Redis 7.2+ rejects the rank whose magnitude cannot fit in a signed long.
-        await Assert.That(async () => { using var ignored = await client.ExecuteAsync("LPOS", "list", "b", "RANK", long.MinValue); })
+        await Assert.That(async () =>
+            {
+                using var ignored = await client.ExecuteAsync("LPOS", "list", "b", "RANK", long.MinValue);
+            })
             .Throws<RespireServerException>();
         await Assert.That(await Number(client, "PTTL", "list")).IsEqualTo(1000);
         clock.Advance(TimeSpan.FromMilliseconds(999));
@@ -58,6 +65,7 @@ public class FakeListServerTests
         await client.SetAsync("list", "new type");
         await Assert.That(await client.GetStringAsync("list")).IsEqualTo("new type");
         await client.Keys.DeleteAsync("list");
+
         foreach (var deletion in new[] { "LPOP", "RPOP", "LREM", "LTRIM" })
         {
             await client.Lists.RightPushAsync("list", "last");
@@ -68,7 +76,11 @@ public class FakeListServerTests
                 "LTRIM" => ["list", 1, 0],
                 _ => ["list"],
             };
-            using (var removed = await client.ExecuteAsync(deletion, args)) { }
+
+            using (var removed = await client.ExecuteAsync(deletion, args))
+            {
+            }
+
             await Assert.That(await client.ExistsAsync("list")).IsFalse();
             await client.Lists.RightPushAsync("list", "persistent");
             await Assert.That(await Number(client, "PTTL", "list")).IsEqualTo(-1);
@@ -101,6 +113,7 @@ public class FakeListServerTests
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
 #pragma warning restore RESP010
         await client.Lists.RightPushAsync("list", "value");
+
         foreach (var (command, args) in new (string, RespireValue[])[]
         {
             ("BLPOP", ["list", 1]), ("BRPOP", ["list", 1]), ("LMPOP", [1, "list", "LEFT"]),
@@ -109,7 +122,10 @@ public class FakeListServerTests
             ("BRPOPLPUSH", ["list", "other", 1]),
         })
         {
-            var error = await Assert.That(async () => { using var ignored = await client.ExecuteAsync(command, args); })
+            var error = await Assert.That(async () =>
+                {
+                    using var ignored = await client.ExecuteAsync(command, args);
+                })
                 .Throws<RespireServerException>();
             await Assert.That(error!.Message).Contains(command);
             await Assert.That(await client.Lists.IndexAsync("list", 0)).IsEqualTo("value");

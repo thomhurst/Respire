@@ -26,21 +26,36 @@ public readonly struct RespireMessage
     }
 
     /// <summary>Whether this item is published data or a delivery gap.</summary>
-    public RespireMessageKind Kind { get; }
+    public RespireMessageKind Kind
+    {
+        get;
+    }
 
     /// <summary>Gap details when Kind is Gap; otherwise null.</summary>
-    public RespireSubscriptionGap? Gap { get; }
+    public RespireSubscriptionGap? Gap
+    {
+        get;
+    }
 
     /// <summary>The published channel; empty for a gap marker. Use ToString() for UTF-8 display.</summary>
     /// <remarks>Contains physical wire identity, including an explicit pub/sub prefix, without subscription-descriptor routing or database metadata.</remarks>
-    public RespireChannel Channel { get; }
+    public RespireChannel Channel
+    {
+        get;
+    }
 
     /// <summary>The glob pattern that matched, for pattern subscriptions; otherwise null.</summary>
     /// <remarks>Contains physical wire identity and pattern kind, including an escaped pub/sub prefix, without subscription-descriptor metadata.</remarks>
-    public RespireChannel? Pattern { get; }
+    public RespireChannel? Pattern
+    {
+        get;
+    }
 
     /// <summary>The raw message payload as owned memory; empty for a gap marker.</summary>
-    public ReadOnlyMemory<byte> Payload { get; }
+    public ReadOnlyMemory<byte> Payload
+    {
+        get;
+    }
 
     /// <summary>The payload decoded as UTF-8; empty for a gap marker.</summary>
     public string Text => Internal.Utf8String.GetString(Payload);
@@ -91,6 +106,7 @@ public readonly struct RespireMessage
             notification = notification.StripPrefix(requiredKeyPrefix.Length);
             return true;
         }
+
         notification = default;
         return false;
     }

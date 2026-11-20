@@ -18,7 +18,11 @@ internal static class CommandWriteSizeHint
     internal static int For(int prefixLength, int first = 0, int second = 0,
         int third = 0, int fourth = 0, int fifth = 0)
     {
-        if (first < 0 || second < 0 || third < 0 || fourth < 0 || fifth < 0) return 0;
+        if (first < 0 || second < 0 || third < 0 || fourth < 0 || fifth < 0)
+        {
+            return 0;
+        }
+
         return checked(prefixLength + first + second + third + fourth + fifth);
     }
 
@@ -27,13 +31,23 @@ internal static class CommandWriteSizeHint
 
     internal static int Add(int prefixLength, ReadOnlySpan<RespireValue> arguments)
     {
-        if (prefixLength == 0) return 0;
+        if (prefixLength == 0)
+        {
+            return 0;
+        }
+
         foreach (var argument in arguments)
         {
             var length = argument.GetWriteSizeHint();
-            if (length < 0) return 0;
+
+            if (length < 0)
+            {
+                return 0;
+            }
+
             prefixLength = checked(prefixLength + length);
         }
+
         return prefixLength;
     }
 

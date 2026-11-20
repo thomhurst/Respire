@@ -37,7 +37,10 @@ public class ContainerReservedPortTests
                     hostConfig.Sysctls["net.ipv4.ip_local_port_range"] = $"{number} {number}";
                     // Positive control: without the reservation, the automatic source
                     // port allocation claims the future daemon's listening port.
-                    if (!reservePort) hostConfig.Sysctls["net.ipv4.ip_local_reserved_ports"] = "";
+                    if (!reservePort)
+                    {
+                        hostConfig.Sysctls["net.ipv4.ip_local_reserved_ports"] = "";
+                    }
                 }));
             await container.StartAsync(deadline.Token);
             var start = await container.ExecAsync(
@@ -50,6 +53,7 @@ public class ContainerReservedPortTests
             {
                 var listeners = await container.ExecAsync(["cat", "/proc/net/tcp"], deadline.Token);
                 listeners.ExitCode.Should().Be(0, listeners.Stdout + listeners.Stderr);
+
                 if (listeners.Stdout.Split('\n').Any(line =>
                 {
                     var fields = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
@@ -64,6 +68,7 @@ public class ContainerReservedPortTests
 
             // No explicit source port: this exercises the kernel's automatic allocator.
             var connect = await container.ExecAsync([$"{binary}-cli", "-p", "12345", "PING"], deadline.Token);
+
             if (reservePort)
             {
                 connect.ExitCode.Should().NotBe(0);

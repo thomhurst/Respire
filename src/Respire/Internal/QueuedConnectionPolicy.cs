@@ -18,7 +18,11 @@ internal readonly struct QueuedConnectionPolicy(RespireHashImportSession? import
     {
         get
         {
-            if (watchConnection is not null) return QueuedRedirectBehavior.RequireFreshWatch;
+            if (watchConnection is not null)
+            {
+                return QueuedRedirectBehavior.RequireFreshWatch;
+            }
+
             return IsImportSession ? QueuedRedirectBehavior.Reject : QueuedRedirectBehavior.Recover;
         }
     }
@@ -34,7 +38,9 @@ internal readonly struct QueuedConnectionPolicy(RespireHashImportSession? import
     public void ValidateDurabilityExecution()
     {
         if (IsImportSession)
+        {
             throw new NotSupportedException("Hash import sessions require their original connection and do not support durability batch execution.");
+        }
     }
 
     public bool CanRetryRetirement(ClusterRouter cluster, int attempt, CancellationToken cancellationToken)

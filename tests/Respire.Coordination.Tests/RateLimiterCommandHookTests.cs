@@ -137,7 +137,12 @@ public class RateLimiterCommandHookTests
         await using var listClient = await Connect(listServer, listHook);
         await using var limiterClient = await Connect(limiterServer, limiterHook);
         var list = new RespireRateLimitDenyList(listClient, "deny", TimeSpan.FromMinutes(1));
-        if (cached) await list.IsDeniedAsync("user");
+
+        if (cached)
+        {
+            await list.IsDeniedAsync("user");
+        }
+
         listHook.Completed.Clear();
         await using var limiter = limiterClient.Coordination.RateLimiters.WithDenyList(list, "user")
             .FixedWindow("limit", 1, TimeSpan.FromSeconds(1));
@@ -168,6 +173,7 @@ public class RateLimiterCommandHookTests
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.GateCommand("EVALSHA ", gate.Task);
         using var cancellation = new CancellationTokenSource();
+
         try
         {
             var first = list.IsDeniedAsync("user", cancellation.Token).AsTask();
@@ -199,23 +205,42 @@ public class RateLimiterCommandHookTests
         server.ReplyOverride = (_, _) =>
         {
             var count = Interlocked.Increment(ref attempts);
-            if (count > 1) attempted.TrySetResult();
+
+            if (count > 1)
+            {
+                attempted.TrySetResult();
+            }
+
             return Reply(false, outcome == "success" && count > 1);
         };
         using var cancellation = new CancellationTokenSource();
         var pending = limiter.AcquireAsync(1, cancellation.Token).AsTask();
         await attempted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        if (outcome == "cancel") await cancellation.CancelAsync();
-        if (outcome == "dispose") await limiter.DisposeAsync();
+
+        if (outcome == "cancel")
+        {
+            await cancellation.CancelAsync();
+        }
+
+        if (outcome == "dispose")
+        {
+            await limiter.DisposeAsync();
+        }
+
         if (outcome == "success")
         {
             using var lease = await pending.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(lease.IsAcquired).IsTrue();
         }
         else if (outcome == "cancel")
+        {
             await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        }
         else
+        {
             await Assert.That(async () => await pending).Throws<ObjectDisposedException>();
+        }
+
         await Assert.That(hook.Completed.Count).IsEqualTo(1);
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(outcome switch
         {
@@ -239,7 +264,10 @@ public class RateLimiterCommandHookTests
             ? ":0\r\n"u8.ToArray() : original!(connection, command);
         hook.Before = context =>
         {
-            if (context.Command == "RATE LIMIT ACQUIRE") independent = list.IsDeniedAsync("user").AsTask();
+            if (context.Command == "RATE LIMIT ACQUIRE")
+            {
+                independent = list.IsDeniedAsync("user").AsTask();
+            }
         };
         using var lease = await limiter.AcquireAsync();
         await independent!;
@@ -256,14 +284,13 @@ public class RateLimiterCommandHookTests
         => composite ? client.Coordination.RateLimiters.UpdateAsync(limiter, [RespireRateLimit.FixedWindow(2, TimeSpan.FromSeconds(1))])
             : client.Coordination.RateLimiters.UpdateAsync(limiter, RespireRateLimit.FixedWindow(2, TimeSpan.FromSeconds(1)));
 
-    private static byte[] Reply(bool composite, bool granted)
-        => (composite, granted) switch
-        {
-            (true, true) => "*3\r\n:1\r\n:0\r\n:0\r\n"u8.ToArray(),
-            (true, false) => "*3\r\n:0\r\n:1\r\n:0\r\n"u8.ToArray(),
-            (false, true) => "*4\r\n:1\r\n:0\r\n:0\r\n:1\r\n"u8.ToArray(),
-            _ => "*4\r\n:0\r\n:1\r\n:0\r\n:1\r\n"u8.ToArray(),
-        };
+    private static byte[] Reply(bool composite, bool granted) => (composite, granted) switch
+    {
+        (true, true) => "*3\r\n:1\r\n:0\r\n:0\r\n"u8.ToArray(),
+        (true, false) => "*3\r\n:0\r\n:1\r\n:0\r\n"u8.ToArray(),
+        (false, true) => "*4\r\n:1\r\n:0\r\n:0\r\n:1\r\n"u8.ToArray(),
+        _ => "*4\r\n:0\r\n:1\r\n:0\r\n:1\r\n"u8.ToArray(),
+    };
 
     private static FakeRespServer Server(bool composite)
         => new(Reply(composite, true)) { ReplyOverride = (_, _) => Reply(composite, true) };
@@ -271,28 +298,48 @@ public class RateLimiterCommandHookTests
     private static ValueTask<RespireClient> Connect(FakeRespServer server, RecordingHook hook)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-            CommandHook = hook, PipelineHook = new RejectInternalPipeline(), ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            CommandHook = hook,
+            PipelineHook = new RejectInternalPipeline(),
+            ThreadPoolMonitoring = false,
         });
 
     private sealed class RejectInternalPipeline : RespirePipelineHook
     {
         public override object? OnExecuting(RespirePipelineContext context)
             => throw new InvalidOperationException("Internal scripts must not admit a pipeline.");
+
         public override void OnCompleted(RespirePipelineContext context, object? state,
-            RespirePipelineOutcome outcome, Exception? error) { }
+            RespirePipelineOutcome outcome, Exception? error)
+        {
+        }
     }
 
     private sealed class RecordingHook : RespireCommandHook
     {
         internal Action<RespireCommandContext>? Before;
         internal bool ThrowOnCompleted;
-        internal ConcurrentQueue<(string Command, RespireCommandOutcome Outcome)> Completed { get; } = new();
-        public override object? OnExecuting(RespireCommandContext context) { Before?.Invoke(context); return null; }
+
+        internal ConcurrentQueue<(string Command, RespireCommandOutcome Outcome)> Completed
+        {
+            get;
+        } = new();
+
+        public override object? OnExecuting(RespireCommandContext context)
+        {
+            Before?.Invoke(context);
+            return null;
+        }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Completed.Enqueue((context.Command, outcome));
-            if (ThrowOnCompleted) throw new InvalidOperationException("Observer failed");
+
+            if (ThrowOnCompleted)
+            {
+                throw new InvalidOperationException("Observer failed");
+            }
         }
     }
 }

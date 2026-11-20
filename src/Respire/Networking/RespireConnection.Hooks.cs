@@ -24,6 +24,7 @@ internal sealed partial class RespireConnection
         var started = Stopwatch.GetTimestamp();
         RespireConnection? connection = null;
         var completing = false;
+
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -46,7 +47,11 @@ internal sealed partial class RespireConnection
             {
                 connection.RequestMetricCloseReason(Internal.ConnectionTelemetry.CloseReason.Application);
                 connection.Abort(error, observeErrors: false);
-                try { await connection.DisposeAsync().ConfigureAwait(false); }
+
+                try
+                {
+                    await connection.DisposeAsync().ConfigureAwait(false);
+                }
                 catch { /* Preserve the hook or cancellation failure. */ }
             }
             // A completion callback is never invoked twice, even when it throws.
@@ -54,6 +59,7 @@ internal sealed partial class RespireConnection
             {
                 var outcome = Internal.ConnectionTelemetry.IsCallerCancellation(error, cancellationToken)
                     ? RespireConnectionOutcome.Canceled : RespireConnectionOutcome.Failed;
+
                 try
                 {
                     await hook.OnCompletedAsync(context, outcome, Stopwatch.GetElapsedTime(started), cancellationToken)
@@ -61,6 +67,7 @@ internal sealed partial class RespireConnection
                 }
                 catch { /* An audit failure must not hide the original connection failure. */ }
             }
+
             throw;
         }
     }

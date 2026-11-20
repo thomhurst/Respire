@@ -21,7 +21,10 @@ public class VectorEncodingBenchmarks
     private RespireValue[] _intermediateArguments = null!;
 
     [Params(16, 1536)]
-    public int Dimensions { get; set; }
+    public int Dimensions
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public void Setup()
@@ -43,16 +46,26 @@ public class VectorEncodingBenchmarks
         var originalCapacity = _buffer.Capacity;
         var fp32Bytes = DirectFp32();
         var direct = _buffer.WrittenMemory.ToArray();
+
         if (IntermediateArrayFp32() != fp32Bytes || !_buffer.WrittenMemory.Span.SequenceEqual(direct))
+        {
             throw new InvalidOperationException("FP32 alternatives must produce identical RESP bytes.");
+        }
+
         ValidateFp32(direct);
         var valuesBytes = Values();
         ValidateValues(_buffer.WrittenMemory.Span);
+
         if (_buffer.Capacity != originalCapacity)
+        {
             throw new InvalidOperationException("All alternatives must fit the same preallocated output capacity.");
+        }
+
         Console.WriteLine("VECTOR_ENCODING_SIZE " + JsonSerializer.Serialize(new
         {
-            Dimensions, Fp32Bytes = fp32Bytes, ValuesBytes = valuesBytes,
+            Dimensions,
+            Fp32Bytes = fp32Bytes,
+            ValuesBytes = valuesBytes,
         }));
     }
 
@@ -76,13 +89,21 @@ public class VectorEncodingBenchmarks
     {
         // Charge exactly the extra vector allocation/copy, not argument-list construction.
         byte[] bytes;
-        if (BitConverter.IsLittleEndian) bytes = MemoryMarshal.AsBytes(_vector.AsSpan()).ToArray();
+
+        if (BitConverter.IsLittleEndian)
+        {
+            bytes = MemoryMarshal.AsBytes(_vector.AsSpan()).ToArray();
+        }
         else
         {
             bytes = new byte[checked(_vector.Length * sizeof(float))];
+
             for (var index = 0; index < _vector.Length; index++)
+            {
                 BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(index * sizeof(float)), _vector[index]);
+            }
         }
+
         _intermediateArguments[1] = bytes;
         _buffer.Reset();
         var writer = new RespWriter(_buffer);
@@ -108,37 +129,61 @@ public class VectorEncodingBenchmarks
     private void ValidateFp32(ReadOnlySpan<byte> frame)
     {
         var position = 0;
+
         if (RespParser.TryParseValue(frame, ref position, out var reply) != RespParseStatus.Done || position != frame.Length)
+        {
             throw new InvalidOperationException("FP32 output must be one complete RESP frame.");
+        }
+
         using (reply)
         {
             var arguments = reply.AsArray();
+
             if (arguments.Length != 5 || !arguments[2].AsSpan().SequenceEqual("FP32"u8)
                 || arguments[3].AsSpan().Length != Dimensions * sizeof(float))
+            {
                 throw new InvalidOperationException("Unexpected FP32 command shape.");
+            }
+
             var bytes = arguments[3].AsSpan();
+
             for (var index = 0; index < Dimensions; index++)
+            {
                 if (BinaryPrimitives.ReadInt32LittleEndian(bytes[(index * sizeof(float))..]) != BitConverter.SingleToInt32Bits(_vector[index]))
+                {
                     throw new InvalidOperationException("FP32 encoding changed component bits.");
+                }
+            }
         }
     }
 
     private void ValidateValues(ReadOnlySpan<byte> frame)
     {
         var position = 0;
+
         if (RespParser.TryParseValue(frame, ref position, out var reply) != RespParseStatus.Done || position != frame.Length)
+        {
             throw new InvalidOperationException("VALUES output must be one complete RESP frame.");
+        }
+
         using (reply)
         {
             var arguments = reply.AsArray();
+
             if (arguments.Length != Dimensions + 5 || !arguments[2].AsSpan().SequenceEqual("VALUES"u8)
                 || int.Parse(arguments[3].AsSpan(), CultureInfo.InvariantCulture) != Dimensions)
+            {
                 throw new InvalidOperationException("Unexpected VALUES command shape.");
+            }
+
             for (var index = 0; index < Dimensions; index++)
             {
                 var component = float.Parse(arguments[index + 4].AsSpan(), CultureInfo.InvariantCulture);
+
                 if (BitConverter.SingleToInt32Bits(component) != BitConverter.SingleToInt32Bits(_vector[index]))
+                {
                     throw new InvalidOperationException("VALUES encoding did not round-trip a component.");
+                }
             }
         }
     }

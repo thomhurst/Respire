@@ -19,7 +19,8 @@ public class PayloadLimitedSubscriptionTests(RedisTestContainer fixture)
     public async Task PayloadLimitsArePerSubscriptionAndRetainOrderedGaps(int protocol, RespireSubscriptionKind kind)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespireProtocol)protocol });
+            with
+        { Protocol = (RespireProtocol)protocol });
         var name = "payload:" + Guid.NewGuid().ToString("N");
         var channel = kind == RespireSubscriptionKind.Sharded ? RespireChannel.Sharded(name) : new RespireChannel(name);
         var target = kind == RespireSubscriptionKind.Pattern ? RespireChannel.Pattern(name + "*") : channel;
@@ -42,6 +43,7 @@ public class PayloadLimitedSubscriptionTests(RedisTestContainer fixture)
         await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
         await Assert.That(reader.Current.Text).IsEqualTo("end");
         await using var other = unrestricted.GetAsyncEnumerator();
+
         foreach (var expected in new[] { "ok", "oversized", "end" })
         {
             await Assert.That(await other.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();

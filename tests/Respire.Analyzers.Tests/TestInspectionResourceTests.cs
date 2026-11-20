@@ -14,6 +14,7 @@ public class TestInspectionResourceTests
         var configurations = ReadSourceConfigurations();
         await Assert.That(configurations).IsNotEmpty();
         await Assert.That(configurations.Select(configuration => configuration.Framework).Distinct().Count()).IsEqualTo(configurations.Length);
+
         foreach (var configuration in configurations)
         {
             await Assert.That(configuration.Framework).IsNotEmpty();
@@ -41,8 +42,13 @@ public class TestInspectionResourceTests
     {
         const string missing = "MissingTestInspectionOwnerSurface.txt";
         InvalidOperationException? failure = null;
-        try { using var stream = OpenResource(missing); }
+
+        try
+        {
+            using var stream = OpenResource(missing);
+        }
         catch (InvalidOperationException error) { failure = error; }
+
         await Assert.That(failure).IsNotNull();
         await Assert.That(failure!.Message).IsEqualTo("Missing embedded resource: " + missing);
     }

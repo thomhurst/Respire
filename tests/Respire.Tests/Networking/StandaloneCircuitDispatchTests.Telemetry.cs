@@ -18,8 +18,14 @@ public partial class StandaloneCircuitDispatchTests
 #pragma warning restore RESP010
         var (_, clock) = await Prepare(client, server);
         Open(client, server);
-        if (halfOpen) clock.Advance(TimeSpan.FromMinutes(1));
+
+        if (halfOpen)
+        {
+            clock.Advance(TimeSpan.FromMinutes(1));
+        }
+
         var admission = halfOpen ? client.Core.Circuits!.Acquire(new("127.0.0.1", server.Port), default) : default;
+
         try
         {
             await Assert.That(await Failure(async () => await client.GetStringAsync("secret-key")))

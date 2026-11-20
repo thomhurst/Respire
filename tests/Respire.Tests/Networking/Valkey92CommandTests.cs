@@ -59,8 +59,16 @@ public class Valkey92CommandTests
         var missing = queue.SortedSets.RangeIfExists("sorted");
         var empty = queue.SortedSets.RangeIfExistsWithScores("sorted", 2, 1, true);
         var moved = queue.Keys.Move("key", 1, replace: true);
-        if (pending is not null) await pending.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (pending is not null)
+        {
+            await pending.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         await Assert.That(member.Result).IsNull();
         await Assert.That(missing.Result).IsNull();
         await Assert.That(empty.Result!).IsEmpty();

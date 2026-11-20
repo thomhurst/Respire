@@ -18,10 +18,17 @@ public class Utf8SuffixWriterTests
             "\uD800", "\uDC00", "a\uD800z", "a\uDC00z", "\uDC00tail", "a\uD800\uD800\uDC00",
             new string('a', 8) + "é", new string('a', 98) + "é", new string('a', 998) + "é",
             new string('a', 63) + new string('é', 64), new string('a', 4095) + "😀"];
+
         foreach (var value in values)
-        foreach (var prefix in Enumerable.Range(0, 5))
-        foreach (var padding in new[] { 0, 31, 123, 509 })
-            yield return (value, prefix, padding);
+        {
+            foreach (var prefix in Enumerable.Range(0, 5))
+            {
+                foreach (var padding in new[] { 0, 31, 123, 509 })
+                {
+                    yield return (value, prefix, padding);
+                }
+            }
+        }
     }
 
     [Test]
@@ -35,17 +42,27 @@ public class Utf8SuffixWriterTests
         var leading = Enumerable.Repeat((byte)0xA5, padding).ToArray();
         var buffer = new WriteBuffer(32);
         byte[] actual;
+
         try
         {
             var writer = new RespWriter(buffer);
             writer.WriteRaw(leading);
-            if (prefix is null) writer.WriteBulkString(value);
-            else writer.WritePrefixedKey(prefix, value, default);
+
+            if (prefix is null)
+            {
+                writer.WriteBulkString(value);
+            }
+            else
+            {
+                writer.WritePrefixedKey(prefix, value, default);
+            }
+
             writer.WriteRaw("+NEXT\r\n"u8);
             writer.Complete();
             actual = buffer.WrittenMemory.ToArray();
         }
         finally { buffer.Release(); }
+
         byte[] expected = [.. leading, .. Encoding.ASCII.GetBytes($"${expectedPayload.Length}\r\n"),
             .. expectedPayload, 13, 10, .. "+NEXT\r\n"u8];
         await Assert.That(actual.SequenceEqual(expected)).IsTrue();
@@ -68,17 +85,27 @@ public class Utf8SuffixWriterTests
         var capacity = buffer.Capacity;
         var leading = Enumerable.Repeat((byte)0xA5, capacity - speculativeFrameLength).ToArray();
         byte[] actual;
+
         try
         {
             var writer = new RespWriter(buffer);
             writer.WriteRaw(leading);
-            if (prefix is null) writer.WriteBulkString(value);
-            else writer.WritePrefixedKey(prefix, value, default);
+
+            if (prefix is null)
+            {
+                writer.WriteBulkString(value);
+            }
+            else
+            {
+                writer.WritePrefixedKey(prefix, value, default);
+            }
+
             writer.Complete();
             actual = buffer.WrittenMemory.ToArray();
             await Assert.That(buffer.Capacity).IsGreaterThan(capacity);
         }
         finally { buffer.Release(); }
+
         byte[] expected = [.. leading, .. Encoding.ASCII.GetBytes($"${payload.Length}\r\n"), .. payload, 13, 10];
         await Assert.That(actual.SequenceEqual(expected)).IsTrue();
     }
@@ -95,6 +122,7 @@ public class Utf8SuffixWriterTests
         var payload = prefix.Bytes.Concat(suffix).ToArray();
         var buffer = new WriteBuffer(1);
         byte[] actual;
+
         try
         {
             var writer = new RespWriter(buffer);
@@ -103,6 +131,7 @@ public class Utf8SuffixWriterTests
             actual = buffer.WrittenMemory.ToArray();
         }
         finally { buffer.Release(); }
+
         byte[] expected = [.. Encoding.ASCII.GetBytes($"${payload.Length}\r\n"), .. payload, 13, 10];
         await Assert.That(actual.SequenceEqual(expected)).IsTrue();
     }
@@ -116,6 +145,7 @@ public class Utf8SuffixWriterTests
         var prefix = CreatePrefix(prefixKind);
         var value = new string('a', 998) + "é😀";
         var buffer = new WriteBuffer(4096);
+
         try
         {
             _ = Measure(buffer, value, prefix, false);
@@ -132,15 +162,29 @@ public class Utf8SuffixWriterTests
     private static long Measure(WriteBuffer buffer, string value, KeyPrefix? prefix, bool control)
     {
         var start = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
             buffer.Reset();
             var writer = new RespWriter(buffer);
-            if (prefix is null) writer.WriteBulkString(value);
-            else writer.WritePrefixedKey(prefix, value, default);
+
+            if (prefix is null)
+            {
+                writer.WriteBulkString(value);
+            }
+            else
+            {
+                writer.WritePrefixedKey(prefix, value, default);
+            }
+
             writer.Complete();
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - start;
     }
 
@@ -164,13 +208,22 @@ public class Utf8SuffixWriterTests
     private readonly struct FailingCommand(Exception error, bool prefixed) : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer)
         {
             writer.WriteArrayHeader(2);
             writer.WriteBulkString("GET"u8);
             var value = new string('a', 4095) + new string('é', 4096);
-            if (prefixed) writer.WritePrefixedKey(new KeyPrefix("tenant:"), value, default);
-            else writer.WriteBulkString(value);
+
+            if (prefixed)
+            {
+                writer.WritePrefixedKey(new KeyPrefix("tenant:"), value, default);
+            }
+            else
+            {
+                writer.WriteBulkString(value);
+            }
+
             throw error;
         }
     }

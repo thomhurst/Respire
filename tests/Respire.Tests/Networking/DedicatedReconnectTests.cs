@@ -13,6 +13,7 @@ namespace Respire.Tests.Networking;
 public class DedicatedReconnectTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
+
     private static RespireReconnectPolicy Policy(int attempts = 2, int milliseconds = 25) => new()
     {
         InitialDelay = TimeSpan.FromMilliseconds(milliseconds),
@@ -32,10 +33,15 @@ public class DedicatedReconnectTests
             new RespireConnectionOptions { Database = 1, ReconnectPolicy = Policy() }, null, change =>
             {
                 changes.Enqueue(change);
-                if (change.ReconnectExhausted && Interlocked.Increment(ref exhaustedCount) == 3) exhausted.TrySetResult();
+
+                if (change.ReconnectExhausted && Interlocked.Increment(ref exhaustedCount) == 3)
+                {
+                    exhausted.TrySetResult();
+                }
             });
         using var deadline = new CancellationTokenSource(Deadline);
         var start = Stopwatch.GetTimestamp();
+
         async Task Rent()
         {
             var error = await Assert.That(async () => await pool.RentAsync(deadline.Token))
@@ -43,12 +49,14 @@ public class DedicatedReconnectTests
             await Assert.That(error!.InnerException).IsTypeOf<RespireConnectionException>();
             await Assert.That(error.Endpoint).IsEqualTo((RespireEndpoint?)new RespireEndpoint("127.0.0.1", server.Port));
         }
+
         await Task.WhenAll(Rent(), Rent());
         await Assert.That(Stopwatch.GetElapsedTime(start) >= TimeSpan.FromMilliseconds(70)).IsTrue();
         await Rent(); // A fresh rent can retry even after other rents exhaust.
         await exhausted.Task.WaitAsync(deadline.Token);
         await Assert.That(server.CommandsSeen).IsEqualTo(9);
         await Assert.That(changes.Select(change => change.ReconnectEpisodeId).Distinct().Count()).IsEqualTo(3);
+
         foreach (var episode in changes.GroupBy(change => change.ReconnectEpisodeId))
         {
             await Assert.That(episode.Key > 0).IsTrue();
@@ -98,12 +106,19 @@ public class DedicatedReconnectTests
         var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireConnectionOptions { Protocol = RespireProtocol.Resp3, ReconnectPolicy = Policy() with { MaxAttempts = null } }, null,
-            change => { if (change.State == RespireConnectionState.Disconnected) terminal.TrySetResult(change); });
+            change =>
+            {
+                if (change.State == RespireConnectionState.Disconnected)
+                {
+                    terminal.TrySetResult(change);
+                }
+            });
         using var deadline = new CancellationTokenSource(Deadline);
         var error = await Assert.That(async () => await pool.RentAsync(deadline.Token)).ThrowsExactly<RespireConnectionException>();
         await Assert.That(error!.InnerException).IsTypeOf<RespireProtocolException>();
         await Assert.That(error.Message).Contains("server did not confirm RESP3");
         await Assert.That(server.CommandsSeen).IsEqualTo(afterTransportFailure ? 2 : 1);
+
         if (afterTransportFailure)
         {
             var stopped = await terminal.Task.WaitAsync(deadline.Token);
@@ -119,7 +134,13 @@ public class DedicatedReconnectTests
         var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireConnectionOptions { Database = 1, ReconnectPolicy = Policy() with { MaxAttempts = null } }, null,
-            change => { if (change.State == RespireConnectionState.Disconnected) terminal.TrySetResult(change); });
+            change =>
+            {
+                if (change.State == RespireConnectionState.Disconnected)
+                {
+                    terminal.TrySetResult(change);
+                }
+            });
         using var deadline = new CancellationTokenSource(Deadline);
         await Assert.That(async () => await pool.RentAsync(deadline.Token)).ThrowsExactly<RespireConnectionException>();
         var stopped = await terminal.Task.WaitAsync(deadline.Token);
@@ -138,18 +159,32 @@ public class DedicatedReconnectTests
         listener.InstrumentPublished = (instrument, current) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.connection.reconnect.delay")
+            {
                 current.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<double>((_, value, tags, _) =>
         {
             var matchingPort = false;
             var dedicated = false;
+
             foreach (var tag in tags)
             {
-                if (tag.Key == "server.port" && tag.Value is int port && port == server.Port) matchingPort = true;
-                if (tag.Key == "respire.connection.source" && Equals(tag.Value, "dedicated")) dedicated = true;
+                if (tag.Key == "server.port" && tag.Value is int port && port == server.Port)
+                {
+                    matchingPort = true;
+                }
+
+                if (tag.Key == "respire.connection.source" && Equals(tag.Value, "dedicated"))
+                {
+                    dedicated = true;
+                }
             }
-            if (matchingPort && dedicated && value == 0.025) measured.TrySetResult();
+
+            if (matchingPort && dedicated && value == 0.025)
+            {
+                measured.TrySetResult();
+            }
         });
         listener.Start();
         var eventCount = 0;
@@ -157,7 +192,11 @@ public class DedicatedReconnectTests
             new RespireConnectionOptions { Database = 1, ReconnectPolicy = Policy() }, null, change =>
             {
                 Interlocked.Increment(ref eventCount);
-                if (change.State == RespireConnectionState.Connected) recovered.TrySetResult(change);
+
+                if (change.State == RespireConnectionState.Connected)
+                {
+                    recovered.TrySetResult(change);
+                }
             });
         using var deadline = new CancellationTokenSource(Deadline);
         var connection = await pool.RentAsync(deadline.Token);
@@ -183,13 +222,30 @@ public class DedicatedReconnectTests
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireConnectionOptions { Database = 1, ReconnectPolicy = Policy(milliseconds: 30_000) }, null,
-            change => { if (change.NextReconnectDelay is not null) waiting.TrySetResult(); });
+            change =>
+            {
+                if (change.NextReconnectDelay is not null)
+                {
+                    waiting.TrySetResult();
+                }
+            });
         using var caller = new CancellationTokenSource();
         var pending = pool.RentAsync(caller.Token).AsTask();
         await waiting.Task.WaitAsync(Deadline);
-        if (stop == 0) caller.Cancel();
-        else if (stop == 1) await pool.RetireAsync().AsTask().WaitAsync(Deadline);
-        else await pool.DisposeAsync().AsTask().WaitAsync(Deadline);
+
+        if (stop == 0)
+        {
+            caller.Cancel();
+        }
+        else if (stop == 1)
+        {
+            await pool.RetireAsync().AsTask().WaitAsync(Deadline);
+        }
+        else
+        {
+            await pool.DisposeAsync().AsTask().WaitAsync(Deadline);
+        }
+
         var error = await Assert.That(async () => await pending.WaitAsync(Deadline)).Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken == caller.Token).IsEqualTo(stop == 0);
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
@@ -232,7 +288,11 @@ public class DedicatedReconnectTests
             CloseConnectionAfterCommand = 2,
             SuppressReply = _ =>
             {
-                if (Interlocked.Increment(ref selects) == 1) return false;
+                if (Interlocked.Increment(ref selects) == 1)
+                {
+                    return false;
+                }
+
                 handshake.TrySetResult();
                 return true;
             },
@@ -260,18 +320,24 @@ public class DedicatedReconnectTests
     {
         var acceptGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, holdServerReceipt ? acceptGate.Task : Task.CompletedTask)
-            { SuppressReply = _ => true };
+        { SuppressReply = _ => true };
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var exhausted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var timeout = TimeSpan.FromMilliseconds(50);
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireConnectionOptions
             {
-                Database = 1, CommandTimeout = timeout, ReconnectPolicy = Policy(attempts: 1),
+                Database = 1,
+                CommandTimeout = timeout,
+                ReconnectPolicy = Policy(attempts: 1),
             }, null, change =>
             {
                 changes.Enqueue(change);
-                if (change.ReconnectExhausted) exhausted.TrySetResult();
+
+                if (change.ReconnectExhausted)
+                {
+                    exhausted.TrySetResult();
+                }
             });
         using var deadline = new CancellationTokenSource(Deadline);
         var error = await Assert.That(async () => await pool.RentAsync(deadline.Token))
@@ -287,6 +353,7 @@ public class DedicatedReconnectTests
         await Assert.That(attempts[1].ReconnectAttempt).IsEqualTo(1);
         await Assert.That(attempts[1].ReconnectExhausted).IsTrue();
         await Assert.That(attempts[1].ReconnectEpisodeId).IsEqualTo(attempts[0].ReconnectEpisodeId);
+
         foreach (var attempt in attempts)
         {
             var failure = await Assert.That(attempt.Error).IsTypeOf<RespireTimeoutException>();
@@ -294,12 +361,17 @@ public class DedicatedReconnectTests
             await Assert.That(failure!.Timeout).IsEqualTo(timeout);
             await Assert.That(failure.Diagnostics.ConnectionId).IsNotNull();
         }
+
         var initial = (RespireTimeoutException)attempts[0].Error!;
         var replacement = (RespireTimeoutException)attempts[1].Error!;
         await Assert.That(replacement.Diagnostics.ConnectionId).IsNotEqualTo(initial.Diagnostics.ConnectionId);
         await Assert.That(error!.InnerException).IsSameReferenceAs(replacement);
         // Command deadlines start at enqueue. Neither timeout proves server receipt.
-        if (holdServerReceipt) await Assert.That(server.CommandsSeen).IsEqualTo(0);
+        if (holdServerReceipt)
+        {
+            await Assert.That(server.CommandsSeen).IsEqualTo(0);
+        }
+
         await Assert.That(deadline.IsCancellationRequested).IsFalse();
     }
 
@@ -311,7 +383,11 @@ public class DedicatedReconnectTests
         {
             SuppressReply = command =>
             {
-                if (command == "SELECT 1") received.TrySetResult();
+                if (command == "SELECT 1")
+                {
+                    received.TrySetResult();
+                }
+
                 return true;
             },
         };
@@ -319,6 +395,7 @@ public class DedicatedReconnectTests
             new RespireConnectionOptions { Database = 1, ReconnectPolicy = Policy(attempts: 1) }, null);
         using var caller = new CancellationTokenSource();
         var pending = pool.RentAsync(caller.Token).AsTask();
+
         try
         {
             await received.Task.WaitAsync(Deadline);
@@ -338,7 +415,11 @@ public class DedicatedReconnectTests
         {
             caller.Cancel();
             await pool.DisposeAsync();
-            try { await pending.WaitAsync(Deadline); }
+
+            try
+            {
+                await pending.WaitAsync(Deadline);
+            }
             catch (OperationCanceledException) { }
         }
     }
@@ -351,14 +432,20 @@ public class DedicatedReconnectTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
-            Database = 1, ReconnectPolicy = Policy(milliseconds: 30_000),
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            Database = 1,
+            ReconnectPolicy = Policy(milliseconds: 30_000),
         });
 #pragma warning restore RESP010
         var disposed = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.Dedicated) return;
+            if (change.ReconnectSource != RespireReconnectSource.Dedicated)
+            {
+                return;
+            }
+
 #pragma warning disable RESP009 // Deliberately probe synchronous disposal inside the reconnect callback for self-join deadlocks.
             client.DisposeAsync().AsTask().GetAwaiter().GetResult();
 #pragma warning restore RESP009

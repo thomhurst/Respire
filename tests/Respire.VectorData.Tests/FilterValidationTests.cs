@@ -29,8 +29,11 @@ public class FilterValidationTests
         ];
         var fields = new[] { "Byte", "SByte", "Short", "UShort", "Int", "UInt", "Float" }
             .Select(name => new RespireVectorDataFilterField(name, "number", RespireVectorDataFilterKind.Numeric)).ToArray();
+
         foreach (var filter in equalities)
+        {
             new RespireVectorDataFilter<NullableNumericRecord>(fields).Translate(filter).Value.Should().Be("@number:[1 1]", filter.ToString());
+        }
 
         new RespireVectorDataFilter<NullableNumericRecord>(fields).Translate(r => r.Int == missing).Value.Should().Be("ismissing(@number)");
     }
@@ -44,6 +47,7 @@ public class FilterValidationTests
             r => (int)r.Optional! == 9,
             r => checked((short?)r.Optional) == 9,
         ];
+
         foreach (var filter in filters)
         {
             var translate = () => new RespireVectorDataFilter<FilterRecord>(new FilterMapper().FilterFields).Translate(filter);
@@ -70,6 +74,7 @@ public class FilterValidationTests
             r => r.Optional!.Value == 9,
             r => r.Double == double.NaN,
         ];
+
         foreach (var filter in filters)
         {
             var translate = () => new RespireVectorDataFilter<FilterRecord>(new FilterMapper().FilterFields).Translate(filter);
@@ -112,8 +117,12 @@ public class FilterValidationTests
     public void EncodingRoundTripsAndRejectsMalformedUtf16()
     {
         string[] values = ["", "foo", "FOO", "a,b", " 映画😀\r\n ", "} | * @field:{$vector}"];
+
         foreach (var value in values)
+        {
             RespireVectorDataFilterEncoding.DecodeTag(RespireVectorDataFilterEncoding.EncodeTag(value)).Should().Be(value);
+        }
+
         var invalid = () => RespireVectorDataFilterEncoding.EncodeTag("\uD800");
         invalid.Should().Throw<System.Text.EncoderFallbackException>();
     }
@@ -132,20 +141,27 @@ public class FilterValidationTests
     private sealed class InvalidMapper(string field, string text) : RespireVectorDataHashMapper<FilterRecord>
     {
         private readonly FilterMapper _mapper = new();
+
         public override IReadOnlyList<RespireVectorDataVectorField> VectorFields => _mapper.VectorFields;
+
         public override IReadOnlyList<RespireVectorDataFilterField> FilterFields => _mapper.FilterFields;
+
         public override string GetKey(FilterRecord record) => _mapper.GetKey(record);
+
         public override IReadOnlyDictionary<string, ReadOnlyMemory<byte>> Write(FilterRecord record)
         {
             var fields = new Dictionary<string, ReadOnlyMemory<byte>>(_mapper.Write(record));
             fields[field] = System.Text.Encoding.UTF8.GetBytes(text);
             return fields;
         }
+
         public override FilterRecord Read(string key, IReadOnlyDictionary<string, ReadOnlyMemory<byte>> fields) => _mapper.Read(key, fields);
     }
 
     private static async Task Collect<T>(IAsyncEnumerable<T> values)
     {
-        await foreach (var value in values) { }
+        await foreach (var value in values)
+        {
+        }
     }
 }

@@ -32,8 +32,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", first.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", first.Port)],
             CircuitBreaker = circuit ? new() : null,
         }, deadline.Token);
 #pragma warning restore RESP010
@@ -67,11 +70,13 @@ public partial class ErrorMetricsTests
             : payload.ReadStream;
         payload.Complete();
         var buffer = new byte[1];
+
         for (var index = 0; index < 5; index++)
         {
             MeasureSuccessfulPayload(stream, buffer, false);
             MeasureSuccessfulPayload(stream, buffer, true);
         }
+
         var measurement = AllocationMeasurement.WithoutConcurrentGc(() =>
             (Bytes: MeasureSuccessfulPayload(stream, buffer, false), Control: MeasureSuccessfulPayload(stream, buffer, true)));
         await Assert.That(measurement.Bytes).IsEqualTo(0L);
@@ -83,14 +88,23 @@ public partial class ErrorMetricsTests
     private static long MeasureSuccessfulPayload(Stream stream, byte[] buffer, bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
             RespBulkPayloadPipe.SetErrorAttempts(stream, 0);
             var read = stream.ReadAsync(buffer.AsMemory());
+
             if (!read.IsCompletedSuccessfully || read.GetAwaiter().GetResult() != 0)
+            {
                 throw new InvalidOperationException("Completed payload did not return EOF.");
-            if (control) GC.KeepAlive(new byte[16]);
+            }
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[16]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -110,8 +124,15 @@ public partial class ErrorMetricsTests
         // A nested route retry contributes to the same header result, not a new caller.
         observation.Handled(new RespireConnectionRetiredException("second", 6379));
         var stream = (await RespireTelemetry.ObserveStreamError(new(result), observation))!;
+
         using (var reused = RespireTelemetry.ErrorObservation.Rent(force: true))
-            for (var attempt = 0; attempt < 5; attempt++) reused.Retry();
+        {
+            for (var attempt = 0; attempt < 5; attempt++)
+            {
+                reused.Retry();
+            }
+        }
+
         var error = new IOException("Original producer failure.");
         payload.Complete(error);
         await Assert.That(capture.Items.Count).IsEqualTo(2);
@@ -132,6 +153,7 @@ public partial class ErrorMetricsTests
         var stream = payload.ReadStream;
         RespBulkPayloadPipe.SetErrorAttempts(stream, 3);
         var buffer = new byte[1];
+
         for (var index = 0; index < 2; index++)
         {
             using var cancellation = new CancellationTokenSource();
@@ -139,12 +161,18 @@ public partial class ErrorMetricsTests
                 : stream.ReadAsync(buffer.AsMemory(), cancellation.Token).AsTask();
             await cancellation.CancelAsync();
             OperationCanceledException? failure = null;
-            try { await read; }
+
+            try
+            {
+                await read;
+            }
             catch (OperationCanceledException error) { failure = error; }
+
             await Assert.That(failure).IsNotNull();
             await Assert.That(failure!.CancellationToken).IsEqualTo(cancellation.Token);
             await Assert.That(read.IsCanceled).IsTrue();
         }
+
         payload.GetMemory(1).Span[0] = 42;
         payload.Advance(1);
         await payload.FlushAsync();
@@ -154,8 +182,13 @@ public partial class ErrorMetricsTests
         var pending = stream.ReadAsync(buffer).AsTask();
         payload.Complete(producerError);
         Exception? observed = null;
-        try { await pending; }
+
+        try
+        {
+            await pending;
+        }
         catch (Exception error) { observed = error; }
+
         await Assert.That(observed).IsSameReferenceAs(producerError);
         await Assert.That(await ReadFailure(stream, "memory")).IsSameReferenceAs(producerError);
         var final = capture.Items.ToArray();
@@ -184,14 +217,25 @@ public partial class ErrorMetricsTests
         using var capture = new Capture(throwOnMeasurement: true, onMeasurement: item =>
         {
             if (!(bool)item.Tags["redis.client.errors.internal"]!)
+            {
                 borrowedAtPublication = client.Core.DedicatedPool.CaptureRetirementState().Borrowed;
+            }
         });
         Exception? observed = null;
-        try { await client.Strings.SetAsync("key", source, RespireConnection.StreamChunkSize + 1); }
+
+        try
+        {
+            await client.Strings.SetAsync("key", source, RespireConnection.StreamChunkSize + 1);
+        }
         catch (Exception error) { observed = error; }
+
         await Assert.That(observed).IsSameReferenceAs(expected);
+
         if (observed is OperationCanceledException cancelledError)
+        {
             await Assert.That(cancelledError.CancellationToken).IsEqualTo(cancellation.Token);
+        }
+
         await Assert.That(source.Disposed).IsFalse();
         var final = capture.Items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
         await Assert.That(final.Length).IsEqualTo(1);
@@ -219,28 +263,41 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", first.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", first.Port)],
         }, deadline.Token);
 #pragma warning restore RESP010
         var pool = await client.Core.Cluster!.GetDedicatedPoolAsync(slot, deadline.Token, discovery: null, observation: default);
         var borrowedAtReset = -1;
         using var source = new ReplayUploadSource(() => borrowedAtReset = pool.CaptureRetirementState().Borrowed, resetFails);
         using var capture = new Capture(throwOnMeasurement: true);
+
         if (resetFails)
         {
             var error = await Assert.That(async () => await client.Strings.SetAsync("key", source, 4,
                 cancellationToken: deadline.Token)).Throws<RespireServerException>();
             await Assert.That(error!.Code).IsEqualTo("MOVED");
         }
-        else await Assert.That(await client.Strings.SetAsync("key", source, 4, cancellationToken: deadline.Token)).IsTrue();
+        else
+        {
+            await Assert.That(await client.Strings.SetAsync("key", source, 4, cancellationToken: deadline.Token)).IsTrue();
+        }
+
         await Assert.That(borrowedAtReset).IsEqualTo(0);
         var handled = capture.Items.Where(item => (bool)item.Tags["redis.client.errors.internal"]!).ToArray();
         await Assert.That(handled.Length).IsEqualTo(1);
         await Assert.That(handled[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
         var final = capture.Items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
         await Assert.That(final.Length).IsEqualTo(resetFails ? 1 : 0);
-        if (resetFails) await Assert.That(final[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(1);
+
+        if (resetFails)
+        {
+            await Assert.That(final[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(1);
+        }
+
         await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("SET key ", StringComparison.Ordinal)))
             .IsEqualTo(resetFails ? 0 : 1);
     }
@@ -253,7 +310,12 @@ public partial class ErrorMetricsTests
             set
             {
                 resetting();
-                if (resetFails) throw new IOException("Replay reset failed.");
+
+                if (resetFails)
+                {
+                    throw new IOException("Replay reset failed.");
+                }
+
                 base.Position = value;
             }
         }
@@ -262,47 +324,86 @@ public partial class ErrorMetricsTests
     private static async Task<Exception?> ReadFailure(Stream stream, string read)
     {
         var buffer = new byte[1];
+
         try
         {
             switch (read)
             {
 #pragma warning disable CA2022 // Probe this exact Stream overload for the producer exception; no payload bytes are expected or consumed.
-                case "array": stream.Read(buffer, 0, 1); break;
-                case "span": stream.Read(buffer.AsSpan()); break;
+                case "array":
+                    stream.Read(buffer, 0, 1);
+                    break;
+                case "span":
+                    stream.Read(buffer.AsSpan());
+                    break;
 #pragma warning restore CA2022
-                case "byte": stream.ReadByte(); break;
+                case "byte":
+                    stream.ReadByte();
+                    break;
 #pragma warning disable CA2022 // Probe this exact Stream overload for the producer exception; no payload bytes are expected or consumed.
-                case "legacy": await stream.ReadAsync(buffer, 0, 1); break;
-                default: await stream.ReadAsync(buffer.AsMemory()); break;
+                case "legacy":
+                    await stream.ReadAsync(buffer, 0, 1);
+                    break;
+                default:
+                    await stream.ReadAsync(buffer.AsMemory());
+                    break;
 #pragma warning restore CA2022
             }
         }
         catch (Exception error) { return error; }
+
         return null;
     }
 
     private sealed class FailingUploadSource(int prefixLength, Exception error) : Stream
     {
         private int _remaining = prefixLength;
-        internal bool Disposed { get; private set; }
+
+        internal bool Disposed
+        {
+            get; private set;
+        }
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (_remaining == 0) return ValueTask.FromException<int>(error);
+            if (_remaining == 0)
+            {
+                return ValueTask.FromException<int>(error);
+            }
+
             var count = Math.Min(buffer.Length, _remaining);
             buffer.Span[..count].Clear();
             _remaining -= count;
             return new(count);
         }
-        protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
+
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

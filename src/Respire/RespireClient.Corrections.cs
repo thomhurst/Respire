@@ -7,10 +7,23 @@ public sealed partial class RespireClient
 {
     internal interface ITrackedCorrectionExecution<TResult>
     {
-        ValueTask<TResult> Response { get; }
-        TrackedConnectionIdentity ConnectionIdentity { get; }
-        bool CommandMayBeOutstanding { get; }
+        ValueTask<TResult> Response
+        {
+            get;
+        }
+
+        TrackedConnectionIdentity ConnectionIdentity
+        {
+            get;
+        }
+
+        bool CommandMayBeOutstanding
+        {
+            get;
+        }
+
         RespireTelemetry.ErrorObservation ErrorObservation => default;
+
         ValueTask<TResult> CompleteResponseAsync(ValueTask<TResult> response) => response;
     }
 
@@ -57,14 +70,21 @@ public sealed partial class RespireClient
         // Legacy tracked executions transfer completion here. A supplied dispatch view
         // stays live through the enclosing caller, including any later TTL correction.
         var observation = execution.ErrorObservation;
+
         if (execution is TrackedLockExecution)
+        {
             return execution.CompleteResponseAsync(
                 ValidateAndExecuteCorrectionAsync(execution, ordering, state, correct, onOutcomeUncertain, observation));
+        }
+
         if (observation.IsEmpty)
+        {
             return execution.CompleteResponseAsync(DispatchResponseSource<TResult>.Run(
                 (Client: this, Execution: execution, Ordering: ordering, State: state, Correct: correct, Uncertain: onOutcomeUncertain),
                 static (state, owner) => state.Client.ValidateAndExecuteCorrectionAsync(
                     state.Execution, state.Ordering, state.State, state.Correct, state.Uncertain, owner)));
+        }
+
         return execution.CompleteResponseAsync(RespireTelemetry.ObserveFinalError(
             ValidateAndExecuteCorrectionAsync(execution, ordering, state, correct, onOutcomeUncertain, observation), observation));
     }
@@ -97,19 +117,30 @@ public sealed partial class RespireClient
             // Managed ownership must be lost before a potentially blocked fence begins.
             onOutcomeUncertain?.Invoke();
             var identity = execution.ConnectionIdentity;
+
             if (ordering == CorrectionOrdering.FenceFirst && correct is not null && identity.ServerClientId <= 0)
+            {
                 throw new InvalidOperationException("A fenced correction requires a tracked Redis client identity.", error);
+            }
+
             if (identity.ServerClientId > 0)
             {
                 if (ordering == CorrectionOrdering.FenceFirst)
+                {
                     await FenceCorrectionConnectionAsync(identity).ConfigureAwait(false);
+                }
                 else if (ordering == CorrectionOrdering.BestEffortLockFence
                     && error is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
+                {
                     await TryFenceLockConnectionAsync(identity, "lock release", observation).ConfigureAwait(false);
+                }
             }
 
             if (correct is not null)
+            {
                 await correct(state, identity).ConfigureAwait(false);
+            }
+
             throw;
         }
     }

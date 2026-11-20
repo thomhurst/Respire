@@ -6,6 +6,7 @@ internal static class Utf8RouteName
     public static void Validate(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
+
         for (var i = 0; i < name.Length; i++)
         {
             if (char.IsHighSurrogate(name[i]))

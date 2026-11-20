@@ -45,6 +45,7 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
         using var host = builder.Build();
         using var deadline = new CancellationTokenSource(Deadline);
         await host.StartAsync(deadline.Token);
+
         try
         {
             await state.Warning.Reader.ReadAsync(deadline.Token);
@@ -132,8 +133,13 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
         fixture.Fault.FailuresRemaining = int.MaxValue;
         await fixture.Worker.StartAsync(CancellationToken.None);
         Exception? actual = null;
-        try { await fixture.Worker.ExecuteTask!.WaitAsync(Deadline); }
+
+        try
+        {
+            await fixture.Worker.ExecuteTask!.WaitAsync(Deadline);
+        }
         catch (Exception error) { actual = error; }
+
         await Assert.That(ReferenceEquals(actual, fixture.Fault.Error)).IsTrue();
         await Assert.That(fixture.Fault.Attempts).IsEqualTo(1);
         await Assert.That(fixture.State.Warnings.Count).IsEqualTo(0);
@@ -193,13 +199,20 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
         var state = new HandlerState();
         var services = new ServiceCollection().AddSingleton(state).AddSingleton<IRespireClient>(client);
         services.AddLogging(logging => logging.AddProvider(new RecordingLogger(state)));
+
         if (jobQueue)
+        {
             services.AddRespireJobQueue<Handler, string>("startup", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
                 options: null, queueOptions: new() { RateLimit = new() { PermitLimit = 10, Window = TimeSpan.FromMinutes(1) } });
+        }
         else
+        {
             services.AddRespireStreamWorker<Handler>("events", "workers");
+        }
+
         await using var provider = services.BuildServiceProvider();
         var worker = (BackgroundService)provider.GetRequiredService<IHostedService>();
+
         try
         {
             await worker.StartAsync(CancellationToken.None);
@@ -262,7 +275,11 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
         public int Attempts;
         public bool WaitForCancellation;
         public bool ConnectionErrorOnStop;
-        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Started
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public object? Invoke(object inner, MethodInfo method, object?[]? arguments)
         {
@@ -271,30 +288,47 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
                 && arguments?[2] is RespireValue[] { Length: 3 } values && values[2] == (RespireValue)"initialize")
             {
                 Interlocked.Increment(ref Attempts);
+
                 if (WaitForCancellation)
+                {
                     return method.ReturnType == typeof(ValueTask<bool>)
                         ? (object)new ValueTask<bool>(UntilCanceledAsync<bool>((CancellationToken)arguments![^1]!))
                         : new ValueTask<long>(UntilCanceledAsync<long>((CancellationToken)arguments![^1]!));
-                if (Interlocked.Decrement(ref FailuresRemaining) >= 0) throw Error!;
+                }
+
+                if (Interlocked.Decrement(ref FailuresRemaining) >= 0)
+                {
+                    throw Error!;
+                }
             }
+
             return Forward(inner, method, arguments);
         }
 
         private async Task<T> UntilCanceledAsync<T>(CancellationToken token)
         {
             Started.TrySetResult();
-            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
             catch (OperationCanceledException) when (ConnectionErrorOnStop)
             {
                 throw new RespireConnectionException("connection closed during shutdown");
             }
+
             return default!;
         }
     }
 
     public class ForwardingProxy : DispatchProxy
     {
-        public Func<MethodInfo, object?[]?, object?> Call { get; set; } = null!;
+        public Func<MethodInfo, object?[]?, object?> Call
+        {
+            get; set;
+        } = null!;
+
         protected override object? Invoke(MethodInfo? method, object?[]? arguments) => Call(method!, arguments);
     }
 
@@ -309,7 +343,10 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
 
     private static object? Forward(object inner, MethodInfo method, object?[]? arguments)
     {
-        try { return method.Invoke(inner, arguments); }
+        try
+        {
+            return method.Invoke(inner, arguments);
+        }
         catch (TargetInvocationException error) when (error.InnerException is not null)
         {
             ExceptionDispatchInfo.Capture(error.InnerException).Throw();
@@ -319,9 +356,20 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
 
     public sealed class HandlerState
     {
-        public TaskCompletionSource Delivered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public Channel<bool> Warning { get; } = Channel.CreateUnbounded<bool>();
-        public ConcurrentQueue<KeyValuePair<string, object?>[]> Warnings { get; } = new();
+        public TaskCompletionSource Delivered
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Channel<bool> Warning
+        {
+            get;
+        } = Channel.CreateUnbounded<bool>();
+
+        public ConcurrentQueue<KeyValuePair<string, object?>[]> Warnings
+        {
+            get;
+        } = new();
     }
 
     public sealed class Handler(HandlerState state) : IRespireStreamHandler<RespireStreamEntry>, IRespireStreamHandler<RespireJob<string>>
@@ -342,13 +390,23 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
     private sealed class RecordingLogger(HandlerState state) : ILoggerProvider, ILogger
     {
         public ILogger CreateLogger(string categoryName) => this;
+
         public IDisposable? BeginScope<TState>(TState value) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
-        public void Dispose() { }
+
+        public void Dispose()
+        {
+        }
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState value, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (logLevel != LogLevel.Warning) return;
+            if (logLevel != LogLevel.Warning)
+            {
+                return;
+            }
+
             state.Warnings.Enqueue(((IEnumerable<KeyValuePair<string, object?>>)value!).ToArray());
             state.Warning.Writer.TryWrite(true);
         }
@@ -356,12 +414,35 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
 
     private sealed class Fixture : IAsyncDisposable
     {
-        public required RespireClient Client { get; init; }
-        public required ServiceProvider Provider { get; init; }
-        public required BackgroundService Worker { get; init; }
-        public required HandlerState State { get; init; }
-        public required StartupFault Fault { get; init; }
-        public required StartupFault GroupFault { get; init; }
+        public required RespireClient Client
+        {
+            get; init;
+        }
+
+        public required ServiceProvider Provider
+        {
+            get; init;
+        }
+
+        public required BackgroundService Worker
+        {
+            get; init;
+        }
+
+        public required HandlerState State
+        {
+            get; init;
+        }
+
+        public required StartupFault Fault
+        {
+            get; init;
+        }
+
+        public required StartupFault GroupFault
+        {
+            get; init;
+        }
 
         public static async Task<Fixture> CreateAsync(bool jobQueue, string connectionString, bool invalidKeys = false)
         {
@@ -380,6 +461,7 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
             var state = new HandlerState();
             var services = new ServiceCollection().AddSingleton(state).AddSingleton<IRespireClient>(view);
             services.AddLogging(logging => logging.AddProvider(new RecordingLogger(state)));
+
             if (jobQueue)
             {
                 services.AddRespireJobQueue<Handler, string>("startup", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
@@ -392,9 +474,17 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
                 services.AddRespireStreamWorker<Handler>("events", "workers");
                 await client.Streams.AddAsync("events", ("payload", "value"));
             }
+
             var provider = services.BuildServiceProvider();
-            return new() { Client = client, Provider = provider, State = state, Fault = fault, GroupFault = groupFault,
-                Worker = (BackgroundService)provider.GetRequiredService<IHostedService>() };
+            return new()
+            {
+                Client = client,
+                Provider = provider,
+                State = state,
+                Fault = fault,
+                GroupFault = groupFault,
+                Worker = (BackgroundService)provider.GetRequiredService<IHostedService>()
+            };
         }
 
         public async ValueTask DisposeAsync()

@@ -23,8 +23,16 @@ internal readonly record struct SentinelEpochEvidence(
     internal bool IsCurrent(RespireEndpoint primary, long? epoch, string[]? addresses = null)
     {
         // Deployments that never expose epochs keep metadata-free recovery.
-        if (ObservedEpoch is not { } observed) return true;
-        if (epoch is { } candidate && candidate > observed) return true;
+        if (ObservedEpoch is not { } observed)
+        {
+            return true;
+        }
+
+        if (epoch is { } candidate && candidate > observed)
+        {
+            return true;
+        }
+
         return (epoch is null || epoch == observed) && ObservedPrimary is { } current
             && (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(primary, current)
                 || new SentinelAddressEvidence(primary, addresses).ConfirmsSameAddress(
@@ -35,7 +43,12 @@ internal readonly record struct SentinelEpochEvidence(
         out SentinelEpochEvidence next)
     {
         next = this;
-        if (!IsCurrent(primary, epoch, addresses)) return false;
+
+        if (!IsCurrent(primary, epoch, addresses))
+        {
+            return false;
+        }
+
         if (epoch is { } candidate && (ObservedEpoch is null || candidate > ObservedEpoch))
         {
             next = this with
@@ -46,6 +59,7 @@ internal readonly record struct SentinelEpochEvidence(
                 ValidatedPeer = null,
             };
         }
+
         return true;
     }
 
@@ -53,14 +67,21 @@ internal readonly record struct SentinelEpochEvidence(
         string[]? addresses, RespireEndpoint? validatedPeer, out SentinelEpochEvidence next)
     {
         if (!TryObserve(primary, epoch, addresses, out next))
+        {
             return SentinelConfigurationRejection.Superseded;
+        }
+
         if (next.ObservedEpoch is not null && validatedPeer is { } peer)
         {
             if (next.ValidatedPeer is { } acceptedPeer
                 && !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(peer, acceptedPeer))
+            {
                 return SentinelConfigurationRejection.DifferentPeer;
+            }
+
             next = next with { ValidatedPeer = next.ValidatedPeer ?? peer };
         }
+
         next = next with { AcceptedEpoch = epoch ?? next.ObservedEpoch };
         return SentinelConfigurationRejection.None;
     }

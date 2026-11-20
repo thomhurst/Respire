@@ -9,29 +9,76 @@ namespace Respire;
 public sealed record RespireClientExcludeFilters
 {
     /// <summary>Exclude this connection class.</summary>
-    public RespireClientType? Type { get; init; }
+    public RespireClientType? Type
+    {
+        get; init;
+    }
+
     /// <summary>Exclude these positive IDs; an empty list omits this selector.</summary>
-    public IReadOnlyList<long> Ids { get; init; } = [];
+    public IReadOnlyList<long> Ids
+    {
+        get; init;
+    } = [];
+
     /// <summary>Exclude this ACL username.</summary>
-    public string? User { get; init; }
+    public string? User
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this nonempty remote address and port.</summary>
-    public string? Address { get; init; }
+    public string? Address
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this nonempty local address and port.</summary>
-    public string? LocalAddress { get; init; }
+    public string? LocalAddress
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this nonempty connection name.</summary>
-    public string? Name { get; init; }
+    public string? Name
+    {
+        get; init;
+    }
+
     /// <summary>Exclude these flags; empty excludes every connection.</summary>
-    public string? Flags { get; init; }
+    public string? Flags
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this nonempty library name.</summary>
-    public string? LibraryName { get; init; }
+    public string? LibraryName
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this nonempty library version.</summary>
-    public string? LibraryVersion { get; init; }
+    public string? LibraryVersion
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this nonnegative database number.</summary>
-    public int? Database { get; init; }
+    public int? Database
+    {
+        get; init;
+    }
+
     /// <summary>Exclude these capabilities; empty excludes every connection.</summary>
-    public string? Capabilities { get; init; }
+    public string? Capabilities
+    {
+        get; init;
+    }
+
     /// <summary>Exclude this nonempty remote IP address.</summary>
-    public string? Ip { get; init; }
+    public string? Ip
+    {
+        get; init;
+    }
 
     internal static void AppendArguments(RespireClientFilterOptions options, ref ClientFilterArguments writer)
     {

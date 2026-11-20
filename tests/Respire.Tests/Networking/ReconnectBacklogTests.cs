@@ -31,10 +31,17 @@ public class ReconnectBacklogTests
                     await failSelection.Task.WaitAsync(token);
                     throw failure;
                 }
+
                 return client.Core.Multiplexer.GetConnection();
             });
         var dispatches = new ConcurrentQueue<int>();
-        ValueTask<int> Dispatch(int value) { dispatches.Enqueue(value); return new(value); }
+
+        ValueTask<int> Dispatch(int value)
+        {
+            dispatches.Enqueue(value);
+            return new(value);
+        }
+
         var first = queue.EnqueueAsync((_, _) => Dispatch(1), deadline.Token).AsTask();
         var second = queue.EnqueueAsync((_, _) => Dispatch(2), deadline.Token).AsTask();
         await Assert.That(queue.Count).IsEqualTo(2);
@@ -92,7 +99,13 @@ public class ReconnectBacklogTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         using var cancelled = new CancellationTokenSource();
         var calls = new ConcurrentQueue<int>();
-        ValueTask<int> Record(int value) { calls.Enqueue(value); return new(value); }
+
+        ValueTask<int> Record(int value)
+        {
+            calls.Enqueue(value);
+            return new(value);
+        }
+
         var first = fixture.Queue.EnqueueAsync((_, _) => Record(1), cancelHead ? cancelled.Token : deadline.Token).AsTask();
         await fixture.Handshake.Task.WaitAsync(deadline.Token);
         var second = fixture.Queue.EnqueueAsync((_, _) => Record(2), cancelHead ? deadline.Token : cancelled.Token).AsTask();
@@ -119,7 +132,17 @@ public class ReconnectBacklogTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         using var expired = new CancellationTokenSource();
         var calls = 0;
-        var first = fixture.Queue.EnqueueAsync((_, _) => { Interlocked.Increment(ref calls); return new ValueTask<int>(1); }, expired.Token).AsTask();
+        var first = fixture
+            .Queue
+            .EnqueueAsync(
+                (_, _) =>
+                {
+                    Interlocked.Increment(ref calls);
+                    return new ValueTask<int>(1);
+                },
+                expired.Token
+            )
+            .AsTask();
         await fixture.Handshake.Task.WaitAsync(deadline.Token);
         var second = fixture.Queue.EnqueueAsync((_, _) => new ValueTask<int>(2), deadline.Token).AsTask();
         expired.CancelAfter(TimeSpan.FromMilliseconds(20));
@@ -138,23 +161,47 @@ public class ReconnectBacklogTests
         await using var fixture = await Fixture.CreateAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var calls = 0;
-        ValueTask<int> Dispatch(RespireConnection _, CancellationToken token) { Interlocked.Increment(ref calls); return new(1); }
+
+        ValueTask<int> Dispatch(RespireConnection _, CancellationToken token)
+        {
+            Interlocked.Increment(ref calls);
+            return new(1);
+        }
+
         var first = fixture.Queue.EnqueueAsync(Dispatch, deadline.Token).AsTask();
         await fixture.Handshake.Task.WaitAsync(deadline.Token);
         var second = fixture.Queue.EnqueueAsync(Dispatch, deadline.Token).AsTask();
-        if (retire) await fixture.Client.Core.Multiplexer.RetireAsync().WaitAsync(deadline.Token);
-        else await fixture.Client.DisposeAsync();
+
+        if (retire)
+        {
+            await fixture.Client.Core.Multiplexer.RetireAsync().WaitAsync(deadline.Token);
+        }
+        else
+        {
+            await fixture.Client.DisposeAsync();
+        }
+
         foreach (var pending in new[] { first, second })
         {
             if (retire)
+            {
                 await Assert.That(async () => await pending.WaitAsync(deadline.Token)).ThrowsExactly<RespireConnectionRetiredException>();
+            }
             else
+            {
                 await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<ObjectDisposedException>();
+            }
         }
+
         if (retire)
+        {
             await Assert.That(async () => await fixture.Queue.EnqueueAsync(Dispatch)).ThrowsExactly<RespireConnectionRetiredException>();
+        }
         else
+        {
             await Assert.That(async () => await fixture.Queue.EnqueueAsync(Dispatch)).Throws<ObjectDisposedException>();
+        }
+
         await Assert.That(calls).IsEqualTo(0);
         await Assert.That(fixture.Queue.Count).IsEqualTo(0);
     }
@@ -180,9 +227,16 @@ public class ReconnectBacklogTests
         await client.Core.Multiplexer.GetConnection().DisposeAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var calls = 0;
-        ValueTask<int> Dispatch(RespireConnection _, CancellationToken token) { Interlocked.Increment(ref calls); return new(1); }
+
+        ValueTask<int> Dispatch(RespireConnection _, CancellationToken token)
+        {
+            Interlocked.Increment(ref calls);
+            return new(1);
+        }
+
         var first = queue.EnqueueAsync(Dispatch, deadline.Token).AsTask();
         var second = queue.EnqueueAsync(Dispatch, deadline.Token).AsTask();
+
         if (exhaust)
         {
             foreach (var pending in new[] { first, second })
@@ -190,6 +244,7 @@ public class ReconnectBacklogTests
                 var error = await Assert.That(async () => await pending.WaitAsync(deadline.Token)).ThrowsExactly<RespireReconnectLimitException>();
                 await Assert.That(error!.InnerException).IsNotNull();
             }
+
             await Assert.That(async () => await queue.EnqueueAsync(Dispatch, deadline.Token)).ThrowsExactly<RespireReconnectLimitException>();
             await Assert.That(calls).IsEqualTo(0);
         }
@@ -198,6 +253,7 @@ public class ReconnectBacklogTests
             await Task.WhenAll(first, second).WaitAsync(deadline.Token);
             await Assert.That(calls).IsEqualTo(2);
         }
+
         await Assert.That(queue.Count).IsEqualTo(0);
         await Assert.That(server.ReceivedCommands.Count(command => command == "SELECT 1")).IsEqualTo(3);
     }
@@ -220,7 +276,17 @@ public class ReconnectBacklogTests
         await entered.Task.WaitAsync(deadline.Token);
         await Assert.That(fixture.Queue.Count).IsEqualTo(0);
         var calls = 0;
-        var second = fixture.Queue.EnqueueAsync((_, _) => { Interlocked.Increment(ref calls); return new ValueTask<int>(2); }, deadline.Token).AsTask();
+        var second = fixture
+            .Queue
+            .EnqueueAsync(
+                (_, _) =>
+                {
+                    Interlocked.Increment(ref calls);
+                    return new ValueTask<int>(2);
+                },
+                deadline.Token
+            )
+            .AsTask();
         await Assert.That(fixture.Queue.Count).IsEqualTo(1);
         await Assert.That(calls).IsEqualTo(0);
         finish.SetResult();
@@ -245,29 +311,52 @@ public class ReconnectBacklogTests
     private static RespireOptions Options(int port) => new()
     {
         Endpoints = { new RespireEndpoint("127.0.0.1", port) },
-        Connections = 1, Protocol = RespireProtocol.Resp2, Database = 1,
-        ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5),
+        Connections = 1,
+        Protocol = RespireProtocol.Resp2,
+        Database = 1,
+        ConnectTimeout = TimeSpan.FromSeconds(5),
+        CommandTimeout = TimeSpan.FromSeconds(5),
     };
 
     private sealed class Fixture(FakeRespServer server, RespireClient client,
         RespireConnectionMultiplexer.ReconnectBacklog queue, TaskCompletionSource handshake) : IAsyncDisposable
     {
-        internal FakeRespServer Server { get; } = server;
-        internal RespireClient Client { get; } = client;
-        internal RespireConnectionMultiplexer.ReconnectBacklog Queue { get; } = queue;
-        internal TaskCompletionSource Handshake { get; } = handshake;
+        internal FakeRespServer Server
+        {
+            get;
+        } = server;
+
+        internal RespireClient Client
+        {
+            get;
+        } = client;
+
+        internal RespireConnectionMultiplexer.ReconnectBacklog Queue
+        {
+            get;
+        } = queue;
+
+        internal TaskCompletionSource Handshake
+        {
+            get;
+        } = handshake;
 
         internal static async Task<Fixture> CreateAsync(int capacity = 8)
         {
             var server = new FakeRespServer(4, FakeRespServer.OkReply);
             RespireClient? client = null;
+
             try
             {
                 client = await RespireClient.ConnectAsync(Options(server.Port));
                 var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 server.SuppressReply = command =>
                 {
-                    if (command != "SELECT 1") return false;
+                    if (command != "SELECT 1")
+                    {
+                        return false;
+                    }
+
                     handshake.TrySetResult();
                     return true;
                 };
@@ -279,14 +368,19 @@ public class ReconnectBacklogTests
             {
                 try
                 {
-                    if (client is not null) await client.DisposeAsync();
+                    if (client is not null)
+                    {
+                        await client.DisposeAsync();
+                    }
                 }
                 finally { await server.DisposeAsync(); }
+
                 throw;
             }
         }
 
         internal Task ReleaseAsync() => Server.SendRawAsync(FakeRespServer.OkReply, 1);
+
         public async ValueTask DisposeAsync()
         {
             await Client.DisposeAsync();

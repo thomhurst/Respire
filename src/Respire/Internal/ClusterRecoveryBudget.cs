@@ -24,6 +24,7 @@ internal sealed class ClusterRecoveryBudget : IDisposable
     }
 
     internal CancellationToken Token => _round.Token;
+
     internal CancellationToken PrimaryToken => _primaries.Token;
 
     internal bool IsCallerCancellation(OperationCanceledException error, CancellationToken callerToken)
@@ -47,6 +48,7 @@ internal sealed class ClusterRecoveryBudget : IDisposable
             _earlySeeds = CreateDeadline(Token,
                 TimeSpan.FromTicks(Math.Max(1, remaining.Ticks / 2)), out _earlySeedDeadline);
         }
+
         return _earlySeeds.Token;
     }
 

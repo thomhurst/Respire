@@ -37,6 +37,7 @@ public class StandaloneUnitRetryIntegrationTests(RedisTestContainer fixture)
             TestingStreamFactory = async (host, port, token) =>
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, token);
@@ -78,7 +79,11 @@ public class StandaloneUnitRetryIntegrationTests(RedisTestContainer fixture)
             await using var transaction = client.CreateTransaction();
             var increment = transaction.Increment(key);
             var read = transaction.GetString(key);
-            try { await transaction.CommitAsync(token); }
+
+            try
+            {
+                await transaction.CommitAsync(token);
+            }
             catch (Exception error)
             {
                 // Every member observes the same final failure as the commit.
@@ -86,12 +91,15 @@ public class StandaloneUnitRetryIntegrationTests(RedisTestContainer fixture)
                 (await Capture(() => Task.FromResult(read.Result))).Should().BeOfType(error.GetType());
                 return new(null, null, error);
             }
+
             return new(increment.Result, read.Result, null);
         }
+
         using var batch = client.CreateBatch();
         var incrementing = batch.Increment(key);
         var reading = batch.GetString(key);
         var result = await batch.TryExecuteAsync(token);
+
         if (result.FailureCount != 0)
         {
             result.FailureCount.Should().Be(2);
@@ -99,6 +107,7 @@ public class StandaloneUnitRetryIntegrationTests(RedisTestContainer fixture)
             reading.HasResult.Should().BeFalse();
             return new(null, null, result.FirstError);
         }
+
         return new(incrementing.Result, reading.Result, null);
     }
 
@@ -109,6 +118,7 @@ public class StandaloneUnitRetryIntegrationTests(RedisTestContainer fixture)
             outcome.Failure.Should().BeAssignableTo<RespireConnectionException>();
             return;
         }
+
         outcome.Failure.Should().BeNull();
         // Results come from the final attempt only.
         outcome.Increment.Should().Be(2);
@@ -117,12 +127,19 @@ public class StandaloneUnitRetryIntegrationTests(RedisTestContainer fixture)
 
     internal static async Task WaitForValueAsync(IRespireClient observer, string key, string expected, CancellationToken token)
     {
-        while (await observer.GetStringAsync(key, token) != expected) await Task.Delay(20, token);
+        while (await observer.GetStringAsync(key, token) != expected)
+        {
+            await Task.Delay(20, token);
+        }
     }
 
     private static async Task<Exception?> Capture(Func<Task> operation)
     {
-        try { await operation(); return null; }
+        try
+        {
+            await operation();
+            return null;
+        }
         catch (Exception error) { return error; }
     }
 }

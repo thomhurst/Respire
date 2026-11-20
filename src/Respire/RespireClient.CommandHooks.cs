@@ -127,19 +127,36 @@ public sealed partial class RespireClient
     private string ValidateInterpolatedHookCommand(RespireCommandInterpolatedStringHandler command,
         RespireCommandFlags flags, bool fireAndForget, InterpolatedHookCommand prepared)
     {
-        if (!fireAndForget) ValidateResultFlags(flags);
+        if (!fireAndForget)
+        {
+            ValidateResultFlags(flags);
+        }
+
         var (initialOperation, tokens) = command.Build();
-        for (var i = 0; i < tokens.Length; i++) tokens[i] = tokens[i].Snapshot();
+
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            tokens[i] = tokens[i].Snapshot();
+        }
+
         prepared.Snapshot = (initialOperation, tokens);
         var (operation, firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
         var arguments = tokens.AsSpan(firstArgumentIndex);
+
         if (fireAndForget)
+        {
             ValidateRawFireAndForgetCommand(operation, ReadOnlySpan<string>.Empty, arguments);
+        }
+
         _ = StoredProcedureName(operation, arguments);
         _ = GetRawRoutingKeyIndex(operation, tokens, firstArgumentIndex);
+
         if (!fireAndForget && _core.Cluster is not null
             && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
+        {
             ValidateClusterWideFlags(operation, flags);
+        }
+
         return operation;
     }
 
@@ -149,47 +166,82 @@ public sealed partial class RespireClient
         RespireCommandFlags flags, bool fireAndForget)
     {
         string operation;
+
         if (command.IsCallerSupplied)
         {
             operation = command.Name;
+
             if (_keyPrefix is not null && IsModuleCommand(operation))
             {
                 var error = PrefixModuleKeysOrError(operation.ToUpperInvariant(), args, out args);
-                if (error is not null) throw error;
+
+                if (error is not null)
+                {
+                    throw error;
+                }
             }
         }
         else if (!TryGetPreencodedRawOperation(command, args, out operation, out args))
         {
             if (_keyPrefix is null || !RawCommandKeyLayouts.HasPrefixableLayout(command.Name))
             {
-                if (!fireAndForget) ValidateResultFlags(flags);
+                if (!fireAndForget)
+                {
+                    ValidateResultFlags(flags);
+                }
+
                 ValidateCatalogCommand(command);
                 args = PrefixCatalogKeys(command.Name, args);
+
                 if (fireAndForget && command.IsBlocking(args))
+                {
                     throw new NotSupportedException($"{command.Name} can block and cannot run through ExecuteFireAndForgetAsync.");
+                }
+
                 _ = StoredProcedureName(command.Name, args);
                 _ = ValidateClusterRawKeys(command.Name, args);
+
                 if (!fireAndForget && _core.Cluster is not null
                     && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
+                {
                     ValidateClusterWideFlags(command.Name, flags);
+                }
+
                 return command.Name;
             }
+
             operation = command.Name;
         }
 
         if (!command.IsCallerSupplied && _keyPrefix is not null)
         {
             var error = PrefixModuleKeysOrError(operation, args, out args);
-            if (error is not null) throw error;
+
+            if (error is not null)
+            {
+                throw error;
+            }
         }
-        if (!fireAndForget) ValidateResultFlags(flags);
+
+        if (!fireAndForget)
+        {
+            ValidateResultFlags(flags);
+        }
+
         var parsed = ParseRawCommand(operation, ref args);
+
         if (fireAndForget)
+        {
             ValidateRawFireAndForgetCommand(parsed.Operation, parsed.Words.AsSpan(parsed.FirstArgumentIndex), args);
+        }
+
         _ = CreateRawCommand(parsed.Operation, parsed.Words, parsed.FirstArgumentIndex, args);
+
         if (!fireAndForget && _core.Cluster is not null
             && DynamicCommandRouting.IsClusterWideMutation(parsed.Operation, args))
+        {
             ValidateClusterWideFlags(parsed.Operation, flags);
+        }
         // Normalize parent descriptors and raw subcommand arguments alike, without exposing arguments.
         return parsed.Words.Length == 1 && args.Length > 0
             ? KnownRawOperation(parsed.Operation, args[0]) ?? parsed.Operation

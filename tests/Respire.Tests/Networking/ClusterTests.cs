@@ -46,8 +46,11 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            UseCluster = true, Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
-            Username = "reader", Password = "password",
+            UseCluster = true,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
+            Username = "reader",
+            Password = "password",
             Endpoints = [new("localhost", 16379)],
         });
 #pragma warning restore RESP010
@@ -93,10 +96,13 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             // Only the withheld topology reply needs to time out. Cold handshakes and replica
             // setup must tolerate scheduling/JIT pressure before reconciliation is exercised.
-            ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5),
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+            CommandTimeout = TimeSpan.FromSeconds(5),
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
@@ -107,11 +113,22 @@ public class ClusterTests
         var primaryQueries = primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS");
         primary.SuppressReply = command => command == "CLUSTER SLOTS";
         ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.MarkValidated(TimeSpan.Zero);
-        try { await reads.GetStringAsync("key"); } catch (RespireConnectionException) { }
+
+        try
+        {
+            await reads.GetStringAsync("key");
+        }
+        catch (RespireConnectionException) { }
         // The background refresh owns one connect plus one command budget, independent of the read.
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        while (ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.Nodes.Length != 0) await Task.Delay(5, timeout.Token);
+
+        while (ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.Nodes.Length != 0)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsGreaterThan(primaryQueries);
+
         if (promote)
         {
             await Assert.That(ReplicaRoutes(client)[0]!.Nodes.Length).IsEqualTo(1);
@@ -121,6 +138,7 @@ public class ClusterTests
         {
             await Assert.That(ReplicaRoutes(client)[0]).IsSameReferenceAs(sibling);
         }
+
         await Assert.That(sibling.Nodes[1].IsRetired).IsFalse();
     }
 
@@ -144,18 +162,30 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Connections = 1, ClusterTopologyRefreshInterval = null,
-            Endpoints = [new("127.0.0.1", primary.Port)], ClientSideCache = new(),
+            UseCluster = true,
+            Connections = 1,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         await client.GetStringAsync("cached");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+
         if (policy == RespireReadFrom.Nearest)
+        {
             client.Core.Cluster!.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
                 ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
+        }
+
         using var batch = client.WithReadFrom(policy).CreateBatch();
         var read = batch.Strings.GetString("key");
-        if (includeWrite) _ = batch.Strings.Set("key", "value");
+
+        if (includeWrite)
+        {
+            _ = batch.Strings.Set("key", "value");
+        }
+
         await batch.ExecuteAsync();
         await Assert.That(read.Result).IsEqualTo("value");
         await Assert.That(client.ClientSideCache.Count).IsEqualTo(includeWrite ? 0 : 1);
@@ -183,8 +213,11 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Connections = 1, ClusterTopologyRefreshInterval = null,
-            Endpoints = [new("127.0.0.1", primary.Port)], ClientSideCache = new(),
+            UseCluster = true,
+            Connections = 1,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         await client.GetStringAsync("cached");
@@ -197,7 +230,11 @@ public class ClusterTests
             ActivityStarted = activity =>
             {
                 if (activity.OperationName != "GET" || activity.GetTagItem("server.port") is not int port
-                    || port != replica.Port || Interlocked.CompareExchange(ref retired, 1, 0) != 0) return;
+                    || port != replica.Port || Interlocked.CompareExchange(ref retired, 1, 0) != 0)
+                {
+                    return;
+                }
+
                 var router = client.Core.Cluster!;
                 router.ApplyTopology([new ClusterTopologyRange(0, 16383, new("127.0.0.1", primary.Port), "primary", [])
                 {
@@ -207,13 +244,18 @@ public class ClusterTests
         };
         System.Diagnostics.ActivitySource.AddActivityListener(listener);
         var reads = client.WithReadFrom(RespireReadFrom.Replica);
+
         if (stream)
         {
             await using var result = await reads.Strings.GetStreamAsync("key");
             using var reader = new StreamReader(result!);
             await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("value");
         }
-        else await Assert.That(await reads.GetStringAsync("key")).IsEqualTo("value");
+        else
+        {
+            await Assert.That(await reads.GetStringAsync("key")).IsEqualTo("value");
+        }
+
         await Assert.That(retired).IsEqualTo(1);
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
         await Assert.That(replica.ReceivedCommands).DoesNotContain("GET key");
@@ -242,7 +284,9 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
@@ -269,7 +313,9 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             ReplicaRouteRevalidationInterval = TimeSpan.FromMinutes(1),
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
@@ -281,11 +327,13 @@ public class ClusterTests
             "SSCAN" => RespireCommands.Set.SSCAN,
             _ => RespireCommands.SortedSet.ZSCAN,
         };
+
         async Task ReadPageAsync(ulong cursor)
         {
             if (batchPage)
             {
                 using var batch = reads.CreateBatch();
+
                 if (operation == "ZSCAN")
                 {
                     var page = batch.Execute(descriptor, "key", cursor, "COUNT", 10);
@@ -304,6 +352,7 @@ public class ClusterTests
                 using var result = await reads.ExecuteAsync(descriptor, "key", cursor);
             }
         }
+
         await ReadPageAsync(0);
         ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.MarkValidated(TimeSpan.Zero);
         Volatile.Write(ref topology, ClusterTopologyWithoutReplicas(replica.Port));
@@ -335,7 +384,9 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             ReplicaRouteRevalidationInterval = TimeSpan.FromMinutes(1),
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
@@ -343,10 +394,16 @@ public class ClusterTests
         await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
         await reads.Hashes.ScanFieldsPageAsync("key");
         ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.MarkValidated(TimeSpan.Zero);
-        if (removeReplica) Volatile.Write(ref topology, ClusterTopologyWithoutReplicas(replica.Port));
+
+        if (removeReplica)
+        {
+            Volatile.Write(ref topology, ClusterTopologyWithoutReplicas(replica.Port));
+        }
+
         using var batch = reads.CreateBatch();
         var first = batch.Hashes.ScanFieldsPage("key", freshFirst ? 0UL : 7UL);
         var second = batch.Hashes.ScanFieldsPage("key", freshFirst ? 7UL : 0UL);
+
         if (removeReplica)
         {
             await Assert.That(async () => await batch.ExecuteAsync()).Throws<RespireConnectionException>();
@@ -362,6 +419,7 @@ public class ClusterTests
             await Assert.That(replica.ReceivedCommands.Where(command => command.StartsWith("HSCAN ", StringComparison.Ordinal)).ToArray())
                 .IsEquivalentTo(new[] { "HSCAN key 0 NOVALUES", $"HSCAN key {(freshFirst ? 0 : 7)} NOVALUES", $"HSCAN key {(freshFirst ? 7 : 0)} NOVALUES" });
         }
+
         await Assert.That(replica.ReceivedCommands).Contains("CLUSTER SLOTS");
     }
 
@@ -381,32 +439,53 @@ public class ClusterTests
         await using var replacement = new FakeRespServer(8, FakeRespServer.OkReply);
         await using var replica = new FakeRespServer(8, FakeRespServer.OkReply);
         await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+
         byte[] Topology(int replicaPort, string replicaId) => Encoding.ASCII.GetBytes(
             $"*1\r\n*4\r\n:0\r\n:16383\r\n" +
             $"*3\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n$7\r\nprimary\r\n" +
             $"*3\r\n$9\r\n127.0.0.1\r\n:{replicaPort}\r\n${replicaId.Length}\r\n{replicaId}\r\n");
+
         byte[]? Page(string command, bool issuer)
         {
-            if (command == "CLUSTER SLOTS") return Volatile.Read(ref topology);
-            if (command == "HSCAN key 7 NOVALUES") return "*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray();
-            if (command != "HSCAN key 0 NOVALUES") return null;
+            if (command == "CLUSTER SLOTS")
+            {
+                return Volatile.Read(ref topology);
+            }
+
+            if (command == "HSCAN key 7 NOVALUES")
+            {
+                return "*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray();
+            }
+
+            if (command != "HSCAN key 0 NOVALUES")
+            {
+                return null;
+            }
+
             if (!issuer || retry == "none" || Interlocked.Increment(ref firstPages) != 1)
+            {
                 return "*2\r\n$1\r\n7\r\n*0\r\n"u8.ToArray();
+            }
+
             if (retry == "moved")
             {
                 // Move the slot's only replica before the retry revalidates its fresh-cursor pin.
                 Volatile.Write(ref topology, Topology(replacement.Port, "replacement-id"));
                 ReplicaRoutes(client!)[ClusterHash.GetSlot("key")]!.MarkValidated(TimeSpan.Zero);
             }
+
             return "-TRYAGAIN busy\r\n"u8.ToArray();
         }
+
         replica.ReplyOverride = (_, command) => Page(command, issuer: true);
         replacement.ReplyOverride = (_, command) => Page(command, issuer: false);
         topology = Topology(replica.Port, "replica-id");
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Volatile.Read(ref topology) : null;
         client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             ReplicaRouteRevalidationInterval = TimeSpan.FromMinutes(1),
             Endpoints = [new("127.0.0.1", primary.Port)],
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
@@ -414,6 +493,7 @@ public class ClusterTests
         });
         await using var owner = client;
         await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
+
         async Task<ulong> ReadPageAsync(ulong cursor)
         {
             using var batch = reads.CreateBatch();
@@ -444,22 +524,32 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
         await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
         await Assert.That(await reads.Keys.TouchAsync("key")).IsEqualTo(1);
+
         using (var result = await reads.ExecuteAsync(RespireCommands.Key.TOUCH, "key"))
+        {
             await Assert.That(result.AsInteger()).IsEqualTo(1);
+        }
+
         using (var result = await reads.ExecuteAsync("TOUCH", "key"))
+        {
             await Assert.That(result.AsInteger()).IsEqualTo(1);
+        }
+
         using (var batch = reads.CreateBatch())
         {
             var touched = batch.Keys.Touch("key");
             await batch.ExecuteAsync();
             await Assert.That(touched.Result).IsEqualTo(1);
         }
+
         await Assert.That(primary.ReceivedCommands.Count(command => command == "TOUCH key")).IsEqualTo(4);
         await Assert.That(replica.ReceivedCommands).IsEmpty();
     }
@@ -473,7 +563,9 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
@@ -499,37 +591,50 @@ public class ClusterTests
             ReplyOverride = (_, command) => command == "READONLY" ? FakeRespServer.OkReply : "$5\r\nvalue\r\n"u8.ToArray(),
         };
         var masters = Enumerable.Range(0, masterCount).Select(_ => new FakeRespServer(8, FakeRespServer.OkReply)).ToArray();
+
         try
         {
             var rangeSize = ClusterHash.SlotCount / masterCount;
             var ranges = new StringBuilder($"*{masterCount}\r\n");
+
             for (var index = 0; index < masterCount; index++)
+            {
                 ranges.Append($"*3\r\n:{index * rangeSize}\r\n:{(index + 1) * rangeSize - 1}\r\n" +
                     $"*2\r\n$9\r\n127.0.0.1\r\n:{masters[index].Port}\r\n");
+            }
+
             var topology = Encoding.ASCII.GetBytes(ranges.ToString());
             var healthy = masters[ClusterHash.GetSlot("key") / rangeSize];
             masters[0].ReplyOverride = (_, _) => Volatile.Read(ref topology);
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
-                ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5),
+                Protocol = RespireProtocol.Resp2,
+                UseCluster = true,
+                ClusterTopologyRefreshInterval = null,
+                ConnectTimeout = TimeSpan.FromSeconds(5),
+                CommandTimeout = TimeSpan.FromSeconds(5),
                 Endpoints = [new("127.0.0.1", masters[0].Port)],
             });
 #pragma warning restore RESP010
             Volatile.Write(ref topology, ClusterTopology(masters[0].Port, replica.Port));
+
             foreach (var server in masters)
             {
                 server.DelayCommand("CLUSTER SLOTS", replyDelayMilliseconds);
                 server.SuppressReply = command => stallOthers && !ReferenceEquals(server, healthy) && command == "CLUSTER SLOTS";
                 server.ReplyOverride = (_, _) => Volatile.Read(ref topology);
             }
+
             await Assert.That(await client.WithReadFrom(RespireReadFrom.Replica).Strings.GetStringAsync("key")
                 .AsTask().WaitAsync(TimeSpan.FromSeconds(15))).IsEqualTo("value");
         }
         finally
         {
-            foreach (var server in masters) await server.DisposeAsync();
+            foreach (var server in masters)
+            {
+                await server.DisposeAsync();
+            }
         }
     }
 
@@ -549,7 +654,9 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
@@ -560,9 +667,11 @@ public class ClusterTests
             "SSCAN" => RespireCommands.Set.SSCAN,
             _ => RespireCommands.SortedSet.ZSCAN,
         };
+
         foreach (var cursor in new[] { "0", "7" })
         {
             using var batch = reads.CreateBatch();
+
             if (supported)
             {
                 var page = batch.Execute(descriptor, "key", cursor);
@@ -574,10 +683,14 @@ public class ClusterTests
             }
             else
             {
-                await Assert.That(() => { _ = batch.Execute(descriptor, "key", cursor); }).ThrowsExactly<NotSupportedException>();
+                await Assert.That(() =>
+                {
+                    _ = batch.Execute(descriptor, "key", cursor);
+                }).ThrowsExactly<NotSupportedException>();
                 await Assert.That(batch.Count).IsEqualTo(0);
             }
         }
+
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         await Assert.That(replica.ReceivedCommands.Where(command => command.StartsWith(operation)).ToArray())
             .IsEquivalentTo(supported ? new[] { "ZSCAN key 0", "ZSCAN key 7" } : Array.Empty<string>());
@@ -617,14 +730,20 @@ public class ClusterTests
         long now = 100;
         var attempts = 0;
         var routes = new ClusterReplicaSet([], TimeSpan.Zero, () => now);
+
         Task Fail()
         {
             attempts++;
             return Task.FromException(new RespireConnectionException("discovery unavailable"));
         }
+
         await routes.JoinOrStartRefresh(Fail)!;
+
         for (var index = 0; index < 100; index++)
+        {
             await Assert.That((object?)routes.JoinOrStartRefresh(Fail)).IsNull();
+        }
+
         await Assert.That(attempts).IsEqualTo(1);
         now += ClusterReplicaSet.RefreshIntervalMilliseconds;
         await routes.JoinOrStartRefresh(Fail)!;
@@ -640,12 +759,15 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
         primary.ReplyOverride = (_, _) => "-ERR topology unavailable\r\n"u8.ToArray();
         await using var strict = client.WithReadFrom(RespireReadFrom.Replica);
+
         for (var attempt = 0; attempt < 2; attempt++)
         {
             var error = await Assert.That(async () => await strict.Strings.GetStringAsync("key"))
@@ -653,6 +775,7 @@ public class ClusterTests
             await Assert.That(error!.Message).Contains("no replica available");
             await Assert.That(error.Message).Contains(ClusterHash.GetSlot("key").ToString());
         }
+
         await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("GET "))).IsFalse();
     }
@@ -666,7 +789,14 @@ public class ClusterTests
         var node = router.GetOrCreateNode(new("127.0.0.1", primary.Port));
         router.SetSlotOwner(1, node);
         var probes = 0;
-        var coordinator = new ClusterReplicaDiscovery(_ => { probes++; return Task.CompletedTask; }, _ => false);
+        var coordinator = new ClusterReplicaDiscovery(
+            _ =>
+            {
+                probes++;
+                return Task.CompletedTask;
+            },
+            _ => false
+        );
         typeof(ClusterRouter).GetField("_unknownReplicaDiscovery",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(router, coordinator);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -703,6 +833,7 @@ public class ClusterTests
         }, slot =>
         {
             var covered = ReplicaRoutes(client)[slot] is { Nodes.Length: > 0 };
+
             if (covered && invalidate && !refreshing)
             {
                 invalidate = false;
@@ -711,6 +842,7 @@ public class ClusterTests
                 SetReplicaRoutes(client, slot, unknown);
                 coordinator.Invalidate(slot);
             }
+
             return covered;
         });
         typeof(ClusterRouter).GetField("_unknownReplicaDiscovery", flags)!.SetValue(router, coordinator);
@@ -753,7 +885,9 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
@@ -776,7 +910,11 @@ public class ClusterTests
         {
             SuppressReply = command =>
             {
-                if (command != "CLUSTER SLOTS") return false;
+                if (command != "CLUSTER SLOTS")
+                {
+                    return false;
+                }
+
                 started.TrySetResult();
                 return true;
             },
@@ -784,7 +922,9 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
@@ -820,21 +960,29 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var keys = Enumerable.Range(0, 64).Select(index => $"unknown:{index}").ToArray();
+
         foreach (var key in keys)
         {
             var slot = ClusterHash.GetSlot(key);
             router.SetSlotOwner(slot, router.GetKnownSlotOwner(slot)!);
         }
+
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         primary.SuppressReply = command =>
         {
-            if (command != "CLUSTER SLOTS") return false;
+            if (command != "CLUSTER SLOTS")
+            {
+                return false;
+            }
+
             started.TrySetResult();
             return true;
         };
@@ -860,7 +1008,11 @@ public class ClusterTests
         {
             SuppressReply = command =>
             {
-                if (command != "CLUSTER SLOTS") return false;
+                if (command != "CLUSTER SLOTS")
+                {
+                    return false;
+                }
+
                 started.TrySetResult();
                 return true;
             },
@@ -868,8 +1020,11 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
-            ConnectTimeout = TimeSpan.FromMinutes(1), CommandTimeout = TimeSpan.FromMinutes(1),
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            ConnectTimeout = TimeSpan.FromMinutes(1),
+            CommandTimeout = TimeSpan.FromMinutes(1),
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
@@ -893,7 +1048,11 @@ public class ClusterTests
         {
             SuppressReply = command =>
             {
-                if (command != "CLUSTER SLOTS") return false;
+                if (command != "CLUSTER SLOTS")
+                {
+                    return false;
+                }
+
                 started.TrySetResult();
                 return true;
             },
@@ -901,7 +1060,9 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
@@ -932,16 +1093,29 @@ public class ClusterTests
         {
             SuppressReply = command =>
             {
-                if (command != "CLUSTER SLOTS") return false;
-                if (Interlocked.Increment(ref requests) == 1) started.TrySetResult();
-                else secondRequest.TrySetResult();
+                if (command != "CLUSTER SLOTS")
+                {
+                    return false;
+                }
+
+                if (Interlocked.Increment(ref requests) == 1)
+                {
+                    started.TrySetResult();
+                }
+                else
+                {
+                    secondRequest.TrySetResult();
+                }
+
                 return true;
             },
         };
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
@@ -950,6 +1124,7 @@ public class ClusterTests
         var highKey = keys.First(key => ClusterHash.GetSlot(key) >= 8192);
         var full = ClusterTopology(primary.Port, replica.Port);
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? full : null;
+
         if (moved)
         {
             var router = client.Core.Cluster!;
@@ -957,6 +1132,7 @@ public class ClusterTests
             router.SetSlotOwner(ClusterHash.GetSlot(lowKey), owner);
             router.SetSlotOwner(ClusterHash.GetSlot(highKey), owner);
         }
+
         await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
         var lowRead = reads.Strings.GetStringAsync(lowKey).AsTask();
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -980,7 +1156,11 @@ public class ClusterTests
         {
             SuppressReply = command =>
             {
-                if (command != "READONLY") return false;
+                if (command != "READONLY")
+                {
+                    return false;
+                }
+
                 handshake.TrySetResult();
                 return true;
             },
@@ -990,15 +1170,19 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
+
         List<ClusterTopologyRange> Topology(int port) => [new(0, 16383, new("127.0.0.1", primary.Port), "primary", [])
         {
             Replicas = [new(new("127.0.0.1", port), port.ToString(), [])],
         }];
+
         router.ApplyTopology(Topology(oldReplica.Port), 0, 1);
         var previous = new ClusterReplicaSet(ReplicaRoutes(client)[0]!.Nodes, TimeSpan.FromMinutes(1), static () => 0);
         SetReplicaRoutes(client, 0, previous);
@@ -1039,9 +1223,12 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             ReplicaRouteRevalidationInterval = TimeSpan.FromMinutes(1),
-            ConnectTimeout = TimeSpan.FromSeconds(1), CommandTimeout = TimeSpan.FromSeconds(1),
+            ConnectTimeout = TimeSpan.FromSeconds(1),
+            CommandTimeout = TimeSpan.FromSeconds(1),
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
@@ -1050,17 +1237,24 @@ public class ClusterTests
         await Assert.That(await reads.Strings.GetStringAsync(key)).IsEqualTo("old");
         var routes = ReplicaRoutes(client)[ClusterHash.GetSlot(key)]!;
         Volatile.Write(ref topology, ClusterTopology(primary.Port, newReplica.Port));
+
         if (emptyReplicaReply)
         {
             partial = ClusterTopologyWithoutReplicas(primary.Port);
             primary.DelayCommand("CLUSTER SLOTS", 250);
         }
+
         routes.MarkValidated(TimeSpan.Zero);
         // Selection schedules revalidation without sending a GET behind the deliberately
         // suppressed topology response on the fake server's FIFO connection.
         await client.Core.Cluster!.GetReadConnectionAsync(ClusterHash.GetSlot(key), RespireReadFrom.Replica, CancellationToken.None, observation: default);
         var refresh = routes.JoinOrStartRefresh(() => throw new InvalidOperationException("Read did not start refresh"));
-        if (refresh is not null) await refresh.WaitAsync(TimeSpan.FromSeconds(5));
+
+        if (refresh is not null)
+        {
+            await refresh.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
         await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
         await Assert.That(await reads.Strings.GetStringAsync(key)).IsEqualTo("new");
     }
@@ -1080,17 +1274,22 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-            ClusterTopologyRefreshInterval = null, ConnectTimeout = TimeSpan.FromSeconds(5),
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            ClusterTopologyRefreshInterval = null,
+            ConnectTimeout = TimeSpan.FromSeconds(5),
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
+
         void Publish(int port, long generation) => router.ApplyTopology(
             [new ClusterTopologyRange(0, 16383, new("127.0.0.1", primary.Port), "primary", [])
             {
                 Replicas = [new(new("127.0.0.1", port), "replica", [])],
             }], router.TopologyVersion, generation);
+
         Publish(oldReplica.Port, 1);
         var slot = ClusterHash.GetSlot("key");
         // Freeze the old set's throttle so scheduler delays cannot reopen its refresh budget.
@@ -1113,7 +1312,8 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            UseCluster = true, ClusterTopologyRefreshInterval = null,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             Endpoints = [new("127.0.0.1", 6379)],
         });
@@ -1130,18 +1330,22 @@ public class ClusterTests
         var replica = oldRoutes.Nodes[0];
         var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         router.TopologyChanged += (_, _, _) => changed.TrySetResult();
-        source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations:
-            [new(sourceEndpoint, targetEndpoint, entireRange ? "0-16383" : "0")]));
+        source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, entireRange ? "0-16383" : "0")]));
         await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(router.GetSlotOwnerEndpoint(0)).IsEqualTo(targetEndpoint);
         await Assert.That(ReplicaRoutes(client)[0]).IsNull();
+
         if (entireRange)
         {
             await router.WaitForRetirementAsync().WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(router.IsReplicaNode(replica)).IsFalse();
             await Assert.That(replica.IsRetired).IsTrue();
         }
-        else await Assert.That(ReplicaRoutes(client)[1]).IsSameReferenceAs(oldRoutes);
+        else
+        {
+            await Assert.That(ReplicaRoutes(client)[1]).IsSameReferenceAs(oldRoutes);
+        }
+
         await Assert.That(async () => await router.GetPinnedReadConnectionAsync(0, replica, CancellationToken.None))
             .ThrowsExactly<RespireConnectionException>();
     }
@@ -1163,8 +1367,10 @@ public class ClusterTests
                 : command == "READONLY" ? FakeRespServer.OkReply : "$5\r\nvalue\r\n"u8.ToArray(),
         };
         await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+
         static string Range(int start, int end, int owner, int replicaPort)
             => $"*4\r\n:{start}\r\n:{end}\r\n*2\r\n+127.0.0.1\r\n:{owner}\r\n*2\r\n+127.0.0.1\r\n:{replicaPort}\r\n";
+
         var topology = Encoding.ASCII.GetBytes($"*2\r\n{Range(0, 8191, otherPrimary.Port, otherReplica.Port)}{Range(8192, 16383, primary.Port, replica.Port)}");
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
         // Default deadlines: the primaries below fail their probes outright, so the refresh round
@@ -1172,7 +1378,9 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
@@ -1194,10 +1402,20 @@ public class ClusterTests
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? unavailable : null;
         otherPrimary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? unavailable : null;
         ReplicaRoutes(client)[slot]!.MarkValidated(TimeSpan.Zero);
-        try { await reads.Strings.GetStringAsync(key); }
+
+        try
+        {
+            await reads.Strings.GetStringAsync(key);
+        }
         catch (RespireConnectionException) { }
+
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (ReplicaRoutes(client)[slot]?.Nodes.Length != 0) await Task.Delay(5, timeout.Token);
+
+        while (ReplicaRoutes(client)[slot]?.Nodes.Length != 0)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         await Assert.That(client.Core.Cluster.GetKnownSlotOwner(0)).IsSameReferenceAs(lowOwner);
         await Assert.That(ReplicaRoutes(client)[0]).IsSameReferenceAs(lowReplicas);
         await Assert.That(lowOwner!.IsRetired).IsFalse();
@@ -1254,12 +1472,15 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             ClientAvailabilityZone = "local",
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
         await using var reads = client.WithReadFrom(policy);
+
         if (mode == 1)
         {
             using var batch = reads.CreateBatch();
@@ -1274,13 +1495,22 @@ public class ClusterTests
             await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("value");
         }
         else if (mode == 3)
+        {
             await Assert.That(await reads.Streams.ReadAsync(key, waitFor: TimeSpan.FromMilliseconds(1))).IsEmpty();
+        }
         else
+        {
             await Assert.That(await reads.Strings.GetStringAsync(key)).IsEqualTo("value");
+        }
+
         var prefix = mode == 3 ? "XREAD " : "GET ";
         await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith(prefix))).IsEqualTo(1);
         await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith(prefix))).IsEqualTo(1);
-        if (redirect == "ASK") await Assert.That(target.ReceivedCommands).Contains("ASKING");
+
+        if (redirect == "ASK")
+        {
+            await Assert.That(target.ReceivedCommands).Contains("ASKING");
+        }
     }
 
     [Test]
@@ -1306,7 +1536,9 @@ public class ClusterTests
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
 #pragma warning restore RESP010
@@ -1323,7 +1555,11 @@ public class ClusterTests
         {
             SuppressReply = command =>
             {
-                if (command != "CLUSTER SLOTS") return false;
+                if (command != "CLUSTER SLOTS")
+                {
+                    return false;
+                }
+
                 refreshing.TrySetResult();
                 return true;
             },
@@ -1381,9 +1617,12 @@ public class ClusterTests
         await batch.ExecuteAsync();
         await Assert.That(first.Result).IsEqualTo("value");
         await Assert.That(second.Result).IsEqualTo("value");
+
         foreach (var server in new[] { primary, replica })
+        {
             await Assert.That(server.ReceivedCommands.Where(command => command.StartsWith("GET ")).ToArray())
                 .IsEquivalentTo(["GET {batch}:first", "GET {batch}:second"]);
+        }
     }
 
     [Test]
@@ -1434,11 +1673,20 @@ public class ClusterTests
         await primary.DisposeAsync();
         Volatile.Write(ref primaryStopped, true);
         ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.MarkValidated(TimeSpan.Zero);
-        try { await strict.Strings.GetStringAsync("key"); }
+
+        try
+        {
+            await strict.Strings.GetStringAsync("key");
+        }
         catch (RespireConnectionException) { }
+
         var deadline = DateTime.UtcNow.AddSeconds(5);
+
         while (ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.Nodes.Length != 0 && DateTime.UtcNow < deadline)
+        {
             await Task.Delay(10);
+        }
+
         await Assert.That(ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.Nodes).IsEmpty();
         await Assert.That(ReplicaRoutes(client)[0]!.Nodes).IsEmpty();
         await Assert.That(replica.ReceivedCommands).Contains("CLUSTER SLOTS");
@@ -1451,9 +1699,14 @@ public class ClusterTests
         async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
+
             if (port == primary.Port && Volatile.Read(ref primaryStopped))
+            {
                 throw new RespireConnectionException("The test primary has stopped.");
+            }
+
             var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+
             try
             {
                 await socket.ConnectAsync(host, port, token);
@@ -1504,10 +1757,12 @@ public class ClusterTests
         await Assert.That(identities.Replicas.TryGetById("replica-id", out var identifiedReplica)).IsTrue();
         await Assert.That(ReferenceEquals(identifiedReplica, replicaNode)).IsTrue();
         await Assert.That(await prefixedSecond.Strings.GetStringAsync("second")).IsEqualTo("replica");
+
         using (var raw = await replicaView.ExecuteAsync(RespireCommands.String.GET, ["raw"]))
         {
             await Assert.That(raw.AsString()).IsEqualTo("replica");
         }
+
         using (var batch = replicaView.CreateBatch())
         {
             var batchedRead = batch.Strings.GetString("batch");
@@ -1516,20 +1771,24 @@ public class ClusterTests
         }
 
         await replicaView.Strings.SetAsync("write", "value");
+
         using (var descriptorRead = await replicaView.ExecuteAsync(RespireCommands.String.GET, ["descriptor"]))
         {
             await Assert.That(descriptorRead.AsString()).IsEqualTo("replica");
         }
+
         using (var callerDescriptorRead = await replicaView.ExecuteAsync(
             RespireCommand.Create("GET"), ["caller-descriptor"]))
         {
             await Assert.That(primary.ReceivedCommands).Contains("GET caller-descriptor");
             await Assert.That(callerDescriptorRead.AsString()).IsEqualTo("primary");
         }
+
         using (var unknownRead = await replicaView.ExecuteAsync(RespireCommand.Create("CUSTOM"), ["unknown"]))
         {
             await Assert.That(unknownRead.AsString()).IsEqualTo("primary");
         }
+
         await Assert.That(await client.Strings.GetStringAsync("default")).IsEqualTo("primary");
 
         await Assert.That(replica.ReceivedCommands).IsEquivalentTo(
@@ -1761,7 +2020,11 @@ public class ClusterTests
         {
             SuppressReply = command =>
             {
-                if (command == "READONLY") readOnlyStarted.TrySetResult();
+                if (command == "READONLY")
+                {
+                    readOnlyStarted.TrySetResult();
+                }
+
                 return command == "READONLY";
             },
         };
@@ -1805,9 +2068,13 @@ public class ClusterTests
         var targetReplies = new byte[][] { [] };
         await using var target = new FakeRespServer(targetReplies);
         targetReplies[0] = ClusterTopology(target.Port, newReplica.Port);
+
         if (partial)
+        {
             targetReplies[0] = Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(targetReplies[0])
                 .Replace(":0\r\n:16383", $":{slot}\r\n:{slot}"));
+        }
+
         var moved = Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n");
         await using var oldReplica = new FakeRespServer(FakeRespServer.OkReply, moved);
         var primaryReplies = new byte[][] { [] };
@@ -1824,12 +2091,21 @@ public class ClusterTests
 
         var otherSlot = (slot + 1) % ClusterHash.SlotCount;
         var otherRoutes = ReplicaRoutes(client)[otherSlot];
+
         if (policy == RespireReadFrom.Nearest)
+        {
             client.Core.Cluster!.NearestLatency = new ReadLatencySampler<Respire.Networking.RespireConnection>((connection, _) =>
                 ValueTask.FromResult(connection.Port == oldReplica.Port || connection.Port == newReplica.Port ? 10L : 100L));
+        }
+
         await Assert.That(await client.WithReadFrom(policy)
             .Strings.GetStringAsync(key)).IsEqualTo("replicated");
-        if (partial) await Assert.That(ReplicaRoutes(client)[otherSlot]).IsSameReferenceAs(otherRoutes);
+
+        if (partial)
+        {
+            await Assert.That(ReplicaRoutes(client)[otherSlot]).IsSameReferenceAs(otherRoutes);
+        }
+
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         await Assert.That(oldReplica.ReceivedCommands).IsEquivalentTo(["READONLY", $"GET {key}"]);
         await Assert.That(target.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
@@ -2017,8 +2293,11 @@ public class ClusterTests
         await Assert.That(importing.ReceivedCommands).IsEmpty();
 
         if (policy == RespireReadFrom.Nearest)
+        {
             client.Core.Cluster!.NearestLatency = new ReadLatencySampler<Respire.Networking.RespireConnection>((connection, _) =>
                 ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
+        }
+
         await Assert.That(await client.WithReadFrom(policy)
             .Strings.GetStringAsync(key)).IsEqualTo("importing");
         await Assert.That(importing.ReceivedCommands).IsEquivalentTo(["ASKING", $"GET {key}"]);
@@ -2042,6 +2321,7 @@ public class ClusterTests
 #pragma warning restore RESP010
 
         string text;
+
         await using (var stream = await client.WithReadFrom(RespireReadFrom.Replica).Strings.GetStreamAsync(key))
         {
             using var reader = new StreamReader(stream!);
@@ -2079,12 +2359,16 @@ public class ClusterTests
         {
             await Assert.That(implicitName.AsString()).IsEqualTo("primary");
         }
+
         using (var callerSupplied = await view.ExecuteAsync(RespireCommand.Create("UNKNOWN_READ"), "{caller}:key"))
         {
             await Assert.That(callerSupplied.AsString()).IsEqualTo("primary");
         }
+
         using (var catalog = await view.ExecuteAsync(RespireCommands.String.GET, ["{catalog}:key"]))
+        {
             await Assert.That(catalog.AsString()).IsEqualTo("replica");
+        }
 
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
             ["CLUSTER SLOTS", "UNKNOWN_READ {implicit}:key", "UNKNOWN_READ {caller}:key"]);
@@ -2121,10 +2405,12 @@ public class ClusterTests
 
         await view.ExecuteFireAndForgetAsync(RespireCommand.Create("UNKNOWN_READ"), ["{forget}:key"]);
         await view.ExecuteFireAndForgetAsync($"UNKNOWN_READ {"{forget-interpolated}:key"}");
+
         using (var interpolated = await view.ExecuteAsync($"UNKNOWN_READ {interpolatedKey}"))
         {
             await Assert.That(interpolated.AsString()).IsEqualTo("primary");
         }
+
         await view.ExecuteFireAndForgetAsync(RespireCommands.String.GET, ["{catalog-forget}:key"]);
 
         // The interpolated read follows the fire-and-forget sends on the same primary pipeline.
@@ -2175,7 +2461,11 @@ public class ClusterTests
         var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         primary.SuppressReply = command =>
         {
-            if (command != "CLUSTER SLOTS") return false;
+            if (command != "CLUSTER SLOTS")
+            {
+                return false;
+            }
+
             refreshStarted.TrySetResult();
             return true;
         };
@@ -2188,10 +2478,16 @@ public class ClusterTests
 
         var deadline = DateTime.UtcNow.AddSeconds(10);
         string? value;
+
         do
         {
             value = await strict.Strings.GetStringAsync(key);
-            if (value == "new") break;
+
+            if (value == "new")
+            {
+                break;
+            }
+
             await Task.Delay(20);
         }
         while (DateTime.UtcNow < deadline);
@@ -2200,7 +2496,12 @@ public class ClusterTests
         await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsGreaterThanOrEqualTo(2);
         await Assert.That(primary.ReceivedCommands).DoesNotContain($"GET {key}");
         var retirementDeadline = DateTime.UtcNow.AddSeconds(10);
-        while (!oldNode.IsRetired && DateTime.UtcNow < retirementDeadline) await Task.Delay(10);
+
+        while (!oldNode.IsRetired && DateTime.UtcNow < retirementDeadline)
+        {
+            await Task.Delay(10);
+        }
+
         await Assert.That(oldNode.IsRetired).IsTrue();
     }
 
@@ -2266,6 +2567,7 @@ public class ClusterTests
 
         await Assert.That(await client.WithReadFrom(RespireReadFrom.ReplicaPreferred)
             .Strings.GetStringAsync(key)).IsEqualTo("primary");
+
         await using (var stream = await client.WithReadFrom(RespireReadFrom.ReplicaPreferred).Strings.GetStreamAsync(key))
         {
             using var reader = new StreamReader(stream!);
@@ -2553,6 +2855,7 @@ public class ClusterTests
     {
         var router = client.Core.Cluster!;
         var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+
         lock (router.NodeStateGate)
         {
             typeof(ClusterRouter).GetMethod("SetReplicaRoutesLocked", flags)!.Invoke(router, [slot, routes]);
@@ -3175,11 +3478,13 @@ public class ClusterTests
         var key = "stream-key";
         var keySlot = ClusterHash.GetSlot(key);
         var subcommandSlot = ClusterHash.GetSlot(subcommand);
+
         while (keySlot == 0 || keySlot == subcommandSlot)
         {
             key += "x";
             keySlot = ClusterHash.GetSlot(key);
         }
+
         await using var target = new FakeRespServer(FakeRespServer.OkReply);
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
@@ -3243,6 +3548,7 @@ public class ClusterTests
         using var first = await client.ExecuteAsync(RespireCommands.String.GET, "key");
         await seed.DisposeAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (client.Core.Multiplexer.IsConnected)
         {
             await Task.Delay(10, timeout.Token);
@@ -3331,6 +3637,7 @@ public class ClusterTests
             await Assert.That(third.Error).IsNotNull();
             return;
         }
+
         var result = await batch.TryExecuteAsync();
 
         await Assert.That(first.Result).IsEqualTo("one");
@@ -3761,11 +4068,13 @@ public class ClusterTests
                 new RespireEndpoint("127.0.0.1", seed.Port),
             },
         };
+
         if (useConnectionString)
         {
             options = RespireOptions.Parse(
                 $"127.0.0.1:1,127.0.0.1:{seed.Port},cluster=true,connectTimeout=1000,protocol=2");
         }
+
 #pragma warning disable RESP010 // Test-owned client isolates slot routes, replica selection, and scripted topology changes for this scenario.
         await using var client = await RespireClient.ConnectAsync(options);
 #pragma warning restore RESP010
@@ -3800,6 +4109,7 @@ public class ClusterTests
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await seed.DisposeAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (client.Core.Multiplexer.IsConnected)
         {
             await Task.Delay(10, timeout.Token);
@@ -3831,6 +4141,7 @@ public class ClusterTests
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await seed.DisposeAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (client.Core.Multiplexer.IsConnected)
         {
             await Task.Delay(10, timeout.Token);
@@ -3870,6 +4181,7 @@ public class ClusterTests
         await seed.DisposeAsync();
         await failedOwner.DisposeAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (client.Core.Cluster!.IsSlotConnected(slot))
         {
             await Task.Delay(10, timeout.Token);
@@ -3906,6 +4218,7 @@ public class ClusterTests
         await target.DisposeAsync();
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (client.Core.Cluster!.IsSlotConnected(slot))
         {
             await Task.Delay(10, timeout.Token);
@@ -4070,20 +4383,21 @@ public class ClusterTests
 #pragma warning restore RESP010
 
         var failed = false;
+
         try
         {
             await foreach (var _ in client.Keys.ScanAsync())
             {
             }
         }
-        catch (Exception exception) when (
-            exception is RespireConnectionException or RespireTimeoutException or OperationCanceledException or System.Net.Sockets.SocketException)
+        catch (Exception exception) when (exception is RespireConnectionException or RespireTimeoutException or OperationCanceledException or System.Net.Sockets.SocketException)
         {
             if (exception is RespireTimeoutException timeout)
             {
                 await Assert.That(timeout.CommandName).IsEqualTo("CONNECT");
                 await Assert.That(timeout.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
             }
+
             failed = true;
         }
 
@@ -4120,6 +4434,7 @@ public class ClusterTests
 #pragma warning restore RESP010
         await seed.DisposeAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (client.Core.Multiplexer.IsConnected)
         {
             await Task.Delay(10, timeout.Token);
@@ -4208,13 +4523,16 @@ public class ClusterTests
 #pragma warning restore RESP010
         var pending = client.Scripts.ExistsAsync("digest").AsTask();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (firstNode.CommandsSeen == 0 || secondNode.CommandsSeen == 0)
         {
             await Task.Delay(10, deadline.Token);
         }
+
         await firstNode.SendRawAsync(firstFails ? "-ERR rejected\r\n"u8.ToArray() : flags);
         await Assert.That(pending.IsCompleted).IsFalse();
         await secondNode.SendRawAsync(flags);
+
         if (firstFails)
         {
             await Assert.That(async () => await pending).ThrowsExactly<RespireServerException>();
@@ -4273,6 +4591,7 @@ public class ClusterTests
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
+
 #pragma warning restore RESP010
 
         if (mismatchedDigest)
@@ -4284,6 +4603,7 @@ public class ClusterTests
         {
             await Assert.That(await client.Scripts.LoadAsync(script)).IsEqualTo(script.Sha1);
         }
+
         await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(["SCRIPT LOAD return 1"]);
         await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(["SCRIPT LOAD return 1"]);
     }
@@ -4637,11 +4957,17 @@ public class ClusterTests
     private static long MeasureUnkeyedRouting(Cmd command, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1_000; i++)
         {
             _ = TryGetSlot(command, out _);
-            if (allocate) GC.KeepAlive(AllocateControl());
+
+            if (allocate)
+            {
+                GC.KeepAlive(AllocateControl());
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -4681,7 +5007,9 @@ public class ClusterTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Database = 1, Endpoints = { new RespireEndpoint("localhost") },
+            UseCluster = true,
+            Database = 1,
+            Endpoints = { new RespireEndpoint("localhost") },
         });
 #pragma warning restore RESP010
         await Assert.That(client.Core.Cluster!.IsConnected).IsFalse();
@@ -4736,12 +5064,21 @@ public class ClusterTests
     private sealed class NonSeekableMemoryStream(byte[] value) : Stream
     {
         private int _offset;
+
         internal int BytesRead => _offset;
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -4761,8 +5098,11 @@ public class ClusterTests
         }
 
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
@@ -4798,6 +5138,7 @@ public class ClusterTests
     private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (server.CommandsSeen < count)
         {
             await Task.Delay(10, timeout.Token);

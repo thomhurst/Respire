@@ -1,8 +1,8 @@
 using FluentAssertions;
 using StackExchange.Redis;
 using StackExchange.Redis.KeyspaceIsolation;
-using TUnit.Core;
 using TUnit.Assertions;
+using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
@@ -252,14 +252,17 @@ public class DataTypeInteroperabilityTests
         // Use StackExchange to scan keys; server scans see physical keys, so the pattern carries the test prefix.
         var server = _stackExchangeMultiplexer.GetServer(_fixture.Host, _fixture.Port);
         var keys = new List<RedisKey>();
+
         await foreach (var key in server.KeysAsync(database: _fixture.Database, pattern: _fixture.KeyPrefix + "pattern:a:*"))
         {
             keys.Add(key);
         }
+
         keys.Should().HaveCount(2);
 
         // Delete pattern with StackExchange, through the unprefixed database because the scanned keys are physical
         var physicalDb = _stackExchangeMultiplexer.GetDatabase(_fixture.Database);
+
         foreach (var key in keys)
         {
             await physicalDb.KeyDeleteAsync(key);

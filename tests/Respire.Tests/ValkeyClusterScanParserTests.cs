@@ -35,6 +35,7 @@ public class ValkeyClusterScanParserTests
             RespValue.BulkString((byte[])[.. Encoding.UTF8.GetBytes(otherPrefix + "\uDE00"), .. tail])));
         await Assert.That(page.Keys[0] == ValkeyClusterScanParser.Parse(in otherReply, otherPrefix).Keys[0])
             .IsFalse();
+
         for (var index = 0; index < page.Keys.Count; index++)
         {
             var original = page.Keys[index];
@@ -60,7 +61,9 @@ public class ValkeyClusterScanParserTests
         var reply = RespValue.Array(RespValue.BulkString(cursor), keys);
         var page = ValkeyClusterScanParser.Parse(in reply, prefix);
         reply.Dispose();
-        cursor.AsSpan().Clear(); key.AsSpan().Clear(); prefixBytes.AsSpan().Clear();
+        cursor.AsSpan().Clear();
+        key.AsSpan().Clear();
+        prefixBytes.AsSpan().Clear();
         await Assert.That(page.Cursor).IsEqualTo("future-{route}-opaque");
         await Assert.That(page.IsComplete).IsFalse();
         await Assert.That(page.Keys.Count).IsEqualTo(2);

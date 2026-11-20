@@ -32,6 +32,7 @@ public class GetStringDirectPathTests
 
         var pending = (viaFacet ? client.Strings.GetStringAsync("key") : client.GetStringAsync("key")).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (server.CommandsSeen == commandsBefore)
         {
             if (pending.IsCompleted)
@@ -39,10 +40,18 @@ public class GetStringDirectPathTests
                 await pending;
                 throw new InvalidOperationException("GET completed before the fake server received it.");
             }
-            try { await Task.Delay(1, timeout.Token); }
+
+            try
+            {
+                await Task.Delay(1, timeout.Token);
+            }
             catch (OperationCanceledException error) when (timeout.IsCancellationRequested)
             {
-                if (pending.IsCompleted) await pending;
+                if (pending.IsCompleted)
+                {
+                    await pending;
+                }
+
                 throw new TimeoutException("The fake server did not receive GET within five seconds.", error);
             }
         }

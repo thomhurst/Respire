@@ -59,8 +59,20 @@ public class ServerClusterAdministrationCommandTests
     }
 
     [Test]
-    [Arguments(0)] [Arguments(1)] [Arguments(2)] [Arguments(3)] [Arguments(4)] [Arguments(5)] [Arguments(6)]
-    [Arguments(7)] [Arguments(8)] [Arguments(9)] [Arguments(10)] [Arguments(11)] [Arguments(12)] [Arguments(13)]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(4)]
+    [Arguments(5)]
+    [Arguments(6)]
+    [Arguments(7)]
+    [Arguments(8)]
+    [Arguments(9)]
+    [Arguments(10)]
+    [Arguments(11)]
+    [Arguments(12)]
+    [Arguments(13)]
     public async Task EveryMutationRequiresAdminBeforeConnecting(int operation)
     {
         await using var target = Server(1);
@@ -71,15 +83,31 @@ public class ServerClusterAdministrationCommandTests
     }
 
     [Test]
-    [Arguments(0)] [Arguments(1)] [Arguments(2)] [Arguments(3)] [Arguments(4)] [Arguments(5)] [Arguments(6)]
-    [Arguments(7)] [Arguments(8)] [Arguments(9)] [Arguments(10)] [Arguments(11)] [Arguments(12)] [Arguments(13)]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(4)]
+    [Arguments(5)]
+    [Arguments(6)]
+    [Arguments(7)]
+    [Arguments(8)]
+    [Arguments(9)]
+    [Arguments(10)]
+    [Arguments(11)]
+    [Arguments(12)]
+    [Arguments(13)]
     public async Task EveryMutationFencesCacheEvenOnServerError(int operation)
     {
         await using var target = Server(1);
         var received = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         target.SuppressReply = command =>
         {
-            if (!command.StartsWith("CLUSTER ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("CLUSTER ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             received.TrySetResult(target.ReceivedConnectionIds[^1]);
             return true;
         };
@@ -93,6 +121,7 @@ public class ServerClusterAdministrationCommandTests
         await target.SendRawAsync("-ERR rejected\r\n"u8.ToArray(), connection);
         await Assert.That(async () => await pending).Throws<RespireServerException>();
         await Assert.That(cache.Count).IsEqualTo(0);
+
         void Insert()
         {
             RespireKey key = "cached";
@@ -129,7 +158,12 @@ public class ServerClusterAdministrationCommandTests
             () => node.ClusterSetSlotAsync(0, RespireClusterSlotState.Importing, "").AsTask(),
             () => node.ClusterSetSlotAsync(0, RespireClusterSlotState.Migrating, " ").AsTask(),
         ];
-        foreach (var action in invalid) await Assert.That(action).Throws<ArgumentException>();
+
+        foreach (var action in invalid)
+        {
+            await Assert.That(action).Throws<ArgumentException>();
+        }
+
         await Assert.That(target.ConnectionAccepted.IsCompleted).IsFalse();
     }
 
@@ -150,23 +184,31 @@ public class ServerClusterAdministrationCommandTests
             () => node.ClusterReplicateAsync(nodeId).AsTask(),
             () => node.ClusterSetSlotAsync(0, RespireClusterSlotState.Node, nodeId).AsTask(),
         ];
-        foreach (var command in commands) await Assert.That(command).Throws<ArgumentException>();
+
+        foreach (var command in commands)
+        {
+            await Assert.That(command).Throws<ArgumentException>();
+        }
+
         await Assert.That(target.ConnectionAccepted.IsCompleted).IsFalse();
     }
 
     [Test]
-    [Arguments(false)] [Arguments(true)]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task CancellationAndLifetimeApplyToReadsAndMutations(bool read)
     {
         await using var target = Server(1);
         await using var client = Client(target.Port, 2, true);
         var node = client.Server.OnNode(new("127.0.0.1", target.Port));
-        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
         await Assert.That(async () => await Invoke(cancellation.Token)).Throws<OperationCanceledException>();
         await Assert.That(target.ConnectionAccepted.IsCompleted).IsFalse();
         await client.DisposeAsync();
         await Assert.That(async () => await Invoke(default)).ThrowsExactly<ObjectDisposedException>();
         await Assert.That(target.ConnectionAccepted.IsCompleted).IsFalse();
+
         Task Invoke(CancellationToken token) => read ? node.ClusterSlotsAsync(token).AsTask() : node.ClusterFlushSlotsAsync(token).AsTask();
     }
 
@@ -203,14 +245,19 @@ public class ServerClusterAdministrationCommandTests
     }
 
     [Test]
-    [Arguments(false)] [Arguments(true)]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task OutstandingCommandClosesSocketOnCancellationOrClientDisposal(bool dispose)
     {
         await using var target = Server(1);
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         target.SuppressReply = command =>
         {
-            if (!command.StartsWith("CLUSTER ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("CLUSTER ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -218,6 +265,7 @@ public class ServerClusterAdministrationCommandTests
         using var cancellation = new CancellationTokenSource();
         var pending = client.Server.OnNode(new("127.0.0.1", target.Port)).ClusterSlotsAsync(cancellation.Token).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (dispose)
         {
             await client.DisposeAsync();
@@ -228,18 +276,25 @@ public class ServerClusterAdministrationCommandTests
             cancellation.Cancel();
             await Assert.That(async () => await pending).Throws<OperationCanceledException>();
         }
+
         await target.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(target.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
     }
 
     private static Task Mutate(RespireServerNode node, int operation) => operation switch
     {
-        0 => node.ClusterAddSlotsAsync([0]).AsTask(), 1 => node.ClusterAddSlotsRangeAsync([new(0, 1)]).AsTask(),
-        2 => node.ClusterDeleteSlotsAsync([0]).AsTask(), 3 => node.ClusterDeleteSlotsRangeAsync([new(0, 1)]).AsTask(),
-        4 => node.ClusterBumpEpochAsync().AsTask(), 5 => node.ClusterFailoverAsync().AsTask(),
-        6 => node.ClusterForgetAsync("node").AsTask(), 7 => node.ClusterMeetAsync(new("127.0.0.1", 7000)).AsTask(),
-        8 => node.ClusterReplicateAsync("node").AsTask(), 9 => node.ClusterResetAsync().AsTask(),
-        10 => node.ClusterSaveConfigAsync().AsTask(), 11 => node.ClusterSetConfigEpochAsync(0).AsTask(),
+        0 => node.ClusterAddSlotsAsync([0]).AsTask(),
+        1 => node.ClusterAddSlotsRangeAsync([new(0, 1)]).AsTask(),
+        2 => node.ClusterDeleteSlotsAsync([0]).AsTask(),
+        3 => node.ClusterDeleteSlotsRangeAsync([new(0, 1)]).AsTask(),
+        4 => node.ClusterBumpEpochAsync().AsTask(),
+        5 => node.ClusterFailoverAsync().AsTask(),
+        6 => node.ClusterForgetAsync("node").AsTask(),
+        7 => node.ClusterMeetAsync(new("127.0.0.1", 7000)).AsTask(),
+        8 => node.ClusterReplicateAsync("node").AsTask(),
+        9 => node.ClusterResetAsync().AsTask(),
+        10 => node.ClusterSaveConfigAsync().AsTask(),
+        11 => node.ClusterSetConfigEpochAsync(0).AsTask(),
         12 => node.ClusterSetSlotAsync(0, RespireClusterSlotState.Stable).AsTask(),
         _ => node.ClusterFlushSlotsAsync().AsTask(),
     };
@@ -247,7 +302,9 @@ public class ServerClusterAdministrationCommandTests
     private static RespireClient Client(int port, int protocol, bool admin, bool cache = false)
         => RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", port)], Connections = 1, AllowAdmin = admin,
+            Endpoints = [new("127.0.0.1", port)],
+            Connections = 1,
+            AllowAdmin = admin,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             ClientSideCache = cache ? new() : null,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,

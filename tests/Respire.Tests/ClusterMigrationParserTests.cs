@@ -43,7 +43,8 @@ public class ClusterMigrationParserTests
         byte[] bytes = Encoding.UTF8.GetBytes("task");
         var reply = RespValue.BulkString(bytes);
         var id = ClusterMigrationParser.TaskId(in reply);
-        reply.Dispose(); bytes.AsSpan().Clear();
+        reply.Dispose();
+        bytes.AsSpan().Clear();
         await Assert.That(id).IsEqualTo("task");
     }
 
@@ -55,7 +56,8 @@ public class ClusterMigrationParserTests
         fields.AddRange([RespValue.BulkString("future"), RespValue.Array(RespValue.BulkString(bytes))]);
         var reply = RespValue.Array(RespValue.Array(fields.ToArray()));
         var task = ClusterMigrationParser.Tasks(in reply).Single();
-        reply.Dispose(); bytes.AsSpan().Clear();
+        reply.Dispose();
+        bytes.AsSpan().Clear();
         await Assert.That(task.AdditionalFields["future"][0].AsBytes()).IsEquivalentTo(new byte[] { 255, 0, 128 });
     }
 
@@ -77,21 +79,47 @@ public class ClusterMigrationParserTests
     public async Task RejectsMalformedStatus(string shape)
     {
         var fields = Fields();
+
         switch (shape)
         {
-            case "odd": fields.RemoveAt(fields.Count - 1); break;
-            case "missing": fields.RemoveRange(0, 2); break;
-            case "duplicate": fields.AddRange([RespValue.BulkString("id"), RespValue.BulkString("other")]); break;
-            case "empty-id": fields[1] = RespValue.BulkString(""); break;
-            case "text-type": fields[3] = RespValue.Integer(1); break;
-            case "count-type": fields[15] = RespValue.BulkString("2"); break;
-            case "negative-count": fields[15] = RespValue.Integer(-1); break;
-            case "negative-create": fields[17] = RespValue.Integer(-1); break;
-            case "invalid-unset": fields[19] = RespValue.Integer(-2); break;
-            case "overflow-time": fields[21] = RespValue.Integer(long.MaxValue); break;
-            case "time-type": fields[21] = RespValue.BulkString("0"); break;
-            case "negative-pause": fields[23] = RespValue.Integer(-1); break;
+            case "odd":
+                fields.RemoveAt(fields.Count - 1);
+                break;
+            case "missing":
+                fields.RemoveRange(0, 2);
+                break;
+            case "duplicate":
+                fields.AddRange([RespValue.BulkString("id"), RespValue.BulkString("other")]);
+                break;
+            case "empty-id":
+                fields[1] = RespValue.BulkString("");
+                break;
+            case "text-type":
+                fields[3] = RespValue.Integer(1);
+                break;
+            case "count-type":
+                fields[15] = RespValue.BulkString("2");
+                break;
+            case "negative-count":
+                fields[15] = RespValue.Integer(-1);
+                break;
+            case "negative-create":
+                fields[17] = RespValue.Integer(-1);
+                break;
+            case "invalid-unset":
+                fields[19] = RespValue.Integer(-2);
+                break;
+            case "overflow-time":
+                fields[21] = RespValue.Integer(long.MaxValue);
+                break;
+            case "time-type":
+                fields[21] = RespValue.BulkString("0");
+                break;
+            case "negative-pause":
+                fields[23] = RespValue.Integer(-1);
+                break;
         }
+
         using var reply = shape switch
         {
             "outer" => RespValue.Integer(1),
@@ -107,7 +135,12 @@ public class ClusterMigrationParserTests
     [Arguments(2)]
     public async Task RejectsMalformedImport(int kind)
     {
-        using var value = kind switch { 0 => RespValue.Integer(1), 1 => RespValue.SimpleString("task"), _ => RespValue.BulkString("") };
+        using var value = kind switch
+        {
+            0 => RespValue.Integer(1),
+            1 => RespValue.SimpleString("task"),
+            _ => RespValue.BulkString("")
+        };
         await Assert.That(() => ClusterMigrationParser.TaskId(in value)).ThrowsExactly<RespireProtocolException>();
     }
 
@@ -131,25 +164,42 @@ public class ClusterMigrationParserTests
     {
         using var stream = new MemoryStream();
         stream.Write(Encoding.ASCII.GetBytes($"*1\r\n{(map ? '%' : '*')}{(map ? fields.Count / 2 : fields.Count)}\r\n"));
-        foreach (var field in fields) Write(stream, field);
+
+        foreach (var field in fields)
+        {
+            Write(stream, field);
+        }
+
         var position = 0;
+
         if (RespParser.TryParseValue(stream.ToArray(), ref position, out var reply) != RespParseStatus.Done)
+        {
             throw new InvalidOperationException("Invalid test wire.");
+        }
+
         return reply;
     }
 
     private static void Write(Stream stream, RespValue field)
     {
-        if (field.Type == RespireDataType.Integer) stream.Write(Encoding.ASCII.GetBytes($":{field.AsInteger()}\r\n"));
+        if (field.Type == RespireDataType.Integer)
+        {
+            stream.Write(Encoding.ASCII.GetBytes($":{field.AsInteger()}\r\n"));
+        }
         else if (field.Type == RespireDataType.Array)
         {
             stream.Write(Encoding.ASCII.GetBytes($"*{field.AsArray().Length}\r\n"));
-            foreach (var child in field.AsArray()) Write(stream, child);
+
+            foreach (var child in field.AsArray())
+            {
+                Write(stream, child);
+            }
         }
         else
         {
             stream.Write(Encoding.ASCII.GetBytes($"${field.AsSpan().Length}\r\n"));
-            stream.Write(field.AsSpan()); stream.Write("\r\n"u8);
+            stream.Write(field.AsSpan());
+            stream.Write("\r\n"u8);
         }
     }
 }

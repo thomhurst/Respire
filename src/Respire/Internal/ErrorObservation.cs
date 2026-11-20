@@ -17,6 +17,7 @@ internal static class ErrorObservation
     {
         var observation = Pool.Rent();
         Volatile.Read(ref RentalObserverForTests)?.Invoke();
+
         lock (observation.Gate)
         {
             observation.Generation = unchecked(observation.Generation + 1);
@@ -33,12 +34,20 @@ internal static class ErrorObservation
         RespireEndpoint? endpoint = null)
     {
         // Attribution is part of the result contract, even when metric publication is disabled.
-        if (error is not null) RespireException.PopulateEndpoint(error, endpoint);
+        if (error is not null)
+        {
+            RespireException.PopulateEndpoint(error, endpoint);
+        }
+
         try
         {
             if (error is not null && observeErrors)
             {
-                if (owner.IsEmpty) owner = StartFailure(retryAttempts);
+                if (owner.IsEmpty)
+                {
+                    owner = StartFailure(retryAttempts);
+                }
+
                 owner.PublishFinal(error, endpoint);
             }
         }
@@ -49,26 +58,36 @@ internal static class ErrorObservation
     internal readonly struct FinalOwner
     {
         private readonly Lease? _lease;
+
         internal FinalOwner(Lease lease) => _lease = lease;
 
         internal bool IsEmpty => _lease is null;
+
         internal int RetryAttempts => _lease?.RetryAttempts ?? 0;
+
         internal void SetRetryAttempts(int retryAttempts) => _lease?.SetRetryAttempts(retryAttempts);
 
         internal Borrower Borrow() => new(_lease?.Borrow());
+
         internal bool RecordHandled(Exception error, RespireEndpoint? endpoint = null) => _lease?.RecordHandled(error, endpoint) ?? false;
+
         internal bool RecordRetry() => _lease?.RecordRetry() ?? false;
+
         internal bool PublishFinal(Exception error, RespireEndpoint? endpoint = null) => _lease?.PublishFinal(error, endpoint) ?? false;
+
         internal void Complete() => _lease?.Complete();
     }
 
     internal readonly struct Borrower
     {
         private readonly Lease? _lease;
+
         internal Borrower(Lease? lease) => _lease = lease;
 
         internal Borrower Borrow() => new(_lease?.Borrow());
+
         internal bool RecordHandled(Exception error, RespireEndpoint? endpoint = null) => _lease?.RecordHandled(error, endpoint) ?? false;
+
         internal void Complete() => _lease?.Complete();
     }
 
@@ -90,14 +109,21 @@ internal static class ErrorObservation
             get
             {
                 lock (observation.Gate)
+                {
                     return observation.Generation == generation && !_completed ? observation.RetryAttempts : 0;
+                }
             }
         }
 
         internal void SetRetryAttempts(int retryAttempts)
         {
             lock (observation.Gate)
-                if (IsOpen) ErrorPublication.SetAttempts(ref observation.RetryAttempts, observation.FinalPublished, retryAttempts);
+            {
+                if (IsOpen)
+                {
+                    ErrorPublication.SetAttempts(ref observation.RetryAttempts, observation.FinalPublished, retryAttempts);
+                }
+            }
         }
 
         internal Lease? Borrow()
@@ -106,7 +132,11 @@ internal static class ErrorObservation
             {
                 // Borrow before final publication or completion. Closed leases return an
                 // empty borrower; retry history cannot be recovered after this boundary.
-                if (!IsOpen || observation.References == int.MaxValue) return null;
+                if (!IsOpen || observation.References == int.MaxValue)
+                {
+                    return null;
+                }
+
                 var lease = new Lease(observation, generation);
                 observation.References++;
                 return lease;
@@ -115,13 +145,26 @@ internal static class ErrorObservation
 
         internal bool RecordHandled(Exception error, RespireEndpoint? endpoint = null)
         {
-            if (error is null) return false;
+            if (error is null)
+            {
+                return false;
+            }
+
             int retryAttempts;
+
             lock (observation.Gate)
             {
-                if (!IsOpen) return false;
-                if (!ErrorPublication.TryRecordHandled(ref observation.RetryAttempts, observation.FinalPublished, out retryAttempts)) return false;
+                if (!IsOpen)
+                {
+                    return false;
+                }
+
+                if (!ErrorPublication.TryRecordHandled(ref observation.RetryAttempts, observation.FinalPublished, out retryAttempts))
+                {
+                    return false;
+                }
             }
+
             RespireException.PopulateEndpoint(error, endpoint);
             // Never invoke an exporter while holding the ownership gate. The captured count
             // remains this event's count even if another retry, final inspection or reuse wins.
@@ -133,20 +176,37 @@ internal static class ErrorObservation
         {
             lock (observation.Gate)
             {
-                if (!IsOpen) return false;
+                if (!IsOpen)
+                {
+                    return false;
+                }
+
                 return ErrorPublication.TryRecordRetry(ref observation.RetryAttempts, observation.FinalPublished);
             }
         }
 
         internal bool PublishFinal(Exception error, RespireEndpoint? endpoint = null)
         {
-            if (error is null) return false;
+            if (error is null)
+            {
+                return false;
+            }
+
             int retryAttempts;
+
             lock (observation.Gate)
             {
-                if (!IsOpen) return false;
-                if (!ErrorPublication.TryPublishFinal(observation.RetryAttempts, ref observation.FinalPublished, out retryAttempts)) return false;
+                if (!IsOpen)
+                {
+                    return false;
+                }
+
+                if (!ErrorPublication.TryPublishFinal(observation.RetryAttempts, ref observation.FinalPublished, out retryAttempts))
+                {
+                    return false;
+                }
             }
+
             RespireTelemetry.RecordError(error, internallyHandled: false, retryAttempts, endpoint);
             return true;
         }
@@ -154,14 +214,28 @@ internal static class ErrorObservation
         internal void Complete()
         {
             bool returnToPool;
+
             lock (observation.Gate)
             {
-                if (_completed) return;
+                if (_completed)
+                {
+                    return;
+                }
+
                 _completed = true;
-                if (observation.Generation != generation) return;
+
+                if (observation.Generation != generation)
+                {
+                    return;
+                }
+
                 returnToPool = --observation.References == 0;
             }
-            if (returnToPool) Pool.Return(observation);
+
+            if (returnToPool)
+            {
+                Pool.Return(observation);
+            }
         }
 
         // Check under Gate. Telemetry rejection must never replace the caller's error.
@@ -171,6 +245,7 @@ internal static class ErrorObservation
     private readonly struct PoolPolicy : IPooledObjectPolicy<Observation>
     {
         public Observation Create() => new();
+
         public bool TryReset(Observation observation) => true;
     }
 }

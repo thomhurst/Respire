@@ -17,7 +17,7 @@ public partial class ErrorMetricsTests
         [Matrix(false, true)] bool enabled)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         await using var server = new FakeRespServer(8, FakeRespServer.OkReply);
         server.ReplyOverride = (_, command) => command switch
         {
@@ -31,7 +31,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             ClientSideCache = cache ? new() { CoalesceConcurrentMisses = false } : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
@@ -40,13 +42,19 @@ public partial class ErrorMetricsTests
         RespireKey[] keys = crossSlot ? ["{first}:one", "{second}:two"] : ["{same}:one", "{same}:two"];
         using var capture = new Capture(throwOnMeasurement: true);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         async Task Execute()
         {
             if (generic)
+            {
                 await Assert.That((await client.Strings.GetManyAsync<int>(keys, deadline.Token)).SequenceEqual([1, 2])).IsTrue();
+            }
             else
+            {
                 await Assert.That((await client.Strings.GetManyAsync(keys, deadline.Token)).SequenceEqual(["1", "2"])).IsTrue();
+            }
         }
+
         if (crossSlot)
         {
             await Assert.That(ClusterHash.GetSlot("{first}:one")).IsNotEqualTo(ClusterHash.GetSlot("{second}:two"));
@@ -54,9 +62,14 @@ public partial class ErrorMetricsTests
             await Assert.That(error!.ExpectedSlot).IsNotEqualTo(error.ConflictingSlot);
             await Assert.That(error.Message).Contains("Keys in request don't hash to the same slot");
         }
-        else await Execute();
+        else
+        {
+            await Execute();
+        }
+
         var items = capture.Items.ToArray();
         await Assert.That(items.Length).IsEqualTo(enabled && crossSlot ? 1 : 0);
+
         if (enabled && crossSlot)
         {
             await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsFalse();
@@ -65,6 +78,7 @@ public partial class ErrorMetricsTests
             await Assert.That(items[0].Tags["redis.client.errors.category"]).IsEqualTo("validation");
             await Assert.That(items[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
         }
+
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("MGET ", StringComparison.Ordinal)))
             .IsEqualTo(crossSlot ? 0 : 1);
     }

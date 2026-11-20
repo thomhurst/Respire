@@ -1,6 +1,6 @@
-using System.Globalization;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -24,11 +24,16 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
         var clock = new ManualClock();
         var scheduler = Queue(first).CreateScheduler(clock);
         await scheduler.UpsertAsync("0-future", "future", new() { Interval = TimeSpan.FromDays(30) });
+
         for (var i = 0; i <= maximumTicks; i++)
+        {
             await scheduler.UpsertAsync($"backlog-{i:D3}", "backlog", new()
             {
-                Interval = TimeSpan.FromMilliseconds(1), MissedTickPolicy = RespireJobMissedTickPolicy.CatchUp,
+                Interval = TimeSpan.FromMilliseconds(1),
+                MissedTickPolicy = RespireJobMissedTickPolicy.CatchUp,
             });
+        }
+
         await scheduler.UpsertAsync("z-skip", "skip", new() { Interval = TimeSpan.FromSeconds(1) });
         clock.Advance(TimeSpan.FromDays(1));
         // Recreate the scheduler on alternating clients: fairness must live in Redis.
@@ -39,6 +44,7 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
             await Assert.That(count <= maximumTicks).IsTrue();
             clock.Advance(TimeSpan.FromSeconds(1));
         }
+
         var entries = await first.Streams.ReadAsync(Queue(first).StreamKey);
         await Assert.That(entries.Any(entry => entry.GetString("_respire.job.schedule") == "z-skip")).IsTrue();
         await Assert.That(entries.Any(entry => entry.GetString("_respire.job.schedule") == "0-future")).IsFalse();
@@ -52,8 +58,12 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
         await using var client = await ConnectAsync();
         var clock = new ManualClock();
         var scheduler = Queue(client).CreateScheduler(clock);
+
         foreach (var id in new[] { "a", "b", "c" })
+        {
             await scheduler.UpsertAsync(id, id, new() { Interval = TimeSpan.FromSeconds(1) });
+        }
+
         clock.Advance(TimeSpan.FromSeconds(1));
         await Assert.That(await scheduler.RunDueAsync(1)).IsEqualTo(1);
         await scheduler.RemoveAsync("a");
@@ -89,10 +99,15 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
         await Assert.That(await scheduler.RunDueAsync()).IsEqualTo(1);
         var entry = (await client.Streams.ReadAsync(queue.StreamKey)).Single();
         // The HTML reporter can independently sample this source even when our listener declines it.
-        if (sampled) await Assert.That(stopped.Count).IsEqualTo(1);
+        if (sampled)
+        {
+            await Assert.That(stopped.Count).IsEqualTo(1);
+        }
+
         var expected = stopped.SingleOrDefault() ?? parent;
         await Assert.That(entry.GetString("traceparent")).IsEqualTo(expected.Id);
         await Assert.That(entry.GetString("tracestate")).IsEqualTo("vendor=value");
+
         if (!ReferenceEquals(expected, parent))
         {
             await Assert.That(expected.OperationName).IsEqualTo("job enqueue");
@@ -101,6 +116,7 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
             await Assert.That(expected.ParentSpanId).IsEqualTo(parent.SpanId);
             await Assert.That(expected.Status).IsEqualTo(ActivityStatusCode.Unset);
         }
+
         await Assert.That(Activity.Current).IsSameReferenceAs(parent);
     }
 
@@ -124,9 +140,14 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
         clock.Advance(TimeSpan.FromMinutes(1));
         var hosted = provider.GetServices<IHostedService>().ToArray();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
         try
         {
-            foreach (var service in hosted) await service.StartAsync(deadline.Token);
+            foreach (var service in hosted)
+            {
+                await service.StartAsync(deadline.Token);
+            }
+
             var job = await received.Job.Task.WaitAsync(deadline.Token);
             await Assert.That(job.Payload).IsEqualTo("typed payload");
             await using var events = queue.ReadEventsAsync(cancellationToken: deadline.Token).GetAsyncEnumerator();
@@ -140,8 +161,13 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
         finally
         {
             using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            foreach (var service in hosted.Reverse()) await service.StopAsync(stopping.Token);
+
+            foreach (var service in hosted.Reverse())
+            {
+                await service.StopAsync(stopping.Token);
+            }
         }
+
         var background = hosted.Cast<BackgroundService>().ToArray();
         await Assert.That(background.Length).IsEqualTo(2);
         await Assert.That(background.All(service => service.ExecuteTask is { IsCompleted: true })).IsTrue();
@@ -164,7 +190,8 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
         var schedulers = new[] { queue.CreateScheduler(clock), Queue(second).CreateScheduler(clock) };
         await schedulers[0].UpsertAsync("report", "payload", new()
         {
-            Interval = TimeSpan.FromSeconds(1), MissedTickPolicy = RespireJobMissedTickPolicy.CatchUp,
+            Interval = TimeSpan.FromSeconds(1),
+            MissedTickPolicy = RespireJobMissedTickPolicy.CatchUp,
         });
         clock.Advance(TimeSpan.FromSeconds(10));
         var results = await Task.WhenAll(Enumerable.Range(0, 16)
@@ -210,14 +237,18 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
     {
         var clock = new ManualClock();
         var start = clock.GetUtcNow();
+
         await using (var original = await ConnectAsync())
         {
             await Queue(original).CreateScheduler(clock).UpsertAsync("report", "persisted", new()
             {
-                Interval = TimeSpan.FromSeconds(1), MissedTickPolicy = RespireJobMissedTickPolicy.CatchUp,
+                Interval = TimeSpan.FromSeconds(1),
+                MissedTickPolicy = RespireJobMissedTickPolicy.CatchUp,
             });
         }
+
         clock.Advance(TimeSpan.FromSeconds(5));
+
         await using (var restarted = await ConnectAsync())
         {
             var queue = Queue(restarted);
@@ -226,6 +257,7 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
             await Assert.That(Tick(entries[0])).IsEqualTo(start.AddSeconds(1).ToUnixTimeMilliseconds());
             await Assert.That(Tick(entries[1])).IsEqualTo(start.AddSeconds(2).ToUnixTimeMilliseconds());
         }
+
         await using var recovered = await ConnectAsync();
         var recoveredQueue = Queue(recovered);
         var scheduler = recoveredQueue.CreateScheduler(clock);
@@ -234,6 +266,7 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
         await Assert.That(await scheduler.RunDueAsync(2)).IsEqualTo(0);
         var all = await recovered.Streams.ReadAsync(recoveredQueue.StreamKey);
         await Assert.That(all.Length).IsEqualTo(5);
+
         for (var index = 0; index < all.Length; index++)
         {
             await Assert.That(Tick(all[index])).IsEqualTo(start.AddSeconds(index + 1).ToUnixTimeMilliseconds());
@@ -364,10 +397,12 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
         clock.Advance(TimeSpan.FromSeconds(1));
         var user = "recurring-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-" + deniedCommand]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
-                with { Username = user, Password = "password" });
+                with
+            { Username = user, Password = "password" });
             await Assert.That(async () => await Queue(restricted).CreateScheduler(clock).RunDueAsync()).Throws<RespireServerException>();
             await Assert.That(await admin.Streams.CountAsync(queue.StreamKey)).IsEqualTo(0);
             await Assert.That(await queue.CreateScheduler(clock).RunDueAsync()).IsEqualTo(1);
@@ -404,8 +439,12 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
         var queue = Queue(client);
         var clock = new ManualClock();
         var scheduler = queue.CreateScheduler(clock);
+
         if (replacing)
+        {
             await scheduler.UpsertAsync("report", "original", new() { Interval = TimeSpan.FromSeconds(1) });
+        }
+
         var failing = RespireScript.Create(Script("Upsert").Source.Replace(
             "local ordered = redis.pcall('ZADD', KEYS[4], 0, ARGV[1])",
             "local ordered = {err = 'ERR injected order index failure'}"));
@@ -418,9 +457,12 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
         await Assert.That(due).IsEqualTo(replacing ? 1 : 0);
         clock.Advance(TimeSpan.FromSeconds(1));
         await Assert.That(await scheduler.RunDueAsync()).IsEqualTo(replacing ? 1 : 0);
+
         if (replacing)
+        {
             await Assert.That((await client.Streams.ReadAsync(queue.StreamKey)).Single()
                 .GetString("_respire.job.payload")).IsEqualTo("original");
+        }
     }
 
     [Test]
@@ -437,15 +479,26 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
         using var due = await client.Scripts.ExecuteAsync(Script("ReadDue"), [.. Keys(queue)], [clock.GetUtcNow().ToUnixTimeMilliseconds(), 1]);
         var definition = due[0][1].AsString();
         var tick = due[0][2].AsString();
-        if (remove) await scheduler.RemoveAsync("report");
-        else await scheduler.UpsertAsync("report", "replacement", new() { Interval = TimeSpan.FromSeconds(1) });
+
+        if (remove)
+        {
+            await scheduler.RemoveAsync("report");
+        }
+        else
+        {
+            await scheduler.UpsertAsync("report", "replacement", new() { Interval = TimeSpan.FromSeconds(1) });
+        }
+
         await Assert.That(await client.Scripts.ExecuteIntegerAsync(Script("CommitTick"), [.. Keys(queue)],
             ["report", definition, tick, clock.GetUtcNow().AddSeconds(1).ToUnixTimeMilliseconds(), "stale", "old", tick])).IsEqualTo(0);
         await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(0);
         clock.Advance(TimeSpan.FromSeconds(1));
         await Assert.That(await scheduler.RunDueAsync()).IsEqualTo(remove ? 0 : 1);
+
         if (!remove)
+        {
             await Assert.That((await client.Streams.ReadAsync(queue.StreamKey)).Single().GetString("_respire.job.payload")).IsEqualTo("replacement");
+        }
     }
 
     [Test]
@@ -512,13 +565,18 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
     private sealed class ManualClock(DateTimeOffset? initial = null) : TimeProvider
     {
         private DateTimeOffset _utcNow = initial ?? new DateTimeOffset(2026, 10, 15, 0, 0, 0, TimeSpan.Zero);
+
         public override DateTimeOffset GetUtcNow() => _utcNow;
+
         public void Advance(TimeSpan elapsed) => _utcNow += elapsed;
     }
 
     public sealed class HostedJobState
     {
-        public TaskCompletionSource<RespireJob<string>> Job { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<RespireJob<string>> Job
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     public sealed class HostedJobHandler(HostedJobState state) : IRespireStreamHandler<RespireJob<string>>

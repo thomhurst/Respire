@@ -26,7 +26,9 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
         => _clock = clock ?? (static () => Environment.TickCount64);
 
     internal long Timestamp => _clock();
+
     internal int DeferredCount => _deferred.Count;
+
     internal int DeferredSlots => _deferredSlots;
 
     internal delegate AppliedMove? ApplyMigration(RespireEndpoint source, RespireEndpoint target,
@@ -34,12 +36,18 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
 
     internal bool TryRecordSequence(object scope, long sequence)
     {
-        lock (_sequenceGate) return _sequences.GetOrCreateValue(scope).TryAdd(sequence);
+        lock (_sequenceGate)
+        {
+            return _sequences.GetOrCreateValue(scope).TryAdd(sequence);
+        }
     }
 
     internal void ForgetSequence(object scope)
     {
-        lock (_sequenceGate) _sequences.Remove(scope);
+        lock (_sequenceGate)
+        {
+            _sequences.Remove(scope);
+        }
     }
 
     /// <remarks>The caller must hold the router's nodes gate.</remarks>
@@ -57,7 +65,11 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
         // delayed replays without retaining an unbounded set or forgetting old IDs.
         internal bool TryAdd(long sequence)
         {
-            if (sequence <= _highestSeen) return false;
+            if (sequence <= _highestSeen)
+            {
+                return false;
+            }
+
             _highestSeen = sequence;
             return true;
         }
@@ -88,6 +100,7 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
     {
         _deferred.Add(deferred);
         _deferredSlots += deferred.Slots.Length;
+
         while (_deferred.Count > DeferredMigrationLimit
                || _deferredSlots > ClusterHash.SlotCount)
         {
@@ -104,9 +117,14 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
     /// <remarks>The caller must hold the router's nodes gate.</remarks>
     internal void Expire(List<(string Reason, TNode Sender)> skippedMetrics)
     {
-        if (_deferred.Count == 0) return;
+        if (_deferred.Count == 0)
+        {
+            return;
+        }
+
         var now = Timestamp;
         var expired = 0;
+
         while (expired < _deferred.Count
                && now - _deferred[expired].DeferredAt >= DeferredLifetimeMilliseconds)
         {
@@ -114,7 +132,12 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
             _deferredSlots -= deferred.Slots.Length;
             skippedMetrics.Add(("deferral_expired", deferred.Sender));
         }
-        if (expired == 0) return;
+
+        if (expired == 0)
+        {
+            return;
+        }
+
         _deferred.RemoveRange(0, expired);
     }
 
@@ -132,18 +155,39 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
             for (var i = 0; i < _deferred.Count; i++)
             {
                 var deferred = _deferred[i];
+
                 if (!ReferenceEquals(resolveSource(deferred.Source), move.Target))
+                {
                     continue;
+                }
+
                 var ready = SplitSortedSlots(deferred.Slots, move.Slots, out var remaining);
-                if (ready is null) continue;
+
+                if (ready is null)
+                {
+                    continue;
+                }
 
                 if (apply(deferred.Source, deferred.Target, ready, deferred.Token, out var waiting) is { } next)
+                {
                     applied.Enqueue(next);
+                }
                 // Slots that another entry moved first keep waiting.
-                if (waiting is not null) remaining = MergeSortedSlots(remaining, waiting);
+                if (waiting is not null)
+                {
+                    remaining = MergeSortedSlots(remaining, waiting);
+                }
+
                 _deferredSlots -= deferred.Slots.Length - remaining.Length;
-                if (remaining.Length == 0) _deferred.RemoveAt(i--);
-                else deferred.Slots = remaining;
+
+                if (remaining.Length == 0)
+                {
+                    _deferred.RemoveAt(i--);
+                }
+                else
+                {
+                    deferred.Slots = remaining;
+                }
             }
         }
     }
@@ -154,12 +198,24 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
         List<int>? common = null;
         var others = new List<int>(slots.Length);
         var j = 0;
+
         foreach (var slot in slots)
         {
-            while (j < moved.Length && moved[j] < slot) j++;
-            if (j < moved.Length && moved[j] == slot) (common ??= []).Add(slot);
-            else others.Add(slot);
+            while (j < moved.Length && moved[j] < slot)
+            {
+                j++;
+            }
+
+            if (j < moved.Length && moved[j] == slot)
+            {
+                (common ??= []).Add(slot);
+            }
+            else
+            {
+                others.Add(slot);
+            }
         }
+
         rest = common is null ? slots : [.. others];
         return common?.ToArray();
     }
@@ -169,9 +225,13 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
         var merged = new int[first.Length + second.Length];
         var a = 0;
         var b = 0;
+
         for (var i = 0; i < merged.Length; i++)
+        {
             merged[i] = b == second.Length || (a < first.Length && first[a] <= second[b])
                 ? first[a++] : second[b++];
+        }
+
         return merged;
     }
 }

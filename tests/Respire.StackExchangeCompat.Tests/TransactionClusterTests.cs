@@ -34,6 +34,7 @@ public class TransactionClusterTests
             _ => null,
         };
         await using var client = await RespireClient.ConnectAsync(Options(source));
+
         for (var attempt = 0; attempt < 2; attempt++)
         {
             await using var transaction = await client.CreateCompatibilityTransactionAsync(watched ? ["key"] : [], default);
@@ -42,6 +43,7 @@ public class TransactionClusterTests
             Assert.Equal(queueAbort ? "ERR" : "NOPERM", error.Code);
             Assert.Throws<RespireServerException>(() => pending.Result);
         }
+
         var commands = target.ReceivedCommands;
         var connections = target.ReceivedConnectionIds;
         var execConnections = commands.Select((command, index) => (command, index))
@@ -71,6 +73,7 @@ public class TransactionClusterTests
         };
         await using var client = await RespireClient.ConnectAsync(Options(source));
         await using var adapter = RespireConnectionMultiplexer.Wrap(client);
+
         for (var attempt = 0; attempt < 2; attempt++)
         {
             var transaction = adapter.GetDatabase().CreateTransaction();
@@ -80,6 +83,7 @@ public class TransactionClusterTests
             Assert.Equal("data", (string?)await row);
             Assert.Equal("1", (string?)await version);
         }
+
         var commands = target.ReceivedCommands;
         var start = commands.ToList().IndexOf("ASKING");
         Assert.Equal(Enumerable.Range(0, 2).SelectMany(_ => new[] { "ASKING", "MULTI", "HGET key row", "HGET key version", "EXEC" }), commands.Skip(start));
@@ -109,8 +113,16 @@ public class TransactionClusterTests
         target.SuppressReply = command =>
         {
             if (command != "CLIENT SETNAME import-timeout"
-                || Interlocked.Increment(ref handshakes) != (dedicated ? 2 : 1)) return false;
-            if (cancel) cancellation.Cancel();
+                || Interlocked.Increment(ref handshakes) != (dedicated ? 2 : 1))
+            {
+                return false;
+            }
+
+            if (cancel)
+            {
+                cancellation.Cancel();
+            }
+
             return true;
         };
         await using var client = await RespireClient.ConnectAsync(Options(source) with
@@ -121,6 +133,7 @@ public class TransactionClusterTests
         });
         await using var transaction = await client.CreateCompatibilityTransactionAsync([], default);
         var pending = transaction.GetString("key");
+
         if (cancel)
         {
             var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
@@ -134,6 +147,7 @@ public class TransactionClusterTests
             await Assert.ThrowsAsync<RespireTimeoutException>(async () => await transaction.CommitAsync());
             Assert.Throws<RespireTimeoutException>(() => pending.Result);
         }
+
         Assert.Equal(dedicated ? 2 : 1, Volatile.Read(ref handshakes));
         Assert.Single(source.ReceivedCommands.Where(command => command == "EXEC"));
         Assert.DoesNotContain("ASKING", target.ReceivedCommands);
@@ -185,8 +199,16 @@ public class TransactionClusterTests
         await using var transaction = await client.CreateCompatibilityTransactionAsync(["key"], default);
         var pending = transaction.Strings.Set("key", "value");
         Assert.Equal(!conflict, await transaction.CommitAsync());
-        if (conflict) Assert.Throws<RespireTransactionAbortedException>(() => pending.Result);
-        else Assert.True(pending.Result);
+
+        if (conflict)
+        {
+            Assert.Throws<RespireTransactionAbortedException>(() => pending.Result);
+        }
+        else
+        {
+            Assert.True(pending.Result);
+        }
+
         var commands = target.ReceivedCommands;
         var start = commands.ToList().IndexOf("ASKING");
         Assert.Equal(new[] { "ASKING", "WATCH key", "ASKING", "MULTI", "SET key value", "EXEC" }, commands.Skip(start));
@@ -223,14 +245,23 @@ public class TransactionClusterTests
         using var cancellation = new CancellationTokenSource();
         target.SuppressReply = command =>
         {
-            if (command != "WATCH key") return false;
-            if (cancel) cancellation.Cancel();
+            if (command != "WATCH key")
+            {
+                return false;
+            }
+
+            if (cancel)
+            {
+                cancellation.Cancel();
+            }
+
             return true;
         };
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
             CommandTimeout = TimeSpan.FromSeconds(2),
         });
+
         if (cancel)
         {
             var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
@@ -238,8 +269,11 @@ public class TransactionClusterTests
             Assert.Equal(cancellation.Token, error.CancellationToken);
         }
         else
+        {
             await Assert.ThrowsAsync<RespireTimeoutException>(async () =>
                 await client.CreateCompatibilityTransactionAsync(["key"], default));
+        }
+
         Assert.DoesNotContain("MULTI", target.ReceivedCommands);
         Assert.Single(target.ReceivedCommands.Where(command => command == "WATCH key"));
     }
@@ -280,10 +314,16 @@ public class TransactionClusterTests
         await using var client = await RespireClient.ConnectAsync(Options(source) with { CommandTimeout = TimeSpan.FromSeconds(2) });
         await using var transaction = await client.CreateCompatibilityTransactionAsync(["key"], default);
         var pending = transaction.Strings.Set("key", "value");
+
         if (loseReply)
+        {
             await Assert.ThrowsAsync<RespireTimeoutException>(async () => await transaction.CommitAsync());
+        }
         else
+        {
             await Assert.ThrowsAsync<RespireTransactionRetryException>(async () => await transaction.CommitAsync());
+        }
+
         Assert.Equal(RespirePendingStatus.Faulted, pending.Status);
         Assert.Single(target.ReceivedCommands.Where(command => command == "WATCH key"));
         Assert.Single(target.ReceivedCommands.Where(command => command == "SET key value"));
@@ -292,8 +332,11 @@ public class TransactionClusterTests
 
     private static RespireOptions Options(FakeRespServer source) => new()
     {
-        Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-        ClusterTopologyRefreshInterval = null, CommandTimeout = TimeSpan.FromSeconds(10),
+        Protocol = RespireProtocol.Resp2,
+        UseCluster = true,
+        Connections = 1,
+        ClusterTopologyRefreshInterval = null,
+        CommandTimeout = TimeSpan.FromSeconds(10),
         Endpoints = [new("127.0.0.1", source.Port)],
     };
 

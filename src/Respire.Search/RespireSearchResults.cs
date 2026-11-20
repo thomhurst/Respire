@@ -17,7 +17,10 @@ public sealed record RespireSearchDocument(string Id, IReadOnlyDictionary<string
         init
         {
             if (!string.Equals(_id, value, StringComparison.Ordinal))
+            {
                 _documentKey = new RespireKey(value);
+            }
+
             _id = value;
         }
     }
@@ -30,24 +33,38 @@ public sealed record RespireSearchDocument(string Id, IReadOnlyDictionary<string
     }
 
     /// <summary>Typed projected values, including binary string fields.</summary>
-    public IReadOnlyDictionary<string, RespireSearchValue> StructuredFields { get; init; } = RespireSearchEmpty.SearchValues;
+    public IReadOnlyDictionary<string, RespireSearchValue> StructuredFields
+    {
+        get; init;
+    } = RespireSearchEmpty.SearchValues;
 
     /// <summary>Owned nested explanation returned by EXPLAINSCORE, or null when not requested.</summary>
-    public RespireSearchValue? ScoreExplanation { get; init; }
+    public RespireSearchValue? ScoreExplanation
+    {
+        get; init;
+    }
 
     /// <summary>Owned legacy document payload. Null means absent or unrequested; empty memory preserves an empty payload.</summary>
-    public ReadOnlyMemory<byte>? Payload { get; init; }
+    public ReadOnlyMemory<byte>? Payload
+    {
+        get; init;
+    }
 
     /// <summary>Owned server-encoded sort key (for example #5 for a number), or null when unavailable.</summary>
-    public RespireSearchValue? SortKey { get; init; }
+    public RespireSearchValue? SortKey
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Returned scalar fields selected for highlighting or summarization. Flags describe the request;
     /// the server can return unchanged text for a field without matching terms. Default field selection
     /// includes returned scalar fields; only the server knows which fields are indexed as text.
     /// </summary>
-    public IReadOnlyDictionary<string, RespireSearchTextResult> TextResults { get; init; }
-        = RespireSearchEmpty.TextResults;
+    public IReadOnlyDictionary<string, RespireSearchTextResult> TextResults
+    {
+        get; init;
+    } = RespireSearchEmpty.TextResults;
 }
 
 /// <summary>Owned returned text with its requested presentation. Markup is not HTML-escaped; fragment separators are preserved.</summary>
@@ -63,10 +80,19 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
     // the slots even when fields are omitted, so all reply flags must reach this parser.
     internal static RespireSearchResult Parse(RespireResult result, RespireSearchQueryOptions options)
     {
-        if (result.Type == RespireDataType.Map) return ParseResp3(result, options);
-        if (result.Count == 0) throw RespireSearchReply.Unexpected("FT.SEARCH", "an empty reply");
+        if (result.Type == RespireDataType.Map)
+        {
+            return ParseResp3(result, options);
+        }
+
+        if (result.Count == 0)
+        {
+            throw RespireSearchReply.Unexpected("FT.SEARCH", "an empty reply");
+        }
+
         var total = result[0].AsInteger();
         var docs = new List<RespireSearchDocument>();
+
         for (var i = 1; i < result.Count;)
         {
             var idValue = result[i++];
@@ -74,34 +100,60 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
             var documentKey = new RespireKey(idValue.AsBytes());
             double? score = null;
             RespireSearchValue? explanation = null;
+
             if (options.WithScores)
             {
-                if (i == result.Count) throw RespireSearchReply.Unexpected("FT.SEARCH", "a document without its score");
+                if (i == result.Count)
+                {
+                    throw RespireSearchReply.Unexpected("FT.SEARCH", "a document without its score");
+                }
+
                 (score, explanation) = ReadScore(result[i++]);
             }
+
             ReadOnlyMemory<byte>? payload = null;
             RespireSearchValue? sortKey = null;
+
             if (options.WithPayloads)
             {
                 var value = ReadSlot(result, ref i, "payload");
-                if (!value.IsNull) payload = value.AsBytes().AsMemory();
+
+                if (!value.IsNull)
+                {
+                    payload = value.AsBytes().AsMemory();
+                }
             }
+
             if (options.WithSortKeys)
             {
                 var value = ReadSlot(result, ref i, "sort key");
-                if (!value.IsNull) sortKey = RespireSearchValue.From(value);
+
+                if (!value.IsNull)
+                {
+                    sortKey = RespireSearchValue.From(value);
+                }
             }
+
             IReadOnlyDictionary<string, string?> fields = RespireSearchEmpty.NullableStrings;
             IReadOnlyDictionary<string, RespireSearchValue> structured = RespireSearchEmpty.SearchValues;
+
             if (!options.NoContent)
             {
                 var fieldsValue = ReadSlot(result, ref i, "fields");
-                if (!fieldsValue.IsNull) (fields, structured) = RespireSearchReply.ReadFields(fieldsValue, "FT.SEARCH");
+
+                if (!fieldsValue.IsNull)
+                {
+                    (fields, structured) = RespireSearchReply.ReadFields(fieldsValue, "FT.SEARCH");
+                }
             }
+
             docs.Add(new(id, fields, score)
             {
-                StructuredFields = structured, DocumentKey = documentKey,
-                ScoreExplanation = explanation, Payload = payload, SortKey = sortKey,
+                StructuredFields = structured,
+                DocumentKey = documentKey,
+                ScoreExplanation = explanation,
+                Payload = payload,
+                SortKey = sortKey,
                 TextResults = ReadTextResults(fields, structured, options),
             });
         }
@@ -113,17 +165,27 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
     // map on RESP3, with total_results, results, warnings, and execution_time entries.
     internal static RespireSearchResult ParseHybrid(RespireResult result, int? fieldCount = null)
     {
-        if (fieldCount is null) RespireSearchReply.RequirePairs(result, "FT.HYBRID");
+        if (fieldCount is null)
+        {
+            RespireSearchReply.RequirePairs(result, "FT.HYBRID");
+        }
+
         var count = fieldCount ?? result.Count;
+
         if (fieldCount is not null && (result.Type != RespireDataType.Array || count < 0 || count >= result.Count || (count & 1) != 0))
+        {
             throw RespireSearchReply.Unexpected("FT.HYBRID", "an invalid field/value reply");
+        }
+
         long total = 0;
         var documents = new List<RespireSearchDocument>();
         var warnings = new List<string>();
+
         for (var i = 0; i < count; i += 2)
         {
             var key = result[i].AsString();
             var value = result[i + 1];
+
             switch (key)
             {
                 case "total_results":
@@ -133,7 +195,10 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
                     RespireSearchReply.AddStrings(value, warnings);
                     break;
                 case "results":
-                    for (var j = 0; j < value.Count; j++) AddHybridDocument(value[j], documents);
+                    for (var j = 0; j < value.Count; j++)
+                    {
+                        AddHybridDocument(value[j], documents);
+                    }
                     break;
             }
         }
@@ -146,10 +211,12 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
         long total = 0;
         var docs = new List<RespireSearchDocument>();
         var warnings = new List<string>();
+
         for (var i = 0; i + 1 < result.Count; i += 2)
         {
             var key = result[i].AsString();
             var value = result[i + 1];
+
             switch (key)
             {
                 case "total_results":
@@ -159,7 +226,10 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
                     RespireSearchReply.AddStrings(value, warnings);
                     break;
                 case "results":
-                    for (var j = 0; j < value.Count; j++) AddResp3Document(value[j], docs, options);
+                    for (var j = 0; j < value.Count; j++)
+                    {
+                        AddResp3Document(value[j], docs, options);
+                    }
                     break;
             }
         }
@@ -178,10 +248,12 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
         RespireSearchValue? sortKey = null;
         IReadOnlyDictionary<string, string?> fields = RespireSearchEmpty.NullableStrings;
         IReadOnlyDictionary<string, RespireSearchValue> structured = RespireSearchEmpty.SearchValues;
+
         for (var k = 0; k < item.Count; k += 2)
         {
             var itemKey = item[k].AsString();
             var itemValue = item[k + 1];
+
             switch (itemKey)
             {
                 case "id" or "key" or "keyid" or "__key":
@@ -192,10 +264,16 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
                     (score, explanation) = ReadScore(itemValue);
                     break;
                 case "payload":
-                    if (!itemValue.IsNull) payload = itemValue.AsBytes().AsMemory();
+                    if (!itemValue.IsNull)
+                    {
+                        payload = itemValue.AsBytes().AsMemory();
+                    }
                     break;
                 case "sortkey":
-                    if (!itemValue.IsNull) sortKey = RespireSearchValue.From(itemValue);
+                    if (!itemValue.IsNull)
+                    {
+                        sortKey = RespireSearchValue.From(itemValue);
+                    }
                     break;
                 case "extra_attributes":
                     var parsed = RespireSearchReply.ReadFields(itemValue, "FT.SEARCH");
@@ -205,25 +283,44 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
             }
         }
 
-        if (id is null) throw RespireSearchReply.Unexpected("FT.SEARCH", "a result row without an id");
+        if (id is null)
+        {
+            throw RespireSearchReply.Unexpected("FT.SEARCH", "a result row without an id");
+        }
+
         docs.Add(new(id, fields, score)
         {
-            StructuredFields = structured, DocumentKey = documentKey,
-            ScoreExplanation = explanation, Payload = payload, SortKey = sortKey,
+            StructuredFields = structured,
+            DocumentKey = documentKey,
+            ScoreExplanation = explanation,
+            Payload = payload,
+            SortKey = sortKey,
             TextResults = ReadTextResults(fields, structured, options),
         });
     }
 
     private static RespireResult ReadSlot(RespireResult result, ref int index, string name)
     {
-        if (index == result.Count) throw RespireSearchReply.Unexpected("FT.SEARCH", $"a document without its {name}");
+        if (index == result.Count)
+        {
+            throw RespireSearchReply.Unexpected("FT.SEARCH", $"a document without its {name}");
+        }
+
         return result[index++];
     }
 
     private static (double Score, RespireSearchValue? Explanation) ReadScore(RespireResult value)
     {
-        if (value.Type != RespireDataType.Array) return (value.AsDouble(), null);
-        if (value.Count != 2) throw RespireSearchReply.Unexpected("FT.SEARCH", "an invalid score/explanation pair");
+        if (value.Type != RespireDataType.Array)
+        {
+            return (value.AsDouble(), null);
+        }
+
+        if (value.Count != 2)
+        {
+            throw RespireSearchReply.Unexpected("FT.SEARCH", "an invalid score/explanation pair");
+        }
+
         return (value[0].AsDouble(), RespireSearchValue.From(value[1]));
     }
 
@@ -232,17 +329,29 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
         IReadOnlyDictionary<string, RespireSearchValue> structured,
         RespireSearchQueryOptions options)
     {
-        if (options.Highlight is null && options.Summarize is null) return RespireSearchEmpty.TextResults;
+        if (options.Highlight is null && options.Summarize is null)
+        {
+            return RespireSearchEmpty.TextResults;
+        }
+
         var text = new Dictionary<string, RespireSearchTextResult>(StringComparer.Ordinal);
+
         foreach (var field in fields)
         {
             if (structured[field.Key].Type is RespireDataType.Array or RespireDataType.Map or RespireDataType.Set or RespireDataType.Push or RespireDataType.Attribute)
+            {
                 continue;
+            }
+
             var highlighted = options.Highlight is { } highlight && Selected(highlight.Fields, field.Key);
             var summarized = options.Summarize is { } summary && Selected(summary.Fields, field.Key);
+
             if (field.Value is not null && (highlighted || summarized))
+            {
                 text.Add(field.Key, new(field.Value, highlighted, summarized));
+            }
         }
+
         return text;
     }
 
@@ -260,10 +369,12 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
         var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
         var structuredFields = new Dictionary<string, RespireSearchValue>(StringComparer.Ordinal);
         var reserved = HasReservedHybridKey(row);
+
         for (var j = 0; j < row.Count; j += 2)
         {
             var key = row[j].AsString();
             var value = row[j + 1];
+
             if (reserved ? key == "__key" : key is "id" or "key" or "keyid")
             {
                 id = value.AsString();
@@ -276,8 +387,16 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
             else if (key == "extra_attributes" && IsFieldList(value))
             {
                 var parsed = RespireSearchReply.ReadFields(value, "FT.HYBRID");
-                foreach (var (name, text) in parsed.Fields) fields[name] = text;
-                foreach (var (name, structured) in parsed.Structured) structuredFields[name] = structured;
+
+                foreach (var (name, text) in parsed.Fields)
+                {
+                    fields[name] = text;
+                }
+
+                foreach (var (name, structured) in parsed.Structured)
+                {
+                    structuredFields[name] = structured;
+                }
             }
             else
             {
@@ -286,7 +405,11 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
             }
         }
 
-        if (id is null) throw RespireSearchReply.Unexpected("FT.HYBRID", "a result row without __key");
+        if (id is null)
+        {
+            throw RespireSearchReply.Unexpected("FT.HYBRID", "a result row without __key");
+        }
+
         documents.Add(new(id, fields, score) { StructuredFields = structuredFields, DocumentKey = documentKey });
     }
 
@@ -294,7 +417,10 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
     {
         for (var j = 0; j < row.Count; j += 2)
         {
-            if (row[j].AsString() == "__key") return true;
+            if (row[j].AsString() == "__key")
+            {
+                return true;
+            }
         }
 
         return false;
@@ -303,11 +429,17 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
     // A loaded field may itself be named extra_attributes; only unwrap values shaped like a field list.
     private static bool IsFieldList(RespireResult value)
     {
-        if (value.Type is not (RespireDataType.Array or RespireDataType.Map) || (value.Count & 1) != 0) return false;
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map) || (value.Count & 1) != 0)
+        {
+            return false;
+        }
+
         for (var i = 0; i < value.Count; i += 2)
         {
             if (value[i].Type is not (RespireDataType.SimpleString or RespireDataType.BulkString or RespireDataType.VerbatimString))
+            {
                 return false;
+            }
         }
 
         return true;
@@ -318,19 +450,24 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
 public sealed record RespireSearchAggregateResult(long Total, IReadOnlyList<IReadOnlyDictionary<string, string?>> Rows)
 {
     /// <summary>Rows with nested RESP collections preserved for collection-valued reducers such as TOLIST.</summary>
-    public IReadOnlyList<IReadOnlyDictionary<string, RespireSearchValue>> StructuredRows { get; init; } = [];
+    public IReadOnlyList<IReadOnlyDictionary<string, RespireSearchValue>> StructuredRows
+    {
+        get; init;
+    } = [];
 
     internal static RespireSearchAggregateResult Parse(RespireResult result)
     {
         var rows = new List<IReadOnlyDictionary<string, string?>>();
         var structuredRows = new List<IReadOnlyDictionary<string, RespireSearchValue>>();
         long total = 0;
+
         if (result.Type == RespireDataType.Map)
         {
             for (var i = 0; i + 1 < result.Count; i += 2)
             {
                 var key = result[i].AsString();
                 var value = result[i + 1];
+
                 if (key == "total_results")
                 {
                     total = RespireSearchReply.ReadInteger(value);
@@ -338,15 +475,25 @@ public sealed record RespireSearchAggregateResult(long Total, IReadOnlyList<IRea
                 else if (key == "results")
                 {
                     for (var j = 0; j < value.Count; j++)
+                    {
                         AddRow(UnwrapExtraAttributes(value[j]), rows, structuredRows);
+                    }
                 }
             }
         }
         else
         {
-            if (result.Count == 0) throw RespireSearchReply.Unexpected("FT.AGGREGATE", "an empty reply");
+            if (result.Count == 0)
+            {
+                throw RespireSearchReply.Unexpected("FT.AGGREGATE", "an empty reply");
+            }
+
             total = result[0].AsInteger();
-            for (var i = 1; i < result.Count; i++) AddRow(result[i], rows, structuredRows);
+
+            for (var i = 1; i < result.Count; i++)
+            {
+                AddRow(result[i], rows, structuredRows);
+            }
         }
 
         return new(total, rows) { StructuredRows = structuredRows };
@@ -356,9 +503,13 @@ public sealed record RespireSearchAggregateResult(long Total, IReadOnlyList<IRea
     private static RespireResult UnwrapExtraAttributes(RespireResult item)
     {
         RespireSearchReply.RequirePairs(item, "FT.AGGREGATE");
+
         for (var k = 0; k < item.Count; k += 2)
         {
-            if (item[k].AsString() == "extra_attributes") return item[k + 1];
+            if (item[k].AsString() == "extra_attributes")
+            {
+                return item[k + 1];
+            }
         }
 
         return item;
@@ -387,12 +538,18 @@ public sealed record RespireSearchAggregateCursorPage(RespireSearchAggregateResu
     /// Index the cursor belongs to. Pages returned by <see cref="RespireSearchClient"/> always set it,
     /// so the page-based cursor overloads cannot pair a cursor with the wrong index.
     /// </summary>
-    public string? Index { get; init; }
+    public string? Index
+    {
+        get; init;
+    }
 
     internal static RespireSearchAggregateCursorPage Parse(RespireResult result, string command, string index)
     {
         if (result.Type != RespireDataType.Array || result.Count != 2)
+        {
             throw RespireSearchReply.Unexpected(command, "a reply that is not [results, cursor]");
+        }
+
         return new(RespireSearchAggregateResult.Parse(result[0]), result[1].AsInteger()) { Index = index };
     }
 
@@ -410,7 +567,10 @@ public sealed record RespireSearchAggregateCursorPage(RespireSearchAggregateResu
 public sealed record RespireSearchIndexInfo(string Name, long DocumentCount, IReadOnlyList<RespireSearchIndexAttribute> Attributes)
 {
     /// <summary>Every top-level FT.INFO entry by name, copied so it outlives the response.</summary>
-    public IReadOnlyDictionary<string, RespireSearchValue> Properties { get; init; } = RespireSearchEmpty.SearchValues;
+    public IReadOnlyDictionary<string, RespireSearchValue> Properties
+    {
+        get; init;
+    } = RespireSearchEmpty.SearchValues;
 
     internal static RespireSearchIndexInfo Parse(RespireResult result)
     {
@@ -419,11 +579,13 @@ public sealed record RespireSearchIndexInfo(string Name, long DocumentCount, IRe
         long documents = 0;
         var attributes = new List<RespireSearchIndexAttribute>();
         var properties = new Dictionary<string, RespireSearchValue>(StringComparer.Ordinal);
+
         for (var i = 0; i < result.Count; i += 2)
         {
             var key = result[i].AsString();
             var value = result[i + 1];
             properties[key] = RespireSearchValue.From(value);
+
             switch (key)
             {
                 case "index_name":
@@ -433,12 +595,19 @@ public sealed record RespireSearchIndexInfo(string Name, long DocumentCount, IRe
                     documents = RespireSearchReply.ReadInteger(value);
                     break;
                 case "attributes":
-                    for (var j = 0; j < value.Count; j++) attributes.Add(RespireSearchIndexAttribute.Parse(value[j]));
+                    for (var j = 0; j < value.Count; j++)
+                    {
+                        attributes.Add(RespireSearchIndexAttribute.Parse(value[j]));
+                    }
                     break;
             }
         }
 
-        if (name is null) throw RespireSearchReply.Unexpected("FT.INFO", "a reply without index_name");
+        if (name is null)
+        {
+            throw RespireSearchReply.Unexpected("FT.INFO", "a reply without index_name");
+        }
+
         return new(name, documents, attributes) { Properties = properties };
     }
 }
@@ -455,10 +624,16 @@ public sealed record RespireSearchIndexAttribute(string Identifier, string Attri
     };
 
     /// <summary>Flags such as <c>SORTABLE</c> or <c>NOSTEM</c>.</summary>
-    public IReadOnlyList<string> Flags { get; init; } = [];
+    public IReadOnlyList<string> Flags
+    {
+        get; init;
+    } = [];
 
     /// <summary>Other attribute settings by name, such as <c>WEIGHT</c>, <c>SEPARATOR</c>, or <c>dim</c>.</summary>
-    public IReadOnlyDictionary<string, RespireSearchValue> Options { get; init; } = RespireSearchEmpty.SearchValues;
+    public IReadOnlyDictionary<string, RespireSearchValue> Options
+    {
+        get; init;
+    } = RespireSearchEmpty.SearchValues;
 
     internal static RespireSearchIndexAttribute Parse(RespireResult value)
     {
@@ -466,16 +641,29 @@ public sealed record RespireSearchIndexAttribute(string Identifier, string Attri
         var flags = new List<string>();
         var options = new Dictionary<string, RespireSearchValue>(StringComparer.Ordinal);
         var map = value.Type == RespireDataType.Map;
+
         for (var i = 0; i < value.Count;)
         {
             var key = value[i].AsString();
             var hasValue = i + 1 < value.Count;
+
             if (hasValue && key is "identifier" or "attribute" or "type")
             {
                 var text = value[i + 1].AsString();
-                if (key == "identifier") identifier = text;
-                else if (key == "attribute") attribute = text;
-                else type = text;
+
+                if (key == "identifier")
+                {
+                    identifier = text;
+                }
+                else if (key == "attribute")
+                {
+                    attribute = text;
+                }
+                else
+                {
+                    type = text;
+                }
+
                 i += 2;
             }
             else if (map && key == "flags")
@@ -516,7 +704,12 @@ public sealed record RespireSearchValue(
         if (RespireSearchReply.IsCollection(value))
         {
             var items = new RespireSearchValue[value.Count];
-            for (var i = 0; i < items.Length; i++) items[i] = From(value[i]);
+
+            for (var i = 0; i < items.Length; i++)
+            {
+                items[i] = From(value[i]);
+            }
+
             return new(value.Type, null, items);
         }
 
@@ -535,24 +728,40 @@ internal static class RespireSearchReply
         if (result.Type == RespireDataType.Integer)
         {
             var count = result.AsInteger();
-            if (count >= 0) return count;
+
+            if (count >= 0)
+            {
+                return count;
+            }
         }
+
         throw Unexpected(command, "a nonnegative integer was expected");
     }
 
     internal static string[] ReadStringCollection(RespireResult result, string command, string expectedItem = "a string")
     {
         if (result.IsNull || result.Type is not (RespireDataType.Array or RespireDataType.Set))
+        {
             throw Unexpected(command, $"{expectedItem} collection was expected");
+        }
+
         var strings = new string[result.Count];
-        for (var i = 0; i < strings.Length; i++) strings[i] = ReadString(result[i], command, expectedItem);
+
+        for (var i = 0; i < strings.Length; i++)
+        {
+            strings[i] = ReadString(result[i], command, expectedItem);
+        }
+
         return strings;
     }
 
     internal static string ReadString(RespireResult result, string command, string expectedItem = "a string")
     {
         if (result.IsNull || result.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
+        {
             throw Unexpected(command, $"{expectedItem} was expected");
+        }
+
         return result.AsString();
     }
 
@@ -562,7 +771,9 @@ internal static class RespireSearchReply
     internal static void RequirePairs(RespireResult value, string command)
     {
         if (!IsCollection(value) || (value.Count & 1) != 0)
+        {
             throw Unexpected(command, $"a {value.Type} where key/value pairs were expected");
+        }
     }
 
     internal static (Dictionary<string, string?> Fields, Dictionary<string, RespireSearchValue> Structured) ReadFields(RespireResult values, string command)
@@ -570,6 +781,7 @@ internal static class RespireSearchReply
         RequirePairs(values, command);
         var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
         var structured = new Dictionary<string, RespireSearchValue>(StringComparer.Ordinal);
+
         for (var i = 0; i < values.Count; i += 2)
         {
             var name = values[i].AsString();
@@ -583,7 +795,10 @@ internal static class RespireSearchReply
 
     internal static void AddStrings(RespireResult values, List<string> target)
     {
-        for (var j = 0; j < values.Count; j++) target.Add(values[j].AsString());
+        for (var j = 0; j < values.Count; j++)
+        {
+            target.Add(values[j].AsString());
+        }
     }
 
     // Some servers report counts as integers, others as numeric strings or doubles.

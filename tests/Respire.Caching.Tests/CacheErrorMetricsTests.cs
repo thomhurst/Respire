@@ -22,6 +22,7 @@ public partial class CacheErrorMetricsTests
         var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -38,14 +39,21 @@ public partial class CacheErrorMetricsTests
             };
             server.SuppressReply = command =>
             {
-                if (!command.StartsWith(getPrefix, StringComparison.Ordinal)) return false;
+                if (!command.StartsWith(getPrefix, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 reading.TrySetResult();
                 return true;
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-                ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
+                Protocol = RespireProtocol.Resp2,
+                UseCluster = true,
+                Connections = 1,
+                ClusterTopologyRefreshInterval = null,
+                Endpoints = [new("127.0.0.1", server.Port)],
             });
             await client.EnsureReliableCorrectionOrderingAsync();
             await using var cache = new RespireDistributedCache(client);
@@ -54,11 +62,16 @@ public partial class CacheErrorMetricsTests
             listener.InstrumentPublished = (instrument, observer) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     observer.EnableMeasurementEvents(instrument);
+                }
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
-                if (metricScope.Value) recorded.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+                if (metricScope.Value)
+                {
+                    recorded.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+                }
             });
             listener.Start();
             using var caller = new CancellationTokenSource();
@@ -98,6 +111,7 @@ public partial class CacheErrorMetricsTests
         var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -117,15 +131,22 @@ public partial class CacheErrorMetricsTests
                         reading.TrySetResult();
                         return true;
                     }
-                    if (!command.StartsWith(correctionPrefix, StringComparison.Ordinal)) return false;
+
+                    if (!command.StartsWith(correctionPrefix, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
                     correcting.TrySetResult();
                     return true;
                 },
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespireProtocol.Resp2, Connections = 1,
-                Endpoints = [new("127.0.0.1", server.Port)], CommandTimeout = TimeSpan.FromSeconds(5),
+                Protocol = RespireProtocol.Resp2,
+                Connections = 1,
+                Endpoints = [new("127.0.0.1", server.Port)],
+                CommandTimeout = TimeSpan.FromSeconds(5),
             });
             IRespireClient cacheClient = decorated
                 ? new RespireDistributedCacheTests.ScriptInterceptingClient(client, async (_, send) =>
@@ -142,14 +163,25 @@ public partial class CacheErrorMetricsTests
             listener.InstrumentPublished = (instrument, meterListener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
-                if (!metricScope.Value) return;
+                if (!metricScope.Value)
+                {
+                    return;
+                }
+
                 var item = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
                 items.Enqueue(item);
-                if (Equals(item.GetValueOrDefault("db.response.status_code"), "NOPERM")) completed.TrySetResult();
+
+                if (Equals(item.GetValueOrDefault("db.response.status_code"), "NOPERM"))
+                {
+                    completed.TrySetResult();
+                }
+
                 throw new InvalidOperationException("Listener failure must remain isolated.");
             });
             listener.Start();
@@ -166,9 +198,14 @@ public partial class CacheErrorMetricsTests
             // Rent unrelated owners after the foreground owner has returned. A detached
             // NOSCRIPT retry must retain its own live generation through the later EVAL.
             var owners = Enumerable.Range(0, 32).Select(_ => DispatchResponseSource<bool>.Start()).ToArray();
+
             try
             {
-                foreach (var owner in owners) owner.Observation.SetAttempts(37);
+                foreach (var owner in owners)
+                {
+                    owner.Observation.SetAttempts(37);
+                }
+
                 server.SuppressReply = null;
                 index = server.ReceivedCommands.ToList().FindLastIndex(command =>
                     command.StartsWith(correctionPrefix, StringComparison.Ordinal));
@@ -184,7 +221,7 @@ public partial class CacheErrorMetricsTests
                 await Assert.That(owners.All(owner => owner.Observation.Attempts == 37)).IsTrue();
                 await Assert.That(await client.PingAsync()).IsGreaterThanOrEqualTo(TimeSpan.Zero);
             }
-            finally { foreach (var owner in owners) owner.CompleteInternal(); }
+            finally { foreach (var owner in owners) { owner.CompleteInternal(); } }
         }
         finally { RespireMetrics.Configure(previous); }
     }
@@ -201,6 +238,7 @@ public partial class CacheErrorMetricsTests
         var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -215,15 +253,21 @@ public partial class CacheErrorMetricsTests
                         ? "-NOPERM correction rejected\r\n"u8.ToArray() : null,
                 SuppressReply = command =>
                 {
-                    if (!command.StartsWith(getPrefix, StringComparison.Ordinal)) return false;
+                    if (!command.StartsWith(getPrefix, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
                     reading.TrySetResult();
                     return true;
                 },
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespireProtocol.Resp2, Connections = 1,
-                Endpoints = [new("127.0.0.1", server.Port)], CommandTimeout = TimeSpan.FromSeconds(5),
+                Protocol = RespireProtocol.Resp2,
+                Connections = 1,
+                Endpoints = [new("127.0.0.1", server.Port)],
+                CommandTimeout = TimeSpan.FromSeconds(5),
             });
             await using var cache = client.AsDistributedCache();
             var items = new ConcurrentQueue<(Dictionary<string, object?> Tags, string Publication)>();
@@ -231,13 +275,19 @@ public partial class CacheErrorMetricsTests
             listener.InstrumentPublished = (instrument, meterListener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
                 // Keep the publisher with its tags so a rare extra physical or detached error
                 // can be distinguished from duplicate correction publication in CI.
-                if (!metricScope.Value) return;
+                if (!metricScope.Value)
+                {
+                    return;
+                }
+
                 items.Enqueue((tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value),
                     string.Join(Environment.NewLine, Environment.StackTrace.Split(Environment.NewLine).Take(20))));
                 throw new InvalidOperationException("Listener failure must remain isolated.");
@@ -245,17 +295,20 @@ public partial class CacheErrorMetricsTests
             listener.Start();
             var response = refresh ? cache.RefreshAsync("key") : cache.GetAsync("key");
             await reading.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
             try
             {
                 // Detached work from an earlier test can publish after its foreground wait
                 // ends, even though this class is NotInParallel. Reproduce that publication
                 // on a context that does not belong to this cache operation.
                 Task unrelatedPublication;
+
                 using (ExecutionContext.SuppressFlow())
                 {
                     unrelatedPublication = Task.Run(() => RespireTelemetry.RecordError(
                         new ObjectDisposedException("earlier test"), internallyHandled: true, retryAttempts: 1));
                 }
+
                 await unrelatedPublication;
                 // Exceed the production tolerance while the successful read reply is parked.
                 await Task.Delay(TimeSpan.FromMilliseconds(1100));
@@ -267,6 +320,7 @@ public partial class CacheErrorMetricsTests
                     command.StartsWith(getPrefix, StringComparison.Ordinal));
                 await server.SendRawAsync("*2\r\n:1\r\n$5\r\nvalue\r\n"u8.ToArray(), server.ReceivedConnectionIds[index]);
             }
+
             var error = await Assert.That(async () => await response).ThrowsExactly<RespireServerException>();
             await Assert.That(error!.Code).IsEqualTo("NOPERM");
             var snapshot = items.ToArray();
@@ -282,12 +336,14 @@ public partial class CacheErrorMetricsTests
             await Assert.That((bool)recorded[^1]["redis.client.errors.internal"]!).IsFalse();
             await Assert.That(recorded[^1]["db.response.status_code"]).IsEqualTo("NOPERM");
             await Assert.That(recorded[^1]["redis.client.operation.retry_attempts"]).IsEqualTo(retry ? 1 : 0);
+
             if (retry)
             {
                 await Assert.That((bool)recorded[0]["redis.client.errors.internal"]!).IsTrue();
                 await Assert.That(recorded[0]["db.response.status_code"]).IsEqualTo("NOSCRIPT");
                 await Assert.That(recorded[0]["redis.client.operation.retry_attempts"]).IsEqualTo(0);
             }
+
             await Assert.That(await client.PingAsync()).IsGreaterThanOrEqualTo(TimeSpan.Zero);
         }
         finally { RespireMetrics.Configure(previous); }
@@ -302,6 +358,7 @@ public partial class CacheErrorMetricsTests
         var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             await using var server = new FakeRespServer(FakeRespServer.OkReply)
@@ -311,7 +368,9 @@ public partial class CacheErrorMetricsTests
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespireProtocol.Resp2, CommandTimeout = null, Endpoints = [new("127.0.0.1", server.Port)],
+                Protocol = RespireProtocol.Resp2,
+                CommandTimeout = null,
+                Endpoints = [new("127.0.0.1", server.Port)],
             });
             await using var cache = client.AsDistributedCache();
             var finals = new ConcurrentQueue<Dictionary<string, object?>>();
@@ -319,20 +378,35 @@ public partial class CacheErrorMetricsTests
             listener.InstrumentPublished = (instrument, meterListener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
-                if (!metricScope.Value) return;
+                if (!metricScope.Value)
+                {
+                    return;
+                }
+
                 var item = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
+
                 if (!(bool)item["redis.client.errors.internal"]! && Equals(item.GetValueOrDefault("db.response.status_code"), "WRONGTYPE"))
+                {
                     finals.Enqueue(item);
+                }
             });
             listener.Start();
             await Assert.That(async () =>
             {
-                if (refresh) await cache.RefreshAsync("key");
-                else await cache.GetAsync("key");
+                if (refresh)
+                {
+                    await cache.RefreshAsync("key");
+                }
+                else
+                {
+                    await cache.GetAsync("key");
+                }
             }).Throws<RespireServerException>();
             await Assert.That(finals.Count).IsEqualTo(1);
             await Assert.That(server.ReceivedCommands.Contains("CLIENT ID")).IsTrue();
@@ -350,12 +424,14 @@ public partial class CacheErrorMetricsTests
         var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             await using var server = new FakeRespServer(FakeRespServer.OkReply);
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+                Protocol = RespireProtocol.Resp2,
+                Endpoints = [new("127.0.0.1", server.Port)],
             });
             await using var cache = client.AsDistributedCache();
             await client.DisposeAsync();
@@ -364,20 +440,37 @@ public partial class CacheErrorMetricsTests
             listener.InstrumentPublished = (instrument, meterListener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
-                if (!metricScope.Value) return;
+                if (!metricScope.Value)
+                {
+                    return;
+                }
+
                 var item = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
-                if (!(bool)item["redis.client.errors.internal"]!) finals.Enqueue(item);
+
+                if (!(bool)item["redis.client.errors.internal"]!)
+                {
+                    finals.Enqueue(item);
+                }
+
                 throw new InvalidOperationException("Listener failure must remain isolated.");
             });
             listener.Start();
             await Assert.That(async () =>
             {
-                if (refresh) await cache.RefreshAsync("key");
-                else await cache.GetAsync("key");
+                if (refresh)
+                {
+                    await cache.RefreshAsync("key");
+                }
+                else
+                {
+                    await cache.GetAsync("key");
+                }
             }).Throws<ObjectDisposedException>();
             await Assert.That(finals.Count).IsEqualTo(1);
             await Assert.That(finals.Single()["error.type"]).IsEqualTo(typeof(ObjectDisposedException).FullName);
@@ -397,6 +490,7 @@ public partial class CacheErrorMetricsTests
         var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -407,14 +501,20 @@ public partial class CacheErrorMetricsTests
                     : command.StartsWith("CLIENT KILL ", StringComparison.Ordinal) ? ":0\r\n"u8.ToArray() : null,
                 SuppressReply = command =>
                 {
-                    if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return false;
+                    if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
                     written.TrySetResult();
                     return true;
                 },
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+                Protocol = RespireProtocol.Resp2,
+                Connections = 1,
+                Endpoints = [new("127.0.0.1", server.Port)],
                 CommandTimeout = TimeSpan.FromSeconds(5),
             });
             await client.EnsureReliableCorrectionOrderingAsync();
@@ -428,14 +528,27 @@ public partial class CacheErrorMetricsTests
             listener.InstrumentPublished = (instrument, meterListener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
-                if (!metricScope.Value) return;
+                if (!metricScope.Value)
+                {
+                    return;
+                }
+
                 var item = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
-                if (!(bool)item["redis.client.errors.internal"]!) finals.Enqueue(item);
-                else handled.Enqueue(item);
+
+                if (!(bool)item["redis.client.errors.internal"]!)
+                {
+                    finals.Enqueue(item);
+                }
+                else
+                {
+                    handled.Enqueue(item);
+                }
             });
             listener.Start();
             server.ReplyOverride = (_, command) => command == "CLIENT ID" ? ":123\r\n"u8.ToArray() : null;
@@ -446,7 +559,12 @@ public partial class CacheErrorMetricsTests
                     correcting.TrySetResult();
                     return true;
                 }
-                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return false;
+
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 written.TrySetResult();
                 return true;
             };
@@ -464,15 +582,18 @@ public partial class CacheErrorMetricsTests
             var correctionIndex = server.ReceivedCommands.ToList().FindLastIndex(command =>
                 command.StartsWith("CLIENT KILL ", StringComparison.Ordinal));
             var correctionConnection = server.ReceivedConnectionIds[correctionIndex];
+
             try
             {
                 // Detached work can outlive an earlier test despite NotInParallel.
                 Task unrelatedPublication;
+
                 using (ExecutionContext.SuppressFlow())
                 {
                     unrelatedPublication = Task.Run(() => RespireTelemetry.RecordError(
                         new ObjectDisposedException("earlier test"), internallyHandled: true, retryAttempts: 1));
                 }
+
                 await unrelatedPublication;
                 await Assert.That(finals.Count).IsEqualTo(0);
                 await Assert.That(response.IsCompleted).IsFalse();
@@ -483,21 +604,45 @@ public partial class CacheErrorMetricsTests
                 // An acknowledged fence allows its idempotent correction to finish later.
                 server.SuppressReply = command =>
                 {
-                    if (replace || command != "CLIENT ID") return false;
+                    if (replace || command != "CLIENT ID")
+                    {
+                        return false;
+                    }
+
                     replacementIdentifying.TrySetResult();
                     return true;
                 };
                 server.ReplyOverride = (connection, command) =>
                 {
-                    if (command == "CLIENT ID") return ":123\r\n"u8.ToArray();
-                    if (!command.StartsWith("EVAL ", StringComparison.Ordinal)) return null;
-                    if (connection != readConnection) replacementCorrecting.TrySetResult();
+                    if (command == "CLIENT ID")
+                    {
+                        return ":123\r\n"u8.ToArray();
+                    }
+
+                    if (!command.StartsWith("EVAL ", StringComparison.Ordinal))
+                    {
+                        return null;
+                    }
+
+                    if (connection != readConnection)
+                    {
+                        replacementCorrecting.TrySetResult();
+                    }
+
                     return ":0\r\n"u8.ToArray();
                 };
                 await server.SendRawAsync(replace ? "-NOPERM correction rejected\r\n"u8.ToArray() : ":0\r\n"u8.ToArray(), correctionConnection);
             }
-            if (replace) await Assert.That(async () => await response).Throws<RespireServerException>();
-            else await Assert.That(async () => await response).Throws<OperationCanceledException>();
+
+            if (replace)
+            {
+                await Assert.That(async () => await response).Throws<RespireServerException>();
+            }
+            else
+            {
+                await Assert.That(async () => await response).Throws<OperationCanceledException>();
+            }
+
             if (!replace)
             {
                 await replacementIdentifying.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -509,11 +654,13 @@ public partial class CacheErrorMetricsTests
                 // A round trip on the replacement drains its correction reply before teardown.
                 await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             }
+
             var final = finals.Single();
             await Assert.That(final["error.type"]).IsEqualTo(replace
                 ? typeof(RespireServerException).FullName : typeof(OperationCanceledException).FullName);
             await Assert.That(final["redis.client.operation.retry_attempts"]).IsEqualTo(replace ? 0 : 1);
             await Assert.That(handled.Count).IsEqualTo(replace ? 0 : 1);
+
             if (!replace)
             {
                 var retry = handled.Single();
@@ -545,18 +692,33 @@ public partial class CacheErrorMetricsTests
         var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             await using var target = new FakeRespServer(FakeRespServer.OkReply)
             {
                 ReplyOverride = (_, command) =>
                 {
-                    if (command == "CLIENT ID") return ":123\r\n"u8.ToArray();
-                    if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal)) return ":0\r\n"u8.ToArray();
+                    if (command == "CLIENT ID")
+                    {
+                        return ":123\r\n"u8.ToArray();
+                    }
+
+                    if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal))
+                    {
+                        return ":0\r\n"u8.ToArray();
+                    }
+
                     if (retry && command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                    {
                         return "-NOSCRIPT private-cache-script\r\n"u8.ToArray();
+                    }
+
                     if (command.StartsWith("EVAL", StringComparison.Ordinal))
+                    {
                         return "-WRONGTYPE private-cache-key\r\n"u8.ToArray();
+                    }
+
                     return null;
                 },
             };
@@ -566,7 +728,9 @@ public partial class CacheErrorMetricsTests
             await using var seed = new FakeRespServer(topology);
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespireProtocol.Resp2, UseCluster = cluster, ClusterTopologyRefreshInterval = null,
+                Protocol = RespireProtocol.Resp2,
+                UseCluster = cluster,
+                ClusterTopologyRefreshInterval = null,
                 Endpoints = [new("127.0.0.1", cluster ? seed.Port : target.Port)],
             });
             await using var cache = client.AsDistributedCache();
@@ -575,11 +739,17 @@ public partial class CacheErrorMetricsTests
             listener.InstrumentPublished = (instrument, meterListener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
-                if (!metricScope.Value) return;
+                if (!metricScope.Value)
+                {
+                    return;
+                }
+
                 items.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
                 throw new InvalidOperationException("Listener failure must remain isolated.");
             });
@@ -590,12 +760,14 @@ public partial class CacheErrorMetricsTests
             await Assert.That(error!.Code).IsEqualTo("WRONGTYPE");
             var recorded = items.ToArray();
             await Assert.That(recorded.Length).IsEqualTo(retry ? 2 : 1);
+
             if (retry)
             {
                 await Assert.That((bool)recorded[0]["redis.client.errors.internal"]!).IsTrue();
                 await Assert.That(recorded[0]["db.response.status_code"]).IsEqualTo("NOSCRIPT");
                 await Assert.That(recorded[0]["redis.client.operation.retry_attempts"]).IsEqualTo(0);
             }
+
             await Assert.That((bool)recorded[^1]["redis.client.errors.internal"]!).IsFalse();
             await Assert.That(recorded[^1]["db.response.status_code"]).IsEqualTo("WRONGTYPE");
             await Assert.That(recorded[^1]["redis.client.operation.retry_attempts"]).IsEqualTo(retry ? 1 : 0);

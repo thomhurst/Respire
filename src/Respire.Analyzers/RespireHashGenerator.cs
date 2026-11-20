@@ -23,10 +23,14 @@ public sealed class RespireHashGenerator : IIncrementalGenerator
         context.RegisterSourceOutput(models, static (output, model) =>
         {
             if (model.Error is not null)
+            {
                 output.ReportDiagnostic(Diagnostic.Create(InvalidModel,
                     Location.Create(model.Path, model.Span, model.LineSpan), model.Error));
+            }
             else
+            {
                 output.AddSource(model.HintName!, SourceText.From(model.Source!, Encoding.UTF8));
+            }
         });
     }
 }

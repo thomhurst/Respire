@@ -56,12 +56,14 @@ public sealed partial class RespireOutputCacheStore
         arguments[1] = expires;
         arguments[2] = value.ToArray();
         arguments[3] = generation + ":" + key;
+
         for (var index = 0; index < tags.Length; index++)
         {
             var tag = tags.Span[index];
             keys[index + 2] = _tagPrefix + tag;
             arguments[index + 4] = tag;
         }
+
         cancellationToken.ThrowIfCancellationRequested();
         _ = await _client.Scripts.ExecuteIntegerAsync(PublishGeneration, keys, arguments, cancellationToken).ConfigureAwait(false);
     }
@@ -71,19 +73,30 @@ public sealed partial class RespireOutputCacheStore
         if (members.Count == 1)
         {
             if (TryParseGenerationMember(members[0], out var key, out var generation))
+            {
                 _ = await _client.Scripts.ExecuteIntegerAsync(EvictGeneration,
                     [_valuePrefix + key, tagKey], [generation, members[0]], cancellationToken).ConfigureAwait(false);
+            }
             else
+            {
                 await _client.SortedSets.RemoveAsync(tagKey, [members[0]], cancellationToken).ConfigureAwait(false);
+            }
+
             return;
         }
+
         using var batch = _client.CreateBatch();
+
         foreach (var member in members)
         {
             if (TryParseGenerationMember(member, out var key, out var generation))
+            {
                 _ = batch.Scripts.Evaluate(EvictGeneration, [_valuePrefix + key, tagKey], [generation, member]);
+            }
             else
+            {
                 _ = batch.SortedSets.Remove(tagKey, member);
+            }
         }
         // The pipeline is not atomic across members. Each script and malformed-member
         // removal is idempotent, so a retry safely completes a partially failed page.
@@ -101,6 +114,7 @@ public sealed partial class RespireOutputCacheStore
             key = generation = string.Empty;
             return false;
         }
+
         key = member[33..];
         generation = member[..32];
         return true;

@@ -27,14 +27,30 @@ public partial class CommandHookTests
         {
             switch (route)
             {
-                case "acquire": await client.Locks.AcquireAsync("lock", TimeSpan.FromSeconds(30)); break;
-                case "wait": await client.Locks.AcquireAsync("lock", TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)); break;
-                case "throw": await client.Locks.AcquireOrThrowAsync("lock", TimeSpan.FromSeconds(30)); break;
-                case "keepalive": await client.Locks.AcquireAsync("lock", TimeSpan.FromSeconds(30), keepAlive: true); break;
-                case "take": await client.Locks.TryTakeAsync("lock", "owner", TimeSpan.FromSeconds(30)); break;
-                case "release": await client.Locks.ReleaseAsync("lock", "owner"); break;
-                case "renew": await client.Locks.ResetExpiryAsync("lock", "owner", TimeSpan.FromSeconds(30)); break;
-                case "verify": await client.Locks.GetOwnerTokenAsync("lock"); break;
+                case "acquire":
+                    await client.Locks.AcquireAsync("lock", TimeSpan.FromSeconds(30));
+                    break;
+                case "wait":
+                    await client.Locks.AcquireAsync("lock", TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5));
+                    break;
+                case "throw":
+                    await client.Locks.AcquireOrThrowAsync("lock", TimeSpan.FromSeconds(30));
+                    break;
+                case "keepalive":
+                    await client.Locks.AcquireAsync("lock", TimeSpan.FromSeconds(30), keepAlive: true);
+                    break;
+                case "take":
+                    await client.Locks.TryTakeAsync("lock", "owner", TimeSpan.FromSeconds(30));
+                    break;
+                case "release":
+                    await client.Locks.ReleaseAsync("lock", "owner");
+                    break;
+                case "renew":
+                    await client.Locks.ResetExpiryAsync("lock", "owner", TimeSpan.FromSeconds(30));
+                    break;
+                case "verify":
+                    await client.Locks.GetOwnerTokenAsync("lock");
+                    break;
             }
         });
         await Assert.That(error).IsSameReferenceAs(rejection);
@@ -60,23 +76,35 @@ public partial class CommandHookTests
         await using var mutex = await client.Locks.AcquireOrThrowAsync("lock", TimeSpan.FromMinutes(1));
         var baseline = server.CommandsSeen;
         hook.Before = _ => throw new InvalidOperationException("Lock policy");
+
         try
         {
             await Failure(async () =>
             {
                 switch (route)
                 {
-                    case "release": await mutex.ReleaseAsync(); break;
-                    case "dispose": await mutex.DisposeAsync(); break;
-                    case "renew": await mutex.ResetExpiryAsync(TimeSpan.FromMinutes(2)); break;
-                    case "verify": await mutex.VerifyStillHeldAsync(); break;
-                    case "keepalive": await mutex.KeepAliveAsync(); break;
+                    case "release":
+                        await mutex.ReleaseAsync();
+                        break;
+                    case "dispose":
+                        await mutex.DisposeAsync();
+                        break;
+                    case "renew":
+                        await mutex.ResetExpiryAsync(TimeSpan.FromMinutes(2));
+                        break;
+                    case "verify":
+                        await mutex.VerifyStillHeldAsync();
+                        break;
+                    case "keepalive":
+                        await mutex.KeepAliveAsync();
+                        break;
                 }
             });
             await Assert.That(mutex.IsReleased).IsFalse();
             await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
         }
         finally { hook.Before = null; } // Failure cleanup must be allowed to release the owned lock.
+
         await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(mutex.IsReleased).IsTrue();
         await Assert.That(hook.Completed.Select(c => c.Outcome).ToArray()).IsEquivalentTo(new[]
@@ -123,7 +151,10 @@ public partial class CommandHookTests
         Task<string?>? reentrant = null;
         hook.Before = context =>
         {
-            if (context.Command == "LOCK RELEASE") reentrant = client.Strings.GetStringAsync("other").AsTask();
+            if (context.Command == "LOCK RELEASE")
+            {
+                reentrant = client.Strings.GetStringAsync("other").AsTask();
+            }
         };
         await Assert.That(await client.Locks.ReleaseAsync("lock", "owner")).IsTrue();
         await Assert.That(await reentrant!).IsEqualTo("42");
@@ -141,7 +172,11 @@ public partial class CommandHookTests
         await using var server = LockHookServer();
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("SET ", StringComparison.Ordinal) || !command.Contains(" IFEQ ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("SET ", StringComparison.Ordinal) || !command.Contains(" IFEQ ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             renewalSent.TrySetResult();
             return true;
         };
@@ -154,6 +189,7 @@ public partial class CommandHookTests
         await using var mutex = await client.Locks.AcquireOrThrowAsync("lock", TimeSpan.FromMinutes(1));
         using var cancellation = new CancellationTokenSource();
         var pending = mutex.ResetExpiryAsync(TimeSpan.FromMinutes(2), cancellation.Token).AsTask();
+
         try
         {
             await renewalSent.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -164,6 +200,7 @@ public partial class CommandHookTests
             await Assert.That(hook.Completed.Count).IsEqualTo(1);
         }
         finally { finishFence.TrySetResult(); }
+
         await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10))).Throws<OperationCanceledException>();
         await Assert.That(hook.Completed.Count).IsEqualTo(2);
         await Assert.That(hook.Completed.Last().Outcome).IsEqualTo(RespireCommandOutcome.Canceled);
@@ -196,7 +233,10 @@ public partial class CommandHookTests
         server.ReplyOverride = (id, command) =>
         {
             if (command.StartsWith("SET ", StringComparison.Ordinal) && command.Contains(" IFEQ ", StringComparison.Ordinal))
+            {
                 renewed.TrySetResult();
+            }
+
             return replies(id, command);
         };
         var hook = new RecordingHook();
@@ -205,12 +245,14 @@ public partial class CommandHookTests
 #pragma warning restore RESP010
         var attempt = await client.Locks.AcquireAsync("lock", TimeSpan.FromSeconds(2), keepAlive: true);
         var lifetime = attempt.Lock.KeepAliveCancellationToken;
+
         try
         {
             await renewed.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await Assert.That(hook.Completed.Count).IsEqualTo(1);
         }
         finally { await attempt.DisposeAsync(); }
+
         await Assert.That(hook.Entered.Select(c => c.Command).ToArray()).IsEquivalentTo(new[] { "LOCK ACQUIRE", "LOCK DISPOSE" });
         await Assert.That(attempt.Lock.IsReleased).IsTrue();
         await Assert.That(lifetime.IsCancellationRequested).IsTrue();
@@ -230,6 +272,7 @@ public partial class CommandHookTests
         await using var mutex = await client.Locks.AcquireOrThrowAsync("lock", TimeSpan.FromMinutes(1));
         var first = mutex.ReleaseAsync().AsTask();
         Task<RespireLockReleaseOutcome>? second = null;
+
         try
         {
             await sent.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -238,6 +281,7 @@ public partial class CommandHookTests
             await Assert.That(hook.Completed.Count).IsEqualTo(1);
         }
         finally { finish.TrySetResult(); }
+
         await Assert.That(await first).IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(await second!).IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(hook.Completed.Count).IsEqualTo(3);

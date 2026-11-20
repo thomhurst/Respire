@@ -108,6 +108,7 @@ public class RespWriterTests
     private static byte[] Write(RespireValue value, int sizeHint)
     {
         var buffer = new WriteBuffer(16);
+
         try
         {
             var writer = new RespWriter(buffer, sizeHint);

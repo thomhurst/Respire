@@ -29,7 +29,8 @@ public partial class StandaloneCircuitDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates cache generations and mutation fences with circuit admission enabled or disabled.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
             CircuitBreaker = enabled ? Options(server).CircuitBreaker : null,
         });
 #pragma warning restore RESP010
@@ -37,15 +38,23 @@ public partial class StandaloneCircuitDispatchTests
         var cache = client.Core.ClientCache!;
         RespireKey key = "key";
         var read = cache.BeginRead(in key);
+
         try
         {
             var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
+
             if (shape == "string")
+            {
                 await Assert.That(await client.StringOrNullAsync("SET", in command, default)).IsEqualTo("OK");
+            }
             else if (shape == "bytes")
+            {
                 await Assert.That((await client.BytesOrNullAsync("SET", in command, default))!).IsEquivalentTo("OK"u8.ToArray());
+            }
             else
+            {
                 await Assert.That(await client.OkResultAsync("SET", in command, default)).IsTrue();
+            }
             // Keep an in-flight read generation alive across the mutation. Admission
             // invalidates it once; a successful reply must not invalidate it again.
             await Assert.That(read.State.Generation).IsEqualTo(read.Generation + 1);
@@ -65,21 +74,27 @@ public partial class StandaloneCircuitDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates cache invalidation after server, converter, or circuit rejection failures.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         await client.GetStringAsync("warm");
+
         if (failure == "redis")
+        {
             server.ReplyOverride = (_, command) => command == "SET key new" ? "-ERR rejected\r\n"u8.ToArray() : null;
+        }
         else if (failure == "rejection")
         {
             var admission = client.Core.Circuits!.Acquire(new("127.0.0.1", server.Port), default);
             admission.Failed(new RespireConnectionException("unavailable"), default);
             admission.Dispose();
         }
+
         var cache = client.Core.ClientCache!;
         RespireKey key = "key";
         var read = cache.BeginRead(in key);
+
         try
         {
             var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
@@ -87,13 +102,29 @@ public partial class StandaloneCircuitDispatchTests
             var error = await Failure(async () =>
             {
                 if (failure == "converter")
+                {
                     await client.ConvertResponseAsync<CatalogCommand, Exception, bool>("SET", in command, default,
                         conversionError, static (Exception error, in RespValue _) => throw error);
-                else await client.OkResultAsync("SET", in command, default);
+                }
+                else
+                {
+                    await client.OkResultAsync("SET", in command, default);
+                }
             });
-            if (failure == "rejection") await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
-            else if (failure == "redis") await Assert.That(error).IsTypeOf<RespireServerException>();
-            else await Assert.That(error).IsSameReferenceAs(conversionError);
+
+            if (failure == "rejection")
+            {
+                await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
+            }
+            else if (failure == "redis")
+            {
+                await Assert.That(error).IsTypeOf<RespireServerException>();
+            }
+            else
+            {
+                await Assert.That(error).IsSameReferenceAs(conversionError);
+            }
+
             await Assert.That(read.State.Generation).IsEqualTo(read.Generation + 2);
             await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
             await Assert.That(server.ReceivedCommands.Count(command => command == "SET key new"))
@@ -119,7 +150,9 @@ public partial class StandaloneCircuitDispatchTests
         errorListener.InstrumentPublished = static (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         errorListener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref errors, value));
         errorListener.Start();
@@ -133,7 +166,8 @@ public partial class StandaloneCircuitDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates mutation-fence lifetime during user conversion and telemetry callbacks.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
             CircuitBreaker = enabled ? Options(server).CircuitBreaker : null,
         });
 #pragma warning restore RESP010
@@ -143,6 +177,7 @@ public partial class StandaloneCircuitDispatchTests
         var read = cache.BeginRead(in key);
         var activeDuringConversion = -1;
         var conversionError = new InvalidOperationException("conversion failed");
+
         try
         {
             var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
@@ -162,7 +197,12 @@ public partial class StandaloneCircuitDispatchTests
                         (int _, in RespValue response) =>
                         {
                             activeDuringConversion = cache.InspectForTests().ActiveMutationCount;
-                            if (fails) throw conversionError;
+
+                            if (fails)
+                            {
+                                throw conversionError;
+                            }
+
                             return ResponseReader.Ok(in response);
                         })).IsTrue();
                     return null;
@@ -188,7 +228,9 @@ public partial class StandaloneCircuitDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates canceled mutation fences until the injected native reply drains.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(), CommandTimeout = TimeSpan.FromSeconds(10),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
+            CommandTimeout = TimeSpan.FromSeconds(10),
             CircuitBreaker = enabled ? Options(server).CircuitBreaker : null,
         });
 #pragma warning restore RESP010
@@ -199,6 +241,7 @@ public partial class StandaloneCircuitDispatchTests
         var read = cache.BeginRead(in key);
         var conversions = 0;
         using var cancellation = new CancellationTokenSource();
+
         try
         {
             var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
@@ -215,7 +258,12 @@ public partial class StandaloneCircuitDispatchTests
             await Assert.That(read.State.Generation).IsEqualTo(read.Generation + 1);
             await server.SendRawAsync(FakeRespServer.OkReply, server.ReceivedConnectionIds[^1]);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (cache.InspectForTests().ActiveMutationCount != 0) await Task.Delay(1, deadline.Token);
+
+            while (cache.InspectForTests().ActiveMutationCount != 0)
+            {
+                await Task.Delay(1, deadline.Token);
+            }
+
             await Assert.That(read.State.Generation).IsEqualTo(read.Generation + 2);
             await Assert.That(conversions).IsEqualTo(0);
             await Assert.That(server.ReceivedCommands.Count(command => command == "SET key new")).IsEqualTo(1);
@@ -265,17 +313,28 @@ public partial class StandaloneCircuitDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates source and replacement circuits during the controlled maintenance publication race.
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMinutes(1), MaxDelay = TimeSpan.FromMinutes(1) },
         });
 #pragma warning restore RESP010
         var (sourceCircuit, _) = await Prepare(client, source);
-        if (sourceOpen) Open(client, source);
+
+        if (sourceOpen)
+        {
+            Open(client, source);
+        }
+
         var multiplexer = client.Core.Multiplexer;
         var original = multiplexer.GetConnection();
         var endpoint = new RespireEndpoint("127.0.0.1", target.Port);
         var targetAdmission = client.Core.Circuits!.Acquire(endpoint, default);
-        if (targetOpen) targetAdmission.Failed(new RespireConnectionException("target unavailable"), default);
+
+        if (targetOpen)
+        {
+            targetAdmission.Failed(new RespireConnectionException("target unavailable"), default);
+        }
+
         targetAdmission.Dispose();
         var targetCircuit = client.Core.Circuits.GetForTests(endpoint);
         var announcement = multiplexer.CaptureMovingAnnouncement(0, original,
@@ -288,7 +347,10 @@ public partial class StandaloneCircuitDispatchTests
         multiplexer.MovingHandoffPublished += published.Set;
         multiplexer.StateChanged += change =>
         {
-            if (change.State != RespireConnectionState.Reconnecting || Interlocked.Increment(ref handoffs) != 1) return;
+            if (change.State != RespireConnectionState.Reconnecting || Interlocked.Increment(ref handoffs) != 1)
+            {
+                return;
+            }
             // Selection already observed the dead source. Publish its captured MOVING before
             // GetConnection throws, so the catch must not charge or reject the new endpoint.
             multiplexer.QueueDedicatedMovingHandoff(original, announcement, static () => true);
@@ -296,6 +358,7 @@ public partial class StandaloneCircuitDispatchTests
         };
 
         var pending = Task.Run(() => Send(client, shape, "routed"));
+
         if (targetOpen)
         {
             var error = await Failure(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
@@ -307,6 +370,7 @@ public partial class StandaloneCircuitDispatchTests
             await pending.WaitAsync(TimeSpan.FromSeconds(10));
             await Send(client, shape, "next");
         }
+
         await Assert.That(published.IsSet).IsTrue();
         await Assert.That(handoffs).IsEqualTo(1);
         await Assert.That(multiplexer.ActiveConnectionEndpoint).IsEqualTo(endpoint);
@@ -389,17 +453,26 @@ public partial class StandaloneCircuitDispatchTests
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStopped = activity =>
             {
-                if (activity.OperationName is "GET" or "STRLEN") activities.Enqueue(activity);
+                if (activity.OperationName is "GET" or "STRLEN")
+                {
+                    activities.Enqueue(activity);
+                }
             },
         };
         // Traced typed commands use the general response path. Its circuit retry must
         // retain ownership of both the activity and duration through the handoff.
-        if (tracingEnabled) ActivitySource.AddActivityListener(tracing);
+        if (tracingEnabled)
+        {
+            ActivitySource.AddActivityListener(tracing);
+        }
+
         using var listener = new MeterListener();
         listener.InstrumentPublished = static (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name is "db.client.operation.duration" or "redis.client.errors")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
             durations.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
@@ -411,8 +484,10 @@ public partial class StandaloneCircuitDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates source and target circuit admission during the maintenance handoff.
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
-            CommandTimeout = TimeSpan.FromSeconds(5), MaxInflightCommands = 2,
+            Protocol = RespireProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            CommandTimeout = TimeSpan.FromSeconds(5),
+            MaxInflightCommands = 2,
             ClientSideCache = shape == "cache" ? new() : null,
         });
 #pragma warning restore RESP010
@@ -429,7 +504,12 @@ public partial class StandaloneCircuitDispatchTests
         await Received(source, "GET parked", 2);
         var endpoint = new RespireEndpoint("127.0.0.1", target.Port);
         var targetAdmission = client.Core.Circuits!.Acquire(endpoint, default);
-        if (targetOpen) targetAdmission.Failed(new RespireConnectionException("target unavailable"), default);
+
+        if (targetOpen)
+        {
+            targetAdmission.Failed(new RespireConnectionException("target unavailable"), default);
+        }
+
         targetAdmission.Dispose();
         var targetCircuit = client.Core.Circuits.GetForTests(endpoint);
         durations.Clear();
@@ -439,10 +519,13 @@ public partial class StandaloneCircuitDispatchTests
         var pending = Dispatch();
         await Assert.That(pending.IsCompleted).IsFalse();
         await source.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
+
         try
         {
             if (targetOpen)
+            {
                 await Assert.That(await Failure(() => pending)).IsTypeOf<RespireCircuitOpenException>();
+            }
             else
             {
                 await pending.WaitAsync(TimeSpan.FromSeconds(5));
@@ -464,20 +547,27 @@ public partial class StandaloneCircuitDispatchTests
             await Assert.That(handled[0]["error.type"]).IsEqualTo(typeof(RespireConnectionRetiredException).FullName);
             await Assert.That(handled[0]["redis.client.operation.retry_attempts"]).IsEqualTo(0);
             await Assert.That(final.Length).IsEqualTo(targetOpen ? 1 : 0);
+
             if (targetOpen)
             {
                 await Assert.That(final[0]["error.type"]).IsEqualTo(typeof(RespireCircuitOpenException).FullName);
                 await Assert.That(final[0]["redis.client.operation.retry_attempts"]).IsEqualTo(1);
             }
+
             if (shape is "string" or "bytes" or "integer")
             {
                 await Assert.That(durations.Count).IsEqualTo(1);
                 var duration = durations.Single();
                 await Assert.That(duration["server.port"]).IsEqualTo(target.Port);
                 await Assert.That(duration.ContainsKey("error.type")).IsEqualTo(targetOpen);
+
                 if (targetOpen)
+                {
                     await Assert.That(duration["error.type"]).IsEqualTo(typeof(RespireCircuitOpenException).FullName);
+                }
+
                 await Assert.That(activities.Count).IsEqualTo(tracingEnabled ? 1 : 0);
+
                 if (tracingEnabled)
                 {
                     var activity = activities.Single();
@@ -502,7 +592,10 @@ public partial class StandaloneCircuitDispatchTests
                 using var reader = new StreamReader(stream!);
                 await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("routed");
             }
-            else await Send(client, shape == "cache" ? "string" : shape, "routed");
+            else
+            {
+                await Send(client, shape == "cache" ? "string" : shape, "routed");
+            }
         }
     }
 
@@ -536,7 +629,10 @@ public partial class StandaloneCircuitDispatchTests
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStopped = activity =>
             {
-                if (callback == "activity" && activity.OperationName == "GET") ThrowFromListener();
+                if (callback == "activity" && activity.OperationName == "GET")
+                {
+                    ThrowFromListener();
+                }
             },
         };
         ActivitySource.AddActivityListener(tracing);
@@ -544,11 +640,16 @@ public partial class StandaloneCircuitDispatchTests
         listener.InstrumentPublished = static (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<double>((_, _, _, _) =>
         {
-            if (callback == "duration") ThrowFromListener();
+            if (callback == "duration")
+            {
+                ThrowFromListener();
+            }
         });
         listener.Start();
 
@@ -579,7 +680,8 @@ public partial class StandaloneCircuitDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates the retired source circuit from the healthy maintenance replacement.
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
         });
 #pragma warning restore RESP010
         await Prepare(client, source);
@@ -605,7 +707,8 @@ public partial class StandaloneCircuitDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates cache hits and circuit-rejected misses without inherited tracking state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
@@ -630,7 +733,12 @@ public partial class StandaloneCircuitDispatchTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
 #pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
-        if (!protocol) server.CloseConnectionAfterCommand = server.CommandsSeen + 1;
+
+        if (!protocol)
+        {
+            server.CloseConnectionAfterCommand = server.CommandsSeen + 1;
+        }
+
         var error = await Failure(() => Send(client, "string", protocol ? "malformed" : "disconnect"));
         await Assert.That(error is RespireConnectionException or RespireProtocolException).IsTrue();
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
@@ -639,7 +747,12 @@ public partial class StandaloneCircuitDispatchTests
         // command retries while the replacement socket is being established.
         client.Core.Multiplexer.ScheduleReconnect(0);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!client.Core.Multiplexer.IsConnected) await Task.Delay(1, deadline.Token);
+
+        while (!client.Core.Multiplexer.IsConnected)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         clock.Advance(TimeSpan.FromMinutes(1));
         await Trip(client, server);
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
@@ -673,7 +786,11 @@ public partial class StandaloneCircuitDispatchTests
         clock.Advance(TimeSpan.FromMinutes(1));
         await Task.WhenAll(Send(client, shape, "recovery"), Send(client, "string", "recovery-2"));
         // Discarded fire-and-forget replies do not close a recovery probe.
-        if (shape == "fire-and-forget") await Send(client, "string", "recovery-3");
+        if (shape == "fire-and-forget")
+        {
+            await Send(client, "string", "recovery-3");
+        }
+
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
         await Assert.That(server.ReceivedCommands.Any(command => command.Contains("rejected", StringComparison.Ordinal))).IsFalse();
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET fail")).IsEqualTo(1);
@@ -697,7 +814,12 @@ public partial class StandaloneCircuitDispatchTests
         await Assert.That(await Failure(() => Send(client, "string", "overflow"))).IsTypeOf<RespireCircuitOpenException>();
         await server.SendRawAsync("$3\r\none\r\n$3\r\ntwo\r\n"u8.ToArray());
         await Assert.That(await first).IsEqualTo("one");
-        using (var reply = await second) await Assert.That(reply.AsString()).IsEqualTo("two");
+
+        using (var reply = await second)
+        {
+            await Assert.That(reply.AsString()).IsEqualTo("two");
+        }
+
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
         server.SuppressReply = null;
         await Assert.That(await client.GetStringAsync("after")).IsEqualTo("after");
@@ -721,6 +843,7 @@ public partial class StandaloneCircuitDispatchTests
         server.SuppressReply = command => command == "GET parked";
         using var cancellation = new CancellationTokenSource();
         Task? parked = null;
+
         if (exit is "cancel" or "capacity-timeout")
         {
             parked = exit == "capacity-timeout"
@@ -728,11 +851,13 @@ public partial class StandaloneCircuitDispatchTests
                 : Send(client, "string", "parked", cancellation.Token);
             await Received(server, "GET parked");
         }
+
         async Task HoldCapacity()
         {
             using var reply = await client.Core.Multiplexer.GetConnection().SendWithoutResponseTimeoutAsync(
                 new Cmd1(Verbs.Get, "parked"), cancellation.Token);
         }
+
         switch (exit)
         {
             case "cancel":
@@ -744,7 +869,12 @@ public partial class StandaloneCircuitDispatchTests
                 await Assert.That(await Failure(() => Send(client, "string", "never", cancellation.Token))).IsTypeOf<OperationCanceledException>();
                 break;
             case "writer":
-                await Assert.That(await Failure(async () => { using var reply = await client.SendAsync("GET", new ThrowingCommand(), default); }))
+                await Assert.That(
+                        await Failure(async () =>
+                        {
+                            using var reply = await client.SendAsync("GET", new ThrowingCommand(), default);
+                        })
+                    )
                     .IsTypeOf<IOException>();
                 break;
             case "capacity-timeout":
@@ -753,8 +883,14 @@ public partial class StandaloneCircuitDispatchTests
                 await Failure(() => parked!);
                 break;
         }
+
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
-        if (parked is not null) await server.SendRawAsync("$4\r\nlate\r\n"u8.ToArray());
+
+        if (parked is not null)
+        {
+            await server.SendRawAsync("$4\r\nlate\r\n"u8.ToArray());
+        }
+
         server.SuppressReply = null;
         // Every ignored path leaves enough capacity for the entire later probe batch.
         await Assert.That(await client.GetStringAsync("full-1")).IsEqualTo("full-1");
@@ -820,6 +956,7 @@ public partial class StandaloneCircuitDispatchTests
         pool.Return(lease);
         Open(client, server);
         var commands = server.CommandsSeen;
+
         for (var i = 0; i < 8; i++)
         {
             using var payload = new MemoryStream("value"u8.ToArray());
@@ -829,16 +966,27 @@ public partial class StandaloneCircuitDispatchTests
                 {
                     await client.Strings.SetAsync("rejected", payload, 5);
                 }
-                else using (var response = await client.ExecuteAsync("BLPOP", "rejected", "1")) { }
+                else
+                {
+                    using (var response = await client.ExecuteAsync("BLPOP", "rejected", "1"))
+                    {
+                    }
+                }
             });
             await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
             await Assert.That(payload.Position).IsEqualTo(0);
             var reused = await pool.RentAsync(default,
                 kind: shape == "upload" ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
-            try { await Assert.That(ReferenceEquals(reused, lease)).IsTrue(); }
+
+            try
+            {
+                await Assert.That(ReferenceEquals(reused, lease)).IsTrue();
+            }
             finally { pool.Return(reused); }
+
             await Assert.That(pool.CaptureRetirementState().Borrowed).IsEqualTo(0);
         }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(commands);
     }
 
@@ -854,7 +1002,8 @@ public partial class StandaloneCircuitDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates upload handoff publication and admission to the replacement endpoint.
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(10),
         });
 #pragma warning restore RESP010
@@ -869,7 +1018,12 @@ public partial class StandaloneCircuitDispatchTests
         failed.Dispose();
         var endpoint = new RespireEndpoint("127.0.0.1", target.Port);
         var targetAdmission = client.Core.Circuits.Acquire(endpoint, default);
-        if (targetOpen) targetAdmission.Failed(new RespireConnectionException("target unavailable"), default);
+
+        if (targetOpen)
+        {
+            targetAdmission.Failed(new RespireConnectionException("target unavailable"), default);
+        }
+
         targetAdmission.Dispose();
         var targetCircuit = client.Core.Circuits.GetForTests(endpoint);
         var announcement = multiplexer.CaptureMovingAnnouncement(0, original,
@@ -885,16 +1039,28 @@ public partial class StandaloneCircuitDispatchTests
             ActivityStarted = activity =>
             {
                 if (activity.OperationName != "SET" || !Equals(activity.GetTagItem("server.port"), source.Port)
-                    || Interlocked.Increment(ref handoffs) != 1) return;
+                    || Interlocked.Increment(ref handoffs) != 1)
+                {
+                    return;
+                }
                 // The upload has rented the warmed lease, but has not acquired circuit admission.
                 // Publish the real maintenance replacement before allowing admission to continue.
                 multiplexer.QueueDedicatedMovingHandoff(original, announcement, static () => true);
-                if (!published.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Upload handoff did not publish.");
-                if (retireSocket) _ = lease.RetireAsync();
+
+                if (!published.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    throw new TimeoutException("Upload handoff did not publish.");
+                }
+
+                if (retireSocket)
+                {
+                    _ = lease.RetireAsync();
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
         using var payload = new MemoryStream("value"u8.ToArray());
+
         if (targetOpen)
         {
             var error = await Failure(async () => await client.Strings.SetAsync("routed", payload, 5));
@@ -907,6 +1073,7 @@ public partial class StandaloneCircuitDispatchTests
             await client.Strings.SetAsync("routed", payload, 5);
             await Assert.That(payload.Position).IsEqualTo(5);
         }
+
         await Assert.That(handoffs).IsEqualTo(1);
         await Assert.That(multiplexer.ActiveConnectionEndpoint).IsEqualTo(endpoint);
         await Assert.That(source.CommandsSeen).IsEqualTo(commands);
@@ -934,13 +1101,23 @@ public partial class StandaloneCircuitDispatchTests
         Open(client, server);
         var error = await Failure(async () =>
         {
-            if (shape == "stream") await using (var stream = await client.Strings.GetStreamAsync("rejected")) { }
+            if (shape == "stream")
+            {
+                await using (var stream = await client.Strings.GetStreamAsync("rejected"))
+                {
+                }
+            }
             else if (shape == "upload")
             {
                 using var payload = new MemoryStream("value"u8.ToArray());
                 await client.Strings.SetAsync("rejected", payload, 5);
             }
-            else using (var result = await client.ExecuteAsync("BLPOP", "rejected", "1")) { }
+            else
+            {
+                using (var result = await client.ExecuteAsync("BLPOP", "rejected", "1"))
+                {
+                }
+            }
         });
         await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
         await Assert.That(server.ReceivedCommands.Any(command => command.Contains("rejected", StringComparison.Ordinal))).IsFalse();
@@ -966,8 +1143,15 @@ public partial class StandaloneCircuitDispatchTests
         await server.SendRawAsync("$100\r\nx"u8.ToArray());
         await using var stream = await pending;
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(1);
-        if (exit == "cancel") cancellation.Cancel();
-        else if (exit == "dispose") await stream!.DisposeAsync();
+
+        if (exit == "cancel")
+        {
+            cancellation.Cancel();
+        }
+        else if (exit == "dispose")
+        {
+            await stream!.DisposeAsync();
+        }
         else
         {
             var buffer = new byte[100];
@@ -977,8 +1161,13 @@ public partial class StandaloneCircuitDispatchTests
             readCancellation.Cancel();
             await Assert.That(await Failure(async () => await read)).IsTypeOf<OperationCanceledException>();
         }
+
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (circuit.Snapshot().ActiveProbes != 0) await Task.Delay(1, deadline.Token);
+
+        while (circuit.Snapshot().ActiveProbes != 0)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
         // Complete the discarded frame before later replies: the same connection keeps FIFO.
         await server.SendRawAsync(Encoding.UTF8.GetBytes(new string('x', 99) + "\r\n"));
         server.SuppressReply = null;
@@ -995,6 +1184,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
 #pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
+
         for (var i = 0; i < 8; i++)
         {
             await Trip(client, server);
@@ -1027,8 +1217,11 @@ public partial class StandaloneCircuitDispatchTests
         {
             new RespireOptions { Endpoints = [new("localhost")], ReplicaEndpoints = [new("replica")] },
         })
+        {
             await Assert.That(() => RespireClient.Create(options with { CircuitBreaker = new() }))
                 .Throws<RespireConfigurationException>();
+        }
+
         await Assert.That(() => RespireClient.Create(new RespireOptions { Endpoints = [new("localhost")], CircuitBreaker = new() { HalfOpenProbeCount = 0 } }))
             .Throws<ArgumentOutOfRangeException>();
     }
@@ -1054,8 +1247,11 @@ public partial class StandaloneCircuitDispatchTests
 
     private static RespireOptions Options(FakeRespServer server) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
-        ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromMilliseconds(200),
+        Endpoints = [new("127.0.0.1", server.Port)],
+        Connections = 1,
+        Protocol = RespireProtocol.Resp2,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromMilliseconds(200),
         CircuitBreaker = new() { MinimumFailureCount = 1, FailureRateThreshold = 0.25, HalfOpenProbeCount = 2, OpenDuration = TimeSpan.FromMinutes(1) },
     };
 
@@ -1082,25 +1278,45 @@ public partial class StandaloneCircuitDispatchTests
     {
         switch (shape)
         {
-            case "string": await client.GetStringAsync(key, cancellationToken); break;
-            case "bytes": await client.GetBytesAsync(key, cancellationToken); break;
-            case "integer": await client.Strings.LengthAsync(key, cancellationToken); break;
-            case "raw": using (var result = await client.ExecuteAsync("GET", [key], cancellationToken: cancellationToken)) { } break;
-            case "fire-and-forget": await client.ExecuteFireAndForgetAsync("GET", [key], cancellationToken: cancellationToken); break;
+            case "string":
+                await client.GetStringAsync(key, cancellationToken);
+                break;
+            case "bytes":
+                await client.GetBytesAsync(key, cancellationToken);
+                break;
+            case "integer":
+                await client.Strings.LengthAsync(key, cancellationToken);
+                break;
+            case "raw":
+                using (var result = await client.ExecuteAsync("GET", [key], cancellationToken: cancellationToken))
+                {
+                }
+                break;
+            case "fire-and-forget":
+                await client.ExecuteFireAndForgetAsync("GET", [key], cancellationToken: cancellationToken);
+                break;
         }
     }
 
     private static async Task<Exception> Failure(Func<Task> operation)
     {
-        try { await operation(); }
+        try
+        {
+            await operation();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected dispatch failure.");
     }
 
     private static async Task Received(FakeRespServer server, string command, int occurrences = 1)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.ReceivedCommands.Count(received => received == command) < occurrences) await Task.Delay(1, deadline.Token);
+
+        while (server.ReceivedCommands.Count(received => received == command) < occurrences)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
     }
 
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_clock")]
@@ -1109,14 +1325,18 @@ public partial class StandaloneCircuitDispatchTests
     private sealed class Clock : TimeProvider
     {
         private long _timestamp = TimeProvider.System.GetTimestamp();
+
         public override long GetTimestamp() => Interlocked.Read(ref _timestamp);
+
         public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
+
         internal void Advance(TimeSpan duration) => Interlocked.Add(ref _timestamp, (long)(duration.TotalSeconds * TimestampFrequency));
     }
 
     private readonly struct ThrowingCommand : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer) => throw new IOException("Application command writer failed before dispatch.");
     }
 }

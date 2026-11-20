@@ -1,10 +1,10 @@
 using System.Diagnostics.CodeAnalysis;
-using System.Runtime.CompilerServices;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
-using Respire.Serialization;
 using Respire.Protocol;
+using Respire.Serialization;
 
 namespace Respire;
 
@@ -23,6 +23,7 @@ public readonly record struct RespireScoreBound
         {
             throw new ArgumentOutOfRangeException(nameof(value), "A score boundary cannot be NaN.");
         }
+
         if (exclusive && double.IsInfinity(value))
         {
             throw new ArgumentOutOfRangeException(nameof(value), "An infinite score boundary cannot be exclusive.");
@@ -33,10 +34,16 @@ public readonly record struct RespireScoreBound
     }
 
     /// <summary>The numeric boundary value.</summary>
-    public double Value { get; }
+    public double Value
+    {
+        get;
+    }
 
     /// <summary>Whether the boundary excludes <see cref="Value"/>.</summary>
-    public bool IsExclusive { get; }
+    public bool IsExclusive
+    {
+        get;
+    }
 
     /// <summary>Negative infinity.</summary>
     public static RespireScoreBound Min => new(double.NegativeInfinity, exclusive: false);
@@ -106,7 +113,10 @@ public readonly record struct RespireLexBound
     }
 
     /// <summary>The member value, or null for an infinite boundary.</summary>
-    public string? Value { get; }
+    public string? Value
+    {
+        get;
+    }
 
     /// <summary>Whether this finite boundary excludes <see cref="Value"/>.</summary>
     public bool IsExclusive => _kind == ExclusiveKind;
@@ -126,15 +136,14 @@ public readonly record struct RespireLexBound
     /// <summary>Creates an inclusive member boundary.</summary>
     public static implicit operator RespireLexBound(string value) => Inclusive(value);
 
-    internal RespireValue ToRespireValue()
-        => _kind switch
-        {
-            MinimumKind => "-",
-            MaximumKind => "+",
-            ExclusiveKind => string.Concat("(", Value),
-            _ when Value is not null => string.Concat("[", Value),
-            _ => throw new InvalidOperationException("A default RespireLexBound is not valid."),
-        };
+    internal RespireValue ToRespireValue() => _kind switch
+    {
+        MinimumKind => "-",
+        MaximumKind => "+",
+        ExclusiveKind => string.Concat("(", Value),
+        _ when Value is not null => string.Concat("[", Value),
+        _ => throw new InvalidOperationException("A default RespireLexBound is not valid."),
+    };
 }
 
 /// <summary>A minimum and maximum lexicographical member boundary.</summary>
@@ -505,7 +514,6 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
     public ValueTask<long> DifferenceStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken)
         => DifferenceStoreAsync(destination, [key], cancellationToken);
 
-
     public ValueTask<bool> AddAsync(RespireKey key, RespireValue member, double score, CancellationToken cancellationToken = default)
         => client.FlagAsync("ZADD", new Cmd3(Verbs.ZAdd, client.Key(in key), score, member), cancellationToken);
 
@@ -529,6 +537,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
     internal static RespireValue[] ScoreMemberPairs(ReadOnlySpan<(RespireValue Member, double Score)> entries)
     {
         var args = new RespireValue[entries.Length * 2];
+
         for (var i = 0; i < entries.Length; i++)
         {
             args[i * 2] = entries[i].Score;
@@ -867,6 +876,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
         long offset, long? count, bool descending, bool withScores)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
+
         if (count is { } value)
         {
             ArgumentOutOfRangeException.ThrowIfNegative(value);
@@ -882,6 +892,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
         arguments[index++] = descending ? maximum : minimum;
         arguments[index++] = descending ? minimum : maximum;
         arguments[index++] = mode;
+
         if (descending)
         {
             arguments[index++] = CommandOptionFrames.REVValue;
@@ -933,6 +944,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
         }
 
         var elements = reply.AsArray();
+
         if (elements.IsEmpty)
         {
             return default;
@@ -965,6 +977,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
         if (elements.Length > 0 && elements[0].Type == RespireDataType.Array)
         {
             var pairEntries = new RespireSortedSetEntry[elements.Length];
+
             for (var i = 0; i < elements.Length; i++)
             {
                 var pair = elements[i].AsArray();
@@ -975,6 +988,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
         }
 
         var entries = new RespireSortedSetEntry[elements.Length / 2];
+
         for (var i = 0; i < entries.Length; i++)
         {
             entries[i] = new RespireSortedSetEntry(elements[i * 2].AsString(), ResponseReader.Double(in elements[i * 2 + 1]));
@@ -995,6 +1009,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
         string operation, Verb verb, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<string[]>.Start();
+
         try
         {
             var mappedKeys = client.MapKeys(keys);
@@ -1010,6 +1025,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
         CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<long>.Start();
+
         try
         {
             var mappedDestination = client.Key(in destination);
@@ -1047,13 +1063,25 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
     private static void ValidateCombineSlots(
         RespireClient client, string operation, RespireValue[] keys, RespireValue? destination = null)
     {
-        if (client.Core.Cluster is null) return;
+        if (client.Core.Cluster is null)
+        {
+            return;
+        }
+
         int? slot = destination is { } key && key.TryGetClusterSlot(out var destinationSlot) ? destinationSlot : null;
+
         foreach (var source in keys)
         {
-            if (!source.TryGetClusterSlot(out var current)) continue;
+            if (!source.TryGetClusterSlot(out var current))
+            {
+                continue;
+            }
+
             if (slot is { } expected && expected != current)
+            {
                 throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, operation, expected, current, source);
+            }
+
             slot = current;
         }
     }
@@ -1061,15 +1089,19 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
     private static RespireValue[] CombineArguments(RespireValue[] keys, RespireSortedSetCombineOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+
         if (keys.Length == 0)
         {
             throw new ArgumentException("At least one input key is required.", nameof(keys));
         }
+
         var weights = options.Weights.Span;
+
         if (!weights.IsEmpty && weights.Length != keys.Length)
         {
             throw new ArgumentException("Supply one weight per input key, or omit weights.", nameof(options));
         }
+
         var aggregate = options.Aggregate switch
         {
             RespireSortedSetAggregate.Sum => "SUM",
@@ -1082,11 +1114,17 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
         arguments[0] = keys.Length;
         keys.CopyTo(arguments, 1);
         var index = keys.Length + 1;
+
         if (!weights.IsEmpty)
         {
             arguments[index++] = "WEIGHTS";
-            foreach (var weight in weights) arguments[index++] = weight;
+
+            foreach (var weight in weights)
+            {
+                arguments[index++] = weight;
+            }
         }
+
         arguments[index++] = "AGGREGATE";
         arguments[index] = aggregate;
         return arguments;
@@ -1105,9 +1143,11 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
     internal static RespireSortedSetEntry<T>[] ParseEntries<T>(RespireClient client, in RespValue reply)
     {
         var elements = reply.AsArray();
+
         if (elements.Length > 0 && elements[0].Type == RespireDataType.Array)
         {
             var pairEntries = new RespireSortedSetEntry<T>[elements.Length];
+
             for (var i = 0; i < elements.Length; i++)
             {
                 var pair = elements[i].AsArray();
@@ -1119,6 +1159,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
         }
 
         var entries = new RespireSortedSetEntry<T>[elements.Length / 2];
+
         for (var i = 0; i < entries.Length; i++)
         {
             entries[i] = new RespireSortedSetEntry<T>(

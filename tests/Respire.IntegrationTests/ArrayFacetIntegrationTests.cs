@@ -41,15 +41,28 @@ public class ArrayFacetIntegrationTests(VersionedServerFixture servers)
         var info = await client.Arrays.InfoAsync("info", full: true);
         using var raw = await client.ExecuteAsync(RespireCommands.Array.ARINFO, "info", "FULL");
         var fields = new Dictionary<string, RespireResult>(StringComparer.Ordinal);
-        for (var index = 0; index < raw.Count; index += 2) fields.Add(raw[index].AsString(), raw[index + 1]);
+
+        for (var index = 0; index < raw.Count; index += 2)
+        {
+            fields.Add(raw[index].AsString(), raw[index + 1]);
+        }
+
         Dictionary<string, ulong> integers = new(StringComparer.Ordinal)
         {
-            ["count"] = info.Count, ["len"] = info.Length, ["next-insert-index"] = info.NextInsertIndex,
-            ["slices"] = info.Slices, ["directory-size"] = info.DirectorySize,
-            ["super-dir-entries"] = info.SuperDirectoryEntries, ["slice-size"] = info.SliceSize,
+            ["count"] = info.Count,
+            ["len"] = info.Length,
+            ["next-insert-index"] = info.NextInsertIndex,
+            ["slices"] = info.Slices,
+            ["directory-size"] = info.DirectorySize,
+            ["super-dir-entries"] = info.SuperDirectoryEntries,
+            ["slice-size"] = info.SliceSize,
         };
+
         foreach (var (name, value) in integers)
+        {
             await Assert.That(value).IsEqualTo((ulong)fields[name].AsInteger());
+        }
+
         await Assert.That(info.Slices).IsGreaterThan(0UL);
         await Assert.That(info.DirectorySize).IsGreaterThan(0UL);
         await Assert.That(info.SliceSize).IsGreaterThan(0UL);
@@ -167,7 +180,11 @@ public class ArrayFacetIntegrationTests(VersionedServerFixture servers)
         using var info = await client.ExecuteAsync(RespireCommands.Server.COMMAND, "INFO", "ARGREP");
         var available = !info[0].IsNull;
         // Both the minimum supported family and the requested 8.10 acceptance server are mandatory.
-        if (image is "redis:8.10-alpine" or "redis:8.8.3-alpine") await Assert.That(available).IsTrue();
+        if (image is "redis:8.10-alpine" or "redis:8.8.3-alpine")
+        {
+            await Assert.That(available).IsTrue();
+        }
+
         Skip.Unless(available, "Redis array commands are unavailable on this server.");
     }
 }

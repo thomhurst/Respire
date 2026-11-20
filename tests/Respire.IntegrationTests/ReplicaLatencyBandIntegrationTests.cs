@@ -22,7 +22,12 @@ public class ReplicaLatencyBandIntegrationTests
             .WithCreateParameterModifier(parameters =>
             {
                 foreach (var bindings in parameters.HostConfig!.PortBindings.Values)
-                    foreach (var binding in bindings) binding.HostIP = "127.0.0.1";
+                {
+                    foreach (var binding in bindings)
+                    {
+                        binding.HostIP = "127.0.0.1";
+                    }
+                }
             })
             .WithEntrypoint("sh", "-c")
             .WithCommand("redis-server --port 6379 --save '' --appendonly no & " +
@@ -37,8 +42,10 @@ public class ReplicaLatencyBandIntegrationTests
             .Select(port => new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(port))).ToArray();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [endpoints[0]], ReplicaEndpoints = endpoints[1..],
-            Connections = 1, Protocol = RespireProtocol.Resp2,
+            Endpoints = [endpoints[0]],
+            ReplicaEndpoints = endpoints[1..],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp2,
             ReplicaLatencyTolerance = TimeSpan.FromMilliseconds(1),
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
@@ -49,8 +56,11 @@ public class ReplicaLatencyBandIntegrationTests
         foreach (var endpoint in endpoints[1..])
         {
             await using var direct = await RespireClient.ConnectAsync(new RespireOptions { Endpoints = [endpoint] });
+
             while (await direct.GetStringAsync(key, deadline.Token) != "value")
+            {
                 await Task.Delay(20, deadline.Token);
+            }
         }
         // Keep band membership deterministic while exercising real ROLE validation and read I/O.
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
@@ -68,16 +78,20 @@ public class ReplicaLatencyBandIntegrationTests
             {
                 if (activity.TraceId == traceId && activity.GetTagItem("db.operation.name") as string == "GET"
                     && activity.GetTagItem("server.port") is { } port)
+                {
                     selectedPorts.Enqueue(Convert.ToInt32(port));
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
+
         for (var index = 0; index < 24; index++)
         {
             (await reader.GetStringAsync(key, deadline.Token)).Should().Be("value");
             var selection = client.Core.ReadRouter.LastReadSelection!;
             selection.EligibleEndpoints.Should().BeEquivalentTo(endpoints[1..3]);
         }
+
         selectedPorts.Should().HaveCount(24);
         selectedPorts.Distinct().Should().BeEquivalentTo(endpoints[1..3].Select(endpoint => endpoint.Port));
     }

@@ -25,7 +25,8 @@ public class AggregateProgressWireTests
         await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespireProtocol.Resp2, ReceiveBufferSize = 1024,
+                Protocol = RespireProtocol.Resp2,
+                ReceiveBufferSize = 1024,
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
             });
         var command = new Cmd1(Verbs.Get, "key");
@@ -51,6 +52,7 @@ public class AggregateProgressWireTests
         var expectedPosition = 0;
         var expectedWire = Encoding.ASCII.GetBytes(prefix + "llo\r\n");
         var expectedStatus = RespParser.TryParseValue(expectedWire, ref expectedPosition, out var expected);
+
         using (expected)
         {
             await Assert.That(expectedStatus).IsEqualTo(RespParseStatus.Done);
@@ -74,20 +76,33 @@ public class AggregateProgressWireTests
         private long _writtenBytes;
 
         public void Publish(byte[] bytes) => _segments.Writer.TryWrite(bytes);
+
         public async Task<int> NextReadSizeAsync(CancellationToken token) => await _reads.Reader.ReadAsync(token);
+
         public async Task WaitForWrittenAsync(int count, CancellationToken token)
         {
             while (Interlocked.Read(ref _writtenBytes) < count)
+            {
                 await _writes.Reader.ReadAsync(token);
+            }
         }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             _reads.Writer.TryWrite(buffer.Length);
             byte[] segment;
-            try { segment = await _segments.Reader.ReadAsync(cancellationToken); }
+
+            try
+            {
+                segment = await _segments.Reader.ReadAsync(cancellationToken);
+            }
             catch (ChannelClosedException) { return 0; }
-            if (segment.Length > buffer.Length) throw new InvalidOperationException("Controlled segment exceeds receive window.");
+
+            if (segment.Length > buffer.Length)
+            {
+                throw new InvalidOperationException("Controlled segment exceeds receive window.");
+            }
+
             segment.CopyTo(buffer);
             return segment.Length;
         }
@@ -98,6 +113,7 @@ public class AggregateProgressWireTests
             _writes.Writer.TryWrite(true);
             return ValueTask.CompletedTask;
         }
+
         protected override void Dispose(bool disposing)
         {
             _segments.Writer.TryComplete();
@@ -105,15 +121,30 @@ public class AggregateProgressWireTests
             _writes.Writer.TryComplete();
             base.Dispose(disposing);
         }
+
         public override bool CanRead => true;
+
         public override bool CanWrite => true;
+
         public override bool CanSeek => false;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-        public override void Flush() { }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
     }
 }

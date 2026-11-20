@@ -29,6 +29,7 @@ public static class RespireStackExchangeExtensions
     public static RedisResult ToStackExchangeResult(this RespireResult result)
     {
         var type = result.Type;
+
         if (result.IsNull)
         {
             return result.NullWireType switch
@@ -85,14 +86,17 @@ public static class RespireStackExchangeExtensions
     {
         ArgumentNullException.ThrowIfNull(client);
         var nativeArguments = new RespireValue[arguments.Length];
+
         for (var index = 0; index < arguments.Length; index++)
         {
             if (arguments[index].IsNull)
             {
                 throw new ArgumentException("Null values cannot be sent as Redis arguments.", nameof(arguments));
             }
+
             nativeArguments[index] = arguments[index].ToRespireValue();
         }
+
         return ExecuteAndConvertAsync(client, command, nativeArguments, flags, cancellationToken);
     }
 

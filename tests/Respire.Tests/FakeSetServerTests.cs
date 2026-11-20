@@ -80,12 +80,16 @@ public class FakeSetServerTests
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
 #pragma warning restore RESP010
         await client.Sets.AddAsync("set", "member");
+
         foreach (var (command, args) in new (string, RespireValue[])[]
         {
             ("SPOP", ["set"]), ("SRANDMEMBER", ["set"]),
         })
         {
-            var error = await Assert.That(async () => { using var ignored = await client.ExecuteAsync(command, args); })
+            var error = await Assert.That(async () =>
+                {
+                    using var ignored = await client.ExecuteAsync(command, args);
+                })
                 .Throws<RespireServerException>();
             await Assert.That(error!.Message).Contains(command);
             await Assert.That(await client.Sets.CountAsync("set")).IsEqualTo(1);

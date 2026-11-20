@@ -13,10 +13,16 @@ public sealed record RespireSearchAggregateOptions
     internal static readonly RespireSearchAggregateOptions Default = new();
 
     /// <summary>Pipeline stages in execution order. Use the factory methods on <see cref="RespireSearchAggregateStage"/>.</summary>
-    public IReadOnlyList<RespireSearchAggregateStage> Stages { get; init; } = [];
+    public IReadOnlyList<RespireSearchAggregateStage> Stages
+    {
+        get; init;
+    } = [];
 
     /// <summary>Query dialect version.</summary>
-    public int? Dialect { get; init; }
+    public int? Dialect
+    {
+        get; init;
+    }
 
     /// <summary>Builds pipeline arguments in caller order.</summary>
     internal RespireValue[] ToArguments(RespireSearchCursorOptions? cursor = null)
@@ -24,6 +30,7 @@ public sealed record RespireSearchAggregateOptions
         ArgumentNullException.ThrowIfNull(Stages);
         RespireSearchDialect.Validate(Dialect, requiresParameters: false);
         var args = new List<RespireValue>();
+
         foreach (var stage in Stages)
         {
             ArgumentNullException.ThrowIfNull(stage, nameof(Stages));
@@ -70,9 +77,15 @@ public sealed record RespireSearchAggregateLoad(IReadOnlyList<string> Fields) : 
     internal override void AddArguments(List<RespireValue> args)
     {
         ArgumentNullException.ThrowIfNull(Fields);
-        if (Fields.Count == 0) throw new ArgumentException("LOAD requires at least one field.", nameof(Fields));
+
+        if (Fields.Count == 0)
+        {
+            throw new ArgumentException("LOAD requires at least one field.", nameof(Fields));
+        }
+
         args.Add("LOAD");
         args.Add(Fields.Count);
+
         foreach (var field in Fields)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(field);
@@ -117,6 +130,7 @@ public sealed record RespireSearchAggregateGroupBy(IReadOnlyList<string> Propert
         ArgumentNullException.ThrowIfNull(Reducers);
         args.Add("GROUPBY");
         args.Add(Properties.Count);
+
         foreach (var property in Properties)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(property);
@@ -136,15 +150,28 @@ public sealed record RespireSearchAggregateGroupBy(IReadOnlyList<string> Propert
 public sealed record RespireSearchAggregateSortBy(IReadOnlyList<RespireSearchAggregateSort> Keys) : RespireSearchAggregateStage
 {
     /// <summary>Optional <c>MAX</c> number of sorted rows to keep.</summary>
-    public int? Max { get; init; }
+    public int? Max
+    {
+        get; init;
+    }
 
     internal override void AddArguments(List<RespireValue> args)
     {
         ArgumentNullException.ThrowIfNull(Keys);
-        if (Keys.Count == 0) throw new ArgumentException("SORTBY requires at least one key.", nameof(Keys));
-        if (Max is <= 0) throw new ArgumentOutOfRangeException(nameof(Max));
+
+        if (Keys.Count == 0)
+        {
+            throw new ArgumentException("SORTBY requires at least one key.", nameof(Keys));
+        }
+
+        if (Max is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(Max));
+        }
+
         args.Add("SORTBY");
         args.Add(checked(Keys.Count * 2));
+
         foreach (var key in Keys)
         {
             ArgumentNullException.ThrowIfNull(key, nameof(Keys));
@@ -173,8 +200,16 @@ public sealed record RespireSearchAggregateLimit(int Offset, int Count) : Respir
 {
     internal override void AddArguments(List<RespireValue> args)
     {
-        if (Offset < 0) throw new ArgumentOutOfRangeException(nameof(Offset));
-        if (Count < 0) throw new ArgumentOutOfRangeException(nameof(Count));
+        if (Offset < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(Offset));
+        }
+
+        if (Count < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(Count));
+        }
+
         args.Add("LIMIT");
         args.Add(Offset);
         args.Add(Count);
@@ -198,7 +233,12 @@ public sealed record RespireSearchReducer(string Function, IReadOnlyList<string>
         args.Add("REDUCE");
         args.Add(Function);
         args.Add(Arguments.Count);
-        foreach (var argument in Arguments) args.Add(argument);
+
+        foreach (var argument in Arguments)
+        {
+            args.Add(argument);
+        }
+
         if (!string.IsNullOrWhiteSpace(Alias))
         {
             args.Add("AS");
@@ -211,38 +251,71 @@ public sealed record RespireSearchReducer(string Function, IReadOnlyList<string>
 public sealed record RespireSearchCollectOptions
 {
     /// <summary>Fields to collect. Names are normalized to an @ prefix.</summary>
-    public IReadOnlyList<string> Fields { get; init; } = [];
+    public IReadOnlyList<string> Fields
+    {
+        get; init;
+    } = [];
 
     /// <summary>Collects all fields materialized in the pipeline. Cannot be combined with <see cref="Fields"/>.</summary>
-    public bool AllFields { get; init; }
+    public bool AllFields
+    {
+        get; init;
+    }
 
     /// <summary>Deduplicates collected entries.</summary>
-    public bool Distinct { get; init; }
+    public bool Distinct
+    {
+        get; init;
+    }
 
     /// <summary>Sort keys within each group.</summary>
-    public IReadOnlyList<RespireSearchAggregateSort> SortBy { get; init; } = [];
+    public IReadOnlyList<RespireSearchAggregateSort> SortBy
+    {
+        get; init;
+    } = [];
 
     /// <summary>Offset and count within each group, applied after sorting.</summary>
-    public (int Offset, int Count)? Limit { get; init; }
+    public (int Offset, int Count)? Limit
+    {
+        get; init;
+    }
 
     internal string[] ToArguments()
     {
         ArgumentNullException.ThrowIfNull(Fields);
         ArgumentNullException.ThrowIfNull(SortBy);
+
         if (AllFields == (Fields.Count > 0))
+        {
             throw new ArgumentException("Choose AllFields or a nonempty Fields list.", nameof(Fields));
+        }
+
         var args = new List<string> { "FIELDS" };
-        if (AllFields) args.Add("*");
+
+        if (AllFields)
+        {
+            args.Add("*");
+        }
         else
         {
             args.Add(Fields.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            foreach (var field in Fields) args.Add(Property(field));
+
+            foreach (var field in Fields)
+            {
+                args.Add(Property(field));
+            }
         }
-        if (Distinct) args.Add("DISTINCT");
+
+        if (Distinct)
+        {
+            args.Add("DISTINCT");
+        }
+
         if (SortBy.Count > 0)
         {
             args.Add("SORTBY");
             args.Add(checked(SortBy.Count * 2).ToString(System.Globalization.CultureInfo.InvariantCulture));
+
             foreach (var sort in SortBy)
             {
                 ArgumentNullException.ThrowIfNull(sort);
@@ -250,13 +323,19 @@ public sealed record RespireSearchCollectOptions
                 args.Add(RespireSearchSort.Token(sort.Direction));
             }
         }
+
         if (Limit is { } limit)
         {
-            if (limit.Offset < 0 || limit.Count < 0) throw new ArgumentOutOfRangeException(nameof(Limit));
+            if (limit.Offset < 0 || limit.Count < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(Limit));
+            }
+
             args.Add("LIMIT");
             args.Add(limit.Offset.ToString(System.Globalization.CultureInfo.InvariantCulture));
             args.Add(limit.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
+
         return [.. args];
     }
 
@@ -273,16 +352,31 @@ public sealed record RespireSearchCollectOptions
 public sealed record RespireSearchCursorOptions
 {
     /// <summary>Rows per page (<c>COUNT</c>). Null uses the server default.</summary>
-    public int? Count { get; init; }
+    public int? Count
+    {
+        get; init;
+    }
 
     /// <summary>Idle time in milliseconds before the server deletes the cursor (<c>MAXIDLE</c>).</summary>
-    public int? MaxIdleMilliseconds { get; init; }
+    public int? MaxIdleMilliseconds
+    {
+        get; init;
+    }
 
     internal void AddArguments(List<RespireValue> args)
     {
-        if (Count is <= 0) throw new ArgumentOutOfRangeException(nameof(Count));
-        if (MaxIdleMilliseconds is <= 0) throw new ArgumentOutOfRangeException(nameof(MaxIdleMilliseconds));
+        if (Count is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(Count));
+        }
+
+        if (MaxIdleMilliseconds is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(MaxIdleMilliseconds));
+        }
+
         args.Add("WITHCURSOR");
+
         if (Count is { } count)
         {
             args.Add("COUNT");

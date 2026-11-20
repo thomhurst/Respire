@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text;
 using System.Text.Json.Nodes;
-using Respire.Aspire;
 using Azure.Core;
 using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.Extensions.Caching.Distributed;
@@ -16,6 +15,7 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+using Respire.Aspire;
 using Respire.Azure;
 using Respire.DependencyInjection;
 using Respire.Tests.Networking;
@@ -74,6 +74,7 @@ public class RegistrationTests
             """)!;
         var named = json["Aspire"]!["Respire"]!["cache"]!["Options"]!;
         var segments = path.Split(':');
+
         if (mode != "absent")
         {
             if (segments.Length == 2)
@@ -82,21 +83,34 @@ public class RegistrationTests
                 named[segments[0]] = nested;
                 named = nested;
             }
+
             named[segments[^1]] = mode == "empty" ? new JsonArray() : new JsonArray("named:6380");
         }
+
         var builder = Builder(new());
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json.ToJsonString()));
         builder.Configuration.AddJsonStream(stream);
         var section = builder.Configuration.GetSection("Aspire:Respire:cache:Options:" + path);
         await Assert.That(section.Exists()).IsEqualTo(mode != "absent");
-        if (mode == "empty") await Assert.That(section.Value).IsEqualTo(string.Empty);
+
+        if (mode == "empty")
+        {
+            await Assert.That(section.Value).IsEqualTo(string.Empty);
+        }
 
         RespireOptions? observed = null;
         builder.AddRespireClient("cache", configureOptions: (_, options) => observed = options);
         using var host = builder.Build();
+
         if (path == "Endpoints" && mode == "empty")
+        {
             await Assert.That(() => host.Services.GetRequiredService<IRespireClient>()).Throws<InvalidOperationException>();
-        else _ = host.Services.GetRequiredService<IRespireClient>();
+        }
+        else
+        {
+            _ = host.Services.GetRequiredService<IRespireClient>();
+        }
+
         var values = path switch
         {
             "Endpoints" => observed!.Endpoints.Select(endpoint => endpoint.ToString()).ToArray(),
@@ -104,10 +118,16 @@ public class RegistrationTests
             _ => observed!.ClientSideCache!.KeyPrefixes.Select(prefix => prefix.ToString()).ToArray(),
         };
         await Assert.That(values.Length).IsEqualTo(mode == "empty" ? 0 : 1);
-        if (mode == "replacement") await Assert.That(values.Single()).IsEqualTo("named:6380");
+
+        if (mode == "replacement")
+        {
+            await Assert.That(values.Single()).IsEqualTo("named:6380");
+        }
         else if (mode == "absent")
+        {
             await Assert.That(values.Single()).IsEqualTo(path == "Endpoints" ? "global:6379"
                 : path == "ReplicaEndpoints" ? "global-replica:6379" : "global:");
+        }
     }
 
     /// <summary>Ensures registration metadata cannot drift when caller-owned settings or returned snapshots change.</summary>
@@ -141,8 +161,10 @@ public class RegistrationTests
     {
         var builder = Builder(new()
         {
-            ["ConnectionStrings:cache"] = "localhost:6379", ["ConnectionStrings:trace"] = "localhost:6379",
-            ["ConnectionStrings:meter"] = "localhost:6379", ["ConnectionStrings:both"] = "localhost:6379",
+            ["ConnectionStrings:cache"] = "localhost:6379",
+            ["ConnectionStrings:trace"] = "localhost:6379",
+            ["ConnectionStrings:meter"] = "localhost:6379",
+            ["ConnectionStrings:both"] = "localhost:6379",
         });
         builder.AddRespireClient("cache", settings => settings.DisableTracing = settings.DisableMetrics = true);
         builder.AddKeyedRespireClient("trace", settings => settings.DisableMetrics = true);
@@ -156,7 +178,11 @@ public class RegistrationTests
         using var host = builder.Build();
         await host.StartAsync();
         using var source = new ActivitySource("Respire");
-        using (source.StartActivity("aspire-multiple-clients")) { }
+
+        using (source.StartActivity("aspire-multiple-clients"))
+        {
+        }
+
         using var meter = new Meter("Respire");
         meter.CreateCounter<int>("aspire.multiple.clients").Add(1);
         host.Services.GetRequiredService<TracerProvider>().ForceFlush();
@@ -412,7 +438,11 @@ public class RegistrationTests
         using var host = builder.Build();
         await host.StartAsync();
         using var source = new ActivitySource("Respire");
-        using (source.StartActivity("aspire-registration-test")) { }
+
+        using (source.StartActivity("aspire-registration-test"))
+        {
+        }
+
         using var meter = new Meter("Respire");
         meter.CreateCounter<int>("aspire.registration.test").Add(1);
         host.Services.GetRequiredService<TracerProvider>().ForceFlush();
@@ -502,12 +532,14 @@ public class RegistrationTests
     private sealed class TestCredential : TokenCredential
     {
         internal string[]? Scopes;
+
         /// <summary>Captures requested scopes while returning a deterministic, unexpired test token.</summary>
         public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
         {
             Scopes = requestContext.Scopes;
             return new AccessToken("test-token", DateTimeOffset.UtcNow.AddHours(1));
         }
+
         /// <summary>Shares the deterministic token behavior for asynchronous credential consumers.</summary>
         public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
             => ValueTask.FromResult(GetToken(requestContext, cancellationToken));
@@ -516,15 +548,26 @@ public class RegistrationTests
     private sealed class CountingLoggerFactory : ILoggerFactory
     {
         internal int RespireCategories;
+
         /// <summary>Counts Respire categories while avoiding actual log output.</summary>
         public ILogger CreateLogger(string categoryName)
         {
-            if (categoryName.StartsWith("Respire", StringComparison.Ordinal)) RespireCategories++;
+            if (categoryName.StartsWith("Respire", StringComparison.Ordinal))
+            {
+                RespireCategories++;
+            }
+
             return Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
         }
+
         /// <summary>Leaves provider ownership with the test; this factory only counts category requests.</summary>
-        public void AddProvider(ILoggerProvider provider) { }
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
         /// <summary>Releases no resources because the factory owns none.</summary>
-        public void Dispose() { }
+        public void Dispose()
+        {
+        }
     }
 }

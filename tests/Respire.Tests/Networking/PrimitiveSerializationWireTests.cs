@@ -25,8 +25,11 @@ public class PrimitiveSerializationWireTests
         await client.Strings.SetAsync("segment", new ArraySegment<byte>(buffer, 1, bytes.Length));
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("SET text {\"a\":1} PX 60000 NX");
+
         foreach (var arguments in server.ReceivedArguments.Skip(1))
+        {
             await Assert.That(arguments[2].AsSpan().SequenceEqual(bytes)).IsTrue();
+        }
     }
 
     [Test]

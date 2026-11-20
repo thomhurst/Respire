@@ -7,9 +7,17 @@ namespace Respire.IntegrationTests;
 public class KeySerializationIntegrationTests(RedisTestContainer fixture)
 {
     [ClassDataSource<LfuRedisTestContainer>(Shared = SharedType.PerTestSession)]
-    public required LfuRedisTestContainer Lfu { get; init; }
+    public required LfuRedisTestContainer Lfu
+    {
+        get; init;
+    }
 
-    public enum Mode { Immediate, Batch, Transaction }
+    public enum Mode
+    {
+        Immediate,
+        Batch,
+        Transaction
+    }
 
     [Test]
     [Arguments(2, Mode.Immediate)]
@@ -100,17 +108,25 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
         await Run(view, mode, k => k.RestoreAsync("idle", payload, options: idle), k => k.Restore("idle", payload, options: idle));
         using var observed = await client.ExecuteAsync(RespireCommands.Key.OBJECT_IDLETIME, prefix + "idle");
         observed.AsInteger().Should().BeGreaterThanOrEqualTo(120).And.BeLessThan(150);
-        Func<Task> busy = async () => { await Run(view, mode, k => k.RestoreAsync("source", payload), k => k.Restore("source", payload)); };
+        Func<Task> busy = async () =>
+        {
+            await Run(view, mode, k => k.RestoreAsync("source", payload), k => k.Restore("source", payload));
+        };
         (await busy.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("BUSYKEY");
         var corrupt = payload.ToArray();
         corrupt[^1] ^= 255;
         var unsupported = payload.ToArray();
         unsupported[^10] = unsupported[^9] = 255;
+
         foreach (var bad in new[] { Array.Empty<byte>(), corrupt, unsupported })
         {
-            Func<Task> invalid = async () => { await Run(view, mode, k => k.RestoreAsync("bad", bad), k => k.Restore("bad", bad)); };
+            Func<Task> invalid = async () =>
+            {
+                await Run(view, mode, k => k.RestoreAsync("bad", bad), k => k.Restore("bad", bad));
+            };
             (await invalid.Should().ThrowAsync<RespireServerException>()).Which.Message.Should().Contain("version or checksum");
         }
+
         (await view.Keys.ExistsAsync("bad")).Should().BeFalse();
     }
 
@@ -121,25 +137,33 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Lfu.IsolatedConnectionString) with
         {
-            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3, Connections = 1
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
+            Connections = 1
         });
         await client.SetAsync("source", "a non-integer value");
         var payload = (await client.Keys.DumpAsync("source"))!;
+
         foreach (var mode in Enum.GetValues<Mode>())
-        foreach (byte frequency in new byte[] { 0, 255 })
         {
-            var key = $"target:{mode}:{frequency}";
-            var options = new RespireRestoreOptions { Frequency = frequency };
-            await Run(client, mode, k => k.RestoreAsync(key, payload, options: options), k => k.Restore(key, payload, options: options));
-            using var observed = await client.ExecuteAsync(RespireCommands.Key.OBJECT_FREQ, key);
-            observed.AsInteger().Should().Be(frequency);
+            foreach (byte frequency in new byte[] { 0, 255 })
+            {
+                var key = $"target:{mode}:{frequency}";
+                var options = new RespireRestoreOptions { Frequency = frequency };
+                await Run(client, mode, k => k.RestoreAsync(key, payload, options: options), k => k.Restore(key, payload, options: options));
+                using var observed = await client.ExecuteAsync(RespireCommands.Key.OBJECT_FREQ, key);
+                observed.AsInteger().Should().Be(frequency);
+            }
         }
     }
 
     private static async Task<T> Run<T>(IRespireClient client, Mode mode,
         Func<IRespireKeyCommands, ValueTask<T>> immediate, Func<IRespireBatchKeyCommands, RespirePending<T>> deferred)
     {
-        if (mode == Mode.Immediate) return await immediate(client.Keys);
+        if (mode == Mode.Immediate)
+        {
+            return await immediate(client.Keys);
+        }
+
         if (mode == Mode.Batch)
         {
             using var batch = client.CreateBatch();
@@ -147,6 +171,7 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
             await batch.TryExecuteAsync();
             return result.Result;
         }
+
         await using var transaction = client.CreateTransaction();
         var pending = deferred(transaction.Keys);
         await transaction.CommitAsync();

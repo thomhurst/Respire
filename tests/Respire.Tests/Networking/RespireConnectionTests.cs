@@ -45,12 +45,14 @@ public class RespireConnectionTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
 
         var tasks = new List<Task<RespValue>>();
+
         for (var i = 0; i < 50; i++)
         {
             tasks.Add(connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask());
         }
 
         var results = await Task.WhenAll(tasks);
+
         for (var i = 0; i < 50; i++)
         {
             await Assert.That(results[i].AsInteger()).IsEqualTo(i);
@@ -69,6 +71,7 @@ public class RespireConnectionTests
         var second = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (server.CommandsSeen == 0)
         {
             await Task.Delay(10, timeout.Token);
@@ -80,6 +83,7 @@ public class RespireConnectionTests
         await Assert.That(third.IsCompleted).IsFalse();
 
         var responses = await Task.WhenAll(first, second, third).WaitAsync(timeout.Token);
+
         foreach (var response in responses)
         {
             response.Dispose();
@@ -134,6 +138,7 @@ public class RespireConnectionTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
 
         var pending = new ValueTask<long>[batchSize];
+
         for (var batch = 0; batch < 2; batch++)
         {
             for (var i = 0; i < pending.Length; i++)
@@ -180,6 +185,7 @@ public class RespireConnectionTests
         var first = client.GetStringAsync("first", cancellation.Token);
 
         using var commandTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (server.CommandsSeen == 0)
         {
             await Task.Delay(10, commandTimeout.Token);
@@ -233,6 +239,7 @@ public class RespireConnectionTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
 
         var tasks = new List<Task<RespValue>>();
+
         for (var i = 0; i < 1000; i++)
         {
             tasks.Add(connection.SendAsync(new SetCommand($"key{i}", $"value{i}")).AsTask());
@@ -241,6 +248,7 @@ public class RespireConnectionTests
         var results = await Task.WhenAll(tasks);
 
         await Assert.That(server.CommandsSeen).IsEqualTo(1000);
+
         foreach (var result in results)
         {
             await Assert.That(result.AsString()).IsEqualTo("OK");
@@ -271,6 +279,7 @@ public class RespireConnectionTests
 
         var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (server.CommandsSeen == 0)
         {
             await Task.Delay(10, timeout.Token);
@@ -333,6 +342,7 @@ public class RespireConnectionTests
         transport.PauseWrites = true;
         using var cancellation = new CancellationTokenSource();
         var write = connection.SendFireAndForgetAsync(new SetCommand("key", "value"), cancellation.Token).AsTask();
+
         try
         {
             await transport.WriteStarted.Task.WaitAsync(timeout.Token);
@@ -559,9 +569,18 @@ public class RespireConnectionTests
             CloseConnectionAfterCommand = 2,
             SuppressReply = command =>
             {
-                if (command != "AUTH secret") return false;
+                if (command != "AUTH secret")
+                {
+                    return false;
+                }
+
                 var attempt = Interlocked.Increment(ref authenticationCount);
-                if (attempt == 1) return false;
+
+                if (attempt == 1)
+                {
+                    return false;
+                }
+
                 reconnectHandshakes[attempt - 2].TrySetResult();
                 return true;
             },
@@ -598,6 +617,7 @@ public class RespireConnectionTests
         multiplexer.StateChanged += change =>
         {
             laterSubscriberStates.Enqueue(change.State);
+
             if (laterSubscriberStates.Count >= 4)
             {
                 laterSubscriberFourStates.TrySetResult();
@@ -608,12 +628,14 @@ public class RespireConnectionTests
         await Assert.That(async () => await multiplexer.GetConnection()
             .SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask().WaitAsync(timeout.Token))
             .Throws<RespireConnectionException>();
+
         while (multiplexer.IsConnected)
         {
             await Task.Delay(10, timeout.Token);
         }
 
         await Assert.That(() => multiplexer.GetConnection()).Throws<RespireConnectionException>();
+
         for (var i = 0; i < reconnectHandshakes.Length; i++)
         {
             await reconnectHandshakes[i].Task.WaitAsync(timeout.Token);
@@ -669,9 +691,20 @@ public class RespireConnectionTests
 
     private sealed class GatedWriteStream(Stream transport) : SslStream(transport)
     {
-        public bool PauseWrites { get; set; }
-        public TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource ResumeWrites { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool PauseWrites
+        {
+            get; set;
+        }
+
+        public TaskCompletionSource WriteStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ResumeWrites
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
             => InnerStream.ReadAsync(buffer, cancellationToken);

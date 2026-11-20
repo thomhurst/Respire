@@ -58,7 +58,12 @@ public class ServerAclParserTests
             Text("age-seconds"), modern ? RespValue.Double(1.25) : Text("1.25"), Text("client-info"), Text("id=1"),
             Text("future"), RespValue.BulkString(resource),
         };
-        if (modern) fields.AddRange([Text("entry-id"), RespValue.Integer(7), Text("timestamp-created"), RespValue.Integer(1000), Text("timestamp-last-updated"), RespValue.Integer(2000)]);
+
+        if (modern)
+        {
+            fields.AddRange([Text("entry-id"), RespValue.Integer(7), Text("timestamp-created"), RespValue.Integer(1000), Text("timestamp-last-updated"), RespValue.Integer(2000)]);
+        }
+
         var reply = RespValue.Array(RespValue.Array(fields.ToArray()));
         var entry = AclParser.Log(in reply).Single();
         resource.AsSpan().Clear();

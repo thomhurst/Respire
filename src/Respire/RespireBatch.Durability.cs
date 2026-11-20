@@ -35,7 +35,12 @@ public sealed partial class RespireBatch
             return ExecuteWithAcknowledgementAsync("WAIT", command, static value =>
             {
                 var count = ResponseReader.Integer(in value);
-                if (count < 0) throw new RespireProtocolException("WAIT returned a negative replica count.");
+
+                if (count < 0)
+                {
+                    throw new RespireProtocolException("WAIT returned a negative replica count.");
+                }
+
                 return count;
             }, cancellationToken);
         }
@@ -63,11 +68,20 @@ public sealed partial class RespireBatch
             return ExecuteWithAcknowledgementAsync("WAITAOF", command, static value =>
             {
                 var counts = value.AsArray();
-                if (counts.Length != 2) throw new RespireProtocolException("WAITAOF must return two acknowledgement counts.");
+
+                if (counts.Length != 2)
+                {
+                    throw new RespireProtocolException("WAITAOF must return two acknowledgement counts.");
+                }
+
                 var local = ResponseReader.Integer(in counts[0]);
                 var replicaCount = ResponseReader.Integer(in counts[1]);
+
                 if (local is < 0 or > 1 || replicaCount < 0)
+                {
                     throw new RespireProtocolException("WAITAOF returned invalid acknowledgement counts.");
+                }
+
                 return new RespireAofAcknowledgementResult(local, replicaCount);
             }, cancellationToken);
         }
@@ -113,18 +127,28 @@ public sealed partial class RespireBatch
         // Pool selection and rental record the attempted node on the first queued owner;
         // ShareEndpoint copies it to the others before their failures are published.
         var observation = _ops.Count == 0 ? default : _ops[0].Observation;
+
         try
         {
-            foreach (var op in _ops) op.MutationFence = mutationFence;
+            foreach (var op in _ops)
+            {
+                op.MutationFence = mutationFence;
+            }
+
             pool = core.Cluster is { } cluster
                 ? await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null, observation).ConfigureAwait(false)
                 : await core.GetDedicatedPoolAsync(cancellationToken, observation).ConfigureAwait(false);
             // WAIT uses connection-local replication history, including when this batch only reads.
             if (core.Cluster is { } router)
+            {
                 (pool, connection) = await router.RentDedicatedConnectionAsync(
                     pool, slot, cancellationToken, discovery: null, observation, reuseIdle: false).ConfigureAwait(false);
+            }
             else
+            {
                 (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken, observation, reuseIdle: false).ConfigureAwait(false);
+            }
+
             telemetry = RespireTelemetry.StartBatchOperation(
                 operation, _ops, static op => op.Operation,
                 connection.Host, connection.Port, core.Options.Database, out telemetryOperation, started);
@@ -138,14 +162,26 @@ public sealed partial class RespireBatch
                 ? await QueuedCircuitDispatch.SendAsync(circuits, connection, admittedAcknowledgement, operation,
                     cancellationToken, default, withoutResponseTimeout: true).ConfigureAwait(false)
                 : await connection.SendWithoutResponseTimeoutAsync(admittedAcknowledgement, cancellationToken).ConfigureAwait(false);
-            if (response.IsError) throw ResponseReader.ServerError(in response, operation);
+
+            if (response.IsError)
+            {
+                throw ResponseReader.ServerError(in response, operation);
+            }
+
             return convert(response);
         }
         catch (Exception error)
         {
             operationError = error;
+
             foreach (var op in _ops)
-                if (!op.IsCompleted) op.Fail(error);
+            {
+                if (!op.IsCompleted)
+                {
+                    op.Fail(error);
+                }
+            }
+
             throw;
         }
         finally
@@ -175,13 +211,20 @@ public sealed partial class RespireBatch
                 // acknowledgement failure that only the final publication below reports.
                 var finalEndpoint = observation.Endpoint;
                 var pendingErrors = DeferredOperation.ReportErrors(_ops) != 0;
+
                 if (operationError is not null && !pendingErrors)
+                {
                     ErrorObservation.FinishFinal(default, operationError, endpoint: finalEndpoint);
+                }
+
                 if (connection is null && operationError is not null)
+                {
                     RespireTelemetry.RecordUnroutedBatchFailure(operation, _ops, static op => op.Operation,
                         core.Options.Database, started, operationError,
                         endpoint: pool?.Endpoint ?? (core.Cluster is null && core.Sentinel is null
                             ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null));
+                }
+
                 telemetry.Complete(core, telemetryOperation, error: operationError, connection: connection,
                     batchSize: _ops.Count == 1 ? null : _ops.Count);
             }
@@ -194,23 +237,41 @@ public sealed partial class RespireBatch
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
-            if (_sent) throw new InvalidOperationException("This batch has already been sent.");
+
+            if (_sent)
+            {
+                throw new InvalidOperationException("This batch has already been sent.");
+            }
+
             ConnectionPolicy.ValidateDurabilityExecution();
-            if (_ops.Count == 0) throw new InvalidOperationException("A durability acknowledgement requires a nonempty batch.");
+
+            if (_ops.Count == 0)
+            {
+                throw new InvalidOperationException("A durability acknowledgement requires a nonempty batch.");
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
             int? slot = null;
+
             if (_client.Core.Cluster is not null)
             {
                 // Deferred operations already contain keys resolved through the client's prefix view.
                 foreach (var op in _ops)
                 {
                     if (!op.TryGetClusterSlot(out var current))
+                    {
                         throw new NotSupportedException("Cluster durability batches require a routing key for every command.");
+                    }
+
                     if (slot is { } previous && previous != current)
+                    {
                         throw new NotSupportedException("Cluster durability batches require every command to use the same hash slot.");
+                    }
+
                     slot = current;
                 }
             }
+
             return slot;
         }
         catch (Exception error)

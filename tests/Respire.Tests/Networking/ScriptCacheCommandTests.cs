@@ -30,11 +30,13 @@ public class ScriptCacheCommandTests
         var script = RespireScript.Create("return KEYS[1]", readOnly: true);
         var shaReply = System.Text.Encoding.UTF8.GetBytes($"$40\r\n{script.Sha1}\r\n");
         byte[][] replies = [shaReply, "*1\r\n:1\r\n"u8.ToArray(), FakeRespServer.OkReply, "$10\r\ntenant:key\r\n"u8.ToArray()];
+
         if (transaction)
         {
             replies = [FakeRespServer.OkReply, "+QUEUED\r\n"u8.ToArray(), "+QUEUED\r\n"u8.ToArray(),
                 "+QUEUED\r\n"u8.ToArray(), "+QUEUED\r\n"u8.ToArray(), [.. "*4\r\n"u8, .. replies.SelectMany(x => x)]];
         }
+
         await using var server = new FakeRespServer(replies);
         await using var owner = await FakeRespServer.ConnectClientAsync(server.Port);
         var client = owner.WithKeyPrefix("tenant:");
@@ -45,7 +47,16 @@ public class ScriptCacheCommandTests
         var exists = scripts.Exists(script.Sha1);
         var flush = scripts.Flush(RespireScriptFlushMode.Sync);
         var evaluation = scripts.Evaluate(script, ["key"]);
-        if (transaction) await tx.CommitAsync(); else await batch.ExecuteAsync();
+
+        if (transaction)
+        {
+            await tx.CommitAsync();
+        }
+        else
+        {
+            await batch.ExecuteAsync();
+        }
+
         await Assert.That(load.Result).IsEqualTo(script.Sha1);
         await Assert.That(exists.Result).IsEquivalentTo([true]);
         await Assert.That(flush.Result).IsTrue();
@@ -69,7 +80,12 @@ public class ScriptCacheCommandTests
         var pending = client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return 1", readOnly: true),
             cancellationToken: cancellation.Token).AsTask();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen == 0) await Task.Delay(10, deadline.Token);
+
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+
         cancellation.Cancel();
         await Assert.That(async () => await pending).Throws<OperationCanceledException>();
         using var pong = await client.ExecuteAsync("PING");

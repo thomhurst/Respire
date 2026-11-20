@@ -36,6 +36,7 @@ internal sealed class LatencyTracker
         UpdateMinMax(ticks);
 
         var microseconds = ticks * 1_000_000.0 / Stopwatch.Frequency;
+
         if (microseconds >= _maxValueUs)
         {
             Interlocked.Increment(ref _overflowCount);
@@ -43,6 +44,7 @@ internal sealed class LatencyTracker
         }
 
         var bucketIndex = (int)(microseconds / _bucketWidthUs);
+
         if ((uint)bucketIndex >= (uint)_buckets.Length)
         {
             bucketIndex = _buckets.Length - 1;
@@ -54,25 +56,34 @@ internal sealed class LatencyTracker
     private void UpdateMinMax(long ticks)
     {
         long currentMin;
+
         do
         {
             currentMin = Interlocked.Read(ref _minTicks);
+
             if (ticks >= currentMin)
+            {
                 break;
+            }
         } while (Interlocked.CompareExchange(ref _minTicks, ticks, currentMin) != currentMin);
 
         long currentMax;
+
         do
         {
             currentMax = Interlocked.Read(ref _maxTicks);
+
             if (ticks <= currentMax)
+            {
                 break;
+            }
         } while (Interlocked.CompareExchange(ref _maxTicks, ticks, currentMax) != currentMax);
     }
 
     public LatencySnapshot ToSnapshot()
     {
         var count = Interlocked.Read(ref _count);
+
         if (count == 0)
         {
             return new LatencySnapshot
@@ -112,13 +123,18 @@ internal sealed class LatencyTracker
     {
         var count = Interlocked.Read(ref _count);
         var target = (long)Math.Ceiling(count * percentile);
+
         if (target <= 0)
+        {
             target = 1;
+        }
 
         long cumulative = 0;
+
         for (var i = 0; i < _buckets.Length; i++)
         {
             cumulative += Interlocked.Read(ref _buckets[i]);
+
             if (cumulative >= target)
             {
                 return (i + 1) * _bucketWidthUs / 1000.0;
@@ -131,12 +147,43 @@ internal sealed class LatencyTracker
 
 internal sealed class LatencySnapshot
 {
-    public required long Count { get; init; }
-    public required double MinMs { get; init; }
-    public required double MaxMs { get; init; }
-    public required double P50Ms { get; init; }
-    public required double P95Ms { get; init; }
-    public required double P99Ms { get; init; }
-    public required double P999Ms { get; init; }
-    public required long OverflowCount { get; init; }
+    public required long Count
+    {
+        get; init;
+    }
+
+    public required double MinMs
+    {
+        get; init;
+    }
+
+    public required double MaxMs
+    {
+        get; init;
+    }
+
+    public required double P50Ms
+    {
+        get; init;
+    }
+
+    public required double P95Ms
+    {
+        get; init;
+    }
+
+    public required double P99Ms
+    {
+        get; init;
+    }
+
+    public required double P999Ms
+    {
+        get; init;
+    }
+
+    public required long OverflowCount
+    {
+        get; init;
+    }
 }

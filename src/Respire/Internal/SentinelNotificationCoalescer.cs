@@ -23,9 +23,15 @@ namespace Respire.Internal;
 /// </remarks>
 internal sealed class SentinelNotificationCoalescer
 {
-    internal SentinelNotificationState State { get; private set; }
+    internal SentinelNotificationState State
+    {
+        get; private set;
+    }
+
     internal SentinelHint? Active => State.Active;
+
     internal SentinelHintKey? ActiveKey => Active?.Key;
+
     internal SentinelHint? Pending => State.Pending;
 
     internal SentinelNotificationTransition Transition(in SentinelNotificationEvent notification,
@@ -39,6 +45,7 @@ internal sealed class SentinelNotificationCoalescer
     internal sealed class SourceResolution(SentinelNotificationCoalescer owner, long id)
     {
         internal long Id => id;
+
         internal SentinelHint Hint => owner.State.SourceResolutions[id];
     }
 

@@ -42,6 +42,7 @@ public class SentinelRetirementTransitionTests
         var completed = lookup.State.Transition(new(SentinelNotificationEventKind.SourceResolved,
             ResolutionId: lookup.ResolutionId, AddressEvidence: new(Source, [current.ValidatedPeer!.Value.Host])),
             new(CurrentEvidence: current, LookupGeneration: arrived));
+
         if (sameEndpoint || samePeer)
         {
             await Assert.That(completed.Action).IsEqualTo(SentinelNotificationAction.None);
@@ -52,6 +53,7 @@ public class SentinelRetirementTransitionTests
             await Assert.That(completed.Action).IsEqualTo(SentinelNotificationAction.RunNext);
             await Assert.That(completed.RetireGeneration).IsSameReferenceAs(current.Identity);
         }
+
         await Assert.That(lookup.State.SourceResolutions[lookup.ResolutionId].Sources[0].Addresses.IsDefault).IsTrue();
     }
 
@@ -64,11 +66,21 @@ public class SentinelRetirementTransitionTests
         var current = new SentinelGenerationEvidence(new SentinelGenerationIdentity(), new("replacement.test", 6379), B, false, [B], B);
         var protection = SentinelHint.FromSwitchMaster("protection", C, B, Reporter);
         var state = new SentinelNotificationState();
-        if (!offeredDuringLookup) state = state.Transition(new(SentinelNotificationEventKind.Offer, protection)).State;
+
+        if (!offeredDuringLookup)
+        {
+            state = state.Transition(new(SentinelNotificationEventKind.Offer, protection)).State;
+        }
+
         var lookup = state.Transition(new(SentinelNotificationEventKind.BeginSourceResolution,
             SentinelHint.FromSwitchMaster("source", Source, C, Reporter)));
         state = lookup.State;
-        if (offeredDuringLookup) state = state.Transition(new(SentinelNotificationEventKind.Offer, protection)).State;
+
+        if (offeredDuringLookup)
+        {
+            state = state.Transition(new(SentinelNotificationEventKind.Offer, protection)).State;
+        }
+
         state = state.Transition(new(SentinelNotificationEventKind.AttemptSucceeded),
             new(ValidatedGeneration: current.Identity, ValidatedPrimary: new(B, B), CurrentEvidence: current)).State;
         await Assert.That(state.Phase).IsEqualTo(SentinelNotificationPhase.Idle);

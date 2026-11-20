@@ -1,5 +1,5 @@
-using FluentAssertions;
 using System.Buffers;
+using FluentAssertions;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -35,15 +35,18 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
         RespireKey key = "dispatch-contract:" + Guid.NewGuid().ToString("N");
         DedicatedConnectionPool? pool = null;
         RespireConnection? borrowed = null;
+
         try
         {
             await client.SetAsync(key, "original");
             (await client.GetStringAsync(key)).Should().Be("original");
+
             if (dedicated)
             {
                 pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
                 (pool, borrowed) = await client.Core.RentDedicatedConnectionAsync(pool, CancellationToken.None, observation: default);
             }
+
             var connection = borrowed ?? client.Core.Multiplexer.GetConnection();
             var command = new Cmd2(Verbs.Set, key.AsValue(), new byte[payloadLength]);
             // Models a new higher-level path that dispatches directly instead of obtaining
@@ -55,7 +58,9 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
                     case "streaming":
                         var streamed = new StreamedSetCommand(key.AsValue(),
                             new ReadOnlySequence<byte>(new byte[payloadLength]), default, RespireSetWhen.Always);
-                        using (await connection.SendCheckedAsync(streamed, commandName: "SET")) { }
+                        using (await connection.SendCheckedAsync(streamed, commandName: "SET"))
+                        {
+                        }
                         break;
                     case "transaction":
                         var buffer = new WriteBuffer(128);
@@ -64,7 +69,10 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
                             var writer = new RespWriter(buffer);
                             command.Write(ref writer);
                             writer.Complete();
-                            using (await connection.SendTransactionAsync(buffer.WrittenMemory, 1)) { }
+
+                            using (await connection.SendTransactionAsync(buffer.WrittenMemory, 1))
+                            {
+                            }
                         }
                         finally { buffer.Release(); }
                         break;
@@ -76,16 +84,23 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
                         await connection.SendFireAndForgetAsync(command, commandName: "SET");
                         break;
                     case "blocking":
-                        using (await connection.SendWithoutResponseTimeoutAsync(command)) { }
+                        using (await connection.SendWithoutResponseTimeoutAsync(command))
+                        {
+                        }
                         break;
                     case "pinned":
-                        using (await (await connection.EnqueuePinnedAsync(command, CancellationToken.None, "SET"))) { }
+                        using (await (await connection.EnqueuePinnedAsync(command, CancellationToken.None, "SET")))
+                        {
+                        }
                         break;
                     default:
-                        using (await connection.SendAsync(command, commandName: "SET")) { }
+                        using (await connection.SendAsync(command, commandName: "SET"))
+                        {
+                        }
                         break;
                 }
             }
+
             await ((Func<Task>)BypassLogicalAdmissionAsync).Should().ThrowAsync<InvalidOperationException>();
             (await client.WithoutClientCache().GetStringAsync(key)).Should().Be("original");
             await client.SetAsync(key, "admitted");
@@ -93,7 +108,11 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
         }
         finally
         {
-            if (borrowed is not null) pool!.Return(borrowed);
+            if (borrowed is not null)
+            {
+                pool!.Return(borrowed);
+            }
+
             await client.Keys.DeleteAsync(key);
         }
     }
@@ -106,28 +125,40 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         RespireKey key = "dispatch-name:" + Guid.NewGuid().ToString("N");
+
         try
         {
             await client.SetAsync(key, "original");
             var connection = client.Core.Multiplexer.GetConnection();
+
             async Task WriteAsync()
             {
                 if (!preEncoded)
                 {
                     var command = new DynamicCommand(["SET", key.AsValue(), "unsafe"], routingKeyIndex: 1);
-                    using (await connection.SendAsync(command, commandName: "GET")) { }
+
+                    using (await connection.SendAsync(command, commandName: "GET"))
+                    {
+                    }
+
                     return;
                 }
+
                 var buffer = new WriteBuffer(128);
+
                 try
                 {
                     var writer = new RespWriter(buffer);
                     new Cmd2(Verbs.Set, key.AsValue(), "unsafe").Write(ref writer);
                     writer.Complete();
-                    using (await connection.SendAsync(new RawCommand(buffer.WrittenMemory.ToArray()), commandName: "GET")) { }
+
+                    using (await connection.SendAsync(new RawCommand(buffer.WrittenMemory.ToArray()), commandName: "GET"))
+                    {
+                    }
                 }
                 finally { buffer.Release(); }
             }
+
             await ((Func<Task>)WriteAsync).Should().ThrowAsync<InvalidOperationException>();
             (await client.WithoutClientCache().GetStringAsync(key)).Should().Be("original");
         }
@@ -150,6 +181,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
         var cache = client.Core.ClientCache!;
         var body = new Cmd2(Verbs.Set, bodyKey.AsValue(), "body-write");
         var fence = cache.BeforeCommand("SET", in body);
+
         try
         {
             await client.SetAsync(prefixKey, "original");
@@ -158,30 +190,44 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
             var prefix = new Cmd2(Verbs.Set, prefixKey.AsValue(), "unsafe");
             var read = new Cmd1(Verbs.Get, bodyKey.AsValue());
             var ping = new RawCommand(RespCommands.Ping);
+
             async Task WriteAsync()
             {
                 switch (path)
                 {
                     case "bulk-stream":
-                        await using (await connection.SendPrefixedBulkStreamAsync(prefix, read)) { }
+                        await using (await connection.SendPrefixedBulkStreamAsync(prefix, read))
+                        {
+                        }
                         break;
                     case "validated":
-                        using (await connection.SendValidatedPrefixedAsync(prefix, read)) { }
+                        using (await connection.SendValidatedPrefixedAsync(prefix, read))
+                        {
+                        }
                         break;
                     case "first-prefix":
-                        using (await connection.SendValidatedPrefixedAsync(prefix, ping, read)) { }
+                        using (await connection.SendValidatedPrefixedAsync(prefix, ping, read))
+                        {
+                        }
                         break;
                     case "second-prefix":
-                        using (await connection.SendValidatedPrefixedAsync(ping, prefix, read)) { }
+                        using (await connection.SendValidatedPrefixedAsync(ping, prefix, read))
+                        {
+                        }
                         break;
                     case "fenced-body":
-                        using (await connection.SendPrefixedCheckedAsync(prefix, new MutationCommand<Cmd2>(body, fence))) { }
+                        using (await connection.SendPrefixedCheckedAsync(prefix, new MutationCommand<Cmd2>(body, fence)))
+                        {
+                        }
                         break;
                     default:
-                        using (await connection.SendPrefixedCheckedAsync(prefix, read)) { }
+                        using (await connection.SendPrefixedCheckedAsync(prefix, read))
+                        {
+                        }
                         break;
                 }
             }
+
             await ((Func<Task>)WriteAsync).Should().ThrowAsync<InvalidOperationException>();
             (await client.WithoutClientCache().GetStringAsync(prefixKey)).Should().Be("original");
             (await client.WithoutClientCache().GetStringAsync(bodyKey)).Should().Be("original");
@@ -203,7 +249,12 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
         RespireKey key = "dispatch-owner:" + Guid.NewGuid().ToString("N");
         var owner = foreign ? new ClientSideCacheCoordinator(new()) : client.Core.ClientCache!;
         var fence = owner.BeginUnknownMutation();
-        if (!foreign) owner.CompleteMutation(in fence, succeeded: true);
+
+        if (!foreign)
+        {
+            owner.CompleteMutation(in fence, succeeded: true);
+        }
+
         try
         {
             await client.SetAsync(key, "original");
@@ -228,6 +279,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         RespireKey key = "dispatch-read:" + Guid.NewGuid().ToString("N");
+
         try
         {
             await client.SetAsync(key, "original");
@@ -254,10 +306,12 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         { Protocol = RespireProtocol.Resp3, ClientSideCache = new() { TrackingMode = mode, KeyPrefixes = [prefix] } });
         RespireKey key = prefix + "key";
+
         try
         {
             await client.SetAsync(key, "original");
             (await client.GetStringAsync(key)).Should().Be("original");
+
             foreach (var readOnly in new[] { true, false })
             {
                 var script = RespireScript.Create("return redis.call('GET', KEYS[1]) -- " + suffix + readOnly,
@@ -280,6 +334,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
                 (await transaction.CommitAsync()).Should().BeTrue();
                 pending.Result.Should().BeTrue();
             }
+
             (await client.GetStringAsync(key)).Should().Be("committed");
 
             RespireChannel channel = prefix + "channel";

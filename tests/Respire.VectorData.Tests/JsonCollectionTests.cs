@@ -32,7 +32,12 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
         await collection.UpsertAsync(expected);
         var received = await Collect(collection.GetAsync(new[] { "one", "missing", "two" }, new() { IncludeVectors = includeVectors }));
         received.Should().HaveCount(2);
-        foreach (var record in expected) AssertRecord(record, received.Single(value => value.Id == record.Id), includeVectors);
+
+        foreach (var record in expected)
+        {
+            AssertRecord(record, received.Single(value => value.Id == record.Id), includeVectors);
+        }
+
         (await collection.GetAsync("missing")).Should().BeNull();
     });
 
@@ -53,7 +58,11 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
         await collection.UpsertAsync(Movie("existing", 1, 0));
         JsonMovie[] records = [Movie("new", 1, 1), Movie("existing", 0, 1) with { Details = new("Updated record") }];
         await collection.UpsertAsync(records);
-        foreach (var record in records) AssertRecord(record, await collection.GetAsync(record.Id, new() { IncludeVectors = true }), true);
+
+        foreach (var record in records)
+        {
+            AssertRecord(record, await collection.GetAsync(record.Id, new() { IncludeVectors = true }), true);
+        }
     });
 
     [Test, Arguments(2), Arguments(3)]
@@ -89,6 +98,7 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
         await collection.UpsertAsync(Movie("one", 1, 0));
         store.RegisterMapper(new MovieMapper());
         using var hashes = store.GetHashCollection<Movie>("hashes");
+
         try
         {
             await hashes.UpsertAsync(new Movie("one", "Title", new float[] { 1, 0 }));
@@ -110,6 +120,7 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
         using var otherStore = new RespireVectorStore(client, "other:" + Guid.NewGuid().ToString("N"));
         otherStore.RegisterMapper(new JsonMovieMapper());
         using var foreign = otherStore.GetJsonCollection<JsonMovie>(collection.Name);
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
@@ -142,11 +153,17 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
         await collection.UpsertAsync(new[] { Movie("a", 1, 0), Movie("b", 0, 1), Movie("c", -1, 0) });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         List<VectorSearchResult<JsonMovie>> all;
+
         do
         {
             all = await Collect(collection.SearchAsync(new float[] { 1, 0 }, 3, new() { VectorProperty = movie => movie.Vector }, deadline.Token));
-            if (all.Count < 3) await Task.Delay(20, deadline.Token);
+
+            if (all.Count < 3)
+            {
+                await Task.Delay(20, deadline.Token);
+            }
         } while (all.Count < 3);
+
         all.Select(hit => hit.Record.Id).Should().Equal("a", "b", "c");
         all.Select(hit => hit.Score).Should().Equal(0, 2, 4);
         all.Should().OnlyContain(hit => hit.Record.Vector == null && hit.Record.AlternateVector == null);
@@ -175,6 +192,7 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
         using var store = new RespireVectorStore(client, "nested:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new NestedVectorMapper());
         using var collection = store.GetJsonCollection<NestedVectorRecord>("nested");
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
@@ -185,11 +203,17 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
             owned.Data.Caption.Should().Be("Keep caption");
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             List<VectorSearchResult<NestedVectorRecord>> hits;
+
             do
             {
                 hits = await Collect(collection.SearchAsync(new float[] { 1, 0 }, 1, cancellationToken: deadline.Token));
-                if (hits.Count == 0) await Task.Delay(20, deadline.Token);
+
+                if (hits.Count == 0)
+                {
+                    await Task.Delay(20, deadline.Token);
+                }
             } while (hits.Count == 0);
+
             hits.Single().Record.Data.Caption.Should().Be("Keep caption");
             hits.Single().Record.Data.Values.Should().BeNull();
             hits.Single().Score.Should().Be(0);
@@ -206,6 +230,7 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
         using var store = new RespireVectorStore(client, "nested-multi:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new NestedMultiVectorMapper());
         using var collection = store.GetJsonCollection<NestedMultiVectorRecord>("nested");
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
@@ -216,12 +241,18 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
             });
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             List<VectorSearchResult<NestedMultiVectorRecord>> first;
+
             do
             {
                 first = await Collect(collection.SearchAsync(new float[] { 1, 0 }, 2,
                     new() { VectorProperty = record => record.Values.First }, deadline.Token));
-                if (first.Count < 2) await Task.Delay(20, deadline.Token);
+
+                if (first.Count < 2)
+                {
+                    await Task.Delay(20, deadline.Token);
+                }
             } while (first.Count < 2);
+
             first.Select(hit => hit.Record.Id).Should().Equal("first", "second");
             first.Select(hit => hit.Score).Should().Equal(0, 2);
             first.Should().OnlyContain(hit => hit.Record.Values.First == null && hit.Record.Values.Second == null);
@@ -242,6 +273,7 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
         using var store = new RespireVectorStore(client, "deep:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new DeepJsonMapper());
         using var collection = store.GetJsonCollection<DeepJsonRecord>("records");
+
         try
         {
             await collection.UpsertAsync(JsonDepthTests.CreateRecord());
@@ -285,7 +317,11 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
         using var store = new RespireVectorStore(client, "json:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new JsonMovieMapper());
         using var collection = store.GetJsonCollection<JsonMovie>("映画:a:b");
-        try { await test(client, store, collection); }
+
+        try
+        {
+            await test(client, store, collection);
+        }
         finally { await collection.EnsureCollectionDeletedAsync(); }
     }
 
@@ -296,11 +332,19 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
         received.Should().NotBeNull();
         received!.Id.Should().Be(expected.Id);
         received.Details.Should().Be(expected.Details);
+
         if (includeVectors)
         {
             received.Vector.Should().Equal(expected.Vector);
-            if (expected.AlternateVector is null) received.AlternateVector.Should().BeNull();
-            else received.AlternateVector.Should().Equal(expected.AlternateVector);
+
+            if (expected.AlternateVector is null)
+            {
+                received.AlternateVector.Should().BeNull();
+            }
+            else
+            {
+                received.AlternateVector.Should().Equal(expected.AlternateVector);
+            }
         }
         else
         {
@@ -312,7 +356,12 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
     private static async Task<List<T>> Collect<T>(IAsyncEnumerable<T> values)
     {
         var items = new List<T>();
-        await foreach (var value in values) items.Add(value);
+
+        await foreach (var value in values)
+        {
+            items.Add(value);
+        }
+
         return items;
     }
 }

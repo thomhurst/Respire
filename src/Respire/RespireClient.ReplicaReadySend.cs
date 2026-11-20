@@ -20,6 +20,7 @@ public sealed partial class RespireClient
             response = default;
             return false;
         }
+
         response = SendOnReadyReplicaAsync<TCommand, TResult, TSend>(
             operation, connection, in command, cancellationToken, sender, observation);
         return true;
@@ -34,7 +35,11 @@ public sealed partial class RespireClient
             || command.ReadKind != ReadCommandKind.Read || command is IStreamingRespCommand
             || _core.ReadRouter.IsBacklogDraining
             || _readFrom is not (RespireReadFrom.Replica or RespireReadFrom.ReplicaPreferred)
-            || cancellationToken.IsCancellationRequested || RespireTelemetry.IsOperationEnabled(operation)) return null;
+            || cancellationToken.IsCancellationRequested || RespireTelemetry.IsOperationEnabled(operation))
+        {
+            return null;
+        }
+
         try
         {
             var connection = _core.ReadRouter.TryAcquireReadyConnection(_readFrom, cancellationToken);
@@ -55,7 +60,10 @@ public sealed partial class RespireClient
         where TSend : struct, IReadySend<TResult>
     {
         // The ready replica gate excludes telemetry; the ordinary route owns its duration.
-        try { return sender.Send(connection, operation, in command, cancellationToken, default, errorObservation: observation); }
+        try
+        {
+            return sender.Send(connection, operation, in command, cancellationToken, default, errorObservation: observation);
+        }
         catch (Exception error)
         {
             // Readiness is an observation, not a lease. Preserve the former async failure shape.

@@ -65,8 +65,11 @@ public class SharedRefreshCoordinatorTests
     private sealed class ManualClock : TimeProvider
     {
         private long _timestamp;
+
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
         public override long GetTimestamp() => Volatile.Read(ref _timestamp);
+
         internal void Advance(TimeSpan elapsed) => Interlocked.Add(ref _timestamp, elapsed.Ticks);
     }
 }

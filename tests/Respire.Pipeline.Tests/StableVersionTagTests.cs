@@ -20,6 +20,7 @@ public class StableVersionTagTests
         var head = await donor.Git("rev-parse", "HEAD");
         var objects = await donor.Git("rev-parse", "--path-format=absolute", "--git-path", "objects");
         var previous = Environment.GetEnvironmentVariable("GIT_ALTERNATE_OBJECT_DIRECTORIES");
+
         try
         {
             Environment.SetEnvironmentVariable("GIT_ALTERNATE_OBJECT_DIRECTORIES",
@@ -60,19 +61,29 @@ public class StableVersionTagTests
         var previous = values.Keys.ToDictionary(name => name, Environment.GetEnvironmentVariable);
         var configuration = await File.ReadAllTextAsync(System.IO.Path.Combine(gitDirectory, "config"));
         var refs = await repository.Git("show-ref");
+
         try
         {
             foreach (var (name, value) in values)
+            {
                 Environment.SetEnvironmentVariable(name, setting == "all" || name == setting ? value : null);
+            }
+
             await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");
             await Assert.That(await File.ReadAllTextAsync(System.IO.Path.Combine(gitDirectory, "config"))).IsEqualTo(configuration);
             await Assert.That(await repository.Git("show-ref")).IsEqualTo(refs);
+
             foreach (var (name, value) in values)
+            {
                 await Assert.That(Environment.GetEnvironmentVariable(name)).IsEqualTo(setting == "all" || name == setting ? value : null);
+            }
         }
         finally
         {
-            foreach (var (name, value) in previous) Environment.SetEnvironmentVariable(name, value);
+            foreach (var (name, value) in previous)
+            {
+                Environment.SetEnvironmentVariable(name, value);
+            }
         }
     }
 
@@ -87,9 +98,12 @@ public class StableVersionTagTests
         var older = await repository.Git("rev-parse", "refs/tags/v1.2.3");
         await repository.CommitAsync("newer release");
         var newer = await repository.Git("rev-parse", "HEAD");
+
         if (annotated)
+        {
             newer = await repository.GitWithInput(
                 $"object {newer}\ntype commit\ntag V1.2.3\ntagger Test <test@example.com> 1234567890 +0000\n\nrelease\n", "mktag");
+        }
         // Build the packed representation directly so fixture setup also works on
         // case-insensitive filesystems, where loose ref names cannot coexist.
         await repository.Git("tag", "-d", "v1.2.3");
@@ -183,6 +197,7 @@ public class StableVersionTagTests
         var head = await repository.Git("rev-parse", "HEAD");
         var parent = await repository.Git("rev-parse", "HEAD~1");
         var previous = Environment.GetEnvironmentVariable(variable);
+
         try
         {
             if (variable == "GIT_REPLACE_REF_BASE")
@@ -216,6 +231,7 @@ public class StableVersionTagTests
         var shallowFile = System.IO.Path.Combine(boundary.Path, "custom-shallow");
         await File.WriteAllTextAsync(shallowFile, await repository.Git("rev-parse", "HEAD") + "\n");
         var previous = Environment.GetEnvironmentVariable("GIT_SHALLOW_FILE");
+
         try
         {
             await Assert.That(await repository.SelectAsync()).IsEqualTo("v1.2.3");
@@ -261,19 +277,32 @@ public class StableVersionTagTests
         using var repository = new TestRepository();
         var branchVariables = new[] { "PULL_REQUEST_BRANCH", "GITHUB_HEAD_REF", "GITHUB_REF_NAME" }
             .ToDictionary(name => name, Environment.GetEnvironmentVariable);
+
         try
         {
-            foreach (var name in branchVariables.Keys) Environment.SetEnvironmentVariable(name, null);
+            foreach (var name in branchVariables.Keys)
+            {
+                Environment.SetEnvironmentVariable(name, null);
+            }
+
             await Assert.That(async () => await GitVersionDetails.GetBranchNameAsync(repository.Path, CancellationToken.None))
                 .ThrowsExactly<InvalidOperationException>();
             await repository.InitializeAsync();
-            if (detached) await repository.Git("checkout", "--detach");
+
+            if (detached)
+            {
+                await repository.Git("checkout", "--detach");
+            }
+
             await Assert.That(await GitVersionDetails.GetBranchNameAsync(repository.Path, CancellationToken.None))
                 .IsEqualTo(detached ? "detached" : "main");
         }
         finally
         {
-            foreach (var (name, value) in branchVariables) Environment.SetEnvironmentVariable(name, value);
+            foreach (var (name, value) in branchVariables)
+            {
+                Environment.SetEnvironmentVariable(name, value);
+            }
         }
     }
 
@@ -311,12 +340,14 @@ public class StableVersionTagTests
         var refsBefore = await repository.Git("show-ref");
         var trace = System.IO.Path.Combine(repository.Path, "git-trace.jsonl");
         var previousTrace = Environment.GetEnvironmentVariable("GIT_TRACE2_EVENT");
+
         try
         {
             Environment.SetEnvironmentVariable("GIT_TRACE2_EVENT", trace);
             await Assert.That(await repository.SelectAsync()).IsEqualTo(expected);
         }
         finally { Environment.SetEnvironmentVariable("GIT_TRACE2_EVENT", previousTrace); }
+
         var starts = File.ReadLines(trace).Count(line =>
         {
             using var record = System.Text.Json.JsonDocument.Parse(line);
@@ -416,12 +447,18 @@ public class StableVersionTagTests
     {
         using var repository = new TestRepository();
         await repository.InitializeAsync();
-        if (hasStableTag) await repository.Git("tag", "V1.2.3");
+
+        if (hasStableTag)
+        {
+            await repository.Git("tag", "V1.2.3");
+        }
+
         foreach (var tag in new[] { "v1.3.0-beta.1", "v1.4.0+build", "v1.5", "v999999999999999.0.0" })
         {
             await repository.CommitAsync(tag);
             await repository.Git("tag", tag);
         }
+
         await Assert.That(await repository.SelectAsync()).IsEqualTo(hasStableTag ? "V1.2.3" : null);
         await repository.CommitAsync("+semver:minor");
         await repository.Git("commit", "--allow-empty", "--allow-empty-message", "-m", "");
@@ -433,7 +470,9 @@ public class StableVersionTagTests
     private sealed class TestRepository : IDisposable
     {
         private readonly DirectoryInfo _directory = Directory.CreateTempSubdirectory("respire-version-tags-");
+
         internal string Path => _directory.FullName;
+
         internal async Task InitializeAsync(string objectFormat = "sha1")
         {
             await Git("init", "-b", "main", $"--object-format={objectFormat}");
@@ -441,16 +480,25 @@ public class StableVersionTagTests
             await Git("config", "user.email", "test@example.com");
             await CommitAsync("base");
         }
+
         internal Task<string> Git(params string[] arguments) => RunGitAsync(Path, null, arguments);
+
         internal Task<string> GitWithInput(string input, params string[] arguments) => RunGitAsync(Path, input, arguments);
+
         internal Task<string> CommitAsync(string message) => Git("commit", "--allow-empty", "-m", message);
+
         internal Task<string> TagAsync(string name, bool annotated)
             => annotated ? Git("tag", "-a", name, "-m", name) : Git("tag", name);
+
         internal Task<string?> SelectAsync() => GitVersionDetails.GetLatestStableVersionTagAsync(Path, CancellationToken.None);
+
         public void Dispose()
         {
             foreach (var file in _directory.EnumerateFiles("*", SearchOption.AllDirectories))
+            {
                 file.Attributes &= ~FileAttributes.ReadOnly;
+            }
+
             _directory.Delete(recursive: true);
         }
     }
@@ -469,11 +517,17 @@ public class StableVersionTagTests
                 CreateNoWindow = true,
             },
         };
-        foreach (var argument in arguments) process.StartInfo.ArgumentList.Add(argument);
+
+        foreach (var argument in arguments)
+        {
+            process.StartInfo.ArgumentList.Add(argument);
+        }
+
         process.Start();
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         IOException? inputError = null;
+
         if (input is not null)
         {
             try
@@ -483,11 +537,21 @@ public class StableVersionTagTests
             }
             catch (IOException exception) { inputError = exception; }
         }
+
         await process.WaitForExitAsync();
         var outputText = await output;
         var errorText = await error;
-        if (process.ExitCode != 0) throw new InvalidOperationException(errorText);
-        if (inputError is not null) throw inputError;
+
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(errorText);
+        }
+
+        if (inputError is not null)
+        {
+            throw inputError;
+        }
+
         return outputText.Trim();
     }
 }

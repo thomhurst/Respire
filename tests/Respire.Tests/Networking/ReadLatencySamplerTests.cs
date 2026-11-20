@@ -39,14 +39,20 @@ public class ReadLatencySamplerTests
                 if (Interlocked.Increment(ref clockReads) == 4)
                 {
                     publishing.TrySetResult();
-                    if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException();
+
+                    if (!release.Wait(TimeSpan.FromSeconds(10)))
+                    {
+                        throw new TimeoutException();
+                    }
                 }
+
                 return 100;
             });
         await Assert.That(await sampler.GetLatencyAsync(warm, default)).IsEqualTo(ReadLatencyResult.Measured(10));
         var coldSample = sampler.GetLatencyAsync(cold, default).AsTask();
         coldReply.SetResult(20);
         Task<ReadLatencyResult>? cached = null;
+
         try
         {
             await publishing.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -57,7 +63,11 @@ public class ReadLatencySamplerTests
         {
             release.Set();
             await coldSample;
-            if (cached is not null) await cached;
+
+            if (cached is not null)
+            {
+                await cached;
+            }
         }
     }
 
@@ -72,8 +82,13 @@ public class ReadLatencySamplerTests
             if (Volatile.Read(ref pause))
             {
                 readingClock.Set();
-                if (!resumeClock.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException();
+
+                if (!resumeClock.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    throw new TimeoutException();
+                }
             }
+
             return 100;
         });
         var connection = new object();
@@ -81,6 +96,7 @@ public class ReadLatencySamplerTests
         Volatile.Write(ref pause, true);
         var cached = Task.Run(async () => await sampler.GetLatencyAsync(connection, default));
         ReadLatencySampler<object>.ValidationReservation reservation = default;
+
         try
         {
             await Assert.That(readingClock.Wait(TimeSpan.FromSeconds(5))).IsTrue();
@@ -102,6 +118,7 @@ public class ReadLatencySamplerTests
         await using var sampler = new ReadLatencySampler<object>((_, _) => ValueTask.FromResult(10L));
         var connection = new object();
         await Assert.That(sampler.TryReserveForValidation(connection, out var reservation)).IsTrue();
+
         using (reservation)
         {
             await Assert.That(sampler.TryReserveForValidation(connection, out _)).IsFalse();
@@ -109,6 +126,7 @@ public class ReadLatencySamplerTests
             await Assert.That(await sampler.GetLatencyAsync(new object(), default)).IsEqualTo(ReadLatencyResult.Measured(10));
             await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
         }
+
         await Assert.That(await sampler.GetLatencyAsync(connection, default)).IsEqualTo(ReadLatencyResult.Measured(10));
         await Assert.That(sampler.SamplesStarted).IsEqualTo(2);
     }
@@ -124,7 +142,12 @@ public class ReadLatencySamplerTests
         reply.SetResult(10);
         await probe;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (sampler.HasPendingProbe(connection)) await Task.Delay(1, deadline.Token);
+
+        while (sampler.HasPendingProbe(connection))
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         await Assert.That(sampler.TryReserveForValidation(connection, out var reservation)).IsTrue();
         reservation.Dispose();
     }
@@ -137,11 +160,13 @@ public class ReadLatencySamplerTests
         await Assert.That(sampler.TryReserveForValidation(connection, out var first)).IsTrue();
         first.Dispose();
         await Assert.That(sampler.TryReserveForValidation(connection, out var second)).IsTrue();
+
         using (second)
         {
             first.Dispose();
             await Assert.That(await sampler.GetLatencyAsync(connection, default)).IsEqualTo(ReadLatencyResult.Pending);
         }
+
         await Assert.That(await sampler.GetLatencyAsync(connection, default)).IsEqualTo(ReadLatencyResult.Measured(10));
     }
 
@@ -186,11 +211,13 @@ public class ReadLatencySamplerTests
         // No PING is queued ahead of a read on the late-discovered connection.
         await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
         await Assert.That(sampler.HasPendingProbe(discovered)).IsFalse();
+
         while (selection.TryNextSample(out var pending))
         {
             var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, wait: null, default);
             selection.Consider(pending.Candidate, latency, pending.Linked, pending.Order);
         }
+
         await Assert.That(selection.TryGet(out var selected)).IsTrue();
         await Assert.That(selected).IsSameReferenceAs(discovered);
         replies.SetResult(10);
@@ -228,7 +255,8 @@ public class ReadLatencySamplerTests
 #pragma warning disable RESP010 // This wire-probe scenario owns and disposes its client to isolate outstanding replies and command deadlines.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = commandDeadline ? TimeSpan.FromMilliseconds(250) : null,
             ConnectionIdleReadTimeout = null,
@@ -239,7 +267,12 @@ public class ReadLatencySamplerTests
         await Assert.That(await sampler.GetLatencyAsync(connection, default))
             .IsEqualTo(ReadLatencyResult.Pending);
         await Task.Delay(TimeSpan.FromMilliseconds(1_100));
-        for (var index = 0; index < 20; index++) await sampler.GetLatencyAsync(connection, default);
+
+        for (var index = 0; index < 20; index++)
+        {
+            await sampler.GetLatencyAsync(connection, default);
+        }
+
         await Assert.That(sampler.SamplesStarted).IsEqualTo(1);
         await Assert.That(server.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
 
@@ -253,11 +286,13 @@ public class ReadLatencySamplerTests
         Volatile.Write(ref suppress, false);
         await server.SendRawAsync(commandDeadline ? "+PONG\r\n$5\r\nvalue\r\n"u8.ToArray() : FakeRespServer.PongReply);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (sampler.SamplesStarted == 1)
         {
             await sampler.GetLatencyAsync(connection, deadline.Token);
             await Task.Delay(1, deadline.Token);
         }
+
         await Assert.That((await sampler.GetLatencyAsync(connection, deadline.Token)).Kind)
             .IsEqualTo(ReadLatencyKind.Measured);
         await Assert.That(server.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(2);
@@ -302,17 +337,35 @@ public class ReadLatencySamplerTests
     private static long MeasureWarm(ReadLatencySampler<object> sampler, object candidate, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
-            if (!sampler.CanConnect(candidate)) throw new InvalidOperationException();
+            if (!sampler.CanConnect(candidate))
+            {
+                throw new InvalidOperationException();
+            }
+
             sampler.ConnectionSucceeded(candidate);
             var selection = new NearestReadSelection<object>();
             selection.QueueSample(candidate, NearestReadSelection.GetLatencyAsync(sampler.GetLatencyAsync(candidate, default),
                 wait: null, default));
-            if (selection.TryNextSample(out _)) throw new InvalidOperationException("Warm sample unexpectedly queued");
-            if (!selection.TryGet(out var result) || !ReferenceEquals(candidate, result)) throw new InvalidOperationException();
-            if (allocate) Volatile.Write(ref _escape, new byte[37]);
+
+            if (selection.TryNextSample(out _))
+            {
+                throw new InvalidOperationException("Warm sample unexpectedly queued");
+            }
+
+            if (!selection.TryGet(out var result) || !ReferenceEquals(candidate, result))
+            {
+                throw new InvalidOperationException();
+            }
+
+            if (allocate)
+            {
+                Volatile.Write(ref _escape, new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -421,7 +474,12 @@ public class ReadLatencySamplerTests
         await Assert.That(await next).IsEqualTo(ReadLatencyResult.Unknown);
         await Assert.That(sampler.SamplesStarted).IsEqualTo(4);
         var selection = new NearestReadSelection<string>();
-        foreach (var latency in results) selection.Consider("blocked", latency);
+
+        foreach (var latency in results)
+        {
+            selection.Consider("blocked", latency);
+        }
+
         await Assert.That(selection.TryGet(out _)).IsFalse();
         selection.Consider("unsampled", await next);
         await Assert.That(selection.TryGet(out var selected)).IsTrue();

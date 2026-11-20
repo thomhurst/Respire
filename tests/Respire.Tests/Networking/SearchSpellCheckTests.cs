@@ -171,7 +171,12 @@ public class SearchSpellCheckTests
             () => search.SpellCheckAsync("idx", "x", new() { ExcludeDictionaries = null! }).AsTask(),
             () => search.SpellCheckAsync("idx", "x", new() { IncludeDictionaries = [null!] }).AsTask(),
             () => search.SpellCheckAsync("idx", "x", new() { ExcludeDictionaries = [""] }).AsTask()];
-        foreach (var call in invalid) await Assert.That(call).Throws<ArgumentException>();
+
+        foreach (var call in invalid)
+        {
+            await Assert.That(call).Throws<ArgumentException>();
+        }
+
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT."))).IsFalse();
     }
 
@@ -192,14 +197,20 @@ public class SearchSpellCheckTests
             (s, t) => s.DeleteDictionaryTermsAsync("d", ["hello"], t).AsTask(),
             (s, t) => s.DumpDictionaryAsync("d", t).AsTask(),
             (s, t) => s.SpellCheckAsync("idx", "helo", cancellationToken: t).AsTask()];
+
         foreach (var call in calls)
         {
             await Assert.That(() => call(prefixed.Search, default)).Throws<NotSupportedException>();
             var error = await Assert.That(() => call(client.Search, canceled.Token)).Throws<OperationCanceledException>();
             await Assert.That(error!.CancellationToken).IsEqualTo(canceled.Token);
         }
+
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT."))).IsFalse();
-        foreach (var call in calls) await Assert.That(() => call(client.Search, default)).Throws<RespireServerException>();
+
+        foreach (var call in calls)
+        {
+            await Assert.That(() => call(client.Search, default)).Throws<RespireServerException>();
+        }
     }
 
     private static FakeRespServer Server(Func<string, string> reply) => new(1, FakeRespServer.PongReply)

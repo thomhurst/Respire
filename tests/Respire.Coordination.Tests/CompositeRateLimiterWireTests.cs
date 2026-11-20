@@ -45,6 +45,7 @@ public class CompositeRateLimiterWireTests
         await Assert.That(probe.IsAcquired).IsTrue();
         var commands = server.ReceivedArguments;
         await Assert.That(commands.Count).IsEqualTo(3);
+
         foreach (var command in commands)
         {
             await Assert.That(Encoding.UTF8.GetString(command[0])).IsEqualTo("EVAL");

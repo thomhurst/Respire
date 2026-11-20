@@ -202,7 +202,11 @@ public class GeneratedHashMutationTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(connections, ":0\r\n"u8.ToArray())
         {
-            SuppressReply = command => { received.TrySetResult(); return true; },
+            SuppressReply = command =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -258,7 +262,11 @@ public class GeneratedHashMutationTests
         var commandInfo = "*1\r\n*6\r\n$8\r\nhpexpire\r\n:-6\r\n*0\r\n:1\r\n:1\r\n:1\r\n"u8.ToArray();
         await using var server = new FakeRespServer(connections + 2, ":0\r\n"u8.ToArray())
         {
-            SuppressReply = command => { received.TrySetResult(); return command == "COMMAND INFO HPEXPIRE"; },
+            SuppressReply = command =>
+            {
+                received.TrySetResult();
+                return command == "COMMAND INFO HPEXPIRE";
+            },
             ReplyOverride = (_, command) => command switch
             {
                 "COMMAND INFO HPEXPIRE" => commandInfo,
@@ -340,7 +348,9 @@ public class GeneratedHashMutationTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = connections,
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = connections,
         });
 #pragma warning restore RESP010
         var first = new ExpiringHashModel("x", "name", "old", null);
@@ -361,13 +371,19 @@ public class GeneratedHashMutationTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(connections + 1, ":0\r\n"u8.ToArray())
         {
-            SuppressReply = command => { received.TrySetResult(); return true; },
+            SuppressReply = command =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
-            Connections = connections, CommandTimeout = null,
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = connections,
+            CommandTimeout = null,
         });
 #pragma warning restore RESP010
         var first = new ExpiringHashModel("x", "name", "old", null);
@@ -395,7 +411,11 @@ public class GeneratedHashMutationTests
             ReplyOverride = (_, command) => command == "COMMAND INFO HSETEX" ? HSetExCommandInfo : null,
             SuppressReply = command =>
             {
-                if (!command.StartsWith("HSETEX", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("HSETEX", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -403,7 +423,9 @@ public class GeneratedHashMutationTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = connections,
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = connections,
         });
 #pragma warning restore RESP010
         var first = new ExpiringHashModel("x", "name", "old", null);
@@ -432,7 +454,11 @@ public class GeneratedHashMutationTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(connections, ":0\r\n"u8.ToArray())
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -462,5 +488,8 @@ public class GeneratedHashMutationTests
 [RespireHash("mutable")]
 public partial class MutableTrackedHashModel
 {
-    public string Name { get; set; } = "";
+    public string Name
+    {
+        get; set;
+    } = "";
 }

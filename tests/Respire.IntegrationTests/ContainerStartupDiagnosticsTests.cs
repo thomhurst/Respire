@@ -75,6 +75,7 @@ public class ContainerStartupDiagnosticsTests
         var previous = Console.Error;
         using var writer = new RejectingErrorWriter();
         Console.SetError(writer);
+
         try
         {
             Func<Task> start = async () => await RespireContainerFixture.StartAsync(new(), default,
@@ -102,6 +103,7 @@ public class ContainerStartupDiagnosticsTests
         var previous = Console.Error;
         using var writer = new ControlledErrorWriter(() => probe.DisposeCount, blocked);
         Console.SetError(writer);
+
         try
         {
             Func<Task> start = async () => await RespireContainerFixture.StartAsync(new(), default,
@@ -139,19 +141,30 @@ public class ContainerStartupDiagnosticsTests
         internal int CleanupCount;
         internal int Writes;
         internal string? Text;
+
         public override Encoding Encoding => Encoding.UTF8;
+
         public override void WriteLine(string? value)
         {
             CleanupCount = cleanupCount();
             Text = value;
             Interlocked.Increment(ref Writes);
-            if (blocked) Release.Wait();
+
+            if (blocked)
+            {
+                Release.Wait();
+            }
+
             Completed.TrySetResult();
         }
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) Release.Dispose();
+            if (disposing)
+            {
+                Release.Dispose();
+            }
+
             base.Dispose(disposing);
         }
     }
@@ -159,7 +172,9 @@ public class ContainerStartupDiagnosticsTests
     private sealed class RejectingErrorWriter : TextWriter
     {
         internal int Writes;
+
         public override Encoding Encoding => Encoding.UTF8;
+
         public override void Write(char value)
         {
             Writes++;
@@ -179,9 +194,20 @@ public class ContainerStartupDiagnosticsTests
         var container = ContainerProbe.Create(async token =>
         {
             startupToken = token;
-            if (callerCancellation) caller.Cancel();
-            else clock.Advance(TimeSpan.FromMilliseconds(100));
-            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+
+            if (callerCancellation)
+            {
+                caller.Cancel();
+            }
+            else
+            {
+                clock.Advance(TimeSpan.FromMilliseconds(100));
+            }
+
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         });
         var probe = (ContainerProbe)container;
@@ -198,13 +224,18 @@ public class ContainerStartupDiagnosticsTests
             StartupTimeout = callerCancellation ? TimeSpan.FromSeconds(10) : TimeSpan.FromMilliseconds(100),
         }, caller.Token, (_, _) => Task.FromResult(container), clock);
         Exception error;
+
         if (callerCancellation)
         {
             var cancellation = (await start.Should().ThrowAsync<OperationCanceledException>()).Which;
             cancellation.CancellationToken.Should().Be(caller.Token);
             error = cancellation;
         }
-        else error = (await start.Should().ThrowAsync<TimeoutException>()).Which;
+        else
+        {
+            error = (await start.Should().ThrowAsync<TimeoutException>()).Which;
+        }
+
         error.InnerException.Should().BeSameAs(original);
         original.Data["RespireFixture.DaemonLogs"].Should().BeOfType<string>().Which
             .Should().Contain("diagnostics after cancellation");
@@ -222,12 +253,24 @@ public class ContainerStartupDiagnosticsTests
         var probe = (ContainerProbe)container;
         probe.HostnameError = original;
         probe.Execute = (_, _) => throw new InvalidOperationException("Docker exec unavailable.");
-        if (cleanupFails) probe.Cleanup = () => ValueTask.FromException(cleanup);
+
+        if (cleanupFails)
+        {
+            probe.Cleanup = () => ValueTask.FromException(cleanup);
+        }
+
         Func<Task> start = async () => await RespireContainerFixture.StartAsync(new(), default,
             (_, _) => Task.FromResult(container));
+
         if (cleanupFails)
+        {
             (await start.Should().ThrowAsync<AggregateException>()).Which.InnerExceptions.Should().Equal(original, cleanup);
-        else (await start.Should().ThrowAsync<IOException>()).Which.Should().BeSameAs(original);
+        }
+        else
+        {
+            (await start.Should().ThrowAsync<IOException>()).Which.Should().BeSameAs(original);
+        }
+
         original.Data["RespireFixture.DaemonLogs"].Should().BeOfType<string>().Which
             .Should().Contain("Docker exec unavailable");
         probe.DisposeCount.Should().Be(1);
@@ -249,6 +292,7 @@ public class ContainerStartupDiagnosticsTests
             clock.Advance(TimeSpan.FromSeconds(2));
             return pending.Task;
         };
+
         try
         {
             Func<Task> start = async () => await RespireContainerFixture.StartAsync(new(), default,
@@ -275,7 +319,11 @@ public class ContainerStartupDiagnosticsTests
         var diagnostics = await ContainerStartupDiagnostics.CaptureAsync(container, [6379]);
         diagnostics.Length.Should().BeLessThanOrEqualTo(ContainerStartupDiagnostics.MaximumCharacters);
         diagnostics.Should().StartWith("[truncated]").And.Contain("last diagnostic line");
-        if (!fails) diagnostics.Should().EndWith("stderr tail");
+
+        if (!fails)
+        {
+            diagnostics.Should().EndWith("stderr tail");
+        }
     }
 
     [Test]
@@ -293,6 +341,7 @@ public class ContainerStartupDiagnosticsTests
         };
         var diagnostics = await ContainerStartupDiagnostics.CaptureAsync(container, [6381, 6382, 6383]);
         diagnostics.Length.Should().BeLessThanOrEqualTo(ContainerStartupDiagnostics.MaximumCharacters);
+
         foreach (var port in new[] { 6381, 6382, 6383 })
         {
             diagnostics.Should().Contain($"[truncated]\n/tmp/respire-fixture/{port}.log");

@@ -12,10 +12,12 @@ internal sealed class ByteRouteDictionary<TValue>
     private readonly ByteRouteHasher _hasher;
 
     public ByteRouteDictionary() : this(ByteRouteHasher.Instance) { }
+
     internal ByteRouteDictionary(ByteRouteHasher hasher) => _hasher = hasher;
 
     // Enumeration is used only for reconnect snapshots and client disposal, never dispatch.
     public IEnumerable<RespireChannel> Names => Entries.Select(static entry => entry.Name);
+
     public IEnumerable<TValue> Values => Entries.Select(static entry => entry.Value);
 
     private IEnumerable<Entry> Entries
@@ -38,6 +40,7 @@ internal sealed class ByteRouteDictionary<TValue>
     public bool TryGetValue(ReadOnlySpan<byte> bytes, out RespireChannel name, out TValue value)
     {
         _entries.TryGetValue(_hasher.Hash(bytes), out var entry);
+
         for (; entry is not null; entry = entry.Next)
         {
             if (bytes.SequenceEqual(entry.Name.Span))
@@ -47,6 +50,7 @@ internal sealed class ByteRouteDictionary<TValue>
                 return true;
             }
         }
+
         name = default;
         value = default!;
         return false;
@@ -56,6 +60,7 @@ internal sealed class ByteRouteDictionary<TValue>
     {
         var hash = _hasher.Hash(name.Span);
         _entries.TryGetValue(hash, out var first);
+
         for (var entry = first; entry is not null; entry = entry.Next)
         {
             if (entry.Name == name)
@@ -63,6 +68,7 @@ internal sealed class ByteRouteDictionary<TValue>
                 throw new ArgumentException("A route with the same bytes already exists.", nameof(name));
             }
         }
+
         _entries[hash] = new Entry(name, value, first);
     }
 
@@ -71,12 +77,14 @@ internal sealed class ByteRouteDictionary<TValue>
         var hash = _hasher.Hash(name.Span);
         _entries.TryGetValue(hash, out var entry);
         Entry? previous = null;
+
         for (; entry is not null; previous = entry, entry = entry.Next)
         {
             if (entry.Name != name)
             {
                 continue;
             }
+
             if (previous is not null)
             {
                 previous.Next = entry.Next;
@@ -89,13 +97,17 @@ internal sealed class ByteRouteDictionary<TValue>
             {
                 _entries.Remove(hash);
             }
+
             return true;
         }
+
         return false;
     }
 
     public bool ContainsKey(RespireChannel name) => TryGetValue(name, out _);
+
     public bool IsEmpty => _entries.Count == 0;
+
     public void Clear() => _entries.Clear();
 
     private sealed class Entry(RespireChannel name, TValue value, Entry? next)
@@ -108,8 +120,13 @@ internal sealed class ByteRouteDictionary<TValue>
 
 internal sealed class ByteRouteHasher
 {
-    public static ByteRouteHasher Instance { get; } = new(RandomNumberGenerator.GetInt32(1, int.MaxValue));
+    public static ByteRouteHasher Instance
+    {
+        get;
+    } = new(RandomNumberGenerator.GetInt32(1, int.MaxValue));
     private readonly int _seed;
+
     internal ByteRouteHasher(int seed) => _seed = seed;
+
     internal int Hash(ReadOnlySpan<byte> value) => unchecked((int)XxHash32.HashToUInt32(value, _seed));
 }

@@ -5,7 +5,11 @@ using Respire.Networking;
 
 namespace Respire.Internal;
 
-internal enum DedicatedLeaseKind { Ordinary, Streaming }
+internal enum DedicatedLeaseKind
+{
+    Ordinary,
+    Streaming
+}
 
 /// <summary>
 /// A small pool of dedicated (non-multiplexed) connections for commands that occupy a
@@ -31,11 +35,20 @@ internal sealed partial class DedicatedConnectionPool(
     Action<RespireConnection>? streamingConnectionCreated = null) : IAsyncDisposable
 {
     private int MaxIdle => options.DedicatedPool.MaximumIdle;
+
     internal RespireEndpoint Endpoint => new(host, port);
 
     // Identity changes on every MOVING publication, including a handoff to the same address.
-    internal RespireConnectionMultiplexer? MovingOwner { get; init; }
-    internal object? MovingPublication { get; init; }
+    internal RespireConnectionMultiplexer? MovingOwner
+    {
+        get; init;
+    }
+
+    internal object? MovingPublication
+    {
+        get; init;
+    }
+
     internal bool IsMovingPublicationCurrent => MovingOwner is null
         || ReferenceEquals(MovingPublication, MovingOwner.MovingPublication);
 
@@ -44,7 +57,7 @@ internal sealed partial class DedicatedConnectionPool(
     private readonly Lock _gate = new();
     private readonly List<Entry> _idle = new(Math.Min(options.DedicatedPool.MaximumIdle, 4));
     private readonly RespireConnectionOptions _ordinaryOptions = options with
-        { MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled, IsDedicatedConnection = true };
+    { MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled, IsDedicatedConnection = true };
     private readonly RespireConnectionOptions _streamingOptions = options with { IsDedicatedConnection = true };
     // Keep closing entries registered until socket and receive/flush cleanup actually completes.
     private readonly Dictionary<RespireConnection, Entry> _connections = [];
@@ -67,7 +80,13 @@ internal sealed partial class DedicatedConnectionPool(
 
     internal bool IsStopping
     {
-        get { lock (_gate) return _stopping; }
+        get
+        {
+            lock (_gate)
+            {
+                return _stopping;
+            }
+        }
     }
 
     /// <summary>
@@ -85,13 +104,25 @@ internal sealed partial class DedicatedConnectionPool(
         lock (_gate)
         {
             var borrowed = 0;
+
             foreach (var entry in _connections.Values)
-                if (entry.State == State.Rented) borrowed++;
+            {
+                if (entry.State == State.Rented)
+                {
+                    borrowed++;
+                }
+            }
+
             return (borrowed, _connecting, _closeError is not null);
         }
     }
 
-    private enum State { Idle, Rented, Closing }
+    private enum State
+    {
+        Idle,
+        Rented,
+        Closing
+    }
 
     private sealed class Entry(RespireConnection connection, DedicatedLeaseKind kind)
     {
@@ -110,22 +141,27 @@ internal sealed partial class DedicatedConnectionPool(
         bool recoverConnection = true)
     {
         if (Volatile.Read(ref _metricsRegistered) == 0 && Interlocked.Exchange(ref _metricsRegistered, 1) == 0)
+        {
             ConnectionTelemetry.TrackDedicatedPool(this, host, port, options.Database);
+        }
         // Maintenance negotiation is connection state. Keep these leases separate from blocking
         // and corrective leases, while retaining one ownership/drain ledger and idle bound.
         var useStreamingMaintenance = kind == DedicatedLeaseKind.Streaming && options.MaintenanceNotifications != RespireMaintenanceNotificationMode.Disabled;
         var connectionOptions = useStreamingMaintenance ? _streamingOptions : _ordinaryOptions;
         var compatibleKind = useStreamingMaintenance ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary;
         long waitStarted = 0;
+
         while (true)
         {
             Entry? stale = null;
             RespireConnection? reused = null;
             Task? available = null;
+
             lock (_gate)
             {
                 ObjectDisposedException.ThrowIf(_stopping, this);
                 cancellationToken.ThrowIfCancellationRequested();
+
                 if (reuseIdle && TryTakeIdle(compatibleKind, preferredZone, out var entry))
                 {
                     if (entry.Connection.IsConnected && !MarkLifetimeExpired(entry))
@@ -157,30 +193,59 @@ internal sealed partial class DedicatedConnectionPool(
                     {
                         stale = _idle[0];
                         _idle.RemoveAt(0);
-                        if (_idleTimer is not null) PauseIdleTimerIfEmptyLocked();
+
+                        if (_idleTimer is not null)
+                        {
+                            PauseIdleTimerIfEmptyLocked();
+                        }
+
                         stale.Connection.RequestMetricCloseReason(ConnectionTelemetry.CloseReason.IdleEviction);
                         BeginCloseLocked(stale);
                     }
+
                     available = (_availability ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
                 }
             }
+
             if (reused is not null)
             {
-                if (waitStarted != 0) reused.RecordConnectionWait(waitStarted);
+                if (waitStarted != 0)
+                {
+                    reused.RecordConnectionWait(waitStarted);
+                }
+
                 return reused;
             }
-            if (waitStarted == 0) waitStarted = Stopwatch.GetTimestamp();
-            if (stale is not null) _ = CloseAsync(stale);
-            if (available is not null) await available.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+            if (waitStarted == 0)
+            {
+                waitStarted = Stopwatch.GetTimestamp();
+            }
+
+            if (stale is not null)
+            {
+                _ = CloseAsync(stale);
+            }
+
+            if (available is not null)
+            {
+                await available.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
 
-        if (waitStarted == 0) waitStarted = Stopwatch.GetTimestamp();
+        if (waitStarted == 0)
+        {
+            waitStarted = Stopwatch.GetTimestamp();
+        }
+
         var registered = false;
+
         try
         {
             using var connectCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken, _lifetimeCancellation.Token);
             RespireConnection connection;
+
             try
             {
                 // Deadline ownership and connection recovery are independent. Redirects keep
@@ -197,23 +262,34 @@ internal sealed partial class DedicatedConnectionPool(
                 // Unwrap only our own lifetime link, preserving independent retirement cancellation.
                 throw new OperationCanceledException(error.Message, error, cancellationToken);
             }
+
             var entry = new Entry(connection, compatibleKind);
             bool accepted;
+
             lock (_gate)
             {
                 _connections.Add(connection, entry);
                 _creating--;
                 registered = true;
                 accepted = !_stopping;
-                if (!accepted) BeginCloseLocked(entry);
+
+                if (!accepted)
+                {
+                    BeginCloseLocked(entry);
+                }
             }
+
             if (accepted)
             {
                 try
                 {
                     // Observers may publish a handoff and retire this pool. Never call them
                     // under the ownership gate; the borrower still owns any returned lease.
-                    if (useStreamingMaintenance) streamingConnectionCreated?.Invoke(connection);
+                    if (useStreamingMaintenance)
+                    {
+                        streamingConnectionCreated?.Invoke(connection);
+                    }
+
                     connection.RecordConnectionWait(waitStarted);
                     return connection;
                 }
@@ -223,6 +299,7 @@ internal sealed partial class DedicatedConnectionPool(
                     throw;
                 }
             }
+
             await CloseAsync(entry).ConfigureAwait(false);
             throw new ObjectDisposedException(nameof(DedicatedConnectionPool));
         }
@@ -231,7 +308,12 @@ internal sealed partial class DedicatedConnectionPool(
             lock (_gate)
             {
                 _connecting--;
-                if (!registered) _creating--;
+
+                if (!registered)
+                {
+                    _creating--;
+                }
+
                 SignalAvailabilityLocked();
                 CompleteIfDrainedLocked();
             }
@@ -242,24 +324,41 @@ internal sealed partial class DedicatedConnectionPool(
     private bool TryTakeIdle(DedicatedLeaseKind kind, string? preferredZone, out Entry entry)
     {
         var selected = -1;
+
         for (var index = _idle.Count - 1; index >= 0; index--)
         {
-            if (_idle[index].Kind != kind) continue;
-            if (selected < 0) selected = index;
+            if (_idle[index].Kind != kind)
+            {
+                continue;
+            }
+
+            if (selected < 0)
+            {
+                selected = index;
+            }
+
             var connection = _idle[index].Connection;
+
             if (preferredZone is null || connection.IsConnected && ReadFallbackPolicy.IsSameZone(connection, preferredZone))
             {
                 selected = index;
                 break;
             }
         }
+
         if (selected >= 0)
         {
             entry = _idle[selected];
             _idle.RemoveAt(selected);
-            if (_idleTimer is not null) PauseIdleTimerIfEmptyLocked();
+
+            if (_idleTimer is not null)
+            {
+                PauseIdleTimerIfEmptyLocked();
+            }
+
             return true;
         }
+
         entry = null!;
         return false;
     }
@@ -269,21 +368,38 @@ internal sealed partial class DedicatedConnectionPool(
     {
         Debug.Assert(!connection.IsStreamingWriteActive, "A streaming send must release its write path before pool return.");
         Entry? closing = null;
+
         lock (_gate)
         {
-            if (!_connections.TryGetValue(connection, out var entry) || entry.State != State.Rented) return;
+            if (!_connections.TryGetValue(connection, out var entry) || entry.State != State.Rented)
+            {
+                return;
+            }
+
             if (!_stopping && connection.IsConnected && !MarkLifetimeExpired(entry))
             {
                 if (_idle.Count == MaxIdle)
                 {
                     var sameKind = 0;
-                    foreach (var idle in _idle) if (idle.Kind == entry.Kind) sameKind++;
+
+                    foreach (var idle in _idle)
+                    {
+                        if (idle.Kind == entry.Kind)
+                        {
+                            sameKind++;
+                        }
+                    }
                     // A lone kind may use all idle slots. Under mixed demand, each can reclaim
                     // half by evicting the other kind's oldest idle entry, avoiding reconnect churn.
                     if (sameKind < MaxIdle / 2)
                     {
                         var other = 0;
-                        while (other < _idle.Count && _idle[other].Kind == entry.Kind) other++;
+
+                        while (other < _idle.Count && _idle[other].Kind == entry.Kind)
+                        {
+                            other++;
+                        }
+
                         Debug.Assert(other < _idle.Count,
                             "A full pool below this kind's reserved share must contain another lease kind.");
                         closing = _idle[other];
@@ -292,19 +408,27 @@ internal sealed partial class DedicatedConnectionPool(
                         BeginCloseLocked(closing);
                     }
                 }
+
                 if (_idle.Count < MaxIdle)
                 {
                     entry.State = State.Idle;
                     entry.Connection.SetLeaseRented(false);
+
                     if (options.DedicatedPool.IdleTimeout is { } timeout)
                     {
                         entry.IdleSince = options.DedicatedPool.TimeProvider.GetTimestamp();
+
                         if (_idleTimer is null)
+                        {
                             _idleTimer = options.DedicatedPool.TimeProvider.CreateTimer(
                                 static state => ((DedicatedConnectionPool)state!).RetireIdle(), this, timeout, timeout);
+                        }
                         else if (_idle.Count == 0)
+                        {
                             _idleTimer.Change(timeout, timeout);
+                        }
                     }
+
                     _idle.Add(entry);
                     ScheduleIdleLifetimeLocked();
                     SignalAvailabilityLocked();
@@ -315,24 +439,48 @@ internal sealed partial class DedicatedConnectionPool(
                     connection.RequestMetricCloseReason(ConnectionTelemetry.CloseReason.IdleEviction);
                 }
             }
-            else closing = entry;
-            if (ReferenceEquals(closing, entry)) BeginCloseLocked(entry);
+            else
+            {
+                closing = entry;
+            }
+
+            if (ReferenceEquals(closing, entry))
+            {
+                BeginCloseLocked(entry);
+            }
         }
-        if (closing is not null) _ = CloseAsync(closing);
+
+        if (closing is not null)
+        {
+            _ = CloseAsync(closing);
+        }
     }
 
     /// <summary>Removes a failed or abandoned lease and waits for its cleanup.</summary>
     public ValueTask DiscardAsync(RespireConnection connection)
     {
         Entry entry;
+
         lock (_gate)
         {
-            if (!_connections.TryGetValue(connection, out entry!)) return ValueTask.CompletedTask;
-            if (entry.State == State.Closing) return new ValueTask(entry.Closed!.Task);
+            if (!_connections.TryGetValue(connection, out entry!))
+            {
+                return ValueTask.CompletedTask;
+            }
+
+            if (entry.State == State.Closing)
+            {
+                return new ValueTask(entry.Closed!.Task);
+            }
             // Cleanup may run again after a lease has already been returned.
-            if (entry.State != State.Rented) return ValueTask.CompletedTask;
+            if (entry.State != State.Rented)
+            {
+                return ValueTask.CompletedTask;
+            }
+
             BeginCloseLocked(entry);
         }
+
         _ = CloseAsync(entry);
         return new ValueTask(entry.Closed!.Task);
     }
@@ -362,11 +510,20 @@ internal sealed partial class DedicatedConnectionPool(
     {
         lock (_gate)
         {
-            if (_stopping || _movingHandoffsCaptured) return null;
+            if (_stopping || _movingHandoffsCaptured)
+            {
+                return null;
+            }
+
             List<RespireConnection>? handedOff = null;
+
             foreach (var entry in _connections.Values)
+            {
                 if (entry.State != State.Closing && entry.Connection.IsConnected)
+                {
                     (handedOff ??= []).Add(entry.Connection);
+                }
+            }
             // Even an empty publication excludes handshakes that finish afterwards.
             _movingHandoffsCaptured = true;
             return handedOff;
@@ -379,6 +536,7 @@ internal sealed partial class DedicatedConnectionPool(
         List<RespireConnection>? handedOff = null;
         bool cancel;
         Task completion;
+
         lock (_gate)
         {
             cancel = !_stopping;
@@ -390,18 +548,23 @@ internal sealed partial class DedicatedConnectionPool(
             SignalAvailabilityLocked();
             _completion ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             completion = _completion.Task;
+
             foreach (var entry in _connections.Values)
             {
                 // Count only live members of this retired publication. Closing entries and
                 // connections whose handshake finishes after retirement were not handed off.
                 if (cancel && moving && !_movingHandoffsCaptured && entry.State != State.Closing && entry.Connection.IsConnected)
+                {
                     (handedOff ??= []).Add(entry.Connection);
+                }
+
                 if (entry.State == State.Idle || (abortBorrowed && entry.State == State.Rented))
                 {
                     BeginCloseLocked(entry);
                     (closing ??= []).Add(entry);
                 }
             }
+
             _idle.Clear();
         }
 
@@ -416,7 +579,10 @@ internal sealed partial class DedicatedConnectionPool(
             }
             catch (Exception error)
             {
-                lock (_gate) _closeError ??= error;
+                lock (_gate)
+                {
+                    _closeError ??= error;
+                }
             }
             finally
             {
@@ -427,14 +593,24 @@ internal sealed partial class DedicatedConnectionPool(
                 }
             }
         }
+
         if (closing is not null)
         {
-            foreach (var entry in closing) _ = CloseAsync(entry);
+            foreach (var entry in closing)
+            {
+                _ = CloseAsync(entry);
+            }
         }
         // Admission is closed and idle cleanup is running before any listener can block.
         // Borrowed operations still drain normally; callbacks run outside ownership gates.
         if (handedOff is not null)
-            foreach (var connection in handedOff) connection.RecordConnectionHandoff();
+        {
+            foreach (var connection in handedOff)
+            {
+                connection.RecordConnectionHandoff();
+            }
+        }
+
         return new ValueTask(completion);
     }
 
@@ -447,21 +623,35 @@ internal sealed partial class DedicatedConnectionPool(
     private async Task CloseAsync(Entry entry)
     {
         Exception? failure = null;
+
         try
         {
-            if (entry.LifetimeExpired) entry.Connection.RecordConnectionRecycle();
+            if (entry.LifetimeExpired)
+            {
+                entry.Connection.RecordConnectionRecycle();
+            }
+
             await entry.Connection.DisposeAsync().ConfigureAwait(false);
         }
         catch (Exception error)
         {
             failure = error;
         }
+
         lock (_gate)
         {
-            if (_stopping) _closeError ??= failure;
+            if (_stopping)
+            {
+                _closeError ??= failure;
+            }
+
             _connections.Remove(entry.Connection);
             SignalAvailabilityLocked();
-            if (failure is null) entry.Closed!.TrySetResult();
+
+            if (failure is null)
+            {
+                entry.Closed!.TrySetResult();
+            }
             else
             {
                 entry.Closed!.TrySetException(failure);
@@ -470,18 +660,33 @@ internal sealed partial class DedicatedConnectionPool(
                 // failure for discarders, as does the shared retirement completion.
                 _ = entry.Closed.Task.Exception;
             }
+
             CompleteIfDrainedLocked();
         }
+
         if (failure is not null)
+        {
             logger?.DedicatedConnectionCloseFailed(host, port, failure);
+        }
     }
 
     private void CompleteIfDrainedLocked()
     {
         if (!_stopping || !_cancellationComplete || _connecting != 0 || _connections.Count != 0
-            || _completion!.Task.IsCompleted) return;
+            || _completion!.Task.IsCompleted)
+        {
+            return;
+        }
+
         _lifetimeCancellation.Dispose();
-        if (_closeError is null) _completion.TrySetResult();
-        else _completion.TrySetException(_closeError);
+
+        if (_closeError is null)
+        {
+            _completion.TrySetResult();
+        }
+        else
+        {
+            _completion.TrySetException(_closeError);
+        }
     }
 }

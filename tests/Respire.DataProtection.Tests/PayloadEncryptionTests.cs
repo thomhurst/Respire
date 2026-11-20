@@ -23,6 +23,7 @@ public class PayloadEncryptionTests
     {
         var codec = CreateCodec(compress);
         byte[][] values = [[], [0, 255, 128, 1], Encoding.UTF8.GetBytes(new string('x', 4096))];
+
         foreach (var value in values)
         {
             var encrypted = codec.Encode(value);
@@ -37,6 +38,7 @@ public class PayloadEncryptionTests
             codec.Decode(encrypted, destination);
             await Assert.That(destination.WrittenSpan.SequenceEqual(new byte[] { 42 }.Concat(value).ToArray())).IsTrue();
         }
+
         byte[] original = [1, 2, 3];
         var owned = codec.Encode(original);
         original[0] = 99;
@@ -53,13 +55,23 @@ public class PayloadEncryptionTests
         var compression = new ObservingCodec();
         var codec = new RespireDataProtectionValueCodec(new EphemeralDataProtectionProvider().CreateProtector("tests"), compression);
         var encrypted = codec.Encode("secret"u8);
+
         switch (corruption)
         {
-            case "tampered": encrypted[^1] ^= 1; break;
-            case "truncated": encrypted = encrypted[..^1]; break;
-            case "plaintext": encrypted = "secret"u8.ToArray(); break;
-            case "empty": encrypted = []; break;
+            case "tampered":
+                encrypted[^1] ^= 1;
+                break;
+            case "truncated":
+                encrypted = encrypted[..^1];
+                break;
+            case "plaintext":
+                encrypted = "secret"u8.ToArray();
+                break;
+            case "empty":
+                encrypted = [];
+                break;
         }
+
         var destination = new ArrayBufferWriter<byte>();
         destination.Write(new byte[] { 42 });
         await Assert.That(() => codec.Decode(encrypted, destination)).Throws<CryptographicException>();
@@ -92,6 +104,7 @@ public class PayloadEncryptionTests
         byte[] oldPayload;
         Guid oldKeyId;
         Guid newKeyId;
+
         using (var first = CreateProvider(repository))
         {
             var keys = first.GetRequiredService<IKeyManager>();
@@ -103,6 +116,7 @@ public class PayloadEncryptionTests
             await Assert.That(new Guid(oldPayload.AsSpan(4, 16))).IsEqualTo(oldKeyId);
             newKeyId = keys.CreateNewKey(now.AddDays(-1), now.AddDays(60)).KeyId;
         }
+
         using var second = CreateProvider(repository);
         var rotated = new RespireDataProtectionValueCodec(second.GetRequiredService<IDataProtectionProvider>().CreateProtector("rotation"));
         var newPayload = rotated.Encode("after"u8);
@@ -123,8 +137,16 @@ public class PayloadEncryptionTests
     {
         var serializer = new RespireValueCodecSerializer(RespireSerializer.Default, CreateCodec(true));
         var destination = new ArrayBufferWriter<byte>();
-        if (runtimeType) serializer.Serialize(destination, typeof(string), "secret");
-        else serializer.Serialize(destination, "secret");
+
+        if (runtimeType)
+        {
+            serializer.Serialize(destination, typeof(string), "secret");
+        }
+        else
+        {
+            serializer.Serialize(destination, "secret");
+        }
+
         var decoded = runtimeType ? serializer.Deserialize(typeof(string), destination.WrittenSpan)
             : serializer.Deserialize<string>(destination.WrittenSpan);
         await Assert.That(decoded).IsEqualTo("secret");
@@ -164,27 +186,48 @@ public class PayloadEncryptionTests
     {
         var services = new ServiceCollection();
         services.AddDataProtection().SetApplicationName("rotation-test")
-            .AddKeyManagementOptions(options => { options.XmlRepository = repository; options.AutoGenerateKeys = false; });
+            .AddKeyManagementOptions(options =>
+            {
+                options.XmlRepository = repository;
+                options.AutoGenerateKeys = false;
+            });
         return services.BuildServiceProvider();
     }
 
     private sealed class MemoryKeyRepository : IXmlRepository
     {
         private readonly List<XElement> _elements = [];
+
         public IReadOnlyCollection<XElement> GetAllElements()
         {
-            lock (_elements) return _elements.Select(element => new XElement(element)).ToArray();
+            lock (_elements)
+            {
+                return _elements.Select(element => new XElement(element)).ToArray();
+            }
         }
+
         public void StoreElement(XElement element, string friendlyName)
         {
-            lock (_elements) _elements.Add(new XElement(element));
+            lock (_elements)
+            {
+                _elements.Add(new XElement(element));
+            }
         }
     }
 
     private sealed class ObservingCodec : IRespireValueCodec
     {
-        public int DecodeCalls { get; private set; }
+        public int DecodeCalls
+        {
+            get; private set;
+        }
+
         public byte[] Encode(ReadOnlySpan<byte> payload) => payload.ToArray();
-        public byte[] Decode(ReadOnlySpan<byte> payload) { DecodeCalls++; return payload.ToArray(); }
+
+        public byte[] Decode(ReadOnlySpan<byte> payload)
+        {
+            DecodeCalls++;
+            return payload.ToArray();
+        }
     }
 }

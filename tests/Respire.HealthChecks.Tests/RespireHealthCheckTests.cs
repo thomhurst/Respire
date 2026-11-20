@@ -137,6 +137,7 @@ public class RespireHealthCheckTests
         });
         var result = await new RespireHealthCheck(client, new() { ProbeAllNodes = allNodes }).CheckHealthAsync(Context());
         await Assert.That(result.Status).IsEqualTo(allNodes ? HealthStatus.Unhealthy : HealthStatus.Healthy);
+
         if (allNodes)
         {
             var nodes = (RespireNodeHealth[])result.Data["nodes"];
@@ -160,7 +161,8 @@ public class RespireHealthCheckTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
@@ -186,22 +188,33 @@ public class RespireHealthCheckTests
         var topology = Encoding.ASCII.GetBytes(
             $"*2\r\n*{(replica ? 4 : 3)}\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n{extra}"
             + $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
+
         foreach (var server in new[] { first, second })
+        {
             server.ReplyOverride = (_, command) => command switch
             {
                 "INFO SERVER" => FakeRespServer.PongReply,
                 "CLUSTER SLOTS" => topology,
                 _ => FakeRespServer.PongReply,
             };
+        }
+
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = true,
             Endpoints = [new("127.0.0.1", first.Port)],
         });
         await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default);
         var connections = first.ReceivedConnectionIds.Concat(second.ReceivedConnectionIds).ToArray();
         var masters = client.Core.Cluster.RoutingSnapshot.Masters;
-        if (disconnectFirstMaster) await masters[0].DisposeAsync();
+
+        if (disconnectFirstMaster)
+        {
+            await masters[0].DisposeAsync();
+        }
+
         var defaultResult = await new RespireHealthCheck(client).CheckHealthAsync(Context());
         await Assert.That(defaultResult.Status).IsEqualTo(HealthStatus.Healthy);
         var defaultNodes = (RespireNodeHealth[])defaultResult.Data["nodes"];
@@ -212,12 +225,14 @@ public class RespireHealthCheckTests
         var nodes = (RespireNodeHealth[])result.Data["nodes"];
         await Assert.That(nodes.Length).IsEqualTo(replica ? 3 : 2);
         await Assert.That(nodes.Count(node => node.Latency is not null)).IsEqualTo(disconnectFirstMaster ? 1 : 2);
+
         if (replica || disconnectFirstMaster)
         {
             var failed = (replica ? 1 : 0) + (disconnectFirstMaster ? 1 : 0);
             await Assert.That(result.Description).IsEqualTo($"{failed} of {nodes.Length} Respire node probes failed.");
             await Assert.That((int)result.Data["failedNodes"]).IsEqualTo(failed);
         }
+
         await Assert.That(unused.CommandsSeen).IsEqualTo(0);
         await Assert.That(first.ReceivedConnectionIds.Concat(second.ReceivedConnectionIds).Except(connections).Count()).IsEqualTo(0);
     }
@@ -233,6 +248,7 @@ public class RespireHealthCheckTests
         var result = await new RespireHealthCheck(client).CheckHealthAsync(Context());
         await Assert.That(result.Status).IsEqualTo(connected ? HealthStatus.Healthy : HealthStatus.Unhealthy);
         await Assert.That(proxy.PingCalls).IsEqualTo(connected ? 1 : 0);
+
         if (connected)
         {
             var node = ((RespireNodeHealth[])result.Data["nodes"])[0];
@@ -253,23 +269,42 @@ public class RespireHealthCheckTests
 
     public class HealthClientProxy : DispatchProxy
     {
-        public bool Connected { get; set; }
-        public int PingCalls { get; private set; }
-        public RespireEndpoint Endpoint { get; } = new("custom.example", 6379);
-        public CancellationToken ProbeToken { get; private set; }
+        public bool Connected
+        {
+            get; set;
+        }
+
+        public int PingCalls
+        {
+            get; private set;
+        }
+
+        public RespireEndpoint Endpoint
+        {
+            get;
+        } = new("custom.example", 6379);
+
+        public CancellationToken ProbeToken
+        {
+            get; private set;
+        }
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             switch (targetMethod?.Name)
             {
-                case "get_IsConnected": return Connected;
-                case "get_ClientSideCache": return null;
-                case "get_Endpoint": return Endpoint;
+                case "get_IsConnected":
+                    return Connected;
+                case "get_ClientSideCache":
+                    return null;
+                case "get_Endpoint":
+                    return Endpoint;
                 case nameof(IRespireClient.PingAsync):
                     PingCalls++;
                     ProbeToken = (CancellationToken)args![0]!;
                     return new ValueTask<TimeSpan>(TimeSpan.FromMilliseconds(5));
-                default: throw new NotSupportedException(targetMethod?.Name);
+                default:
+                    throw new NotSupportedException(targetMethod?.Name);
             }
         }
     }
@@ -290,14 +325,19 @@ public class RespireHealthCheckTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp3,
-            ClientSideCache = new(), Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
+            Connections = 1,
         });
         var result = await new RespireHealthCheck(client, new() { IncludeClientSideCache = include }).CheckHealthAsync(Context());
         await Assert.That(result.Status).IsEqualTo(HealthStatus.Healthy);
         await Assert.That(result.Data.ContainsKey("clientSideCache")).IsEqualTo(include);
+
         if (include)
+        {
             await Assert.That((RespireClientSideCacheStatistics)result.Data["clientSideCache"]).IsEqualTo(client.ClientSideCache!.GetStatistics());
+        }
     }
 
     [Test]
@@ -328,7 +368,10 @@ public class RespireHealthCheckTests
         var unavailable = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         group.EndpointSwitched += change =>
         {
-            if (change.Reason == RespireFailoverSwitchReasons.NoHealthyEndpoint) unavailable.TrySetResult();
+            if (change.Reason == RespireFailoverSwitchReasons.NoHealthyEndpoint)
+            {
+                unavailable.TrySetResult();
+            }
         };
         using var fault = server.InjectFault("PING", RespireFakeFault.Loading(), occurrences: null);
         await unavailable.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -381,8 +424,10 @@ public class RespireHealthCheckTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
         });
         var result = await new RespireHealthCheck(client, new() { ProbeAllNodes = true }).CheckHealthAsync(Context());
         await Assert.That(result.Status).IsEqualTo(HealthStatus.Healthy);
@@ -397,7 +442,8 @@ public class RespireHealthCheckTests
         await using var sentinel = new FakeRespServer(FakeRespServer.PongReply);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
         });
         var result = await new RespireHealthCheck(client).CheckHealthAsync(Context());
         await Assert.That(result.Status).IsEqualTo(HealthStatus.Unhealthy);

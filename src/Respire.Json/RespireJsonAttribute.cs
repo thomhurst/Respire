@@ -7,5 +7,8 @@ namespace Respire.Json;
 public sealed class RespireJsonAttribute(string keyTemplate) : Attribute
 {
     /// <summary>The model key template.</summary>
-    public string KeyTemplate { get; } = keyTemplate;
+    public string KeyTemplate
+    {
+        get;
+    } = keyTemplate;
 }

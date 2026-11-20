@@ -29,6 +29,10 @@ internal sealed class ReservedUnavailablePort : IDisposable
         }
     }
 
-    public int Port { get; }
+    public int Port
+    {
+        get;
+    }
+
     public void Dispose() => _socket.Dispose();
 }

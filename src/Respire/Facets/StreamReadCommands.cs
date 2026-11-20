@@ -1,8 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Net.Sockets;
-using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
 using System.Security.Authentication;
+using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -61,6 +61,7 @@ internal sealed partial class StreamCommands
         RespireStreamId after = default, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireStreamEntry[]>.Start();
+
         try
         {
             var command = BuildReadCommand(client, [(key, after)], options);
@@ -73,6 +74,7 @@ internal sealed partial class StreamCommands
         ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireStreamReadResult[]>.Start();
+
         try
         {
             var command = BuildReadCommand(client, streams, options);
@@ -128,11 +130,13 @@ internal sealed partial class StreamCommands
         var snapshots = SnapshotStreams(client, streams, group is not null);
         var keys = new RespireValue[snapshots.Length];
         var ids = new RespireStreamId[snapshots.Length];
+
         for (var i = 0; i < snapshots.Length; i++)
         {
             keys[i] = client.Key(snapshots[i].Key);
             ids[i] = snapshots[i].After;
         }
+
         return new StreamReadCommand(keys, ids, options.Count, milliseconds, options.MaxCount, options.MaxSize, group, consumer,
             options.NoAck, options.GetClaimMinIdleMilliseconds());
     }
@@ -140,19 +144,33 @@ internal sealed partial class StreamCommands
     private static (RespireKey Key, RespireStreamId After)[] SnapshotStreams(RespireClient client,
         ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, bool group = false)
     {
-        if (streams.IsEmpty) throw new ArgumentException("At least one stream is required.", nameof(streams));
+        if (streams.IsEmpty)
+        {
+            throw new ArgumentException("At least one stream is required.", nameof(streams));
+        }
+
         var snapshot = streams.ToArray();
         var seen = new HashSet<RespireKey>();
         int? slot = null;
+
         for (var i = 0; i < snapshot.Length; i++)
         {
             var key = snapshot[i].Key.Snapshot();
-            if (!seen.Add(key)) throw new ArgumentException("Each stream key must appear only once.", nameof(streams));
+
+            if (!seen.Add(key))
+            {
+                throw new ArgumentException("Each stream key must appear only once.", nameof(streams));
+            }
+
             var id = snapshot[i].After;
+
             if (group ? id.Value != ">" : id != RespireStreamId.New)
             {
                 if (id == RespireStreamId.Min || id == RespireStreamId.Max || (group && id == RespireStreamId.New))
+                {
                     throw new ArgumentException(group ? "XREADGROUP requires a numeric start id or >." : "XREAD requires a numeric start id or $.", nameof(streams));
+                }
+
                 try
                 {
                     _ = id.CompareTo(RespireStreamId.Beginning);
@@ -162,38 +180,66 @@ internal sealed partial class StreamCommands
                     throw new ArgumentException(group ? "XREADGROUP requires a numeric start id or >." : "XREAD requires a numeric start id or $.", nameof(streams), error);
                 }
             }
+
             if (client.Core.Cluster is not null)
             {
                 var current = client.ResolveKey(key).ClusterSlot;
+
                 if (slot is { } expected && current != expected)
+                {
                     throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, group ? "XREADGROUP" : "XREAD", expected, current, client.Key(in key));
+                }
+
                 slot = current;
             }
+
             snapshot[i] = (key, id);
         }
+
         return snapshot;
     }
 
     internal static RespireStreamReadResult[] ParseStreamRead(in RespValue reply, RespireClient client, string? group = null)
     {
-        if (reply.IsNull) return [];
+        if (reply.IsNull)
+        {
+            return [];
+        }
+
         if (reply.Type is not (RespireDataType.Array or RespireDataType.Map))
+        {
             throw new RespireProtocolException("XREAD must return stream/entries pairs.");
+        }
+
         var values = reply.AsArray();
         var map = reply.Type == RespireDataType.Map;
-        if (map && values.Length % 2 != 0) throw new RespireProtocolException("XREAD returned an incomplete stream pair.");
+
+        if (map && values.Length % 2 != 0)
+        {
+            throw new RespireProtocolException("XREAD returned an incomplete stream pair.");
+        }
+
         var result = new RespireStreamReadResult[map ? values.Length / 2 : values.Length];
+
         for (var i = 0; i < result.Length; i++)
         {
             if (!map && values[i].Type != RespireDataType.Array)
+            {
                 throw new RespireProtocolException("XREAD returned an invalid stream pair.");
+            }
+
             var pair = map ? values.Slice(i * 2, 2) : values[i].AsArray();
+
             if (pair.Length != 2 || pair[0].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)
                 || pair[1].Type != RespireDataType.Array)
+            {
                 throw new RespireProtocolException("XREAD returned an invalid stream pair.");
+            }
+
             var key = MultiKeyPop.ParsePoppedKey(in pair[0], client.KeyPrefixBytes);
             result[i] = new(key, ParseEntries(in pair[1], group is null ? null : client, group is null ? default : client.Key(key), group));
         }
+
         return result;
     }
 
@@ -204,7 +250,10 @@ internal sealed partial class StreamCommands
     private static async IAsyncEnumerable<RespireStreamEntry> EntriesOnly(IAsyncEnumerable<RespireStreamReadEntry> entries,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await foreach (var entry in entries.WithCancellation(cancellationToken).ConfigureAwait(false)) yield return entry.Entry;
+        await foreach (var entry in entries.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            yield return entry.Entry;
+        }
     }
 
     public IAsyncEnumerable<RespireStreamReadEntry> ReadAllAsync(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams,
@@ -212,6 +261,7 @@ internal sealed partial class StreamCommands
     {
         ErrorObservation.FinalOwner owner = default;
         Exception? failure = null;
+
         try
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
@@ -235,18 +285,25 @@ internal sealed partial class StreamCommands
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
         Exception? failure = null;
+
         try
         {
             (RespireKey Key, RespireStreamId After)[] streams;
             Dictionary<RespireKey, int> indexes;
             StreamReadCommand command;
+
             try
             {
                 // Each enumeration gets private cursors. Resolve $ once, under this owner.
                 streams = initial.ToArray();
+
                 for (var i = 0; i < streams.Length; i++)
                 {
-                    if (streams[i].After != RespireStreamId.New) continue;
+                    if (streams[i].After != RespireStreamId.New)
+                    {
+                        continue;
+                    }
+
                     var newest = await client.ConvertUnobservedResponseAsync("XREVRANGE",
                         new Cmd5(Verbs.XRevRange, client.Key(streams[i].Key), "+", "-", "COUNT", 1),
                         cancellationToken, this,
@@ -254,14 +311,18 @@ internal sealed partial class StreamCommands
                         observation).ConfigureAwait(false);
                     streams[i].After = newest.Length == 0 ? RespireStreamId.Beginning : newest[0].Id;
                 }
+
                 indexes = streams.Select((stream, index) => (stream.Key, index)).ToDictionary(x => x.Key, x => x.index);
                 command = BuildReadCommand(client, streams, batchSize, TimeSpan.FromSeconds(1));
             }
             catch (Exception error) { failure = error; throw; }
+
             var failures = 0;
+
             while (true)
             {
                 RespireStreamReadResult[] results;
+
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -275,15 +336,18 @@ internal sealed partial class StreamCommands
                     observation.Handled(error);
                     var delayMilliseconds = 100 * (1 << Math.Min(failures, 5));
                     failures = Math.Min(failures + 1, 6);
+
                     try
                     {
                         client.Core.Logger?.StreamReadRetry(delayMilliseconds, error);
                         await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), cancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception terminal) { failure = terminal; throw; }
+
                     continue;
                 }
                 catch (Exception error) { failure = error; throw; }
+
                 foreach (var result in results)
                 {
                     if (!indexes.TryGetValue(result.Key, out var index))
@@ -291,17 +355,23 @@ internal sealed partial class StreamCommands
                         failure = new RespireProtocolException("XREAD returned an unrequested stream.");
                         throw failure;
                     }
+
                     foreach (var entry in result.Entries)
                     {
                         try
                         {
                             cancellationToken.ThrowIfCancellationRequested();
+
                             if (entry.Id <= streams[index].After)
+                            {
                                 throw new RespireProtocolException("XREAD returned a non-increasing entry id.");
+                            }
+
                             streams[index].After = entry.Id;
                             command.SetAfter(index, entry.Id);
                         }
                         catch (Exception error) { failure = error; throw; }
+
                         yield return new RespireStreamReadEntry(result.Key, entry);
                     }
                 }
@@ -314,8 +384,14 @@ internal sealed partial class StreamCommands
     {
         // No caller-facing ValueTask escapes an iterator. Return the dispatch owner after
         // page cleanup, including early disposal; only failures rent observation storage.
-        if (failure is not null) owner.Fail(failure);
-        else _ = owner.Attach(new ValueTask<bool>(true)).GetAwaiter().GetResult();
+        if (failure is not null)
+        {
+            owner.Fail(failure);
+        }
+        else
+        {
+            _ = owner.Attach(new ValueTask<bool>(true)).GetAwaiter().GetResult();
+        }
     }
 
     private static bool CanRetryStreamRead(Exception error)
@@ -323,8 +399,15 @@ internal sealed partial class StreamCommands
         // Handshake errors retain the server error as their cause; ACL and authentication failures are terminal.
         for (Exception? cause = error; cause is not null; cause = cause.InnerException)
         {
-            if (cause is RespireServerException server) return server.IsTransient;
-            if (cause is AuthenticationException or RespireConfigurationException or ObjectDisposedException) return false;
+            if (cause is RespireServerException server)
+            {
+                return server.IsTransient;
+            }
+
+            if (cause is AuthenticationException or RespireConfigurationException or ObjectDisposedException)
+            {
+                return false;
+            }
         }
         // Pool retirement can cancel a private lifetime token while the caller remains active.
         // The catch filter above excludes caller cancellation and client disposal before retrying it.

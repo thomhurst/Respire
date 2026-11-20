@@ -7,9 +7,17 @@ namespace Respire.IntegrationTests;
 public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
 {
     [ClassDataSource<LfuRedisTestContainer>(Shared = SharedType.PerTestSession)]
-    public required LfuRedisTestContainer Lfu { get; init; }
+    public required LfuRedisTestContainer Lfu
+    {
+        get; init;
+    }
 
-    public enum ExecutionMode { Immediate, Batch, Transaction }
+    public enum ExecutionMode
+    {
+        Immediate,
+        Batch,
+        Transaction
+    }
 
     [Test]
     [Arguments(2, ExecutionMode.Immediate)]
@@ -27,6 +35,7 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
         await view.SetAsync("persistent", "value");
         var instant = DateTimeOffset.FromUnixTimeMilliseconds(2100000000678);
         await view.SetAsync("expiring", "value", expiry: instant);
+
         foreach (var precision in new[] { RespireExpiryTimePrecision.Milliseconds, RespireExpiryTimePrecision.Seconds })
         {
             var missing = await Run(view, mode, k => k.ExpiryTimeAsync("missing", precision), k => k.ExpiryTime("missing", precision));
@@ -40,6 +49,7 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
             expiring.UnixTimeMilliseconds.Should().Be(precision == RespireExpiryTimePrecision.Milliseconds ? 2100000000678L : 2100000001000L);
             expiring.GetExpiresAt().Should().Be(DateTimeOffset.FromUnixTimeMilliseconds(expiring.UnixTimeMilliseconds!.Value));
         }
+
         (await client.Keys.ExistsAsync("expiring")).Should().BeFalse();
     }
 
@@ -67,7 +77,10 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
         (await Run(view, mode, k => k.IdleTimeAsync("missing"), k => k.IdleTime("missing"))).Should().BeNull();
         (await Run(view, mode, k => k.FrequencyAsync("missing"), k => k.Frequency("missing"))).Should().BeNull();
         (await Run(view, mode, k => k.ReferenceCountAsync("missing"), k => k.ReferenceCount("missing"))).Should().BeNull();
-        Func<Task> frequency = async () => { await Run(view, mode, k => k.FrequencyAsync(key), k => k.Frequency(key)); };
+        Func<Task> frequency = async () =>
+        {
+            await Run(view, mode, k => k.FrequencyAsync(key), k => k.Frequency(key));
+        };
         await frequency.Should().ThrowAsync<RespireServerException>();
     }
 
@@ -88,20 +101,35 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
         frequency.Should().NotBeNull();
         frequency!.Value.Should().BeInRange(0, 255);
         (await Run(client, mode, k => k.FrequencyAsync("missing"), k => k.Frequency("missing"))).Should().BeNull();
-        Func<Task> idle = async () => { await Run(client, mode, k => k.IdleTimeAsync("frequency"), k => k.IdleTime("frequency")); };
+        Func<Task> idle = async () =>
+        {
+            await Run(client, mode, k => k.IdleTimeAsync("frequency"), k => k.IdleTime("frequency"));
+        };
         await idle.Should().ThrowAsync<RespireServerException>();
     }
 
     private static async Task<T> Run<T>(IRespireClient client, ExecutionMode mode,
         Func<IRespireKeyCommands, ValueTask<T>> immediate, Func<IRespireBatchKeyCommands, RespirePending<T>> deferred)
     {
-        if (mode == ExecutionMode.Immediate) return await immediate(client.Keys);
+        if (mode == ExecutionMode.Immediate)
+        {
+            return await immediate(client.Keys);
+        }
+
         using var batch = mode == ExecutionMode.Batch ? client.CreateBatch() : null;
         await using var transaction = mode == ExecutionMode.Transaction ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = deferred(queue.Keys);
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.TryExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.TryExecuteAsync();
+        }
+
         return pending.Result;
     }
 }

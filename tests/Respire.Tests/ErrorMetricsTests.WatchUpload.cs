@@ -18,7 +18,7 @@ public partial class ErrorMetricsTests
         [Matrix(false, true)] bool enabled)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         await using var server = new FakeRespServer(8, FakeRespServer.OkReply);
         server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n")
@@ -26,28 +26,41 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var client = prefix ? root.WithKeyPrefix("tenant:") : root;
         RespireKey[] keys = crossSlot ? ["{first}:one", "{second}:two"] : ["{same}:one", "{same}:two"];
         using var capture = new Capture(throwOnMeasurement: true);
-        async Task Execute() { await using var transaction = await client.CreateTransactionAsync(keys); }
+
+        async Task Execute()
+        {
+            await using var transaction = await client.CreateTransactionAsync(keys);
+        }
+
         if (crossSlot)
         {
             await Assert.That(ClusterHash.GetSlot("{first}:one")).IsNotEqualTo(ClusterHash.GetSlot("{second}:two"));
             await Assert.That(Execute).Throws<InvalidOperationException>();
         }
-        else await Execute();
+        else
+        {
+            await Execute();
+        }
+
         var items = capture.Items.ToArray();
         await Assert.That(items.Length).IsEqualTo(enabled && crossSlot ? 1 : 0);
+
         if (enabled && crossSlot)
         {
             await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsFalse();
             await Assert.That(items[0].Tags["error.type"]).IsEqualTo(typeof(InvalidOperationException).FullName);
             await Assert.That(items[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
         }
+
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("WATCH ")))
             .IsEqualTo(crossSlot ? 0 : 1);
     }
@@ -64,7 +77,11 @@ public partial class ErrorMetricsTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("SET ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("SET ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -74,7 +91,10 @@ public partial class ErrorMetricsTests
         using var cancellation = new CancellationTokenSource();
         using var capture = new Capture(throwOnMeasurement: true, onMeasurement: item =>
         {
-            if (Equals(item.Tags.GetValueOrDefault("db.response.status_code"), "NOPERM")) recorded.TrySetResult();
+            if (Equals(item.Tags.GetValueOrDefault("db.response.status_code"), "NOPERM"))
+            {
+                recorded.TrySetResult();
+            }
         });
         var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         observation.SetAttempts(attempts);
@@ -89,9 +109,16 @@ public partial class ErrorMetricsTests
         // The server can parse the whole frame before the client observes its final write. A
         // cancellation in that window correctly aborts the connection to protect RESP framing,
         // so cancel only once the upload has released the write path.
-        while (connection.IsStreamingWriteActive) await Task.Delay(1, deadline.Token);
+        while (connection.IsStreamingWriteActive)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         cancellation.Cancel();
-        var error = await Assert.That(async () => { using var reply = await pending.WaitAsync(deadline.Token); })
+        var error = await Assert.That(async () =>
+            {
+                using var reply = await pending.WaitAsync(deadline.Token);
+            })
             .Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
         // A different logical owner must not alter the metadata on the canceled reply.

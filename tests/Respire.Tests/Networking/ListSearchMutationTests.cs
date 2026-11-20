@@ -33,10 +33,16 @@ public class ListSearchMutationTests
         var left = queue.Lists.LeftPushIfExists("list", values);
         var right = queue.Lists.RightPushIfExists("list", values);
         values[0] = "changed";
+
         if (transaction is not null)
+        {
             await transaction.CommitAsync();
+        }
         else
+        {
             await batch!.ExecuteAsync();
+        }
+
         await Assert.That(position.Result).IsEqualTo(2);
         await Assert.That(positions.Result).IsEquivalentTo([3L, 2L], CollectionOrdering.Matching);
         await Assert.That(before.Result).IsEqualTo(4);
@@ -62,17 +68,45 @@ public class ListSearchMutationTests
         await using var transaction = client.CreateTransaction();
         Func<Task>[] immediate =
         [
-            async () => { await client.Lists.PositionAsync("list", "x", rank: 0); },
-            async () => { await client.Lists.PositionAsync("list", "x", rank: long.MinValue); },
-            async () => { await client.Lists.PositionAsync("list", "x", maxLength: -1); },
-            async () => { await client.Lists.PositionsAsync("list", "x", count: -1); },
-            async () => { await client.Lists.PositionsAsync("list", "x", rank: 0); },
-            async () => { await client.Lists.PositionsAsync("list", "x", maxLength: -1); },
-            async () => { await client.Lists.LeftPushIfExistsAsync("list"); },
-            async () => { await client.Lists.RightPushIfExistsAsync("list"); },
+            async () =>
+            {
+                await client.Lists.PositionAsync("list", "x", rank: 0);
+            },
+            async () =>
+            {
+                await client.Lists.PositionAsync("list", "x", rank: long.MinValue);
+            },
+            async () =>
+            {
+                await client.Lists.PositionAsync("list", "x", maxLength: -1);
+            },
+            async () =>
+            {
+                await client.Lists.PositionsAsync("list", "x", count: -1);
+            },
+            async () =>
+            {
+                await client.Lists.PositionsAsync("list", "x", rank: 0);
+            },
+            async () =>
+            {
+                await client.Lists.PositionsAsync("list", "x", maxLength: -1);
+            },
+            async () =>
+            {
+                await client.Lists.LeftPushIfExistsAsync("list");
+            },
+            async () =>
+            {
+                await client.Lists.RightPushIfExistsAsync("list");
+            },
         ];
+
         foreach (var command in immediate)
+        {
             await Assert.That(command).Throws<ArgumentException>();
+        }
+
         foreach (var lists in new[] { batch.Lists, transaction.Lists })
         {
             await Assert.That(() => lists.Position("list", "x", rank: 0)).Throws<ArgumentOutOfRangeException>();
@@ -84,6 +118,7 @@ public class ListSearchMutationTests
             await Assert.That(() => lists.LeftPushIfExists("list")).Throws<ArgumentException>();
             await Assert.That(() => lists.RightPushIfExists("list")).Throws<ArgumentException>();
         }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
@@ -100,7 +135,11 @@ public class ListSearchMutationTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();

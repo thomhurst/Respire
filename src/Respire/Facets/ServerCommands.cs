@@ -189,10 +189,12 @@ public partial interface IRespireServerCommands
 internal sealed partial class ServerCommands(RespireClient client) : IRespireServerCommands
 {
     private static readonly ReadCommandKind DbSizeReadKind = CommandReadMetadata.Get("DBSIZE").Kind;
+
     public ValueTask<string> InfoAsync(string? section = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(section is null
@@ -206,6 +208,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<long>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(client.Core.Cluster is null
@@ -225,6 +228,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<RespireServerClientInfo[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ConvertAsync(
@@ -241,6 +245,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(clientId);
@@ -258,6 +263,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<RespireSlowLogEntry[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             if (count is < 0)
@@ -280,6 +286,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(client.OkResultAsync("SLOWLOG RESET", new Cmd(Verbs.SlowLogReset), cancellationToken, observation: observation)));
@@ -291,6 +298,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<RespireLatencySample[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ConvertAsync(
@@ -304,6 +312,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<long>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(client.IntegerAsync("LATENCY RESET", new Cmd(Verbs.LatencyReset), cancellationToken, observation: observation));
@@ -315,6 +324,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<long>.Start();
         var observation = owner.Observation;
+
         try
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(eventName);
@@ -330,6 +340,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<long?>.Start();
         var observation = owner.Observation;
+
         try
         {
             if (samples is < 0)
@@ -354,6 +365,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<RespireMemoryStats>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ConvertAsync(
@@ -367,6 +379,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<RespireServerRole>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ConvertAsync(
@@ -380,6 +393,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<DateTimeOffset>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ConvertAsync(
@@ -393,6 +407,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<long>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(client.IntegerAsync("COMMAND COUNT", new Cmd(Verbs.CommandCount), cancellationToken, observation: observation));
@@ -404,6 +419,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<string[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(client.StringArrayAsync("COMMAND LIST", new Cmd(Verbs.CommandList), cancellationToken, observation: observation));
@@ -423,6 +439,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
 
         var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation).ConfigureAwait(false);
         long total = 0;
+
         foreach (var connection in connections)
         {
             using var reply = await client.SendToClusterTargetAsync(
@@ -431,6 +448,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
                 .ConfigureAwait(false);
             total = checked(total + ResponseReader.Integer(in reply));
         }
+
         return total;
     }
 
@@ -452,10 +470,12 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
 
         var cache = client.Core.ClientCache;
         var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+
         try
         {
             var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation)
                 .ConfigureAwait(false);
+
             foreach (var connection in connections)
             {
                 using var reply = await client.SendToClusterTargetAsync(
@@ -467,7 +487,10 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
         }
         finally
         {
-            if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
+            if (mutationFence.IsRequired)
+            {
+                cache!.CompleteMutation(in mutationFence);
+            }
         }
     }
 
@@ -475,6 +498,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<DateTimeOffset>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ConvertAsync(
@@ -494,6 +518,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<Dictionary<string, string>>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(client.StringMapAsync("CONFIG GET", new Cmd1(Verbs.ConfigGet, pattern), cancellationToken, observation: observation));
@@ -505,6 +530,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             EnsureAdminAllowed("CONFIG SET");
@@ -532,6 +558,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     internal static RespireServerClientInfo[] ParseClientList(in RespValue value)
     {
         var text = value.AsString();
+
         if (string.IsNullOrWhiteSpace(text))
         {
             return [];
@@ -539,6 +566,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
 
         var lines = text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
         var clients = new RespireServerClientInfo[lines.Length];
+
         for (var i = 0; i < lines.Length; i++)
         {
             var attributes = ParseClientAttributes(lines[i]);
@@ -562,9 +590,11 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     {
         var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var attributes = new Dictionary<string, string>(fields.Length, StringComparer.Ordinal);
+
         foreach (var field in fields)
         {
             var separator = field.IndexOf('=');
+
             if (separator <= 0)
             {
                 continue;
@@ -579,12 +609,14 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     private static RespireSlowLogEntry[] ParseSlowLog(in RespValue value)
     {
         var entries = value.AsArray();
+
         if (entries.Length == 0)
         {
             return [];
         }
 
         var result = new RespireSlowLogEntry[entries.Length];
+
         for (var i = 0; i < entries.Length; i++)
         {
             var parts = entries[i].AsArray();
@@ -603,12 +635,14 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     private static RespireLatencySample[] ParseLatencyLatest(in RespValue value)
     {
         var entries = value.AsArray();
+
         if (entries.Length == 0)
         {
             return [];
         }
 
         var result = new RespireLatencySample[entries.Length];
+
         for (var i = 0; i < entries.Length; i++)
         {
             var parts = entries[i].AsArray();
@@ -625,6 +659,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     private static Dictionary<string, RespireMemoryStatValue> ParseMemoryMap(ReadOnlySpan<RespValue> elements)
     {
         var result = new Dictionary<string, RespireMemoryStatValue>(elements.Length / 2, StringComparer.Ordinal);
+
         for (var i = 0; i + 1 < elements.Length; i += 2)
         {
             result[elements[i].AsString()] = ParseMemoryValue(in elements[i + 1]);
@@ -641,6 +676,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     private static RespireServerRole ParseRole(in RespValue value)
     {
         var parts = value.AsArray();
+
         if (parts.Length == 0)
         {
             return new RespireServerRole(
@@ -648,6 +684,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
         }
 
         var rawRole = parts[0].AsString();
+
         if (rawRole.Equals("master", StringComparison.OrdinalIgnoreCase))
         {
             return new RespireServerRole(
@@ -698,15 +735,18 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     private static RespireReplicaInfo[] ParseReplicas(in RespValue value)
     {
         var entries = value.AsArray();
+
         if (entries.Length == 0)
         {
             return [];
         }
 
         var replicas = new List<RespireReplicaInfo>(entries.Length);
+
         foreach (var entry in entries)
         {
             var parts = entry.AsArray();
+
             if (parts.Length < 3)
             {
                 continue;
@@ -724,12 +764,14 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
     private static string[] ParseStringArray(in RespValue value)
     {
         var elements = value.AsArray();
+
         if (elements.Length == 0)
         {
             return value.Type is RespireDataType.Array or RespireDataType.Set ? [] : [value.AsString()];
         }
 
         var result = new string[elements.Length];
+
         for (var i = 0; i < elements.Length; i++)
         {
             result[i] = elements[i].AsString();
@@ -775,15 +817,14 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
         return text.Length == 0 ? null : text;
     }
 
-    private static string? ReadScalarString(in RespValue value)
-        => value.Type switch
-        {
-            RespireDataType.Null => null,
-            RespireDataType.Integer => value.AsInteger().ToString(CultureInfo.InvariantCulture),
-            RespireDataType.Double => value.AsDouble().ToString(CultureInfo.InvariantCulture),
-            RespireDataType.Boolean => value.AsBoolean() ? "true" : "false",
-            _ => value.AsString(),
-        };
+    private static string? ReadScalarString(in RespValue value) => value.Type switch
+    {
+        RespireDataType.Null => null,
+        RespireDataType.Integer => value.AsInteger().ToString(CultureInfo.InvariantCulture),
+        RespireDataType.Double => value.AsDouble().ToString(CultureInfo.InvariantCulture),
+        RespireDataType.Boolean => value.AsBoolean() ? "true" : "false",
+        _ => value.AsString(),
+    };
 
     private static DateTimeOffset FromUnixTimeSeconds(long seconds)
     {

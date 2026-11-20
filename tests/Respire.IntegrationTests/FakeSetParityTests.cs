@@ -21,26 +21,43 @@ public class FakeSetParityTests(RedisTestContainer fixture)
         (await Number(client, "SADD", key, member, member, "")).Should().Be(2);
         (await Number(client, "SADD", key, member)).Should().Be(0);
         (await Number(client, "SCARD", key)).Should().Be(2);
+
         using (var members = await client.ExecuteAsync("SMEMBERS", key))
         {
             members.Type.Should().Be(protocol == 3 ? RespireDataType.Set : RespireDataType.Array);
             members.Select(value => Convert.ToHexString(value.AsBytes())).Should().BeEquivalentTo(Convert.ToHexString(member), "");
+
             foreach (var value in members)
             {
                 var copy = value.AsBytes();
-                if (copy.Length != 0) copy[0] = 42;
+
+                if (copy.Length != 0)
+                {
+                    copy[0] = 42;
+                }
             }
         }
+
         (await Number(client, "SISMEMBER", key, member)).Should().Be(1);
+
         using (var membership = await client.ExecuteAsync("SMISMEMBER", key, "missing", member, member, ""))
+        {
             membership.Select(value => value.AsInteger()).Should().Equal(0, 1, 1, 1);
+        }
+
         (await Number(client, "SREM", key, member, member, "missing", "")).Should().Be(2);
-        using (var type = await client.ExecuteAsync("TYPE", key)) type.AsString().Should().Be("none");
+
+        using (var type = await client.ExecuteAsync("TYPE", key))
+        {
+            type.AsString().Should().Be("none");
+        }
+
         using (var members = await client.ExecuteAsync("SMEMBERS", key))
         {
             members.Type.Should().Be(protocol == 3 ? RespireDataType.Set : RespireDataType.Array);
             members.Count.Should().Be(0);
         }
+
         (await Number(client, "SCARD", key)).Should().Be(0);
         (await Number(client, "SREM", key, member)).Should().Be(0);
     }
@@ -110,6 +127,7 @@ public class FakeSetParityTests(RedisTestContainer fixture)
         await client.SetAsync(wrongKey, "string");
         await client.Sets.AddAsync(setKey, "member");
         await client.Sets.AddAsync(destinationKey, "unchanged");
+
         foreach (var (command, args) in new (string, RespireValue[])[]
         {
             ("SADD", [wrongKey, "x"]), ("SREM", [wrongKey, "x"]), ("SMEMBERS", [wrongKey]),
@@ -122,12 +140,16 @@ public class FakeSetParityTests(RedisTestContainer fixture)
             ("GETDEL", [setKey]), ("GETEX", [setKey, "PERSIST"]), ("HSET", [setKey, "field", "x"]),
         })
         {
-            Func<Task> run = async () => { using var ignored = await client.ExecuteAsync(command, args); };
+            Func<Task> run = async () =>
+            {
+                using var ignored = await client.ExecuteAsync(command, args);
+            };
             (await run.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("WRONGTYPE");
             (await client.Sets.MembersAsync(setKey)).Should().BeEquivalentTo("member");
             (await client.Sets.MembersAsync(destinationKey)).Should().BeEquivalentTo("unchanged");
             (await client.GetStringAsync(wrongKey)).Should().Be("string");
         }
+
         (await client.Sets.MoveAsync(missingKey, wrongKey, "member")).Should().BeFalse();
         using var missing = await client.ExecuteAsync("MGET", setKey);
         missing[0].IsNull.Should().BeTrue();
@@ -147,6 +169,7 @@ public class FakeSetParityTests(RedisTestContainer fixture)
         var setKey = prefix + "set";
         var otherKey = prefix + "other";
         await client.Sets.AddAsync(setKey, "a", "b");
+
         foreach (var args in new RespireValue[][]
         {
             [0, setKey], [-1, setKey], [2, setKey], [long.MaxValue, setKey],
@@ -154,10 +177,15 @@ public class FakeSetParityTests(RedisTestContainer fixture)
             [1, setKey, "LIMIT", "01"], [1, setKey, "UNKNOWN", 1], [1, setKey, "LIMIT", 1, "extra"],
         })
         {
-            Func<Task> run = async () => { using var ignored = await client.ExecuteAsync("SINTERCARD", args); };
+            Func<Task> run = async () =>
+            {
+                using var ignored = await client.ExecuteAsync("SINTERCARD", args);
+            };
             (await run.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("ERR");
         }
+
         (await Number(client, "SINTERCARD", 1, setKey, "limit", 1, "LIMIT", 0)).Should().Be(2);
+
         foreach (var (command, args) in new (string, RespireValue[])[]
         {
             ("SADD", [setKey]), ("SREM", [setKey]), ("SMEMBERS", [setKey, "extra"]), ("SCARD", []),
@@ -166,15 +194,20 @@ public class FakeSetParityTests(RedisTestContainer fixture)
             ("SUNIONSTORE", [setKey]), ("SDIFFSTORE", [setKey]), ("SINTERCARD", [1]),
         })
         {
-            Func<Task> run = async () => { using var ignored = await client.ExecuteAsync(command, args); };
+            Func<Task> run = async () =>
+            {
+                using var ignored = await client.ExecuteAsync(command, args);
+            };
             await run.Should().ThrowAsync<RespireServerException>().WithMessage("*wrong number of arguments*");
         }
+
         (await client.Sets.MembersAsync(setKey)).Should().BeEquivalentTo("a", "b");
     }
 
     private ValueTask<RespireClient> Connect(RespireFakeServer? fake, int protocol)
         => RespireClient.ConnectAsync((fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString))
-            with { Protocol = (RespireProtocol)protocol, Connections = 1 });
+            with
+        { Protocol = (RespireProtocol)protocol, Connections = 1 });
 
     private static async Task<long> Number(IRespireClient client, string command, params RespireValue[] args)
     {

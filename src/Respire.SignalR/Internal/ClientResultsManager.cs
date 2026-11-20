@@ -21,6 +21,7 @@ internal sealed class ClientResultsManager : IInvocationBinder
         var result = _pendingInvocations.TryAdd(invocationId, (typeof(T), connectionId, tcs, static (state, completionMessage) =>
         {
             var tcs = (TaskCompletionSourceWithCancellation<T>)state;
+
             if (completionMessage.HasResult)
             {
                 tcs.SetResult((T)completionMessage.Result!);
@@ -29,6 +30,7 @@ internal sealed class ClientResultsManager : IInvocationBinder
             {
                 tcs.SetException(new HubException(completionMessage.Error));
             }
+
             return Task.CompletedTask;
         }
         ));
@@ -71,6 +73,7 @@ internal sealed class ClientResultsManager : IInvocationBinder
         {
             // connection was disconnected or someone else completed the invocation
         }
+
         return Task.CompletedTask;
     }
 
@@ -89,10 +92,16 @@ internal sealed class ClientResultsManager : IInvocationBinder
     internal async Task CompleteAllAsync()
     {
         List<Task>? completions = null;
+
         foreach (var id in _pendingInvocations.Keys)
         {
-            if (RemoveInvocation(id) is not { } pending) continue;
+            if (RemoveInvocation(id) is not { } pending)
+            {
+                continue;
+            }
+
             completions ??= [];
+
             try
             {
                 completions.Add(pending.Completion(pending.Tcs,
@@ -104,7 +113,10 @@ internal sealed class ClientResultsManager : IInvocationBinder
             }
         }
         // Every owner is retired before joining callbacks; one fault must not strand the others.
-        if (completions is not null) await Task.WhenAll(completions).ConfigureAwait(false);
+        if (completions is not null)
+        {
+            await Task.WhenAll(completions).ConfigureAwait(false);
+        }
     }
 
     public bool TryGetType(string invocationId, [NotNullWhen(true)] out Type? type)
@@ -114,6 +126,7 @@ internal sealed class ClientResultsManager : IInvocationBinder
             type = item.Type;
             return true;
         }
+
         type = null;
         return false;
     }
@@ -124,6 +137,7 @@ internal sealed class ClientResultsManager : IInvocationBinder
         {
             return type;
         }
+
         throw new InvalidOperationException($"Invocation ID '{invocationId}' is not associated with a pending client result.");
     }
 
@@ -165,10 +179,17 @@ internal sealed class ClientResultsManager : IInvocationBinder
         // not canceling when the dictionary hasn't been updated yet.
         public void RegisterCancellation()
         {
-            if (!_token.CanBeCanceled) return;
+            if (!_token.CanBeCanceled)
+            {
+                return;
+            }
+
             lock (_gate)
             {
-                if (_completed) return;
+                if (_completed)
+                {
+                    return;
+                }
             }
 
             var registration = _token.UnsafeRegister(static o =>
@@ -176,6 +197,7 @@ internal sealed class ClientResultsManager : IInvocationBinder
                 var tcs = (TaskCompletionSourceWithCancellation<T>)o!;
                 tcs.SetCanceled();
             }, this);
+
             lock (_gate)
             {
                 if (!_completed)
@@ -214,6 +236,7 @@ internal sealed class ClientResultsManager : IInvocationBinder
         private void DisposeCancellationRegistration()
         {
             CancellationTokenRegistration registration;
+
             lock (_gate)
             {
                 _completed = true;
@@ -227,27 +250,33 @@ internal sealed class ClientResultsManager : IInvocationBinder
 #pragma warning disable IDE0060 // Remove unused parameter
         // Just making sure we don't accidentally call one of these without knowing
         public static new void SetCanceled(CancellationToken cancellationToken) => Debug.Assert(false);
+
         public static new void SetException(IEnumerable<Exception> exceptions) => Debug.Assert(false);
+
         public static new bool TrySetCanceled()
         {
             Debug.Assert(false);
             return false;
         }
+
         public static new bool TrySetCanceled(CancellationToken cancellationToken)
         {
             Debug.Assert(false);
             return false;
         }
+
         public static new bool TrySetException(IEnumerable<Exception> exceptions)
         {
             Debug.Assert(false);
             return false;
         }
+
         public static new bool TrySetException(Exception exception)
         {
             Debug.Assert(false);
             return false;
         }
+
         public static new bool TrySetResult(T result)
         {
             Debug.Assert(false);

@@ -21,6 +21,7 @@ public partial class RespireJsonClientTests
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var json = client.WithKeyPrefix("tenant:").Json;
+
         foreach (var condition in Enum.GetValues<RespireJsonSetCondition>())
         {
             var expected = condition != RespireJsonSetCondition.Nx;
@@ -28,9 +29,17 @@ public partial class RespireJsonClientTests
                 "$.values", condition)).IsEqualTo(expected);
             await Assert.That(await json.SetJsonAsync(type, "text", "[1.5,2.5]", "$.values", condition)).IsEqualTo(expected);
             await Assert.That(await json.SetJsonAsync(type, "bytes", "[1.5,2.5]"u8.ToArray(), "$.values", condition)).IsEqualTo(expected);
-            var conditionToken = condition switch { RespireJsonSetCondition.Nx => " NX", RespireJsonSetCondition.Xx => " XX", _ => "" };
+            var conditionToken = condition switch
+            {
+                RespireJsonSetCondition.Nx => " NX",
+                RespireJsonSetCondition.Xx => " XX",
+                _ => ""
+            };
+
             foreach (var key in new[] { "typed", "text", "bytes" })
+            {
                 await Assert.That(server.ReceivedCommands).Contains($"JSON.SET tenant:{key} $.values [1.5,2.5]{conditionToken} FPHA {token}");
+            }
         }
 
         // The catalog already carries JSON.SET key/mutation metadata for immediate raw commands.
@@ -67,7 +76,10 @@ public partial class RespireJsonClientTests
         await client.Json.SetAsync("typed", new[] { 1.5 }, JsonTestContext.Default.DoubleArray, default, default, default);
         await client.Json.SetJsonAsync("text", "[1.5]", default, default, default);
         await client.Json.SetJsonAsync("bytes", "[1.5]"u8.ToArray(), default, default, default);
+
         foreach (var key in new[] { "typed", "text", "bytes" })
+        {
             await Assert.That(server.ReceivedCommands).Contains($"JSON.SET {key} . [1.5]");
+        }
     }
 }

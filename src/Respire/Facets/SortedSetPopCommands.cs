@@ -83,7 +83,6 @@ internal sealed partial class SortedSetCommands
     public ValueTask<RespireSortedSetPopResult<T>?> PopAsync<T>(RespireKey key, TimeSpan? waitFor, bool descending, CancellationToken cancellationToken = default)
         => PopAsync<T>([key], waitFor, descending, cancellationToken);
 
-
     public ValueTask<RespireSortedSetPopManyResult?> PopManyAsync(ReadOnlySpan<RespireKey> keys, TimeSpan? waitFor, long count = 1, bool descending = false, CancellationToken cancellationToken = default)
         => PopManyCoreAsync(keys, count, descending, waitFor ?? Timeout.InfiniteTimeSpan, cancellationToken);
 
@@ -95,6 +94,7 @@ internal sealed partial class SortedSetCommands
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireSortedSetPopManyResult?>.Start();
+
         try
         {
             var (operation, command) = PopManyCommand(client, keys, count, descending, waitFor);
@@ -111,6 +111,7 @@ internal sealed partial class SortedSetCommands
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireSortedSetPopResult?>.Start();
+
         try
         {
             var (operation, command) = PopOneCommand(client, keys, waitFor, descending);
@@ -141,7 +142,11 @@ internal sealed partial class SortedSetCommands
 
     internal static RespireSortedSetPopManyResult? ParsePopMany(in RespValue reply, ReadOnlySpan<byte> prefix)
     {
-        if (reply.IsNull) return null;
+        if (reply.IsNull)
+        {
+            return null;
+        }
+
         var elements = PopReplyElements(in reply, 2);
         ValidatePopEntries(in elements[1]);
         return new RespireSortedSetPopManyResult(MultiKeyPop.ParsePoppedKey(in elements[0], prefix), ParseEntries(in elements[1]));
@@ -149,7 +154,11 @@ internal sealed partial class SortedSetCommands
 
     internal static RespireSortedSetPopResult? ParsePopOne(in RespValue reply, ReadOnlySpan<byte> prefix)
     {
-        if (reply.IsNull) return null;
+        if (reply.IsNull)
+        {
+            return null;
+        }
+
         var elements = PopReplyElements(in reply, 3);
         return new RespireSortedSetPopResult(MultiKeyPop.ParsePoppedKey(in elements[0], prefix),
             new RespireSortedSetEntry(elements[1].AsString(), ResponseReader.Double(in elements[2])));
@@ -172,6 +181,7 @@ internal sealed partial class SortedSetCommands
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireSortedSetPopManyResult<T>?>.Start();
+
         try
         {
             var (operation, command) = PopManyCommand(client, keys, count, descending, waitFor);
@@ -190,6 +200,7 @@ internal sealed partial class SortedSetCommands
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireSortedSetPopResult<T>?>.Start();
+
         try
         {
             var (operation, command) = PopOneCommand(client, keys, waitFor, descending);
@@ -226,7 +237,11 @@ internal sealed partial class SortedSetCommands
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal static RespireSortedSetPopManyResult<T>? ParsePopMany<T>(RespireClient client, in RespValue reply)
     {
-        if (reply.IsNull) return null;
+        if (reply.IsNull)
+        {
+            return null;
+        }
+
         var elements = PopReplyElements(in reply, 2);
         ValidatePopEntries(in elements[1]);
         return new RespireSortedSetPopManyResult<T>(MultiKeyPop.ParsePoppedKey(in elements[0], client.KeyPrefixBytes), ParseEntries<T>(client, in elements[1]));
@@ -236,7 +251,11 @@ internal sealed partial class SortedSetCommands
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal static RespireSortedSetPopResult<T>? ParsePopOne<T>(RespireClient client, in RespValue reply)
     {
-        if (reply.IsNull) return null;
+        if (reply.IsNull)
+        {
+            return null;
+        }
+
         var elements = PopReplyElements(in reply, 3);
         return new RespireSortedSetPopResult<T>(MultiKeyPop.ParsePoppedKey(in elements[0], client.KeyPrefixBytes),
             new RespireSortedSetEntry<T>(client.DeserializeBorrowed<T>(in elements[1])!, ResponseReader.Double(in elements[2])));
@@ -246,11 +265,21 @@ internal sealed partial class SortedSetCommands
         RespireClient client, ReadOnlySpan<RespireKey> keys, long count, bool descending, TimeSpan? waitFor)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
-        if (waitFor is { } wait) MultiKeyPop.ValidateWait(wait);
+
+        if (waitFor is { } wait)
+        {
+            MultiKeyPop.ValidateWait(wait);
+        }
+
         var operation = waitFor.HasValue ? "BZMPOP" : "ZMPOP";
         var arguments = new RespireValue[keys.Length + (waitFor.HasValue ? 5 : 4)];
         var index = 0;
-        if (waitFor is { } timeout) arguments[index++] = MultiKeyPop.ToSeconds(timeout);
+
+        if (waitFor is { } timeout)
+        {
+            arguments[index++] = MultiKeyPop.ToSeconds(timeout);
+        }
+
         arguments[index++] = keys.Length;
         MultiKeyPop.CopyPopKeys(client, keys, arguments.AsSpan(index, keys.Length), operation);
         index += keys.Length;
@@ -274,15 +303,23 @@ internal sealed partial class SortedSetCommands
     private static void ValidatePopEntries(in RespValue entries)
     {
         if (entries.Type != RespireDataType.Array || entries.AsArray().IsEmpty)
+        {
             throw new RespireProtocolException("Unexpected sorted-set pop entries shape.");
+        }
+
         foreach (ref readonly var pair in entries.AsArray())
+        {
             _ = PopReplyElements(in pair, 2);
+        }
     }
 
     private static ReadOnlySpan<RespValue> PopReplyElements(in RespValue reply, int count)
     {
         if (reply.Type != RespireDataType.Array || reply.AsArray().Length != count)
+        {
             throw new RespireProtocolException("Unexpected sorted-set pop reply shape.");
+        }
+
         return reply.AsArray();
     }
 }

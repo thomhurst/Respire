@@ -99,6 +99,7 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
     // CI runs the shared typed scenarios with each protocol; explicit per-test choices still override it.
     public string ConnectionString =>
         $"redis://{Host}:{Port}/{SharedDatabase}?protocol={TestProtocol}&keyPrefix={Uri.EscapeDataString(KeyPrefix)}";
+
     private static string TestProtocol => Environment.GetEnvironmentVariable("RESPIRE_TEST_PROTOCOL") switch
     {
         null or "" => "auto",
@@ -112,7 +113,9 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
 
     /// <summary>A StackExchange.Redis configuration for <see cref="IsolatedDatabase"/>.</summary>
     public string IsolatedStackExchangeConnectionString => $"{Host}:{Port},defaultDatabase={IsolatedDatabase},allowAdmin=true";
+
     public string Host => Container.Hostname;
+
     public int Port => Container.GetMappedPublicPort(RedisPort);
 
     public async Task InitializeAsync()
@@ -151,6 +154,7 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
         }
 
         var database = lease.Value;
+
         if (_container is not null)
         {
             // A database that could not be emptied stays out of the pool, so no later test inherits its keys.
@@ -167,14 +171,25 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
     {
         await using var client = await RespireClient.ConnectAsync($"redis://{Host}:{Port}/{database}").ConfigureAwait(false);
         var cursor = "0";
+
         do
         {
             using var page = await client.ExecuteAsync("SCAN", cursor, "COUNT", 1000).ConfigureAwait(false);
             cursor = page[0].AsString()!;
             var keys = page[1];
-            if (keys.Count == 0) continue;
+
+            if (keys.Count == 0)
+            {
+                continue;
+            }
+
             var arguments = new RespireValue[keys.Count];
-            for (var index = 0; index < keys.Count; index++) arguments[index] = keys[index].AsBytes();
+
+            for (var index = 0; index < keys.Count; index++)
+            {
+                arguments[index] = keys[index].AsBytes();
+            }
+
             using var deleted = await client.ExecuteAsync("UNLINK", arguments).ConfigureAwait(false);
         }
         while (cursor != "0");

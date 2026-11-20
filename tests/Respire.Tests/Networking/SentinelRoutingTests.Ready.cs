@@ -29,8 +29,11 @@ public partial class SentinelRoutingTests
         var generation = client.Core.Sentinel!.Current!;
         await Assert.That(generation.IsRetired).IsFalse();
         await Assert.That(generation.Multiplexer.IsInitialized && generation.Multiplexer.IsConnected).IsTrue();
+
         if (Environment.GetEnvironmentVariable("TUNIT_DISABLE_HTML_REPORTER") == "true")
+        {
             await Assert.That(RespireTelemetry.IsOperationEnabled("GET")).IsFalse();
+        }
 
         switch (shape)
         {
@@ -50,7 +53,10 @@ public partial class SentinelRoutingTests
                 await VerifySourceAsync(client.SendAsync("GET", new Cmd1(Verbs.Get, "ready"), default),
                     "PendingResponseSource", "$5\r\nvalue\r\n"u8.ToArray(), static value =>
                     {
-                        using (value) return value.AsSpan().SequenceEqual("value"u8);
+                        using (value)
+                        {
+                            return value.AsSpan().SequenceEqual("value"u8);
+                        }
                     });
                 break;
             default:
@@ -80,7 +86,10 @@ public partial class SentinelRoutingTests
                 // uninstrumented CI lane disables that reporter to verify native sources;
                 // ordinary test runs must still retain their instrumented outer wrappers.
                 if (RespireTelemetry.IsOperationEnabled(shape == "integer" ? "INCR" : "GET"))
+                {
                     expectedSource = shape == "raw" ? "StateMachineBox" : "PooledResponseSource";
+                }
+
                 await Assert.That(source?.GetType().Name.Split('`')[0]).IsEqualTo(expectedSource);
             }
             finally
@@ -116,8 +125,13 @@ public partial class SentinelRoutingTests
             : Options(primary.Port) with { SentinelPrimaryName = null };
 #pragma warning disable RESP010 // Each scenario owns isolated Sentinel routing and generation state; sharing a client would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(options);
+
 #pragma warning restore RESP010
-        if (sentinel is not null) await WaitForInitialSentinelValidationAsync(client, sentinel);
+        if (sentinel is not null)
+        {
+            await WaitForInitialSentinelValidationAsync(client, sentinel);
+        }
+
         var operation = shape == "integer" ? "INCR" : shape == "raw" ? "CONTROL" : "GET";
         var expectsAsync = useSentinel || RespireTelemetry.IsOperationEnabled(operation);
         using var caller = new CancellationTokenSource();
@@ -125,6 +139,7 @@ public partial class SentinelRoutingTests
         // not manufacture another token or require the supplied token to be canceled.
         Exception failure = cancellation ? new OperationCanceledException(caller.Token) : new InvalidOperationException("write control");
         var command = new ReadyWriteFailureCommand(failure);
+
         switch (shape)
         {
             case "string":
@@ -142,23 +157,37 @@ public partial class SentinelRoutingTests
             default:
                 throw new ArgumentOutOfRangeException(nameof(shape));
         }
+
         await Assert.That(primary.ReceivedCommands.All(command => command == "ROLE")).IsTrue();
 
         async Task VerifyFailureAsync<T>(Func<ValueTask<T>> send)
         {
             ValueTask<T> response;
-            try { response = send(); }
+
+            try
+            {
+                response = send();
+            }
             catch (Exception error)
             {
-                if (expectsAsync) throw;
+                if (expectsAsync)
+                {
+                    throw;
+                }
+
                 await Assert.That(error).IsSameReferenceAs(failure);
                 return;
             }
             // Consume even an unexpected asynchronous result so a failed control cannot leak it.
             var task = response.AsTask();
             Exception? observed = null;
-            try { await task; }
+
+            try
+            {
+                await task;
+            }
             catch (Exception error) { observed = error; }
+
             await Assert.That(expectsAsync).IsTrue();
             await Assert.That(observed).IsSameReferenceAs(failure);
             await Assert.That(task.IsCanceled).IsEqualTo(cancellation);
@@ -194,8 +223,12 @@ public partial class SentinelRoutingTests
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static bool ConsumeReadyFailureControl(ValueTask<int> response, WeakReference expected)
     {
-        try { response.GetAwaiter().GetResult(); }
+        try
+        {
+            response.GetAwaiter().GetResult();
+        }
         catch (Exception error) { return ReferenceEquals(error, expected.Target); }
+
         return false;
     }
 
@@ -230,11 +263,22 @@ public partial class SentinelRoutingTests
         {
             switch (shape)
             {
-                case "string": await client.Strings.GetStringAsync("accepted").AsTask().WaitAsync(Limit); break;
-                case "bytes": await client.Strings.GetBytesAsync("accepted").AsTask().WaitAsync(Limit); break;
-                case "integer": await client.Strings.IncrementAsync("accepted").AsTask().WaitAsync(Limit); break;
-                case "raw": using (await client.SendAsync("GET", new Cmd1(Verbs.Get, "accepted"), default).AsTask().WaitAsync(Limit)) { } break;
-                default: throw new ArgumentOutOfRangeException(nameof(shape));
+                case "string":
+                    await client.Strings.GetStringAsync("accepted").AsTask().WaitAsync(Limit);
+                    break;
+                case "bytes":
+                    await client.Strings.GetBytesAsync("accepted").AsTask().WaitAsync(Limit);
+                    break;
+                case "integer":
+                    await client.Strings.IncrementAsync("accepted").AsTask().WaitAsync(Limit);
+                    break;
+                case "raw":
+                    using (await client.SendAsync("GET", new Cmd1(Verbs.Get, "accepted"), default).AsTask().WaitAsync(Limit))
+                    {
+                    }
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(shape));
             }
         }).Throws<RespireServerException>();
 
@@ -248,6 +292,7 @@ public partial class SentinelRoutingTests
     private readonly struct ReadyWriteFailureCommand(Exception failure) : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer) => throw failure;
     }
 }

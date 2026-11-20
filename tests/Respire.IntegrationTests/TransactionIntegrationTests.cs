@@ -15,7 +15,8 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespireProtocol)protocol };
+            with
+        { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         var key = $"tx:readonly:{Guid.NewGuid():N}";
         await client.SetAsync(key, "before");
@@ -23,7 +24,12 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
         var result = await client.RunTransactionAsync([key], async (_, token) =>
         {
             var value = await client.GetStringAsync(key, token);
-            if (++attempts == 1) await client.SetAsync(key, "after", cancellationToken: token);
+
+            if (++attempts == 1)
+            {
+                await client.SetAsync(key, "after", cancellationToken: token);
+            }
+
             return value;
         });
         result.Should().Be("after");
@@ -39,7 +45,8 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespireProtocol)protocol };
+            with
+        { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await client.DeleteAsync("tx:key", "tx:counter");
 
@@ -72,7 +79,8 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespireProtocol)protocol };
+            with
+        { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await client.DeleteAsync("tx:discarded");
         var transaction = client.CreateTransaction();
@@ -99,7 +107,8 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespireProtocol)protocol };
+            with
+        { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await client.DeleteAsync("tx:err:applied");
         await client.SetAsync("tx:err:string", "not-a-number");
@@ -131,10 +140,12 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespireProtocol)protocol };
+            with
+        { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         var transaction = client.CreateTransaction();
         var pendings = new RespirePending<bool>[100];
+
         for (var i = 0; i < 100; i++)
         {
             pendings[i] = transaction.Set($"tx:bulk:{i}", $"value-{i}");
@@ -156,7 +167,8 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespireProtocol)protocol };
+            with
+        { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await client.DeleteAsync("tx:concurrent:counter");
 
@@ -169,6 +181,7 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
 
         var transaction = client.CreateTransaction();
         var pendings = new RespirePending<long>[10];
+
         for (var i = 0; i < 10; i++)
         {
             pendings[i] = transaction.Increment("tx:concurrent:counter");
@@ -192,7 +205,8 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespireProtocol)protocol };
+            with
+        { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await client.SetAsync("tx:watched", "initial");
 
@@ -222,7 +236,8 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespireProtocol)protocol };
+            with
+        { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await client.SetAsync("tx:watched:success", "initial");
 

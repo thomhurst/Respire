@@ -36,6 +36,7 @@ public class SortedSetBulkInputTests(RedisTestContainer fixture)
         ];
 
         long added;
+
         if (mode == 0)
         {
             using var cancellation = new CancellationTokenSource();

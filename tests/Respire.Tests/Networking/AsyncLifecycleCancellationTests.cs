@@ -25,10 +25,13 @@ public class AsyncLifecycleCancellationTests
             attemptStarted.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return CleanupAttemptResult.Succeeded;
-        }, null, TimeSpan.FromMinutes(1), TimeSpan.Zero, TimeSpan.Zero, _ => { });
+        }, null, TimeSpan.FromMinutes(1), TimeSpan.Zero, TimeSpan.Zero, _ =>
+        {
+        });
 
         await attemptStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var invokeDisposal = Task.Run(() => disposalReturned.TrySetResult(queue.DisposeAsync().AsTask()));
+
         try
         {
             await callbackStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));

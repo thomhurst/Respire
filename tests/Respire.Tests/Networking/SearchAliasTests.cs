@@ -76,6 +76,7 @@ public class SearchAliasTests
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
 #pragma warning restore RESP010
         var search = client.Search;
+
         foreach (var name in new[] { null, "", " " })
         {
             Func<Task>[] calls = [
@@ -85,9 +86,13 @@ public class SearchAliasTests
                 () => search.UpdateAliasAsync("alias", name!).AsTask(),
                 () => search.DeleteAliasAsync(name!).AsTask(),
                 () => search.ListAliasesAsync(name!).AsTask()];
+
             foreach (var call in calls)
+            {
                 await Assert.That(call).Throws<ArgumentException>();
+            }
         }
+
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT."))).IsFalse();
     }
 
@@ -107,6 +112,7 @@ public class SearchAliasTests
             () => search.AddAliasAsync("alias", "idx").AsTask(),
             () => search.UpdateAliasAsync("alias", "idx").AsTask(),
             () => search.DeleteAliasAsync("alias").AsTask()];
+
         foreach (var call in calls)
         {
             var error = await Assert.That(call).Throws<RespireServerException>();
@@ -132,8 +138,12 @@ public class SearchAliasTests
             () => search.UpdateAliasAsync("alias", "idx").AsTask(),
             () => search.DeleteAliasAsync("alias").AsTask(),
         ];
+
         foreach (var call in calls)
+        {
             await Assert.That(call).ThrowsExactly<NotSupportedException>();
+        }
+
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.", StringComparison.Ordinal))).IsFalse();
     }
 
@@ -167,6 +177,7 @@ public class SearchAliasTests
             () => client.Search.UpdateAliasAsync("alias", "next").AsTask(),
             () => client.Search.DeleteAliasAsync("alias").AsTask(),
         ];
+
         for (var index = 0; index < mutations.Length; index++)
         {
             await mutations[index]();

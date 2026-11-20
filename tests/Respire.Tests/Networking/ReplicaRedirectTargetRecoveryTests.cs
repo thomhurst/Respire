@@ -42,6 +42,7 @@ public class ReplicaRedirectTargetRecoveryTests
         var before = client.ClientSideCache!.GetStatistics().ContinuityFlushes;
         Volatile.Write(ref rejectHandshake, !cancelWaiter);
         target.CloseConnections();
+
         try
         {
             await failed.Task.WaitAsync(Limit);
@@ -53,14 +54,20 @@ public class ReplicaRedirectTargetRecoveryTests
             // This value is covered by the source's uninterrupted tracking connection.
             // Recovery waiters must not repeat the target socket's completed loss fence.
             await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("value");
+
             if (cancelWaiter)
             {
                 cancellation.Cancel();
-                var error = await Assert.That(async () => { using var lease = await second.WaitAsync(Limit); })
+                var error = await Assert.That(async () =>
+                    {
+                        using var lease = await second.WaitAsync(Limit);
+                    })
                     .Throws<OperationCanceledException>();
                 await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
             }
+
             release.TrySetResult();
+
             if (cancelWaiter)
             {
                 using var recovered = await third.WaitAsync(Limit);
@@ -82,9 +89,15 @@ public class ReplicaRedirectTargetRecoveryTests
             }
             else
             {
-                await Assert.That(async () => { using var lease = await second.WaitAsync(Limit); })
+                await Assert.That(async () =>
+                    {
+                        using var lease = await second.WaitAsync(Limit);
+                    })
                     .Throws<RespireReconnectLimitException>();
-                await Assert.That(async () => { using var lease = await third.WaitAsync(Limit); })
+                await Assert.That(async () =>
+                    {
+                        using var lease = await third.WaitAsync(Limit);
+                    })
                     .Throws<RespireReconnectLimitException>();
                 await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - before).IsEqualTo(1L);
                 await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
@@ -117,6 +130,7 @@ public class ReplicaRedirectTargetRecoveryTests
         using var cancellation = new CancellationTokenSource();
         var before = client.ClientSideCache!.GetStatistics().ContinuityFlushes;
         var first = targets.AcquireAsync(endpoint, default).AsTask();
+
         try
         {
             await started.Task.WaitAsync(Limit);
@@ -127,19 +141,40 @@ public class ReplicaRedirectTargetRecoveryTests
             await Assert.That(second.IsCompleted).IsFalse();
             await Assert.That(third.IsCompleted).IsFalse();
             await Assert.That(await client.GetStringAsync("fresh")).IsEqualTo("value");
-            if (cancelWaiter) cancellation.Cancel();
-            release.TrySetResult();
 
-            await Assert.That(async () => { using var lease = await first.WaitAsync(Limit); }).Throws<RespireConnectionException>();
             if (cancelWaiter)
             {
-                var error = await Assert.That(async () => { using var lease = await second.WaitAsync(Limit); })
+                cancellation.Cancel();
+            }
+
+            release.TrySetResult();
+
+            await Assert.That(async () =>
+            {
+                using var lease = await first.WaitAsync(Limit);
+            }).Throws<RespireConnectionException>();
+
+            if (cancelWaiter)
+            {
+                var error = await Assert.That(async () =>
+                    {
+                        using var lease = await second.WaitAsync(Limit);
+                    })
                     .Throws<OperationCanceledException>();
                 await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
             }
             else
-                await Assert.That(async () => { using var lease = await second.WaitAsync(Limit); }).Throws<RespireConnectionException>();
-            await Assert.That(async () => { using var lease = await third.WaitAsync(Limit); }).Throws<RespireConnectionException>();
+            {
+                await Assert.That(async () =>
+                {
+                    using var lease = await second.WaitAsync(Limit);
+                }).Throws<RespireConnectionException>();
+            }
+
+            await Assert.That(async () =>
+            {
+                using var lease = await third.WaitAsync(Limit);
+            }).Throws<RespireConnectionException>();
 
             await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes - before).IsEqualTo(1L);
             await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
@@ -191,14 +226,21 @@ public class ReplicaRedirectTargetRecoveryTests
         original.PendingCommandsFailing += () => failed.TrySetResult();
         var pending = original.SendAsync(new RawCommand(RespCommands.Ping)).AsTask();
         using var timeout = new CancellationTokenSource(Limit);
-        while (!target.ReceivedCommands.Contains("PING")) await Task.Delay(10, timeout.Token);
+
+        while (!target.ReceivedCommands.Contains("PING"))
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         var before = client.ClientSideCache!.GetStatistics().ContinuityFlushes;
         var fenced = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, observer) =>
         {
             if (ReferenceEquals(instrument, RespireTelemetry.ClientCacheContinuityFlushes))
+            {
                 observer.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, _, _) => fenced.TrySetResult());
         listener.Start();
@@ -207,11 +249,18 @@ public class ReplicaRedirectTargetRecoveryTests
         {
             // Both source and target lifetime workers must register their delays before
             // advancing: a late registration could otherwise miss this clock advance.
-            while (clock.ActiveTimers < 2) await Task.Delay(10, timeout.Token);
+            while (clock.ActiveTimers < 2)
+            {
+                await Task.Delay(10, timeout.Token);
+            }
             // Keep the source's recycle unpublished so only the target's fence is measured.
             source.SuppressReply = command => command.StartsWith("HELLO 3", StringComparison.Ordinal);
             clock.Advance(Limit);
-            while (original.IsAcceptingCommands) await Task.Delay(10, timeout.Token);
+
+            while (original.IsAcceptingCommands)
+            {
+                await Task.Delay(10, timeout.Token);
+            }
         }
         else
         {
@@ -289,9 +338,11 @@ public class ReplicaRedirectTargetRecoveryTests
         await using var source = Source(target.Port);
         await using var client = await RespireClient.ConnectAsync(Options(source.Port, retry: true) with
         {
-            CommandTimeout = TimeSpan.FromSeconds(1), MaintenanceRelaxedTimeout = Limit,
+            CommandTimeout = TimeSpan.FromSeconds(1),
+            MaintenanceRelaxedTimeout = Limit,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
-            CircuitBreaker = circuit ? new() : null, MaxInflightCommands = 2,
+            CircuitBreaker = circuit ? new() : null,
+            MaxInflightCommands = 2,
         });
         await Assert.That(await client.GetStringAsync("seed")).IsEqualTo("value");
         var activities = new ConcurrentQueue<Activity>();
@@ -306,13 +357,27 @@ public class ReplicaRedirectTargetRecoveryTests
         var original = lease!.Connection;
         await target.SendRawAsync(Bytes(">3\r\n+MIGRATING\r\n:1\r\n:10\r\n"));
         using var timeout = new CancellationTokenSource(Limit + Limit);
-        while (!original.HasMaintenanceWindow) await Task.Delay(10, timeout.Token);
+
+        while (!original.HasMaintenanceWindow)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         var accepted = original.SendAsync(new RawCommand(RespCommands.Ping)).AsTask();
-        while (!target.ReceivedCommands.Contains("PING")) await Task.Delay(10, timeout.Token);
+
+        while (!target.ReceivedCommands.Contains("PING"))
+        {
+            await Task.Delay(10, timeout.Token);
+        }
 
         // A tracked GET needs two ring slots, so it waits behind the accepted PING.
         var pending = client.GetStringAsync("key", timeout.Token).AsTask();
-        while (!source.ReceivedCommands.Contains("GET key")) await Task.Delay(10, timeout.Token);
+
+        while (!source.ReceivedCommands.Contains("GET key"))
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         await Task.Delay(TimeSpan.FromMilliseconds(1500), timeout.Token);
         await Assert.That(pending.IsCompleted).IsFalse();
         var node = original.Multiplexer!;
@@ -350,9 +415,17 @@ public class ReplicaRedirectTargetRecoveryTests
         var exhausted = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.Endpoint.Port != target.Port) return;
+            if (change.Endpoint.Port != target.Port)
+            {
+                return;
+            }
+
             changes.Enqueue(change);
-            if (change.ReconnectExhausted) exhausted.TrySetResult(change);
+
+            if (change.ReconnectExhausted)
+            {
+                exhausted.TrySetResult(change);
+            }
         };
 
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
@@ -391,19 +464,32 @@ public class ReplicaRedirectTargetRecoveryTests
         var connected = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.Endpoint.Port != target.Port) return;
-            if (change.SourceState == RespireConnectionState.Reconnecting) reconnecting.TrySetResult(change);
-            if (change.SourceState == RespireConnectionState.Connected) connected.TrySetResult(change);
+            if (change.Endpoint.Port != target.Port)
+            {
+                return;
+            }
+
+            if (change.SourceState == RespireConnectionState.Reconnecting)
+            {
+                reconnecting.TrySetResult(change);
+            }
+
+            if (change.SourceState == RespireConnectionState.Connected)
+            {
+                connected.TrySetResult(change);
+            }
         };
         target.CloseConnections();
         var started = await reconnecting.Task.WaitAsync(Limit);
         var recovered = await connected.Task.WaitAsync(Limit);
+
         foreach (var change in new[] { started, recovered })
         {
             await Assert.That(change.ReconnectSource).IsEqualTo(RespireReconnectSource.Dedicated);
             await Assert.That(change.State).IsEqualTo(RespireConnectionState.Connected);
             await Assert.That(change.ReconnectExhausted).IsFalse();
         }
+
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(target.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(2);
     }
@@ -430,8 +516,12 @@ public class ReplicaRedirectTargetRecoveryTests
 
     private static RespireOptions Options(int port, bool retry) => new()
     {
-        Endpoints = [new("127.0.0.1", port)], Connections = 1, EnableReplicaRedirects = true,
-        ClientSideCache = new(), RetryPolicy = retry ? new() : null, CommandTimeout = Limit,
+        Endpoints = [new("127.0.0.1", port)],
+        Connections = 1,
+        EnableReplicaRedirects = true,
+        ClientSideCache = new(),
+        RetryPolicy = retry ? new() : null,
+        CommandTimeout = Limit,
         ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
     };
 
@@ -443,7 +533,9 @@ public class ReplicaRedirectTargetRecoveryTests
 
     private static byte[] TargetReply(string command) => command.StartsWith("GET ", StringComparison.Ordinal)
         ? Bytes("$5\r\nvalue\r\n") : Handshake(command);
+
     private static byte[] Handshake(string command) => command.StartsWith("HELLO 3", StringComparison.Ordinal)
         ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n") : FakeRespServer.OkReply;
+
     private static byte[] Bytes(string text) => Encoding.UTF8.GetBytes(text);
 }

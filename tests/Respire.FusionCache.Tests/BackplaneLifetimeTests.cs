@@ -27,6 +27,7 @@ public class BackplaneLifetimeTests(RedisTestContainer fixture)
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var unsubscribe = backplane.UnsubscribeAsync().AsTask();
         Task dispose = Task.CompletedTask;
+
         try
         {
             await Assert.That(async () => await backplane.SubscribeAsync(Options(_ => default)))
@@ -36,6 +37,7 @@ public class BackplaneLifetimeTests(RedisTestContainer fixture)
             await Assert.That(dispose.IsCompleted).IsFalse();
         }
         finally { release.TrySetResult(); }
+
         await Task.WhenAll(unsubscribe, dispose).WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(finished).IsTrue();
         await client.SetAsync(Guid.NewGuid().ToString(), "shared-client-survives");
@@ -89,7 +91,23 @@ public class BackplaneLifetimeTests(RedisTestContainer fixture)
         await using var backplane = new RespireFusionCacheBackplane(client);
         await Assert.That(() => new RespireFusionCacheBackplane(null!)).ThrowsExactly<ArgumentNullException>();
         await Assert.That(async () => await backplane.SubscribeAsync(null!)).ThrowsExactly<ArgumentNullException>();
-        await Assert.That(async () => await backplane.SubscribeAsync(new("test", "instance", null, _ => { }, _ => { }, null, null)))
+        await Assert.That(
+                async () => await backplane.SubscribeAsync(
+                    new(
+                        "test",
+                        "instance",
+                        null,
+                        _ =>
+                        {
+                        },
+                        _ =>
+                        {
+                        },
+                        null,
+                        null
+                    )
+                )
+            )
             .ThrowsExactly<ArgumentNullException>();
         await Assert.That(async () => await backplane.SubscribeAsync(new("test", "instance", "channel", null, null, null, null)))
             .ThrowsExactly<ArgumentException>();
@@ -101,6 +119,19 @@ public class BackplaneLifetimeTests(RedisTestContainer fixture)
     }
 
     private static BackplaneSubscriptionOptions Options(Func<BackplaneMessage, ValueTask> receive)
-        => new("test", "instance", "fusion:" + Guid.NewGuid(), _ => { }, _ => { }, _ => default, receive);
+        => new(
+            "test",
+            "instance",
+            "fusion:" + Guid.NewGuid(),
+            _ =>
+            {
+            },
+            _ =>
+            {
+            },
+            _ => default,
+            receive
+        );
+
     private static BackplaneMessage Message() => BackplaneMessage.CreateForEntrySet("source", "key", DateTime.UtcNow.Ticks);
 }

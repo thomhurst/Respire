@@ -40,10 +40,25 @@ public class ScriptInterfaceTests
 
     private sealed class SpanOnlyScripts(RespireKey[] expectedKeys, RespireValue[] expectedArgs) : IRespireScriptCommands
     {
-        public int Calls { get; private set; }
-        public bool OriginalStorage { get; private set; }
-        public RespireScript? Script { get; private set; }
-        public CancellationToken CancellationToken { get; private set; }
+        public int Calls
+        {
+            get; private set;
+        }
+
+        public bool OriginalStorage
+        {
+            get; private set;
+        }
+
+        public RespireScript? Script
+        {
+            get; private set;
+        }
+
+        public CancellationToken CancellationToken
+        {
+            get; private set;
+        }
 
         public ValueTask<RespireResult> ExecuteSpanAsync(
             RespireScript script, ReadOnlySpan<RespireKey> keys, ReadOnlySpan<RespireValue> args,

@@ -74,8 +74,12 @@ internal sealed partial class ServerCommands
         var connection = await client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
         using var reply = await client.SendAdmittedOnPinnedConnectionAsync("CLIENT ID", connection,
             new ClientIdCommand(), cancellationToken, observation).ConfigureAwait(false);
+
         if (reply.Type != RespireDataType.Integer || reply.AsInteger() <= 0)
+        {
             throw new RespireProtocolException("CLIENT ID must return a positive integer.");
+        }
+
         return new RespireServerClientConnection(client, connection, reply.AsInteger());
     }
 
@@ -83,6 +87,7 @@ internal sealed partial class ServerCommands
     {
         var owner = DispatchResponseSource<RespireServerResult<RespireServerClientInfo[]>[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(FanOutAsync("CLIENT LIST", new Cmd(Verbs.ClientList), cancellationToken,
@@ -94,10 +99,17 @@ internal sealed partial class ServerCommands
     internal static RespireServerClientInfo ParseClientInfo(in RespValue value)
     {
         if (value.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString or RespireDataType.VerbatimString))
+        {
             throw new RespireProtocolException("CLIENT INFO must return client information text.");
+        }
+
         var rows = ParseClientList(in value);
+
         if (rows.Length != 1 || rows[0].Id <= 0)
+        {
             throw new RespireProtocolException("CLIENT INFO must return exactly one identified client.");
+        }
+
         return rows[0];
     }
 }
@@ -132,9 +144,17 @@ public sealed partial class RespireServerClientConnection
     }
 
     /// <summary>The CLIENT ID captured when this handle was created. IDs are local to Endpoint.</summary>
-    public long Id { get; }
+    public long Id
+    {
+        get;
+    }
+
     /// <summary>The endpoint of the pinned socket.</summary>
-    public RespireEndpoint Endpoint { get; }
+    public RespireEndpoint Endpoint
+    {
+        get;
+    }
+
     /// <summary>Whether the original socket is still connected; this is a point-in-time observation.</summary>
     public bool IsConnected => !_client.Core.Disposed && _connection.IsConnected;
 
@@ -165,6 +185,7 @@ public sealed partial class RespireServerClientConnection
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             EnsureAdmin("CLIENT SETINFO");
@@ -185,6 +206,7 @@ public sealed partial class RespireServerClientConnection
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             EnsureAdmin("CLIENT NO-EVICT");
@@ -198,6 +220,7 @@ public sealed partial class RespireServerClientConnection
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             EnsureAdmin("CLIENT NO-TOUCH");
@@ -213,11 +236,16 @@ public sealed partial class RespireServerClientConnection
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             EnsureAdmin("CLIENT PAUSE");
+
             if (duration < TimeSpan.Zero || duration.Ticks % TimeSpan.TicksPerMillisecond != 0)
+            {
                 throw new ArgumentOutOfRangeException(nameof(duration), "Pause duration must be nonnegative whole milliseconds.");
+            }
+
             var argument = mode switch
             {
                 RespireClientPauseMode.Write => "WRITE",
@@ -234,6 +262,7 @@ public sealed partial class RespireServerClientConnection
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             EnsureAdmin("CLIENT UNPAUSE");
@@ -268,7 +297,10 @@ public sealed partial class RespireServerClientConnection
             static (RespireServerClientConnection _, in RespValue reply) =>
             {
                 if (reply.Type != RespireDataType.Integer || reply.AsInteger() is not (0 or 1))
+                {
                     throw new RespireProtocolException("CLIENT UNBLOCK must return 0 or 1.");
+                }
+
                 return reply.AsInteger() == 1;
             }, observation).ConfigureAwait(false);
     }
@@ -287,18 +319,36 @@ public sealed partial class RespireServerClientConnection
     private static RespireClientTrackingInfo ParseTrackingInfo(in RespValue reply)
     {
         if (reply.Type is not (RespireDataType.Array or RespireDataType.Map))
+        {
             throw new RespireProtocolException("CLIENT TRACKINGINFO must return field/value pairs.");
+        }
+
         var parts = reply.AsArray();
-        if (parts.Length % 2 != 0) throw new RespireProtocolException("CLIENT TRACKINGINFO contains an incomplete field.");
+
+        if (parts.Length % 2 != 0)
+        {
+            throw new RespireProtocolException("CLIENT TRACKINGINFO contains an incomplete field.");
+        }
+
         var fields = new Dictionary<string, RespireResult>(StringComparer.Ordinal);
+
         for (var index = 0; index < parts.Length; index += 2)
+        {
             fields.Add(parts[index].AsString(), RespireResult.CreateOwned(in parts[index + 1]));
+        }
+
         if (!fields.TryGetValue("flags", out var flags) || !fields.TryGetValue("redirect", out var redirect)
             || !fields.TryGetValue("prefixes", out var prefixes))
+        {
             throw new RespireProtocolException("CLIENT TRACKINGINFO is missing required fields.");
+        }
+
         if (flags.Type is not (RespireDataType.Array or RespireDataType.Set) || prefixes.Type is not (RespireDataType.Array or RespireDataType.Set)
             || redirect.Type != RespireDataType.Integer)
+        {
             throw new RespireProtocolException("CLIENT TRACKINGINFO contains invalid field types.");
+        }
+
         return new(flags.Select(value => value.AsString()).ToArray(), redirect.AsInteger(),
             prefixes.Select(value => value.AsBytes()).ToArray(), fields);
     }
@@ -313,7 +363,11 @@ public sealed partial class RespireServerClientConnection
         return await ConvertAsync("ECHO", new Cmd1(Echo, value), cancellationToken,
             static (RespireServerClientConnection _, in RespValue reply) =>
             {
-                if (reply.Type != RespireDataType.BulkString) throw new RespireProtocolException("ECHO must return a bulk string.");
+                if (reply.Type != RespireDataType.BulkString)
+                {
+                    throw new RespireProtocolException("ECHO must return a bulk string.");
+                }
+
                 return reply.AsSpan().ToArray();
             }, observation: observation).ConfigureAwait(false);
     }
@@ -343,7 +397,8 @@ public sealed partial class RespireServerClientConnection
     private void EnsureAdmin(string operation)
     {
         if (!_client.Core.Options.AllowAdmin)
+        {
             throw new NotSupportedException($"{operation} requires RespireOptions.AllowAdmin = true.");
+        }
     }
 }
-

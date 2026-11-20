@@ -1,7 +1,7 @@
-using Respire.Aspire;
+using global::Respire.Caching;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
-using global::Respire.Caching;
+using Respire.Aspire;
 
 namespace Microsoft.Extensions.Hosting;
 
@@ -14,8 +14,16 @@ public static class AspireRespireHybridCachingExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.AddDistributedCache(configureCache);
-        if (configureHybrid is null) builder.HostBuilder.Services.AddHybridCache();
-        else builder.HostBuilder.Services.AddHybridCache(configureHybrid);
+
+        if (configureHybrid is null)
+        {
+            builder.HostBuilder.Services.AddHybridCache();
+        }
+        else
+        {
+            builder.HostBuilder.Services.AddHybridCache(configureHybrid);
+        }
+
         return builder;
     }
 }

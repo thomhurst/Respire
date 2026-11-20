@@ -28,15 +28,21 @@ public partial class UnitRetryLifetimeTests
     public async Task DisposingClientDuringUnitRetryWaitFaultsUnitWithoutResend(string topology, bool transaction, string phase)
     {
         var attempts = 0;
+
         byte[]? Fail(FakeRespServer server)
         {
             Interlocked.Increment(ref attempts);
-            if (phase == "backoff") return transaction ? "*1\r\n-TRYAGAIN busy\r\n"u8.ToArray() : TryAgain;
+
+            if (phase == "backoff")
+            {
+                return transaction ? "*1\r\n-TRYAGAIN busy\r\n"u8.ToArray() : TryAgain;
+            }
             // The unit may have executed. A read-only unit still permits the resend, which
             // must wait for a replacement connection that the stream factory holds back.
             server.CloseConnections();
             return null;
         }
+
         await using var primary = UnitServer((command, server) => command == "GET key" ? Fail(server) : null, Fail);
         await using var sentinel = topology == "sentinel" ? Sentinel(primary.Port) : null;
         var client = await RespireClient.ConnectAsync(Options(sentinel ?? primary, sentinel is not null) with
@@ -45,8 +51,13 @@ public partial class UnitRetryLifetimeTests
             TestingStreamFactory = async (host, port, token) =>
             {
                 // Hold every replacement dial to the primary until the client cancels it.
-                if (port == primary.Port && Volatile.Read(ref attempts) != 0) await Task.Delay(Timeout.Infinite, token);
+                if (port == primary.Port && Volatile.Read(ref attempts) != 0)
+                {
+                    await Task.Delay(Timeout.Infinite, token);
+                }
+
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, token);
@@ -59,6 +70,7 @@ public partial class UnitRetryLifetimeTests
                 : new() { InitialBackoff = TimeSpan.Zero },
         });
         Task<(string? Value, Exception? Error)> running;
+
         try
         {
             running = ReadUnitAsync(client, transaction);
@@ -72,6 +84,7 @@ public partial class UnitRetryLifetimeTests
             await client.DisposeAsync();
             throw;
         }
+
         var disposing = client.DisposeAsync().AsTask();
         var (value, error) = await running.WaitAsync(TimeSpan.FromSeconds(5));
         await disposing.WaitAsync(TimeSpan.FromSeconds(5));
@@ -103,11 +116,13 @@ public partial class UnitRetryLifetimeTests
 #pragma warning disable RESP010 // Test-owned client isolates final-attempt conversion failure and release of the unit mutation fence.
         await using var client = await RespireClient.ConnectAsync(Options(server, sentinel: false) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins },
         });
 #pragma warning restore RESP010
         Exception? numberError;
+
         if (transaction)
         {
             await using var unit = client.CreateTransaction();
@@ -133,6 +148,7 @@ public partial class UnitRetryLifetimeTests
             await Assert.That(number.HasResult).IsFalse();
             numberError = number.Error;
         }
+
         await Assert.That(attempts).IsEqualTo(2);
         await Assert.That(numberError).IsNotNull();
         await Assert.That(numberError is RespireServerException or RespireConnectionException).IsFalse();
@@ -156,7 +172,11 @@ public partial class UnitRetryLifetimeTests
         var attempts = 0;
         await using var server = UnitServer((command, _) =>
         {
-            if (command == "GET key") return Interlocked.Increment(ref attempts) == 1 ? TryAgain : Value;
+            if (command == "GET key")
+            {
+                return Interlocked.Increment(ref attempts) == 1 ? TryAgain : Value;
+            }
+
             return command.StartsWith("GET i", StringComparison.Ordinal) ? Bulk("v" + command[5..]) : null;
         }, _ => Interlocked.Increment(ref attempts) == 1 ? "*1\r\n-TRYAGAIN busy\r\n"u8.ToArray() : "*1\r\n$5\r\nvalue\r\n"u8.ToArray());
 #pragma warning disable RESP010 // Test-owned client keeps the retry unit and independent commands on one connection to verify FIFO ownership.
@@ -171,6 +191,7 @@ public partial class UnitRetryLifetimeTests
         client.Core.UnitRetryClock = clock;
         var target = transaction ? "EXEC" : "GET key";
         var running = ReadUnitAsync(client, transaction);
+
         try
         {
             // Timer registration proves that the first failed attempt has been consumed and
@@ -180,7 +201,11 @@ public partial class UnitRetryLifetimeTests
                 .Select(index => client.GetStringAsync($"i{index}").AsTask())).WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(running.IsCompleted).IsFalse();
             await Assert.That(Volatile.Read(ref attempts)).IsEqualTo(1);
-            for (var index = 0; index < independent; index++) await Assert.That(during[index]).IsEqualTo($"v{index}");
+
+            for (var index = 0; index < independent; index++)
+            {
+                await Assert.That(during[index]).IsEqualTo($"v{index}");
+            }
 
             // Install the reply gate before allowing the resend. Its arrival callback proves
             // the retry is on the wire, independently of continuation scheduling speed.
@@ -200,12 +225,18 @@ public partial class UnitRetryLifetimeTests
 
             await Assert.That(error).IsNull();
             await Assert.That(value).IsEqualTo("value");
-            for (var index = 0; index < independent; index++) await Assert.That(after[index]).IsEqualTo($"v{index + independent}");
+
+            for (var index = 0; index < independent; index++)
+            {
+                await Assert.That(after[index]).IsEqualTo($"v{index + independent}");
+            }
+
             await Assert.That(attempts).IsEqualTo(2);
             // Each independent command was sent once, and none was swallowed by the unit attempts.
             var commands = server.ReceivedCommands.ToArray();
             var first = Array.IndexOf(commands, target);
             var second = Array.LastIndexOf(commands, target);
+
             for (var index = 0; index < independent * 2; index++)
             {
                 var position = Array.IndexOf(commands, $"GET i{index}");
@@ -228,7 +259,11 @@ public partial class UnitRetryLifetimeTests
         {
             await using var unit = client.CreateTransaction();
             var read = unit.GetString("key");
-            try { await unit.CommitAsync(); }
+
+            try
+            {
+                await unit.CommitAsync();
+            }
             catch (Exception error)
             {
                 // Every member reports the commit's final failure.
@@ -236,8 +271,10 @@ public partial class UnitRetryLifetimeTests
                 await Assert.That(member.GetType()).IsEqualTo(error.GetType());
                 return (null, error);
             }
+
             return (read.Result, null);
         }
+
         using var batch = client.CreateBatch();
         var value = batch.GetString("key");
         var result = await batch.TryExecuteAsync();
@@ -247,13 +284,21 @@ public partial class UnitRetryLifetimeTests
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!condition()) await Task.Delay(10, timeout.Token);
+
+        while (!condition())
+        {
+            await Task.Delay(10, timeout.Token);
+        }
     }
 
     private static async Task<Exception> Failure(Func<Task> operation)
     {
-        try { await operation(); }
+        try
+        {
+            await operation();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure.");
     }
 
@@ -267,12 +312,38 @@ public partial class UnitRetryLifetimeTests
         var transactions = new ConcurrentDictionary<int, bool>();
         server.ReplyOverride = (connection, command) =>
         {
-            if (command == "CLIENT ID") return ":1\r\n"u8.ToArray();
-            if (command.StartsWith("HELLO", StringComparison.Ordinal)) return "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
-            if (command == "ROLE") return "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
-            if (command == "MULTI") { transactions[connection] = true; return FakeRespServer.OkReply; }
-            if (command == "EXEC") { transactions[connection] = false; return exec(server); }
-            if (transactions.GetValueOrDefault(connection)) return "+QUEUED\r\n"u8.ToArray();
+            if (command == "CLIENT ID")
+            {
+                return ":1\r\n"u8.ToArray();
+            }
+
+            if (command.StartsWith("HELLO", StringComparison.Ordinal))
+            {
+                return "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
+            }
+
+            if (command == "ROLE")
+            {
+                return "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
+            }
+
+            if (command == "MULTI")
+            {
+                transactions[connection] = true;
+                return FakeRespServer.OkReply;
+            }
+
+            if (command == "EXEC")
+            {
+                transactions[connection] = false;
+                return exec(server);
+            }
+
+            if (transactions.GetValueOrDefault(connection))
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
             return reply(command, server);
         };
         return server;
@@ -291,8 +362,12 @@ public partial class UnitRetryLifetimeTests
 
     private static RespireOptions Options(FakeRespServer server, bool sentinel) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], SentinelPrimaryName = sentinel ? "mymaster" : null,
-        Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
-        CommandTimeout = TimeSpan.FromSeconds(5), RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
+        Endpoints = [new("127.0.0.1", server.Port)],
+        SentinelPrimaryName = sentinel ? "mymaster" : null,
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromSeconds(5),
+        RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };
 }

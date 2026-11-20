@@ -25,8 +25,18 @@ public class PubSubGapTests
     [Arguments(true, RespireSubscriptionKind.Sharded)]
     public async Task ReconnectAcknowledgementAndMessageInOneRead_YieldsGapFirst(bool push, RespireSubscriptionKind kind)
     {
-        var verb = kind switch { RespireSubscriptionKind.Pattern => "psubscribe", RespireSubscriptionKind.Sharded => "ssubscribe", _ => "subscribe" };
-        var messageVerb = kind switch { RespireSubscriptionKind.Pattern => "pmessage", RespireSubscriptionKind.Sharded => "smessage", _ => "message" };
+        var verb = kind switch
+        {
+            RespireSubscriptionKind.Pattern => "psubscribe",
+            RespireSubscriptionKind.Sharded => "ssubscribe",
+            _ => "subscribe"
+        };
+        var messageVerb = kind switch
+        {
+            RespireSubscriptionKind.Pattern => "pmessage",
+            RespireSubscriptionKind.Sharded => "smessage",
+            _ => "message"
+        };
         var prefix = push ? ">" : "*";
         var confirmation = $"{prefix}3\r\n${verb.Length}\r\n{verb}\r\n$2\r\nch\r\n:1\r\n";
         var pattern = kind == RespireSubscriptionKind.Pattern ? "$2\r\nch\r\n" : "";
@@ -52,7 +62,12 @@ public class PubSubGapTests
 
         using var cancel = new CancellationTokenSource();
         var stalled = client.SubscribeAsync("stalled", cancellationToken: cancel.Token).AsTask();
-        while (server.CommandsSeen < 2) await Task.Delay(10, deadline.Token);
+
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+
         await cancel.CancelAsync();
         await Assert.That(async () => await stalled).Throws<OperationCanceledException>();
         await Assert.That(await reader.MoveNextAsync()).IsTrue();
@@ -72,6 +87,7 @@ public class PubSubGapTests
     {
         static byte[] Reply(string name) => Encoding.ASCII.GetBytes(
             $"*3\r\n$9\r\nsubscribe\r\n$1\r\n{name}\r\n:1\r\n*3\r\n$7\r\nmessage\r\n$1\r\n{name}\r\n$1\r\n{name}\r\n");
+
         await using var server = new FakeRespServer(2, Reply("a"), Reply("b"));
         server.SuppressReply = command => command == "SUBSCRIBE stalled";
         // A test-owned client isolates subscription epochs and delivery gaps for these scripted replies.
@@ -85,16 +101,24 @@ public class PubSubGapTests
         await using var subscription = await client.SubscribeAsync(["a", "b"]);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
+
         foreach (var expected in new[] { "a", "b" })
         {
             await Assert.That(await reader.MoveNextAsync()).IsTrue();
             await Assert.That(reader.Current.Text).IsEqualTo(expected);
         }
+
         using var cancel = new CancellationTokenSource();
         var stalled = client.SubscribeAsync("stalled", cancellationToken: cancel.Token).AsTask();
-        while (server.CommandsSeen < 3) await Task.Delay(10, deadline.Token);
+
+        while (server.CommandsSeen < 3)
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+
         await cancel.CancelAsync();
         await Assert.That(async () => await stalled).Throws<OperationCanceledException>();
+
         foreach (var expected in new[] { "a", "b" })
         {
             await Assert.That(await reader.MoveNextAsync()).IsTrue();
@@ -116,7 +140,12 @@ public class PubSubGapTests
         buffer.Write(Message("d"));
         buffer.Complete();
         var items = new List<RespireMessage>();
-        await foreach (var item in buffer.ReadAllAsync()) items.Add(item);
+
+        await foreach (var item in buffer.ReadAllAsync())
+        {
+            items.Add(item);
+        }
+
         await Assert.That(items.Count).IsEqualTo(3);
         var gapIndex = overflow == RespireSubscriptionOverflow.DropOldest ? 0 : 2;
         await Assert.That(items[gapIndex].Kind).IsEqualTo(RespireMessageKind.Gap);
@@ -135,10 +164,20 @@ public class PubSubGapTests
         buffer.Write(Message("before"));
         var start = DateTimeOffset.UtcNow;
         buffer.WriteGap(new(RespireSubscriptionGapReason.Reconnect, start, start.AddSeconds(1)));
-        for (var i = 0; i < 100; i++) buffer.Write(Message("after"));
+
+        for (var i = 0; i < 100; i++)
+        {
+            buffer.Write(Message("after"));
+        }
+
         buffer.Complete();
         var items = new List<RespireMessage>();
-        await foreach (var item in buffer.ReadAllAsync()) items.Add(item);
+
+        await foreach (var item in buffer.ReadAllAsync())
+        {
+            items.Add(item);
+        }
+
         await Assert.That(items.Count).IsEqualTo(2);
         var marker = items.Single(item => item.Kind == RespireMessageKind.Gap);
         await Assert.That(marker.Gap!.Reason).IsEqualTo(RespireSubscriptionGapReason.Reconnect | RespireSubscriptionGapReason.BufferOverflow);
@@ -177,10 +216,12 @@ public class PubSubGapTests
         buffer.Write(Message("retained"));
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync();
+
         await using (var first = buffer.ReadAllAsync(cancelled.Token).GetAsyncEnumerator())
         {
             await Assert.That(async () => await first.MoveNextAsync()).Throws<OperationCanceledException>();
         }
+
         buffer.Complete();
         await using var next = buffer.ReadAllAsync().GetAsyncEnumerator();
         await Assert.That(await next.MoveNextAsync()).IsTrue();
@@ -207,7 +248,11 @@ public class PubSubGapTests
                 for (var i = 0; i < produced; i++)
                 {
                     buffer.Write(Message(i.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-                    if (i % 11 == 0) await Task.Yield();
+
+                    if (i % 11 == 0)
+                    {
+                        await Task.Yield();
+                    }
                 }
             }
             finally { buffer.Complete(); }
@@ -216,9 +261,13 @@ public class PubSubGapTests
         var consumed = 0;
         long discarded = 0;
         var ordered = true;
+
         await foreach (var message in buffer.ReadAllAsync(deadline.Token))
         {
-            if (message.Gap is { } gap) discarded += gap.DroppedMessages;
+            if (message.Gap is { } gap)
+            {
+                discarded += gap.DroppedMessages;
+            }
             else
             {
                 var current = int.Parse(message.Text, System.Globalization.CultureInfo.InvariantCulture);
@@ -227,6 +276,7 @@ public class PubSubGapTests
                 consumed++;
             }
         }
+
         await producer;
         await Assert.That(ordered).IsTrue();
         await Assert.That(discarded + consumed).IsEqualTo(produced);
@@ -251,7 +301,12 @@ public class PubSubGapTests
         var gate = (Lock)typeof(SubscriptionHub).GetField("_gate", flags)!.GetValue(hub)!;
         var deliver = typeof(SubscriptionHub).GetMethod("Deliver", flags)!.CreateDelegate<DeliverFrame>(hub);
         var epoch = (long)epochField.GetValue(hub)!;
-        lock (gate) epochField.SetValue(hub, epoch + 1);
+
+        lock (gate)
+        {
+            epochField.SetValue(hub, epoch + 1);
+        }
+
         var now = DateTimeOffset.UtcNow;
         subscription.Buffer.WriteGap(new(RespireSubscriptionGapReason.Reconnect, now, now));
         // Represents an old callback that already passed OnPush's optimistic epoch check.
@@ -262,7 +317,12 @@ public class PubSubGapTests
         deliver(epoch + 1, RespireSubscriptionKind.Channel, "ch"u8, "ch"u8, false, "latest"u8);
         subscription.Buffer.Complete();
         var items = new List<RespireMessage>();
-        await foreach (var item in subscription) items.Add(item);
+
+        await foreach (var item in subscription)
+        {
+            items.Add(item);
+        }
+
         await Assert.That(items.Count).IsEqualTo(2);
         await Assert.That(items[0].Gap!.DroppedMessages).IsEqualTo(1);
         await Assert.That(items[1].Text).IsEqualTo("latest");

@@ -40,11 +40,16 @@ internal static class CommandHookScope
         string command, CancellationToken token, TState state, Func<TState, ValueTask<TResult>> execute,
         Func<TState, string>? preflight = null)
     {
-        if (preflight is not null) command = preflight(state);
+        if (preflight is not null)
+        {
+            command = preflight(state);
+        }
+
         var context = new RespireCommandContext(command, token);
         object? hookState = null;
         var outcome = RespireCommandOutcome.Rejected;
         Exception? failure = null;
+
         try
         {
             hookState = hook.OnExecuting(context);
@@ -55,13 +60,20 @@ internal static class CommandHookScope
         catch (Exception error)
         {
             failure = error;
+
             if (outcome != RespireCommandOutcome.Rejected)
+            {
                 outcome = error is OperationCanceledException ? RespireCommandOutcome.Canceled : RespireCommandOutcome.Failed;
+            }
+
             throw;
         }
         finally
         {
-            try { hook.OnCompleted(context, hookState, outcome, failure); }
+            try
+            {
+                hook.OnCompleted(context, hookState, outcome, failure);
+            }
             catch (Exception) { /* Observers must not replace results or disturb ownership. */ }
         }
     }
@@ -70,11 +82,16 @@ internal static class CommandHookScope
         string command, CancellationToken token, TState state, Func<TState, ValueTask> execute,
         Func<TState, string>? preflight = null)
     {
-        if (preflight is not null) command = preflight(state);
+        if (preflight is not null)
+        {
+            command = preflight(state);
+        }
+
         var context = new RespireCommandContext(command, token);
         object? hookState = null;
         var outcome = RespireCommandOutcome.Rejected;
         Exception? failure = null;
+
         try
         {
             hookState = hook.OnExecuting(context);
@@ -85,13 +102,20 @@ internal static class CommandHookScope
         catch (Exception error)
         {
             failure = error;
+
             if (outcome != RespireCommandOutcome.Rejected)
+            {
                 outcome = error is OperationCanceledException ? RespireCommandOutcome.Canceled : RespireCommandOutcome.Failed;
+            }
+
             throw;
         }
         finally
         {
-            try { hook.OnCompleted(context, hookState, outcome, failure); }
+            try
+            {
+                hook.OnCompleted(context, hookState, outcome, failure);
+            }
             catch (Exception) { /* Observers must not replace results or disturb ownership. */ }
         }
     }

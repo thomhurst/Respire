@@ -91,7 +91,13 @@ internal sealed class ClusterTopologyRefreshScheduler
 
     internal int ConsecutiveFailures
     {
-        get { lock (_gate) return _consecutiveFailures; }
+        get
+        {
+            lock (_gate)
+            {
+                return _consecutiveFailures;
+            }
+        }
     }
 
     private TimeSpan Now => _clock.GetElapsedTime(_origin);
@@ -111,14 +117,23 @@ internal sealed class ClusterTopologyRefreshScheduler
         lock (_gate)
         {
             var due = SaturatingAdd(Now, delay);
+
             if (force)
             {
                 MergeForcedLocked(due, disconnect: false);
                 return;
             }
 
-            if (_retryDue is { } retry && retry > due) due = retry;
-            if (_pendingDue is not { } pending || due < pending) _pendingDue = due;
+            if (_retryDue is { } retry && retry > due)
+            {
+                due = retry;
+            }
+
+            if (_pendingDue is not { } pending || due < pending)
+            {
+                _pendingDue = due;
+            }
+
             _wake.TrySetResult();
         }
     }
@@ -130,16 +145,28 @@ internal sealed class ClusterTopologyRefreshScheduler
         lock (_gate)
         {
             var due = Now;
+
             if (_lastDisconnectRefresh is { } last && SaturatingAdd(last, PrimaryDisconnectSpacing) > due)
+            {
                 due = SaturatingAdd(last, PrimaryDisconnectSpacing);
-            if (_retryDue is { } retry && retry > due) due = retry;
+            }
+
+            if (_retryDue is { } retry && retry > due)
+            {
+                due = retry;
+            }
+
             MergeForcedLocked(due, disconnect: true);
         }
     }
 
     private void MergeForcedLocked(TimeSpan due, bool disconnect)
     {
-        if (_forcedDue is not { } pending || due < pending) _forcedDue = due;
+        if (_forcedDue is not { } pending || due < pending)
+        {
+            _forcedDue = due;
+        }
+
         _forcedDisconnect |= disconnect;
         _forcedExplicit |= !disconnect;
         _forcedSequence++;
@@ -166,6 +193,7 @@ internal sealed class ClusterTopologyRefreshScheduler
         {
             var now = Now;
             var due = Earliest(Earliest(_pendingDue, _forcedDue), Earliest(_periodicDue, _retryDue));
+
             if (due is { } runAt && runAt <= now)
             {
                 var forcedDue = _forcedDue <= now;
@@ -174,14 +202,28 @@ internal sealed class ClusterTopologyRefreshScheduler
                 // A forced, periodic or retry refresh must query the cluster; only a plain debounced
                 // request may reuse a refresh that succeeded moments ago.
                 var allowRecent = !forcedDue && !periodicDue && !retryDue;
-                if (forcedDue) ClearForcedLocked(now);
+
+                if (forcedDue)
+                {
+                    ClearForcedLocked(now);
+                }
+
                 _pendingDue = null;
-                if (periodicDue) _periodicDue = null;
+
+                if (periodicDue)
+                {
+                    _periodicDue = null;
+                }
+
                 _retryDue = null;
                 return new Decision(true, allowRecent, null, Task.CompletedTask, now, _forcedSequence);
             }
 
-            if (_wake.Task.IsCompleted) _wake = NewWake();
+            if (_wake.Task.IsCompleted)
+            {
+                _wake = NewWake();
+            }
+
             TimeSpan? wait = due is { } next
                 ? (next - now < MaximumTimerSegment ? next - now : MaximumTimerSegment)
                 : null;
@@ -191,7 +233,11 @@ internal sealed class ClusterTopologyRefreshScheduler
 
     private void ClearForcedLocked(TimeSpan refreshStartedAt)
     {
-        if (_forcedDisconnect) _lastDisconnectRefresh = refreshStartedAt;
+        if (_forcedDisconnect)
+        {
+            _lastDisconnectRefresh = refreshStartedAt;
+        }
+
         _forcedDue = null;
         _forcedDisconnect = false;
         _forcedExplicit = false;
@@ -201,7 +247,10 @@ internal sealed class ClusterTopologyRefreshScheduler
     /// <summary>Arms the first periodic deadline.</summary>
     internal void Start()
     {
-        lock (_gate) _periodicDue = NextPeriodicDue(Now);
+        lock (_gate)
+        {
+            _periodicDue = NextPeriodicDue(Now);
+        }
     }
 
     /// <summary>Records the outcome of the refresh <paramref name="run"/> started, and returns the
@@ -211,13 +260,16 @@ internal sealed class ClusterTopologyRefreshScheduler
         lock (_gate)
         {
             var now = Now;
+
             switch (outcome)
             {
                 case TopologyRefreshOutcome.Refreshed:
                     // The cluster was queried after every forced request up to this sequence arrived,
                     // so the fresh map already answers them.
                     if (_forcedDue is not null && _forcedSequence <= run.ForcedSequence)
+                    {
                         ClearForcedLocked(run.StartedAt);
+                    }
                     _consecutiveFailures = 0;
                     _retryDue = null;
                     _periodicDue = NextPeriodicDue(now);
@@ -229,7 +281,10 @@ internal sealed class ClusterTopologyRefreshScheduler
                     return null;
 
                 default:
-                    if (_consecutiveFailures < int.MaxValue) _consecutiveFailures++;
+                    if (_consecutiveFailures < int.MaxValue)
+                    {
+                        _consecutiveFailures++;
+                    }
                     var shift = Math.Min(_consecutiveFailures - 1, 16);
                     var retryDelay = TimeSpan.FromTicks(Math.Min(
                         InitialFailureRetryDelay.Ticks << shift, MaximumFailureRetryDelay.Ticks));
@@ -239,9 +294,15 @@ internal sealed class ClusterTopologyRefreshScheduler
                     // refresh ran, and a periodic deadline shorter than the backoff, wait for it
                     // instead of probing an unavailable cluster again straight away. The periodic
                     // timer is re-armed when the retry completes.
-                    if (_pendingDue is { } pending && pending < retryDue) _pendingDue = retryDue;
+                    if (_pendingDue is { } pending && pending < retryDue)
+                    {
+                        _pendingDue = retryDue;
+                    }
                     // A disconnect queued while the failed refresh ran waits for the retry too.
-                    if (!_forcedExplicit && _forcedDue is { } forced && forced < retryDue) _forcedDue = retryDue;
+                    if (!_forcedExplicit && _forcedDue is { } forced && forced < retryDue)
+                    {
+                        _forcedDue = retryDue;
+                    }
                     _periodicDue = null;
                     return retryDelay;
             }
@@ -250,7 +311,10 @@ internal sealed class ClusterTopologyRefreshScheduler
 
     private TimeSpan? NextPeriodicDue(TimeSpan now)
     {
-        if (_interval is not { } interval) return null;
+        if (_interval is not { } interval)
+        {
+            return null;
+        }
         // Jitter only shortens the interval, so a configured interval remains an upper bound.
         var jitter = TimeSpan.FromTicks((long)(interval.Ticks * PeriodicJitterRatio * _jitterSample()));
         return SaturatingAdd(now, interval - jitter);
@@ -265,11 +329,13 @@ internal sealed class ClusterTopologyRefreshScheduler
         Func<bool, CancellationToken, Task<TopologyRefreshOutcome>> refresh, ILogger? logger, CancellationToken stop)
     {
         Start();
+
         while (!stop.IsCancellationRequested)
         {
             try
             {
                 var decision = Next();
+
                 if (!decision.Run)
                 {
                     await WaitAsync(decision, stop).ConfigureAwait(false);
@@ -277,7 +343,11 @@ internal sealed class ClusterTopologyRefreshScheduler
                 }
 
                 TopologyRefreshOutcome outcome;
-                try { outcome = await refresh(decision.AllowRecentResult, stop).ConfigureAwait(false); }
+
+                try
+                {
+                    outcome = await refresh(decision.AllowRecentResult, stop).ConfigureAwait(false);
+                }
                 catch (OperationCanceledException) when (stop.IsCancellationRequested) { return; }
                 catch (Exception error)
                 {
@@ -287,8 +357,7 @@ internal sealed class ClusterTopologyRefreshScheduler
 
                 if (Complete(decision, outcome) is { } retryDelay)
                 {
-                    logger.TryLog((ConsecutiveFailures, retryDelay), static (logger, state)
-                        => logger.ClusterTopologyRefreshRetry(state.ConsecutiveFailures, state.retryDelay));
+                    logger.TryLog((ConsecutiveFailures, retryDelay), static (logger, state) => logger.ClusterTopologyRefreshRetry(state.ConsecutiveFailures, state.retryDelay));
                 }
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested)
@@ -299,7 +368,11 @@ internal sealed class ClusterTopologyRefreshScheduler
             {
                 // A faulted worker would silently stop all MOVED, disconnect and periodic refreshes.
                 logger.TryLog(error, static (logger, error) => logger.ClusterTopologyWorkerFailed(error));
-                try { await Task.Delay(InitialFailureRetryDelay, _clock, stop).ConfigureAwait(false); }
+
+                try
+                {
+                    await Task.Delay(InitialFailureRetryDelay, _clock, stop).ConfigureAwait(false);
+                }
                 catch (OperationCanceledException) when (stop.IsCancellationRequested) { return; }
             }
         }
@@ -313,7 +386,10 @@ internal sealed class ClusterTopologyRefreshScheduler
             return;
         }
 
-        try { await decision.Wake.WaitAsync(wait, _clock, stop).ConfigureAwait(false); }
+        try
+        {
+            await decision.Wake.WaitAsync(wait, _clock, stop).ConfigureAwait(false);
+        }
         catch (TimeoutException) { }
     }
 }
@@ -323,7 +399,11 @@ internal static class SafeLoggerExtensions
     /// <summary>Logs without letting a faulty user logger break background work.</summary>
     internal static void TryLog<TState>(this ILogger? logger, TState state, Action<ILogger, TState> log)
     {
-        if (logger is null) return;
+        if (logger is null)
+        {
+            return;
+        }
+
         try
         {
             log(logger, state);

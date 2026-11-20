@@ -9,11 +9,14 @@ internal static class JobQueueScheduling
     internal static void ValidateKeys(IRespireClient client, string[] keys)
     {
         var resolved = keys.Select(key => client.ResolveKey(key).ToBytes()).ToArray();
+
         for (var i = 1; i < resolved.Length; i++)
         {
             if (ClusterHash.GetSlot(resolved[0]) != ClusterHash.GetSlot(resolved[i])
                 || resolved.Take(i).Any(key => key.AsSpan().SequenceEqual(resolved[i])))
+            {
                 throw new ArgumentException("Queue keys must resolve to distinct keys in the same Cluster slot.");
+            }
         }
     }
 
@@ -21,7 +24,9 @@ internal static class JobQueueScheduling
     {
         if (duration < TimeSpan.Zero || (!allowZero && duration == TimeSpan.Zero)
             || duration > TimeSpan.FromMilliseconds(int.MaxValue))
+        {
             throw new ArgumentOutOfRangeException(name);
+        }
     }
 
     // Staging paths check types and all cleanup permissions before their first write.

@@ -27,33 +27,57 @@ public sealed partial class RespireServerNode
     {
         try
         {
-            if (groups.IsEmpty) throw new ArgumentException("At least one migration group is required.", nameof(groups));
+            if (groups.IsEmpty)
+            {
+                throw new ArgumentException("At least one migration group is required.", nameof(groups));
+            }
+
             var arguments = new List<RespireValue>();
             var ranges = new List<RespireClusterSlotRange>();
+
             foreach (var group in groups)
             {
                 ArgumentNullException.ThrowIfNull(group, nameof(groups));
                 ArgumentException.ThrowIfNullOrWhiteSpace(group.TargetNodeId, nameof(groups));
+
                 if (group.TargetNodeId.Any(char.IsWhiteSpace))
+                {
                     throw new ArgumentException("A target node ID cannot contain whitespace.", nameof(groups));
+                }
+
                 if (group.Slots is null || group.Slots.Count == 0)
+                {
                     throw new ArgumentException("Each migration group requires slot ranges.", nameof(groups));
+                }
+
                 arguments.Add("SLOTSRANGE");
+
                 foreach (var range in group.Slots)
                 {
                     if (range.Start < 0 || range.End >= 16384 || range.End < range.Start)
+                    {
                         throw new ArgumentOutOfRangeException(nameof(groups), "Slot ranges must be inclusive and within 0 through 16383.");
+                    }
+
                     ranges.Add(range);
                     arguments.Add(range.Start);
                     arguments.Add(range.End);
                 }
+
                 arguments.Add("NODE");
                 arguments.Add(group.TargetNodeId);
             }
+
             ranges.Sort(static (left, right) => left.Start.CompareTo(right.Start));
+
             for (var index = 1; index < ranges.Count; index++)
+            {
                 if (ranges[index].Start <= ranges[index - 1].End)
+                {
                     throw new ArgumentException("Migration slot ranges cannot overlap, including across groups.", nameof(groups));
+                }
+            }
+
             return MutationAsync("CLUSTER MIGRATESLOTS", arguments.ToArray(), cancellationToken);
         }
         catch (Exception error) { RecordPreflightFailure(error); throw; }
@@ -77,7 +101,11 @@ public sealed partial class RespireServerNode
     {
         try
         {
-            if ((uint)slot >= 16384) throw new ArgumentOutOfRangeException(nameof(slot));
+            if ((uint)slot >= 16384)
+            {
+                throw new ArgumentOutOfRangeException(nameof(slot));
+            }
+
             RespireValue[] arguments = mode switch
             {
                 RespireServerFlushMode.Default => [slot],

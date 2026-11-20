@@ -1,5 +1,5 @@
-using Respire.Aspire;
 using Azure.Core;
+using Respire.Aspire;
 using Respire.Azure;
 using Respire.Caching;
 using Respire.DependencyInjection;
@@ -24,7 +24,9 @@ public class CredentialFormattingTests
         ];
 
         foreach (var configuration in configurations)
+        {
             await Assert.That(configuration.ToString()).IsEqualTo(configuration.GetType().FullName);
+        }
     }
 
     private sealed class PrivateCredential : TokenCredential

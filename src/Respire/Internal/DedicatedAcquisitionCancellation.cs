@@ -19,6 +19,7 @@ internal sealed class DedicatedAcquisitionCancellation : IDisposable
     }
 
     internal CancellationToken Token => _source.Token;
+
     internal bool IsCancellationRequested => _source.IsCancellationRequested;
 
     internal void Arm(CommandDeadline deadline)
@@ -36,13 +37,19 @@ internal sealed class DedicatedAcquisitionCancellation : IDisposable
     {
         lock (_gate)
         {
-            if (_disposed) return;
+            if (_disposed)
+            {
+                return;
+            }
+
             if (!_deadline.IsSet)
             {
                 _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
                 return;
             }
+
             var remaining = _deadline.Ticks - Environment.TickCount64;
+
             if (remaining > 0)
             {
                 // CommandTimeout can exceed System.Threading.Timer's approximately 49-day limit.
@@ -61,7 +68,11 @@ internal sealed class DedicatedAcquisitionCancellation : IDisposable
     {
         lock (_gate)
         {
-            if (_disposed) return;
+            if (_disposed)
+            {
+                return;
+            }
+
             _disposed = true;
             _timer.Dispose();
             _source.Dispose();

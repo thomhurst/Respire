@@ -44,6 +44,7 @@ public static class RespireServiceCollectionExtensions
         services.AddSingleton(new RespireOptionsRegistration(name, provider =>
         {
             RespireOptions options;
+
             try
             {
                 options = RespireConfiguration.Apply(configuration, new RespireOptions());
@@ -64,6 +65,7 @@ public static class RespireServiceCollectionExtensions
         services.AddOptions<RespireOptions>(name).ValidateOnStart();
 
         RespireOptions GetOptions(IServiceProvider provider) => provider.GetRequiredService<IOptionsMonitor<RespireOptions>>().Get(name);
+
         return serviceKey is null
             ? AddRespireCore(services, GetOptions)
             : AddKeyedRespireCore(services, serviceKey, GetOptions);
@@ -184,6 +186,7 @@ public static class RespireServiceCollectionExtensions
     {
         var options = configure(provider) ?? throw new InvalidOperationException(
             "The Respire options factory returned null.");
+
         if (options.LoggerFactory is null && provider.GetService<ILoggerFactory>() is { } loggerFactory)
         {
             options = options with { LoggerFactory = loggerFactory };
@@ -199,6 +202,7 @@ public static class RespireServiceCollectionExtensions
             (serviceKey is null
                 ? !descriptor.IsKeyedService
                 : descriptor.IsKeyedService && Equals(descriptor.ServiceKey, serviceKey)));
+
         if (!duplicate)
         {
             return;

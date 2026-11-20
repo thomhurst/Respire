@@ -20,7 +20,10 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
 
 #if DEBUG
     // Per-parser progress evidence for friend tests; absent from Release layout and work.
-    internal int ResumedScalarCountForTests { get; private set; }
+    internal int ResumedScalarCountForTests
+    {
+        get; private set;
+    }
 
     private void RecordResumedScalarForTests()
     {
@@ -47,6 +50,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         if (IsIdle && pos < buffer.Length)
         {
             var typeByte = buffer[pos];
+
             if (typeByte is (byte)'$' or (byte)'=' or (byte)'!')
             {
                 return TryParseInitialBulk(buffer, ref pos, typeByte, out value, out directFill);
@@ -54,6 +58,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
 
             var cursor = pos;
             var initialStatus = RespParser.TryParseValue(buffer, ref cursor, out value, this);
+
             if (initialStatus != RespParseStatus.NeedMoreData
                 || typeByte is not ((byte)'*' or (byte)'~' or (byte)'>' or (byte)'%' or (byte)'|'))
             {
@@ -66,7 +71,9 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             }
 
             if (!IsIdle)
+            {
                 pos = cursor;
+            }
         }
 
         var status = TryParseResumable(buffer, ref pos, out value, out directFill);
@@ -89,6 +96,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             if (_hasPendingBulk)
             {
                 var status = TryCompletePendingBulk(buffer, ref pos, out var bulk);
+
                 if (status != RespParseStatus.Done)
                 {
                     return status;
@@ -113,9 +121,11 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             }
 
             var typeByte = buffer[pos];
+
             if (typeByte is (byte)'$' or (byte)'=' or (byte)'!')
             {
                 var status = ParseBulkHeader(buffer, ref pos, typeByte, out var immediate, out directFill);
+
                 if (status == RespParseStatus.Done)
                 {
                     if (AcceptValue(in immediate, out value))
@@ -142,6 +152,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             if (typeByte is (byte)'*' or (byte)'~' or (byte)'>' or (byte)'%' or (byte)'|')
             {
                 var status = ParseAggregateHeader(buffer, ref pos, typeByte, out var immediate, out var discard);
+
                 if (status != RespParseStatus.Done)
                 {
                     return status;
@@ -150,6 +161,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
                 if (discard)
                 {
                     immediate.Dispose();
+
                     if (ShouldYieldAfterAttribute)
                     {
                         return RespParseStatus.SkippedAttribute;
@@ -174,6 +186,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             var cursor = pos;
             // Aggregate markers were handled above; scalar parsing needs no storage budget.
             var scalarStatus = RespParser.TryParseScalar(buffer, ref cursor, out var scalar);
+
             if (scalarStatus != RespParseStatus.Done)
             {
                 return scalarStatus;
@@ -183,6 +196,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             RecordResumedScalarForTests();
 #endif
             pos = cursor;
+
             if (AcceptValue(in scalar, out value))
             {
                 return RespParseStatus.Done;
@@ -216,6 +230,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         directFill = default;
         var headerEnd = pos + 1;
         var headerStatus = RespParser.TryReadInt64Line(buffer, ref headerEnd, out var declaredLength);
+
         if (headerStatus != RespParseStatus.Done)
         {
             return headerStatus;
@@ -227,6 +242,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             (byte)'=' => RespireDataType.VerbatimString,
             _ => RespireDataType.BulkError,
         };
+
         if (declaredLength >= directFillThreshold && declaredLength > buffer.Length - headerEnd - 2)
         {
             if (declaredLength > int.MaxValue - 2)
@@ -242,6 +258,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         var cursor = pos;
         var status = RespParser.TryParseBulkValue(
             buffer, ref cursor, type, declaredLength, headerEnd, out value);
+
         if (status != RespParseStatus.NeedMoreData)
         {
             if (status == RespParseStatus.Done)
@@ -271,12 +288,14 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         directFill = default;
         var cursor = pos + 1;
         var headerStatus = RespParser.TryReadInt64Line(buffer, ref cursor, out var declaredLength);
+
         if (headerStatus != RespParseStatus.Done)
         {
             return headerStatus;
         }
 
         pos = cursor;
+
         if (declaredLength == -1)
         {
             value = RespValue.NullFromWire((RespireDataType)typeByte);
@@ -295,6 +314,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             _ => RespireDataType.BulkError,
         };
         var length = (int)declaredLength;
+
         if (length >= directFillThreshold && buffer.Length - pos < length + 2)
         {
             directFill = new RespDirectFillRequest(type, length);
@@ -311,6 +331,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         ReadOnlySpan<byte> buffer, ref int pos, out RespValue value)
     {
         value = default;
+
         if (buffer.Length - pos < _pendingBulkLength + 2)
         {
             return RespParseStatus.NeedMoreData;
@@ -339,6 +360,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         discard = typeByte == (byte)'|';
         var cursor = pos + 1;
         var headerStatus = RespParser.TryReadInt64Line(buffer, ref cursor, out var declaredCount);
+
         if (headerStatus != RespParseStatus.Done)
         {
             return headerStatus;
@@ -352,6 +374,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         }
 
         var pairCount = typeByte is (byte)'%' or (byte)'|';
+
         if (!RespAggregateStorage.TryValidate(declaredCount, pairCount, _depth, out var count))
         {
             return RespParseStatus.InvalidData;
@@ -366,6 +389,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             (byte)'%' or (byte)'|' => RespireDataType.Map,
             _ => RespireDataType.Array,
         };
+
         if (count == 0)
         {
             value = RespValue.PooledAggregate(type, [], 0);
@@ -391,7 +415,9 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         RespireDataType type, int count, int depth, Span<RespValue> completed, ReadOnlySpan<byte> buffer)
     {
         while (depth >= _frames.Length)
+        {
             Array.Resize(ref _frames, _frames.Length * 2);
+        }
 
         Debug.Assert(_frames[depth].Elements is null);
         Debug.Assert(_depth == 0
@@ -401,10 +427,14 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         _frames[depth] = new AggregateFrame(type, [], count, discard: false);
         _depth = Math.Max(_depth, depth + 1);
         ref var frame = ref _frames[depth];
+
         for (var i = 0; i < completed.Length; i++)
         {
             if (frame.Index == frame.Elements.Length)
+            {
                 RespAggregateStorage.Grow(ref frame.Elements, count);
+            }
+
             frame.Elements[frame.Index] = completed[i].CopyDeferredPayloadsIndividually(buffer);
             frame.Index++;
             completed[i] = default;
@@ -414,12 +444,18 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
     private bool AcceptValue(in RespValue accepted, out RespValue value)
     {
         var current = accepted;
+
         while (_depth > 0)
         {
             ref var frame = ref _frames[_depth - 1];
+
             if (frame.Index == frame.Elements.Length)
+            {
                 RespAggregateStorage.Grow(ref frame.Elements, frame.Count);
+            }
+
             frame.Elements[frame.Index++] = current;
+
             if (frame.Index < frame.Count)
             {
                 value = default;
@@ -430,6 +466,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             var discard = frame.Discard;
             frame = default;
             _depth--;
+
             if (discard)
             {
                 current.Dispose();
@@ -447,6 +484,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         for (var i = 0; i < _depth; i++)
         {
             ref var frame = ref _frames[i];
+
             for (var j = 0; j < frame.Index; j++)
             {
                 frame.Elements[j].Dispose();
@@ -457,6 +495,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
                 System.Array.Clear(frame.Elements, 0, frame.Index);
                 RespirePools.ValueArrays.Return(frame.Elements);
             }
+
             frame = default;
         }
 

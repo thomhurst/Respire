@@ -28,9 +28,19 @@ public partial class ErrorMetricsTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pending = client.SubscribeAsync("one", cancellationToken: deadline.Token);
-        while (!server.ReceivedCommands.Contains("SUBSCRIBE one")) await Task.Delay(1, deadline.Token);
+
+        while (!server.ReceivedCommands.Contains("SUBSCRIBE one"))
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         using var capture = new Capture(throwOnMeasurement: true);
-        if (!attachLate) RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
+        if (!attachLate)
+        {
+            RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+        }
+
         var index = server.ReceivedCommands.ToList().IndexOf("SUBSCRIBE one");
         await server.SendRawAsync("-NOPERM late rejection\r\n"u8.ToArray(), server.ReceivedConnectionIds[index]);
         await Assert.That(async () => await pending).Throws<RespireServerException>();
@@ -52,7 +62,11 @@ public partial class ErrorMetricsTests
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (!shutdown || !Volatile.Read(ref recovering) || command != "SSUBSCRIBE one") return false;
+            if (!shutdown || !Volatile.Read(ref recovering) || command != "SSUBSCRIBE one")
+            {
+                return false;
+            }
+
             waiting.TrySetResult();
             return true;
         };
@@ -68,8 +82,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", server.Port)],
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = attempts },
         });
 #pragma warning restore RESP010
@@ -78,6 +95,7 @@ public partial class ErrorMetricsTests
         using var capture = new Capture(throwOnMeasurement: true);
         Volatile.Write(ref recovering, true);
         await server.SendRawAsync("*3\r\n$12\r\nsunsubscribe\r\n$3\r\none\r\n:0\r\n"u8.ToArray(), server.ReceivedConnectionIds[index]);
+
         if (shutdown)
         {
             await waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -90,6 +108,7 @@ public partial class ErrorMetricsTests
                 .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
             var items = capture.Items.ToArray();
             await Assert.That(items.Length).IsEqualTo(attempts);
+
             for (var attempt = 0; attempt < items.Length; attempt++)
             {
                 await Assert.That(items[attempt].Tags["db.response.status_code"]).IsEqualTo("NOPERM");
@@ -117,8 +136,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", server.Port)],
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },
         });
 #pragma warning restore RESP010
@@ -132,7 +154,11 @@ public partial class ErrorMetricsTests
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (command != "SSUBSCRIBE one") return false;
+            if (command != "SSUBSCRIBE one")
+            {
+                return false;
+            }
+
             waiting.TrySetResult();
             return true;
         };
@@ -140,12 +166,20 @@ public partial class ErrorMetricsTests
         // Await the worker itself: its drained signal completes even when the worker faults.
         var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var recovery = (Task)typeof(SubscriptionHub).GetMethod("RecoverShardedAsync", flags)!.Invoke(hub, [drained])!;
+
         try
         {
             await waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
             // Reproduce the disposal window before hub lifetime cancellation reaches the command.
-            if (disposeHub) disposed.SetValue(hub, true);
-            else client.Core.Disposed = true;
+            if (disposeHub)
+            {
+                disposed.SetValue(hub, true);
+            }
+            else
+            {
+                client.Core.Disposed = true;
+            }
+
             var index = server.ReceivedCommands.ToList().LastIndexOf("SSUBSCRIBE one");
             await server.SendRawAsync("-NOPERM disposal race\r\n"u8.ToArray(), server.ReceivedConnectionIds[index]);
             await recovery.WaitAsync(TimeSpan.FromSeconds(10));
@@ -181,8 +215,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = null,
         });
 #pragma warning restore RESP010
@@ -197,13 +234,23 @@ public partial class ErrorMetricsTests
         var commandName = replay ? "SSUBSCRIBE one" : "SUNSUBSCRIBE one";
         server.SuppressReply = command =>
         {
-            if (command != commandName) return false;
+            if (command != commandName)
+            {
+                return false;
+            }
+
             waiting.TrySetResult();
             return true;
         };
         using var cancellation = new CancellationTokenSource();
-        if (!cancelInFlight) cancellation.Cancel();
+
+        if (!cancelInFlight)
+        {
+            cancellation.Cancel();
+        }
+
         using var capture = new Capture(throwOnMeasurement: true);
+
         try
         {
             // Exercise the internal owner directly; activation has a separate final owner.
@@ -212,15 +259,22 @@ public partial class ErrorMetricsTests
                     .Invoke(hub, [connection, RespireSubscriptionKind.Sharded, (RespireChannel)"one", cancellation.Token])!
                 : (ValueTask)typeof(SubscriptionHub).GetMethod("UnsubscribePrimaryAsync", flags)!
                     .Invoke(hub, [primary, (RespireChannel)"one", cancellation.Token])!;
+
             if (cancelInFlight)
             {
                 await waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 cancellation.Cancel();
             }
+
             if (replay)
+            {
                 await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+            }
             else
+            {
                 await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+
             await Assert.That(client.Core.Disposed).IsFalse();
             await Assert.That(capture.Items).IsEmpty();
         }
@@ -248,9 +302,13 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
-            CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(1),
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            CommandTimeout = null,
+            ConnectTimeout = TimeSpan.FromSeconds(1),
         });
 #pragma warning restore RESP010
         await using var subscription = await client.SubscribeAsync(channel).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
@@ -272,6 +330,7 @@ public partial class ErrorMetricsTests
         var borrowed = completed.Observation;
         completed.CompleteInternal();
         var next = DispatchResponseSource<bool>.Start();
+
         try
         {
             borrowed.Handled(new IOException("late recovery callback"));
@@ -284,7 +343,11 @@ public partial class ErrorMetricsTests
     [Test]
     public async Task WarmInternalPubSubOwnersAllocateNothing()
     {
-        for (var index = 0; index < 4; index++) _ = MeasureInternalOwners(false);
+        for (var index = 0; index < 4; index++)
+        {
+            _ = MeasureInternalOwners(false);
+        }
+
         _ = MeasureInternalOwners(true);
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
             (MeasureInternalOwners(false), MeasureInternalOwners(true)));
@@ -296,13 +359,24 @@ public partial class ErrorMetricsTests
     private static long MeasureInternalOwners(bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
             var owner = DispatchResponseSource<bool>.Start();
-            if (owner.Observation.Attempts != 0) throw new InvalidOperationException("Unexpected retry count.");
+
+            if (owner.Observation.Attempts != 0)
+            {
+                throw new InvalidOperationException("Unexpected retry count.");
+            }
+
             owner.CompleteInternal();
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 }

@@ -118,6 +118,7 @@ public class StreamConsumerOptionTests
         (RespireKey Key, RespireStreamId After)[] streams = [(key, ">"), ("{s}:two", ">")];
         var options = new RespireStreamReadOptions { Count = 2, NoAck = true, ClaimMinIdle = TimeSpan.FromMilliseconds(500) };
         RespireStreamReadResult[] result;
+
         if (surface == 0)
         {
             var pending = client.Streams.ReadGroupAsync(streams, "g", "c", options);
@@ -131,10 +132,19 @@ public class StreamConsumerOptionTests
             IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
             var pending = queue.Streams.ReadGroup(streams, "g", "c", options);
             Array.Fill(key, (byte)'x');
-            if (transaction is not null) await transaction.CommitAsync();
-            else await batch!.ExecuteAsync();
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
+
             result = pending.Result;
         }
+
         await Assert.That(result.Length).IsEqualTo(2);
         var claimed = result[0].Entries[0];
         await Assert.That(claimed.PreviousIdleTime).IsEqualTo((TimeSpan?)TimeSpan.FromMilliseconds(1250));
@@ -156,6 +166,7 @@ public class StreamConsumerOptionTests
         byte[] Page(string id) => Encoding.ASCII.GetBytes((map ? "%1\r\n" : "*1\r\n*2\r\n")
             + "$13\r\ntenant:events\r\n*1\r\n*4\r\n$3\r\n" + id
             + "\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n:1250\r\n:7\r\n");
+
         var nextPageRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var requests = 0;
         await using var server = new FakeRespServer(2, Page("1-0"), Page("2-0"))
@@ -163,7 +174,11 @@ public class StreamConsumerOptionTests
             SuppressReply = command =>
             {
                 if (!command.StartsWith("XREADGROUP ", StringComparison.Ordinal)
-                    || Interlocked.Increment(ref requests) < 3) return false;
+                    || Interlocked.Increment(ref requests) < 3)
+                {
+                    return false;
+                }
+
                 nextPageRequested.TrySetResult();
                 return true;
             },
@@ -174,11 +189,14 @@ public class StreamConsumerOptionTests
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var options = new RespireStreamReadOptions
         {
-            Count = 1, NoAck = true, ClaimMinIdle = TimeSpan.FromMilliseconds(500),
+            Count = 1,
+            NoAck = true,
+            ClaimMinIdle = TimeSpan.FromMilliseconds(500),
             WaitFor = Timeout.InfiniteTimeSpan,
         };
         await using var entries = client.Streams.ReadGroupAsync(options, "events", "g", "c",
             cancellationToken: cancellation.Token).GetAsyncEnumerator();
+
         foreach (var id in new RespireStreamId[] { "1-0", "2-0" })
         {
             await Assert.That(await entries.MoveNextAsync()).IsTrue();
@@ -186,6 +204,7 @@ public class StreamConsumerOptionTests
             await Assert.That(entries.Current.PreviousIdleTime).IsEqualTo((TimeSpan?)TimeSpan.FromMilliseconds(1250));
             await Assert.That(entries.Current.PreviousDeliveryCount).IsEqualTo((long?)7);
         }
+
         var pending = entries.MoveNextAsync().AsTask();
         await nextPageRequested.Task.WaitAsync(deadline.Token);
         cancellation.Cancel();
@@ -247,21 +266,34 @@ public class StreamConsumerOptionTests
         await using var client = Create(server.Port);
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
+
         foreach (var options in new RespireStreamReadOptions[] { new() { NoAck = true }, new() { ClaimMinIdle = TimeSpan.Zero } })
         {
             await Assert.That(async () => await client.Streams.ReadAsync(options, "events")).Throws<ArgumentException>();
+
             foreach (var queue in new IRespireCommandQueue[] { batch, transaction })
+            {
                 await Assert.That(() => queue.Streams.Read(options, "events")).Throws<ArgumentException>();
+            }
         }
+
         var negative = new RespireStreamReadOptions { ClaimMinIdle = TimeSpan.FromTicks(-1) };
         await Assert.That(async () => await client.Streams.ReadGroupOnceAsync("events", "g", "c", negative)).Throws<ArgumentException>();
+
         foreach (var queue in new IRespireCommandQueue[] { batch, transaction })
+        {
             await Assert.That(() => queue.Streams.ReadGroup("events", "g", "c", negative)).Throws<ArgumentException>();
+        }
+
         foreach (var options in new RespireStreamPendingOptions[] { new() { Count = 0 }, new() { MinIdle = TimeSpan.FromTicks(-1) } })
+        {
             await Assert.That(async () => await client.Streams.PendingAsync(options, "events", "g")).Throws<ArgumentException>();
+        }
+
         RespireStreamClaimOptions[] invalid = [new() { IdleTime = TimeSpan.FromTicks(-1) }, new() { RetryCount = -1 },
             new() { DeliveryTime = DateTimeOffset.UnixEpoch.AddMilliseconds(-1) },
             new() { IdleTime = TimeSpan.Zero, DeliveryTime = DateTimeOffset.UnixEpoch }];
+
         foreach (var options in invalid)
         {
             await Assert.That(async () => await client.Streams.ClaimAsync(options, "events", "g", "c", TimeSpan.Zero, "1-0"))
@@ -269,6 +301,7 @@ public class StreamConsumerOptionTests
             await Assert.That(async () => await client.Streams.ClaimIdsAsync(options, "events", "g", "c", TimeSpan.Zero, "1-0"))
                 .Throws<ArgumentException>();
         }
+
         await Assert.That(async () => await client.Streams.ClaimIdsAsync("events", "g", "c", TimeSpan.Zero, []))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Streams.ClaimPendingIdsAsync("events", "g", "c", TimeSpan.Zero, count: 0))
@@ -304,7 +337,13 @@ public class StreamConsumerOptionTests
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
-        { SuppressReply = _ => { received.TrySetResult(); return true; } };
+        {
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            }
+        };
         await using var client = Create(server.Port);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);

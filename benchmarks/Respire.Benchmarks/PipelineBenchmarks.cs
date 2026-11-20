@@ -191,7 +191,10 @@ public class PipelineThroughputBenchmarks
     private const string TestValue = "throughput_value";
 
     [Params(1, 10, 100, 1000)]
-    public int OperationCount { get; set; }
+    public int OperationCount
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public async Task Setup()

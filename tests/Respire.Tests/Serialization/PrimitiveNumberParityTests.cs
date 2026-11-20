@@ -20,21 +20,24 @@ public class PrimitiveNumberParityTests
             "2147483648", "4294967296", "9223372036854775807", "-9223372036854775808",
             "18446744073709551615", "18446744073709551616", "79228162514264337593543950335",
             "79228162514264337593543950336", "1.7976931348623157e308", "3.4028235e38"];
+
         foreach (var token in tokens)
-        foreach (var text in new[] { token, " \t\r\n" + token + " \t\r\n" })
         {
-            var payload = Encoding.UTF8.GetBytes(text);
-            await Check<byte>(payload);
-            await Check<sbyte>(payload);
-            await Check<short>(payload);
-            await Check<ushort>(payload);
-            await Check<int>(payload);
-            await Check<uint>(payload);
-            await Check<long>(payload);
-            await Check<ulong>(payload);
-            await Check<float>(payload);
-            await Check<double>(payload);
-            await Check<decimal>(payload);
+            foreach (var text in new[] { token, " \t\r\n" + token + " \t\r\n" })
+            {
+                var payload = Encoding.UTF8.GetBytes(text);
+                await Check<byte>(payload);
+                await Check<sbyte>(payload);
+                await Check<short>(payload);
+                await Check<ushort>(payload);
+                await Check<int>(payload);
+                await Check<uint>(payload);
+                await Check<long>(payload);
+                await Check<ulong>(payload);
+                await Check<float>(payload);
+                await Check<double>(payload);
+                await Check<decimal>(payload);
+            }
         }
     }
 
@@ -44,7 +47,10 @@ public class PrimitiveNumberParityTests
         var actual = Outcome(() =>
         {
             if (!PrimitiveCodec.TryDeserialize<T>(payload, out var value))
+            {
                 throw new InvalidOperationException("Numeric primitive was not recognized.");
+            }
+
             return value!;
         });
         await Assert.That(actual).IsEqualTo(expected);
@@ -56,8 +62,16 @@ public class PrimitiveNumberParityTests
         {
             var value = parse();
             // Preserve sign bits, including negative zero, rather than only numeric equality.
-            if (value is double d) return BitConverter.DoubleToInt64Bits(d).ToString(CultureInfo.InvariantCulture);
-            if (value is float f) return BitConverter.SingleToInt32Bits(f).ToString(CultureInfo.InvariantCulture);
+            if (value is double d)
+            {
+                return BitConverter.DoubleToInt64Bits(d).ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (value is float f)
+            {
+                return BitConverter.SingleToInt32Bits(f).ToString(CultureInfo.InvariantCulture);
+            }
+
             return ((IFormattable)value!).ToString(null, CultureInfo.InvariantCulture);
         }
         catch (FormatException) { return "FormatException"; }
@@ -67,23 +81,35 @@ public class PrimitiveNumberParityTests
     private static T Original<T>(byte[] bytes) where T : IUtf8SpanParsable<T>
     {
         var payload = bytes.AsSpan().Trim(" \t\r\n"u8);
+
         try
         {
             var reader = new Utf8JsonReader(payload);
+
             if (!reader.Read() || reader.TokenType != JsonTokenType.Number || reader.BytesConsumed != payload.Length)
+            {
                 throw new FormatException();
+            }
         }
         catch (JsonException) { throw new FormatException(); }
+
         if (typeof(T) == typeof(decimal))
         {
             if (!decimal.TryParse(payload, NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
+            {
                 throw new FormatException();
+            }
+
             return (T)(object)number;
         }
+
         if (!T.TryParse(payload, CultureInfo.InvariantCulture, out var value)
             || value is float f && !float.IsFinite(f)
             || value is double d && !double.IsFinite(d))
+        {
             throw new FormatException();
+        }
+
         return value;
     }
 }

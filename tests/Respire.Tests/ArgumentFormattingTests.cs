@@ -36,8 +36,15 @@ public class ArgumentFormattingTests
     [Test]
     public async Task FormattingMatchesToStringForEveryRepresentation()
     {
-        foreach (var key in Keys()) await Verify(key, key.ToString());
-        foreach (var value in Values()) await Verify(value, value.ToString());
+        foreach (var key in Keys())
+        {
+            await Verify(key, key.ToString());
+        }
+
+        foreach (var value in Values())
+        {
+            await Verify(value, value.ToString());
+        }
     }
 
     private static async Task Verify<T>(T value, string expected) where T : ISpanFormattable, IUtf8SpanFormattable
@@ -59,6 +66,7 @@ public class ArgumentFormattingTests
             await Assert.That(value.TryFormat(chars.AsSpan(0, chars.Length - 1), out charCount, default, null)).IsFalse();
             await Assert.That(charCount).IsEqualTo(0);
         }
+
         if (bytes.Length > 0)
         {
             await Assert.That(value.TryFormat(bytes.AsSpan(0, bytes.Length - 1), out byteCount, default, null)).IsFalse();
@@ -74,6 +82,7 @@ public class ArgumentFormattingTests
             "a£€😀z"u8.ToArray(), [0xf0, 0x9f], [0xed, 0xa0, 0x80],
             [0xc0, 0xaf], [0xe2, 0x82, 0x41], [0xf4, 0x90, 0x80, 0x80],
         ];
+
         foreach (var payload in payloads)
         {
             for (var split = 0; split <= payload.Length; split++)
@@ -148,10 +157,19 @@ public class ArgumentFormattingTests
     internal static int? RunIsolatedAllocationProbe()
     {
         var runtime = Environment.GetEnvironmentVariable(AllocationProbeMode);
-        if (runtime is null) return null;
+
+        if (runtime is null)
+        {
+            return null;
+        }
+
         try
         {
-            if (runtime != Environment.Version.ToString()) throw new InvalidOperationException("Probe runtime differs from parent.");
+            if (runtime != Environment.Version.ToString())
+            {
+                throw new InvalidOperationException("Probe runtime differs from parent.");
+            }
+
             VerifyAllocations();
             return 0;
         }
@@ -167,8 +185,11 @@ public class ArgumentFormattingTests
         var allocated = AllocationMeasurement.WithoutConcurrentGc(() => Measure(keys, values, false));
         var control = AllocationMeasurement.WithoutConcurrentGc(() => Measure(keys, values, true));
         Console.WriteLine($"Argument formatting: {allocated} bytes; positive control: {control} bytes.");
+
         if (allocated != 0 || control < 37L * 100)
+        {
             throw new InvalidOperationException($"Expected zero formatting allocations and a positive control; got {allocated} and {control} bytes.");
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -177,20 +198,31 @@ public class ArgumentFormattingTests
         Span<char> chars = stackalloc char[8192];
         Span<byte> bytes = stackalloc byte[16384];
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 100; i++)
         {
             foreach (var key in keys)
             {
                 if (!chars.TryWrite($"key={key}", out _) || !Utf8.TryWrite(bytes, $"key={key}", out _))
+                {
                     throw new InvalidOperationException("Key did not fit.");
+                }
             }
+
             foreach (var value in values)
             {
                 if (!chars.TryWrite($"value={value}", out _) || !Utf8.TryWrite(bytes, $"value={value}", out _))
+                {
                     throw new InvalidOperationException("Value did not fit.");
+                }
             }
-            if (allocate) GC.KeepAlive(new byte[37]);
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 }

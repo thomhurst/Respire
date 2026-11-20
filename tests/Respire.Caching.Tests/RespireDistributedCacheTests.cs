@@ -19,7 +19,10 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     private const string ClientPause = "client-pause";
 
     [ClassDataSource<RedisTestContainer>(Shared = SharedType.Keyed, Key = ClientPause)]
-    public required RedisTestContainer PausableServer { get; init; }
+    public required RedisTestContainer PausableServer
+    {
+        get; init;
+    }
 
     private RedisTestContainer Server =>
         TestContext.Current!.Metadata.TestDetails.Categories.Contains(ClientPause) ? PausableServer : fixture;
@@ -65,6 +68,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     private Task? _serverPause;
 
     private RespireClient Client => _client!;
+
     private RespireDistributedCache Cache => _cache!;
 
     [Before(Test)]
@@ -81,14 +85,21 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         {
             // A failed assertion must not leave the shared server paused for the next test.
             if (_serverPause is not null)
+            {
                 await _serverPause.WaitAsync(TimeSpan.FromSeconds(5));
+            }
         }
         finally
         {
             if (_cache is not null)
+            {
                 await Cache.DisposeAsync();
+            }
+
             if (_client is not null)
+            {
                 await Client.DisposeAsync();
+            }
         }
     }
 
@@ -166,6 +177,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         var options = new DistributedCacheEntryOptions { AbsoluteExpiration = DateTimeOffset.UtcNow.AddMinutes(-1) };
 
         var threw = false;
+
         try
         {
             await Cache.SetAsync("past", [1], options);
@@ -287,6 +299,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         {
             Cache.Set("sync-key", value, options);
             var fetched = Cache.Get("sync-key");
+
             if (fetched is null || !fetched.SequenceEqual(value))
             {
                 throw new InvalidOperationException("Sync Get returned a different value than Set stored.");
@@ -307,6 +320,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         cts.Cancel();
 
         var threw = false;
+
         try
         {
             await Cache.RemoveAsync("cancel-remove", cts.Token);
@@ -373,6 +387,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         slowClient = new ScriptInterceptingClient(Client, async (call, send) =>
         {
             observedLeases.Add(slowClient!.LastSetExpiry.TimeToLive!.Value);
+
             if (call == 1)
             {
                 // Expire the first lease explicitly. Fixed sleeps can overrun both the
@@ -383,6 +398,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
                 await Assert.That(await Cache.GetAsync("slow-wrapped-remove")).IsNotNull();
                 return rejected;
             }
+
             return await send();
         });
         await using var cache = new RespireDistributedCache(slowClient)
@@ -610,6 +626,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     public async Task NullKey_Throws()
     {
         var threw = false;
+
         try
         {
             await Cache.GetAsync(null!);
@@ -658,7 +675,11 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             ReadGate = peerReadGate.Task,
             SuppressReply = command =>
             {
-                if (command != "CLIENT ID") return false;
+                if (command != "CLIENT ID")
+                {
+                    return false;
+                }
+
                 identityReceived.TrySetResult();
                 return true;
             },
@@ -668,7 +689,8 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await using var timeoutClient = await RespireClient.ConnectAsync(
             new RespireOptions
             {
-                Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
+                Endpoints = [new("127.0.0.1", server.Port)],
+                Protocol = RespireProtocol.Resp2,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
                 LibraryName = null,
                 CommandTimeout = TimeSpan.FromMilliseconds(50),
@@ -678,6 +700,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
         var started = Stopwatch.GetTimestamp();
         RespireTimeoutException? failure = null;
+
         try
         {
             await timeoutCache.SetAsync("identity-timeout", [1], new DistributedCacheEntryOptions());
@@ -717,14 +740,19 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         {
             SuppressReply = command =>
             {
-                if (command != "CLIENT ID") return false;
+                if (command != "CLIENT ID")
+                {
+                    return false;
+                }
+
                 identityReceived.TrySetResult();
                 return true;
             },
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             CommandTimeout = null,
         });
@@ -743,6 +771,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
 
         Exception? failure = null;
+
         try
         {
             await pending.WaitAsync(TimeSpan.FromSeconds(2));
@@ -770,6 +799,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             "ACL", "SETUSER", username, "reset", "on", $">{password}", "~*", "+@all", "-client|kill")).Dispose();
 
         RespireClient? restrictedClient = null;
+
         try
         {
             var options = RespireOptions.Parse(Server.IsolatedConnectionString) with
@@ -782,6 +812,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             await using var restrictedCache = new RespireDistributedCache(restrictedClient);
 
             RespireServerException? failure = null;
+
             try
             {
                 await restrictedCache.SetAsync(
@@ -834,6 +865,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             "ACL", "SETUSER", username, "reset", "on", $">{password}", "~*", "+@all", "-client")).Dispose();
 
         RespireClient? restrictedClient = null;
+
         try
         {
             var options = RespireOptions.Parse(Server.IsolatedConnectionString) with
@@ -856,6 +888,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             // denied CLIENT ID requirement.
             var connection = await restrictedClient.AcquireConnectionAsync(CancellationToken.None);
             await connection.DisposeAsync();
+
             try
             {
                 await restrictedClient.PingAsync();
@@ -904,6 +937,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             "ACL", "SETUSER", username, "reset", "on", $">{password}", "~*", "+@all")).Dispose();
 
         RespireClient? restrictedClient = null;
+
         try
         {
             var options = RespireOptions.Parse(Server.IsolatedConnectionString) with
@@ -939,7 +973,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
                 // Ping can fail immediately after scheduling recovery. Await that attempt's
                 // cleanup instead of sampling CLIENT LIST while its handshake is still live.
                 while (restrictedClient.Core.Multiplexer.IsReconnecting)
+                {
                     await Task.Delay(10, reconnectTimeout.Token);
+                }
             }
 
             // Closing a local socket does not synchronously remove its server-side client.
@@ -947,13 +983,20 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             // candidate. A genuinely leaked socket remains visible through the whole bound.
             var closedAt = Stopwatch.GetTimestamp();
             int leaked;
+
             do
             {
                 leaked = await CountNamedClientsAsync();
-                if (leaked == 0) break;
+
+                if (leaked == 0)
+                {
+                    break;
+                }
+
                 await Task.Delay(10, reconnectTimeout.Token);
             }
             while (Stopwatch.GetElapsedTime(closedAt) < TimeSpan.FromSeconds(5));
+
             await Assert.That(leaked).IsEqualTo(0);
 
             async Task<int> CountNamedClientsAsync()
@@ -989,6 +1032,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         var stallObserved = await StartServerPauseAsync(2000);
 
         var threw = false;
+
         try
         {
             await timeoutCache.RemoveAsync("timeout-remove");
@@ -1028,6 +1072,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         var stallObserved = await StartServerPauseAsync(500);
 
         RespireTimeoutException? failure = null;
+
         try
         {
             await cache.RemoveAsync("default-timeout-remove").WaitAsync(TimeSpan.FromSeconds(5));
@@ -1120,6 +1165,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         var stallObserved = await StartServerPauseAsync(2000);
 
         var threw = false;
+
         try
         {
             await timeoutCache.SetAsync("timeout-set", [1],
@@ -1162,6 +1208,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             // Exercise dispatch after the old two-second pause would already have expired.
             await Task.Delay(dispatchDelayMs);
             RespireTimeoutException? failure = null;
+
             try
             {
                 await timeoutCache.SetAsync(
@@ -1215,6 +1262,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         var stallObserved = await StartServerPauseAsync(2000);
 
         var threw = false;
+
         try
         {
             await timeoutCache.GetAsync("timeout-get");
@@ -1248,10 +1296,22 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             SuppressReply = command =>
             {
                 if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)
-                    && !command.StartsWith("EVAL ", StringComparison.Ordinal)) return false;
+                    && !command.StartsWith("EVAL ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 var call = Interlocked.Increment(ref scriptCalls);
-                if (call == 2) firstCorrection.TrySetResult(command);
-                if (call == 3) freshCorrection.TrySetResult((command, DateTimeOffset.UtcNow));
+
+                if (call == 2)
+                {
+                    firstCorrection.TrySetResult(command);
+                }
+
+                if (call == 3)
+                {
+                    freshCorrection.TrySetResult((command, DateTimeOffset.UtcNow));
+                }
                 // Keep the original set and its FIFO correction pending until the test releases them.
                 return call <= 2;
             },
@@ -1345,6 +1405,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             "ACL", "SETUSER", username, "reset", "on", $">{password}", "~*", "+@all", "-eval")).Dispose();
 
         RespireClient? restrictedClient = null;
+
         try
         {
             var options = RespireOptions.Parse(Server.IsolatedConnectionString) with
@@ -1357,6 +1418,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             await restrictedClient.EnsureReliableCorrectionOrderingAsync();
 
             RespireServerException? failure = null;
+
             try
             {
                 await restrictedClient.ExecuteOnAllConnectionsAsync(
@@ -1404,6 +1466,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
                     controlHandshake.TrySetResult();
                     return true;
                 }
+
                 if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal)
                     && !command.EndsWith("SKIPME yes", StringComparison.Ordinal))
                 {
@@ -1456,6 +1519,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await server.SendRawAsync(":1\r\n"u8.ToArray(), controlConnection);
 
         RespireTimeoutException? failure = null;
+
         try
         {
             await set.WaitAsync(TimeSpan.FromSeconds(10));
@@ -1558,11 +1622,18 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         private RespireKey _lastSetKey;
 
         public int ScriptCalls => _scriptCalls;
+
         public int SetCalls => _setCalls;
+
         public RespireKey LastSetKey => _lastSetKey;
-        public RespireExpiry LastSetExpiry { get; private set; }
+
+        public RespireExpiry LastSetExpiry
+        {
+            get; private set;
+        }
 
         public IRespireScriptCommands Scripts => new InterceptedScripts(this, inner.Scripts);
+
         public IRespireFunctionCommands Functions => inner.Functions;
 
         private sealed class InterceptedScripts(ScriptInterceptingClient owner, IRespireScriptCommands inner) : IRespireScriptCommands
@@ -1598,6 +1669,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         private readonly bool _ignoreScriptCancellation = ignoreScriptCancellation;
 
         public RespireEndpoint Endpoint => inner.Endpoint;
+
         public bool IsConnected => inner.IsConnected;
 
         public ValueTask RegisterKeyTrackingAsync(RespireKey key, RespireKey? field = null,
@@ -1611,19 +1683,33 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         }
 
         public IRespireStringCommands Strings => inner.Strings;
+
         public IRespireKeyCommands Keys => keys ?? inner.Keys;
+
         public IRespireLockCommands Locks => inner.Locks;
+
         public IRespireHashCommands Hashes => inner.Hashes;
+
         public IRespirePathHashCommands PathHashes => inner.PathHashes;
+
         public IRespireListCommands Lists => inner.Lists;
+
         public IRespireArrayCommands Arrays => inner.Arrays;
+
         public IRespireSetCommands Sets => inner.Sets;
+
         public IRespireSortedSetCommands SortedSets => inner.SortedSets;
+
         public IRespireStreamCommands Streams => inner.Streams;
+
         public IRespireBitmapCommands Bitmaps => inner.Bitmaps;
+
         public IRespireHyperLogLogCommands HyperLogLog => inner.HyperLogLog;
+
         public IRespireGeoCommands Geo => inner.Geo;
+
         public IRespireVectorSetCommands VectorSets => inner.VectorSets;
+
         public IRespireServerCommands Server => inner.Server;
 
         public ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default)
@@ -1661,6 +1747,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         private async ValueTask DelaySetAsync(CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _setCalls);
+
             if (setDelay is { } delay)
             {
                 await Task.Delay(delay, cancellationToken);
@@ -1697,26 +1784,20 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<long> PublishShardedAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default)
             => inner.PublishShardedAsync(channel, message, cancellationToken);
 
-
         public ValueTask<RespireSubscription> SubscribeAsync(RespireChannel channel, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
             => inner.SubscribeAsync(channel, options, cancellationToken: cancellationToken);
-
 
         public ValueTask<RespireSubscription> SubscribeAsync(ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
             => inner.SubscribeAsync(channels, options, cancellationToken: cancellationToken);
 
-
         public ValueTask<RespireSubscription> SubscribePatternAsync(RespireChannel channel, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
             => inner.SubscribePatternAsync(channel, options, cancellationToken: cancellationToken);
-
 
         public ValueTask<RespireSubscription> SubscribePatternAsync(ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
             => inner.SubscribePatternAsync(channels, options, cancellationToken: cancellationToken);
 
-
         public ValueTask<RespireSubscription> SubscribeShardedAsync(RespireChannel channel, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
             => inner.SubscribeShardedAsync(channel, options, cancellationToken: cancellationToken);
-
 
         public ValueTask<RespireSubscription> SubscribeShardedAsync(ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
             => inner.SubscribeShardedAsync(channels, options, cancellationToken: cancellationToken);
@@ -1727,15 +1808,17 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<long> PublishShardedAsync(string channel, RespireValue message, CancellationToken cancellationToken = default)
             => inner.PublishShardedAsync(channel, message, cancellationToken);
 
-
         public RespireBatch CreateBatch() => inner.CreateBatch();
+
         public RespireTransaction CreateTransaction() => inner.CreateTransaction();
 
         public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
             RespireKey[] watchKeys, CancellationToken cancellationToken = default)
             => inner.CreateTransactionAsync(watchKeys, cancellationToken);
+
         public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(params ReadOnlySpan<RespireKey> watchKeys)
             => inner.CreateTransactionAsync(watchKeys);
+
         public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
             ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken)
             => inner.CreateTransactionAsync(watchKeys, cancellationToken);
@@ -1769,12 +1852,17 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.ExecuteFireAndForgetAsync(command, cancellationToken);
 
         public IRespireClient WithKeyPrefix(string prefix) => inner.WithKeyPrefix(prefix);
+
         public IRespireClient WithReadFrom(RespireReadFrom readFrom) => inner.WithReadFrom(readFrom);
+
         public IRespireClient WithoutClientCache() => inner.WithoutClientCache();
 
         public IRespireClient WithKeyPrefix(RespireKey prefix) => inner.WithKeyPrefix(prefix);
+
         public IRespireClient WithPubSubPrefix(string prefix) => inner.WithPubSubPrefix(prefix);
+
         public IRespireClient WithPubSubPrefix(RespireKey prefix) => inner.WithPubSubPrefix(prefix);
+
         public ValueTask<T?> GetOrSetAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
             RespireExpiry expiry, CancellationToken cancellationToken = default)
             => inner.GetOrSetAsync(key, factory, expiry, cancellationToken);
@@ -1784,6 +1872,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.GetOrSetAsync(key, options, factory, expiry, cancellationToken);
 
         public RespireKey ResolveKey(RespireKey key) => inner.ResolveKey(key);
+
         public RespireChannel ResolveChannel(RespireChannel channel) => inner.ResolveChannel(channel);
 
         // The test owns the wrapped client's lifetime.
@@ -1794,16 +1883,23 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     {
         public ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
             => DeleteAsync([key], cancellationToken);
+
         public ValueTask<long> UnlinkAsync(RespireKey key, CancellationToken cancellationToken)
             => UnlinkAsync([key], cancellationToken);
+
         public ValueTask<long> TouchAsync(RespireKey key, CancellationToken cancellationToken)
             => TouchAsync([key], cancellationToken);
 
         public ValueTask<string?[]> SortAsync(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => inner.SortAsync(key, options, cancellationToken);
+
         public ValueTask<T?[]> SortAsync<T>(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => inner.SortAsync<T>(key, options, cancellationToken);
+
         public ValueTask<long> SortStoreAsync(RespireKey key, RespireKey destination, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => inner.SortStoreAsync(key, destination, options, cancellationToken);
+
         public ValueTask<RespireKey?> RandomAsync(CancellationToken cancellationToken = default) => inner.RandomAsync(cancellationToken);
+
         public ValueTask<bool> MoveAsync(RespireKey key, int database, CancellationToken cancellationToken = default) => inner.MoveAsync(key, database, cancellationToken);
+
         public ValueTask<bool> MoveAsync(RespireKey key, int database, bool replace, CancellationToken cancellationToken = default) => inner.MoveAsync(key, database, replace, cancellationToken);
 
         private readonly TaskCompletionSource<long> _unlink =

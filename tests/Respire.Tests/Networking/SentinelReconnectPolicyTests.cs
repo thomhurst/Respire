@@ -95,7 +95,11 @@ public class SentinelReconnectPolicyTests
         {
             // MeterListener invokes this synchronously before the resolver starts its delay.
             scheduledAt = Stopwatch.GetTimestamp();
-            if (cancel) cancellation.Cancel();
+
+            if (cancel)
+            {
+                cancellation.Cancel();
+            }
         });
         var options = Options(first.Port, second.Port) with
         {
@@ -103,6 +107,7 @@ public class SentinelReconnectPolicyTests
         };
         var pending = SentinelResolver.ResolveAndConnectPrimaryAsync(options,
             static (resolved, _, _) => ValueTask.FromResult(resolved.PrimaryEndpoint), cancellation.Token).AsTask();
+
         if (cancel)
         {
             var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
@@ -114,6 +119,7 @@ public class SentinelReconnectPolicyTests
             await Assert.That((await pending).Port).IsEqualTo(6379);
             await Assert.That(Stopwatch.GetElapsedTime(scheduledAt) >= TimeSpan.FromMilliseconds(180)).IsTrue();
         }
+
         await Assert.That(metrics.Delays.ToArray()).IsEquivalentTo(new[] { 0.2 });
         await Assert.That(metrics.Exhaustions).IsEqualTo(0L);
     }
@@ -124,12 +130,14 @@ public class SentinelReconnectPolicyTests
         await using var second = new FakeRespServer(2, PrimaryReply(6379));
         await using var first = new FakeRespServer(2, "-ERR unavailable\r\n"u8.ToArray());
         using var metrics = new DiscoveryMetrics(second.Port);
+
         for (var index = 0; index < 2; index++)
         {
             var endpoint = await SentinelResolver.ResolveAndConnectPrimaryAsync(Options(first.Port, second.Port),
                 static (resolved, _, _) => ValueTask.FromResult(resolved.PrimaryEndpoint), default);
             await Assert.That(endpoint.Port).IsEqualTo(6379);
         }
+
         await Assert.That(metrics.Attempts.ToArray()).IsEquivalentTo(new long[] { 1, 1 }, CollectionOrdering.Matching);
         await Assert.That(metrics.Exhaustions).IsEqualTo(0L);
     }
@@ -181,12 +189,15 @@ public class SentinelReconnectPolicyTests
     {
         Protocol = RespireProtocol.Resp2,
         Endpoints = [new("127.0.0.1", first), new("127.0.0.1", second)],
-        SentinelPrimaryName = "mymaster", Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2),
+        SentinelPrimaryName = "mymaster",
+        Connections = 1,
+        ConnectTimeout = TimeSpan.FromSeconds(2),
         ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },
     };
 
     private static byte[] PrimaryReply(int port)
         => Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${port.ToString().Length}\r\n{port}\r\n");
+
     private static byte[] PeersReply(int port)
         => Encoding.ASCII.GetBytes($"*1\r\n*4\r\n$2\r\nip\r\n$9\r\n127.0.0.1\r\n$4\r\nport\r\n${port.ToString().Length}\r\n{port}\r\n");
 
@@ -194,41 +205,72 @@ public class SentinelReconnectPolicyTests
     {
         private readonly MeterListener _listener = new();
         private long _exhaustions;
-        internal ConcurrentQueue<long> Attempts { get; } = new();
-        internal ConcurrentQueue<double> Delays { get; } = new();
+
+        internal ConcurrentQueue<long> Attempts
+        {
+            get;
+        } = new();
+
+        internal ConcurrentQueue<double> Delays
+        {
+            get;
+        } = new();
+
         internal long Exhaustions => Interlocked.Read(ref _exhaustions);
+
         internal DiscoveryMetrics(int port, Action? scheduled = null)
         {
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name.StartsWith("respire.connection.reconnect."))
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
             {
-                if (!Matches(tags, port)) return;
-                if (instrument.Name.EndsWith(".attempt")) Attempts.Enqueue(value);
-                if (instrument.Name.EndsWith(".exhausted")) Interlocked.Add(ref _exhaustions, value);
+                if (!Matches(tags, port))
+                {
+                    return;
+                }
+
+                if (instrument.Name.EndsWith(".attempt"))
+                {
+                    Attempts.Enqueue(value);
+                }
+
+                if (instrument.Name.EndsWith(".exhausted"))
+                {
+                    Interlocked.Add(ref _exhaustions, value);
+                }
             });
             _listener.SetMeasurementEventCallback<double>((_, value, tags, _) =>
             {
-                if (!Matches(tags, port)) return;
+                if (!Matches(tags, port))
+                {
+                    return;
+                }
+
                 Delays.Enqueue(value);
                 scheduled?.Invoke();
             });
             _listener.Start();
         }
+
         private static bool Matches(ReadOnlySpan<KeyValuePair<string, object?>> tags, int port)
         {
             var endpoint = false;
             var scope = false;
+
             foreach (var tag in tags)
             {
                 endpoint |= tag.Key == "server.port" && tag.Value is int value && value == port;
                 scope |= tag.Key == "respire.reconnect.scope" && Equals(tag.Value, "sentinel-discovery");
             }
+
             return endpoint && scope;
         }
+
         public void Dispose() => _listener.Dispose();
     }
 }

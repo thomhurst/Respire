@@ -92,14 +92,23 @@ public class ServerClusterInspectionCommandTests
         await using var seed = new FakeRespServer(2, Bulk("view-of-seed"));
         seed.SuppressReply = command =>
         {
-            if (command == "CLUSTER SLOTS") { _ = seed.SendRawAsync(Slots(seed.Port)); return true; }
+            if (command == "CLUSTER SLOTS")
+            {
+                _ = seed.SendRawAsync(Slots(seed.Port));
+                return true;
+            }
+
             if (command == "CLUSTER NODES")
             {
                 var nodes = $"self 127.0.0.1:{seed.Port}@2 myself,master - 0 0 1 connected 0-16383\nreplica 127.0.0.1:{replica.Port}@2 slave self 0 0 1 connected\n";
                 _ = seed.SendRawAsync(Bulk(nodes), seed.ReceivedConnectionIds[^1]);
                 return true;
             }
-            if (command != "CLUSTER SHARDS") return false;
+
+            if (command != "CLUSTER SHARDS")
+            {
+                return false;
+            }
             // Deliberately different from the active slot map; inspection must not install it.
             var node = Map(true, Bulk("id"), Bulk("unreachable"), Bulk("role"), Bulk("master"), Bulk("health"), Bulk("online"),
                 Bulk("replication-offset"), Integer(0), Bulk("endpoint"), Bulk("not-a-real-host.invalid"), Bulk("port"), Integer(1));
@@ -110,7 +119,9 @@ public class ServerClusterInspectionCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var results = await client.Server.ClusterShardsOnAllNodesAsync();
@@ -127,7 +138,16 @@ public class ServerClusterInspectionCommandTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
-            SuppressReply = command => { if (command != "CLUSTER LINKS") return false; received.TrySetResult(); return true; },
+            SuppressReply = command =>
+            {
+                if (command != "CLUSTER LINKS")
+                {
+                    return false;
+                }
+
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
@@ -153,7 +173,12 @@ public class ServerClusterInspectionCommandTests
                 "CLUSTER KEYSLOT key" => Integer(12539),
                 _ => null,
             };
-            if (reply is null) return false;
+
+            if (reply is null)
+            {
+                return false;
+            }
+
             _ = server.SendRawAsync(reply, server.ReceivedConnectionIds[^1]);
             return true;
         };
@@ -161,7 +186,9 @@ public class ServerClusterInspectionCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -176,10 +203,15 @@ public class ServerClusterInspectionCommandTests
     }
 
     private static byte[] Bulk(string value) => Bulk(Encoding.UTF8.GetBytes(value));
+
     private static byte[] Bulk(byte[] value) => [.. Encoding.ASCII.GetBytes($"${value.Length}\r\n"), .. value, 13, 10];
+
     private static byte[] Integer(long value) => Encoding.ASCII.GetBytes($":{value}\r\n");
+
     private static byte[] Array(params byte[][] values) => [.. Encoding.ASCII.GetBytes($"*{values.Length}\r\n"), .. values.SelectMany(x => x)];
+
     private static byte[] Map(bool resp3, params byte[][] values)
         => [.. Encoding.ASCII.GetBytes(resp3 ? $"%{values.Length / 2}\r\n" : $"*{values.Length}\r\n"), .. values.SelectMany(x => x)];
+
     private static byte[] Slots(int port) => Array(Array(Integer(0), Integer(16383), Array(Bulk("127.0.0.1"), Integer(port))));
 }

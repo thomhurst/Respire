@@ -16,13 +16,18 @@ internal struct CommandAcquisitionScope(
     private CancellationTokenSource? _source;
 
     internal readonly CancellationToken CallerToken => callerToken;
+
     internal readonly bool HasCancellation => _source is not null;
 
     internal CancellationToken Token
     {
         get
         {
-            if (!deadline.IsSet) return callerToken;
+            if (!deadline.IsSet)
+            {
+                return callerToken;
+            }
+
             _source ??= CommandTimeoutCancellation.Create(callerToken,
                 TimeSpan.FromMilliseconds(Math.Max(1L, deadline.RemainingMilliseconds)));
             return _source.Token;
@@ -38,8 +43,11 @@ internal struct CommandAcquisitionScope(
     internal readonly void CheckDeadline(string operation, ClientCore core, RespireConnection? pinnedConnection = null)
     {
         callerToken.ThrowIfCancellationRequested();
+
         if (deadline.IsSet && deadline.RemainingMilliseconds == 0)
+        {
             throw CreateTimeout(operation, core, pinnedConnection);
+        }
     }
 
     internal readonly RespireTimeoutException CreateTimeout(string operation, ClientCore core,
@@ -49,8 +57,12 @@ internal struct CommandAcquisitionScope(
         var diagnostics = core.Cluster is null && core.Sentinel is null
             ? core.Multiplexer.CaptureConnectionWait()
             : RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting);
+
         if (pinnedConnection is not null)
+        {
             diagnostics = pinnedConnection.CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity);
+        }
+
         return new(operation, timeout!.Value, cause, diagnostics);
     }
 

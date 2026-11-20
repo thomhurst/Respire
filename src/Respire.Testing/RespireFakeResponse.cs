@@ -4,18 +4,29 @@ namespace Respire.Testing;
 /// Expectation overrides do not execute the fake command handler or mutate its data.</summary>
 public sealed class RespireFakeResponse
 {
-    internal FakeReply Reply { get; }
+    internal FakeReply Reply
+    {
+        get;
+    }
+
     private RespireFakeResponse(FakeReply reply) => Reply = reply;
 
     /// <summary>A null bulk reply (RESP2) or null (RESP3).</summary>
-    public static RespireFakeResponse Null { get; } = new(FakeReply.Null);
+    public static RespireFakeResponse Null
+    {
+        get;
+    } = new(FakeReply.Null);
 
     /// <summary>Creates a simple string reply, such as OK.</summary>
     public static RespireFakeResponse Simple(string value)
     {
         ArgumentNullException.ThrowIfNull(value);
+
         if (value.Contains('\r') || value.Contains('\n'))
+        {
             throw new ArgumentException("Simple replies cannot contain CR or LF.", nameof(value));
+        }
+
         return new(FakeReply.Simple(value));
     }
 
@@ -36,7 +47,12 @@ public sealed class RespireFakeResponse
     public static RespireFakeResponse Array(params RespireFakeResponse[] values)
     {
         ArgumentNullException.ThrowIfNull(values);
-        if (values.Any(value => value is null)) throw new ArgumentException("Replies cannot be null; use Null.", nameof(values));
+
+        if (values.Any(value => value is null))
+        {
+            throw new ArgumentException("Replies cannot be null; use Null.", nameof(values));
+        }
+
         return new(FakeReply.Array(values.Select(value => value.Reply).ToArray()));
     }
 

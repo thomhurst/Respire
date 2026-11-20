@@ -137,13 +137,12 @@ public struct RespireCommandInterpolatedStringHandler
             ? RespireValue.Null
             : FormatText(value, format);
 
-    private static string FormatText<T>(T value, string? format)
-        => value switch
-        {
-            null => string.Empty,
-            IFormattable formattable => formattable.ToString(format, CultureInfo.InvariantCulture),
-            _ => value.ToString() ?? string.Empty,
-        };
+    private static string FormatText<T>(T value, string? format) => value switch
+    {
+        null => string.Empty,
+        IFormattable formattable => formattable.ToString(format, CultureInfo.InvariantCulture),
+        _ => value.ToString() ?? string.Empty,
+    };
 
     private static RespireValue AlignText<T>(T value, int alignment, string? format)
     {
@@ -161,6 +160,7 @@ public struct RespireCommandInterpolatedStringHandler
 
         var width = Math.Abs(alignment);
         var length = value.GetWireLength();
+
         if (length >= width)
         {
             return value;

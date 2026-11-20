@@ -20,6 +20,7 @@ public class BlockingWaitApiContractTests
 
         await Assert.That(waits).IsNotEmpty();
         await Assert.That(waits.Any(parameter => ((MethodInfo)parameter.Member).IsGenericMethodDefinition)).IsTrue();
+
         foreach (var parameter in waits)
         {
             await Assert.That(parameter.Name).IsEqualTo("waitFor");
@@ -27,6 +28,7 @@ public class BlockingWaitApiContractTests
             // Omitted arguments must never start an indefinite wait on the combined APIs.
             await Assert.That(parameter.IsOptional).IsFalse();
         }
+
         await Assert.That(typeof(RespireStreamReadOptions).GetProperty("WaitFor")!.PropertyType).IsEqualTo(typeof(TimeSpan?));
     }
 

@@ -43,8 +43,16 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         var writes = 0;
         await using var map = Create(client, UniqueKey(), new()
         {
-            Loader = (key, _) => { loads++; return ValueTask.FromResult(new RespireGetResult<int>(key == 1, 0)); },
-            Writer = (_, _) => { writes++; return ValueTask.CompletedTask; },
+            Loader = (key, _) =>
+            {
+                loads++;
+                return ValueTask.FromResult(new RespireGetResult<int>(key == 1, 0));
+            },
+            Writer = (_, _) =>
+            {
+                writes++;
+                return ValueTask.CompletedTask;
+            },
         });
         (await map.GetAsync(1)).Should().Be(new RespireGetResult<int>(true, 0));
         (await map.GetAsync(1)).Found.Should().BeTrue();
@@ -66,15 +74,22 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         await using var map = Create(client, hash, new()
         {
             EntryExpiration = expiry ? TimeSpan.FromMinutes(1) : null,
-            Loader = async (_, _) => { entered.SetResult(); await resume.Task; return new(true, 10); },
+            Loader = async (_, _) =>
+            {
+                entered.SetResult();
+                await resume.Task;
+                return new(true, 10);
+            },
         });
         var read = map.GetAsync(1).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await other.Hashes.SetAsync(hash, "1", (RespireValue)"99");
         }
         finally { resume.TrySetResult(); }
+
         (await read).Value.Should().Be(99);
     }
 
@@ -144,7 +159,12 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
             Writer = (batch, _) =>
             {
                 changes.AddRange(batch);
-                if (batch[0].Entry.Value == 99) throw new IOException("store unavailable");
+
+                if (batch[0].Entry.Value == 99)
+                {
+                    throw new IOException("store unavailable");
+                }
+
                 return ValueTask.CompletedTask;
             },
         });
@@ -171,17 +191,33 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         await client.Hashes.SetAsync(hash, "1", (RespireValue)"10");
         await using var map = Create(client, hash, new()
         {
-            WriteBehind = true, FlushInterval = TimeSpan.FromHours(1),
-            Loader = (_, _) => { loads++; return ValueTask.FromResult(stored); },
-            Writer = (batch, _) => { writes++; stored = batch[^1].Entry; return ValueTask.CompletedTask; },
+            WriteBehind = true,
+            FlushInterval = TimeSpan.FromHours(1),
+            Loader = (_, _) =>
+            {
+                loads++;
+                return ValueTask.FromResult(stored);
+            },
+            Writer = (batch, _) =>
+            {
+                writes++;
+                stored = batch[^1].Entry;
+                return ValueTask.CompletedTask;
+            },
         });
 
         await map.RemoveAsync(1);
         writes.Should().Be(0);
+
         if (preload)
+        {
             (await map.PreloadAsync([1])).Should().Be(0);
+        }
         else
+        {
             (await map.GetAsync(1)).Found.Should().BeFalse();
+        }
+
         writes.Should().Be(1);
         loads.Should().Be(1);
         (await client.Hashes.ExistsAsync(hash, "1")).Should().BeFalse();
@@ -196,7 +232,9 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         var hash = UniqueKey();
         await using var map = Create(client, hash, new()
         {
-            WriteBehind = true, BatchSize = 1, FlushInterval = TimeSpan.FromHours(1),
+            WriteBehind = true,
+            BatchSize = 1,
+            FlushInterval = TimeSpan.FromHours(1),
             EntryExpiration = TimeSpan.FromMinutes(1),
             Loader = (_, _) => ValueTask.FromResult(stored),
             Writer = (batch, _) =>
@@ -229,16 +267,27 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         var hash = UniqueKey();
         var map = Create(client, hash, new()
         {
-            WriteBehind = true, FlushInterval = TimeSpan.FromHours(1),
-            Loader = (_, _) => { loads++; return ValueTask.FromResult(stored); },
+            WriteBehind = true,
+            FlushInterval = TimeSpan.FromHours(1),
+            Loader = (_, _) =>
+            {
+                loads++;
+                return ValueTask.FromResult(stored);
+            },
             Writer = (batch, _) =>
             {
                 attempts++;
-                if (fail) throw new IOException("store unavailable");
+
+                if (fail)
+                {
+                    throw new IOException("store unavailable");
+                }
+
                 stored = batch[^1].Entry;
                 return ValueTask.CompletedTask;
             },
         });
+
         try
         {
             await map.RemoveAsync(1);
@@ -263,9 +312,16 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         var batches = new List<RespireMapChange<int, int>[]>();
         var map = Create(client, UniqueKey(), new()
         {
-            WriteBehind = true, BatchSize = 2, FlushInterval = TimeSpan.FromHours(1),
-            Writer = (batch, _) => { batches.Add(batch.ToArray()); return ValueTask.CompletedTask; },
+            WriteBehind = true,
+            BatchSize = 2,
+            FlushInterval = TimeSpan.FromHours(1),
+            Writer = (batch, _) =>
+            {
+                batches.Add(batch.ToArray());
+                return ValueTask.CompletedTask;
+            },
         });
+
         await using (map)
         {
             await map.SetAsync(1, 10);
@@ -273,6 +329,7 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
             await map.RemoveAsync(1);
             batches.Should().BeEmpty();
         }
+
         batches.Select(batch => batch.Length).Should().Equal(2, 1);
         batches.SelectMany(batch => batch).Select(change => change.Entry).Should().Equal(
             new RespireGetResult<int>(true, 10), new RespireGetResult<int>(true, 20), default);
@@ -290,11 +347,17 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         var received = new List<RespireMapChange<int, int>[]>();
         var map = Create(client, UniqueKey(), new()
         {
-            WriteBehind = true, FlushInterval = TimeSpan.FromHours(1),
+            WriteBehind = true,
+            FlushInterval = TimeSpan.FromHours(1),
             Writer = (batch, _) =>
             {
                 received.Add(batch.ToArray());
-                if (++attempts == 1) throw new IOException("retry me");
+
+                if (++attempts == 1)
+                {
+                    throw new IOException("retry me");
+                }
+
                 return ValueTask.CompletedTask;
             },
         });
@@ -316,9 +379,13 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         var hash = UniqueKey();
         var map = Create(client, hash, new()
         {
-            WriteBehind = true, BatchSize = 1, MaxPendingWrites = 1, FlushInterval = TimeSpan.FromHours(1),
+            WriteBehind = true,
+            BatchSize = 1,
+            MaxPendingWrites = 1,
+            FlushInterval = TimeSpan.FromHours(1),
             Writer = (_, _) => fail ? ValueTask.FromException(new IOException("full")) : ValueTask.CompletedTask,
         });
+
         try
         {
             await map.SetAsync(1, 10);
@@ -337,11 +404,17 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var map = Create(client, UniqueKey(), new()
         {
-            WriteBehind = true, FlushInterval = TimeSpan.FromMilliseconds(20),
+            WriteBehind = true,
+            FlushInterval = TimeSpan.FromMilliseconds(20),
             Writer = (batch, _) =>
             {
                 batch[0].Entry.Value.Should().Be(10);
-                if (++attempts == 1) throw new IOException("transient");
+
+                if (++attempts == 1)
+                {
+                    throw new IOException("transient");
+                }
+
                 written.TrySetResult();
                 return ValueTask.CompletedTask;
             },
@@ -361,9 +434,14 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var map = Create(client, UniqueKey(), new()
         {
-            Writer = async (_, _) => { entered.TrySetResult(); await resume.Task; },
+            Writer = async (_, _) =>
+            {
+                entered.TrySetResult();
+                await resume.Task;
+            },
         });
         var write = map.SetAsync(1, 10).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -392,6 +470,7 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
             },
         });
         Task? dispose = null;
+
         IEnumerable<int> Keys()
         {
             yield return 1;
@@ -416,8 +495,13 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         await using var map = new RespireMap<string, byte[]>(client, UniqueKey(), key => key,
             value => value, bytes => bytes.ToArray(), new()
             {
-                WriteBehind = true, FlushInterval = TimeSpan.FromHours(1),
-                Writer = (batch, _) => { written = batch[0].Entry.Value; return ValueTask.CompletedTask; },
+                WriteBehind = true,
+                FlushInterval = TimeSpan.FromHours(1),
+                Writer = (batch, _) =>
+                {
+                    written = batch[0].Entry.Value;
+                    return ValueTask.CompletedTask;
+                },
             });
         byte[] value = [1, 2, 3];
         await map.SetAsync("binary", value);
@@ -438,7 +522,11 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         await using var map = Create(client, hash, new()
         {
             WriteBehind = true,
-            Writer = (_, _) => { writes++; return ValueTask.CompletedTask; },
+            Writer = (_, _) =>
+            {
+                writes++;
+                return ValueTask.CompletedTask;
+            },
         });
         var write = () => map.SetAsync(1, 10).AsTask();
         await write.Should().ThrowAsync<RespireServerException>();
@@ -455,7 +543,11 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         await using var map = Create(client, hash, new()
         {
             WriteBehind = true,
-            Writer = (_, _) => { writes++; return ValueTask.CompletedTask; },
+            Writer = (_, _) =>
+            {
+                writes++;
+                return ValueTask.CompletedTask;
+            },
         });
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
@@ -490,7 +582,8 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
     private ValueTask<RespireClient> ConnectAsync(RespireClientTrackingMode mode = RespireClientTrackingMode.OptIn, string? prefix = null)
         => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
         {
-            Protocol = RespireProtocol.Resp3, Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            Connections = 1,
             ClientSideCache = new() { TrackingMode = mode, KeyPrefixes = prefix is null ? [] : [(RespireKey)prefix] },
         });
 
@@ -504,6 +597,10 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
     private static async Task UntilAsync(Func<Task<bool>> condition)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!await condition()) await Task.Delay(10, timeout.Token);
+
+        while (!await condition())
+        {
+            await Task.Delay(10, timeout.Token);
+        }
     }
 }

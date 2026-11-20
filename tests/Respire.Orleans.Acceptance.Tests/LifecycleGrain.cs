@@ -7,9 +7,13 @@ namespace Respire.Orleans.Acceptance.Tests;
 public interface ILifecycleGrain : IGrainWithStringKey
 {
     Task SetValue(int value);
+
     Task<int> GetValue();
+
     Task<Guid> GetActivation();
+
     Task RegisterReminder();
+
     Task RemoveReminder();
 }
 
@@ -26,6 +30,7 @@ public sealed class LifecycleGrain(
     }
 
     public Task<int> GetValue() => Task.FromResult(state.State);
+
     public Task<Guid> GetActivation() => Task.FromResult(_activation);
 
     public async Task RegisterReminder() =>
@@ -34,7 +39,11 @@ public sealed class LifecycleGrain(
     public async Task RemoveReminder()
     {
         var reminder = await this.GetReminder("delivery");
-        if (reminder is not null) await this.UnregisterReminder(reminder);
+
+        if (reminder is not null)
+        {
+            await this.UnregisterReminder(reminder);
+        }
     }
 
     public Task ReceiveReminder(string reminderName, TickStatus status)
@@ -47,6 +56,9 @@ public sealed class LifecycleGrain(
 // One observer per silo: a delivery after restart cannot be satisfied by the old activation.
 public sealed class ReminderDeliveries
 {
-    public Channel<(Guid Activation, int Value)> Received { get; } =
+    public Channel<(Guid Activation, int Value)> Received
+    {
+        get;
+    } =
         Channel.CreateUnbounded<(Guid, int)>();
 }

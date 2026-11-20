@@ -11,30 +11,43 @@ internal interface IGeneratedModule
 {
     [RespireCommand("json.get")]
     ValueTask<string?> JsonGet(RespireKey key, string path = "$", CancellationToken token = default);
+
     [RespireCommand("CUSTOM.ARRAY")]
     Task<string?[]> Strings(byte[] key, params RespireValue[] values);
+
     [RespireCommand("CUSTOM.BYTES")]
     ValueTask<byte[]?[]> Bytes();
+
     [RespireCommand("CUSTOM.NUMBER")]
     ValueTask<double?> Number();
+
     [RespireCommand("CUSTOM.BOOL")]
     Task<bool> Boolean();
+
     [RespireCommand("CUSTOM.INT")]
     ValueTask<int> Integer();
+
     [RespireCommand("CUSTOM.RAW")]
     ValueTask<RespireResult> Raw(RespireCommandFlags flags = RespireCommandFlags.None);
+
     [RespireCommand("CUSTOM.RAW")]
     Task<RespireResult> RawTask();
+
     [RespireCommand("CUSTOM.RAW")]
     ValueTask<RespireResult> RawValues(RespireValue[] values, CancellationToken token = default);
+
     [RespireCommand("CUSTOM.WRITE")]
     ValueTask Write(RespireKey key, RespireValue value);
+
     [RespireCommand("CUSTOM.ERROR")]
     Task Error();
+
     [RespireCommand("AUTH")]
     ValueTask Authenticate(string password);
+
     [RespireCommand("MGET")]
     ValueTask<string?[]> MultiGet(params RespireKey[] keys);
+
     [RespireCommand("CUSTOM.RAW")]
     ValueTask<RespireResult> RawLetter(char letter);
 }
@@ -45,8 +58,10 @@ internal interface IObliviousGeneratedModule
 {
     [RespireCommand("CUSTOM.STRING")]
     Task<string> Text();
+
     [RespireCommand("CUSTOM.BYTES")]
     ValueTask<byte[]> Bytes();
+
     [RespireCommand("CUSTOM.ARRAY")]
     ValueTask<string[]> Strings();
 }
@@ -65,8 +80,11 @@ public class GeneratedCommandTests
     private static ValueTask<RespireClient> Connect(FakeRespServer server, RespireProtocol protocol, bool cache = false)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = protocol,
-            ClientSideCache = cache ? new() : null, CommandTimeout = TimeSpan.FromSeconds(5),
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Protocol = protocol,
+            ClientSideCache = cache ? new() : null,
+            CommandTimeout = TimeSpan.FromSeconds(5),
         });
 
     [Test]
@@ -172,7 +190,10 @@ public class GeneratedCommandTests
         await using var client = await Connect(server, RespireProtocol.Resp2);
         var module = new GeneratedModuleImplementation(client);
         await Assert.That(async () => await module.Authenticate("secret")).Throws<NotSupportedException>();
-        await Assert.That(async () => { using var result = await module.Raw((RespireCommandFlags)128); }).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () =>
+        {
+            using var result = await module.Raw((RespireCommandFlags)128);
+        }).Throws<ArgumentOutOfRangeException>();
         var prefixed = new GeneratedModuleImplementation(client.WithKeyPrefix("prefix:"));
         await prefixed.JsonGet("key");
         await Assert.That(server.ReceivedCommands).Contains("JSON.GET prefix:key $");
@@ -192,13 +213,22 @@ public class GeneratedCommandTests
         // The non-async raw shape reports failures through its task, like every other return shape.
         var canceled = module.RawValues([], cancellation.Token);
         await Assert.That(canceled.IsCanceled).IsTrue();
-        await Assert.That(async () => { using var result = await canceled; }).Throws<OperationCanceledException>();
+        await Assert.That(async () =>
+        {
+            using var result = await canceled;
+        }).Throws<OperationCanceledException>();
         var missing = module.RawValues(null!);
-        await Assert.That(async () => { using var result = await missing; }).Throws<ArgumentNullException>();
+        await Assert.That(async () =>
+        {
+            using var result = await missing;
+        }).Throws<ArgumentNullException>();
         // Argument conversion failures, such as an isolated surrogate, also fault the task instead of throwing.
         var unencodable = module.RawLetter('\ud800');
         await Assert.That(unencodable.IsFaulted).IsTrue();
-        await Assert.That(async () => { using var result = await unencodable; }).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () =>
+        {
+            using var result = await unencodable;
+        }).Throws<ArgumentOutOfRangeException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(count);
     }
 

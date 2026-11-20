@@ -84,8 +84,12 @@ public class ReplicaHealthTests
     private static RespValue Parse(string wire)
     {
         var position = 0;
+
         if (RespParser.TryParseValue(Encoding.UTF8.GetBytes(wire), ref position, out var value) != RespParseStatus.Done)
+        {
             throw new InvalidOperationException("Invalid test frame.");
+        }
+
         return value;
     }
 }
@@ -95,8 +99,12 @@ internal static class ReplicaHealthTestExtensions
     internal static async Task RecordAsync(this ReplicaHealth<object> health, object connection, string role)
     {
         var position = 0;
+
         if (RespParser.TryParseValue(Encoding.UTF8.GetBytes(role), ref position, out var value) != RespParseStatus.Done)
+        {
             throw new InvalidOperationException("Invalid test frame.");
+        }
+
         await Assert.That(health.Record(connection, Stopwatch.GetTimestamp(), in value)).IsTrue();
     }
 }

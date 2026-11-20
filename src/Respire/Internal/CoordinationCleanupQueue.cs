@@ -3,7 +3,12 @@ using System.Threading.Channels;
 
 namespace Respire.Internal;
 
-internal enum CleanupAttemptResult { Succeeded, Failed, Abandoned }
+internal enum CleanupAttemptResult
+{
+    Succeeded,
+    Failed,
+    Abandoned
+}
 
 /// <summary>Runs bounded, retryable coordination cleanup for one client core.</summary>
 internal sealed class CoordinationCleanupQueue : IAsyncDisposable
@@ -30,6 +35,7 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
     private int _admissionWaiters;
 
     internal CoordinationCleanupQueue() => _stoppingToken = _stopping.Token;
+
     internal int StartedWorkerCount => _workers?.Length ?? 0;
 
     /// <summary>
@@ -47,24 +53,40 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(attempt);
         ArgumentNullException.ThrowIfNull(onAbandoned);
         var enqueuedAt = Stopwatch.GetTimestamp();
+
         if (Interlocked.Increment(ref _admissionWaiters) > MaximumAdmissionWaiters)
         {
             Interlocked.Decrement(ref _admissionWaiters);
-            try { onAbandoned("overloaded"); }
+
+            try
+            {
+                onAbandoned("overloaded");
+            }
             catch { /* Diagnostics must not stop cleanup callers. */ }
+
             return false;
         }
-        try { await _outstanding.WaitAsync(_stoppingToken).ConfigureAwait(false); }
+
+        try
+        {
+            await _outstanding.WaitAsync(_stoppingToken).ConfigureAwait(false);
+        }
         catch (OperationCanceledException)
         {
-            try { onAbandoned("client_disposed"); }
+            try
+            {
+                onAbandoned("client_disposed");
+            }
             catch { /* Diagnostics must not stop cleanup callers. */ }
+
             return false;
         }
         finally { Interlocked.Decrement(ref _admissionWaiters); }
+
         var cleanup = new Cleanup(attempt, shouldContinue, retryLimit, initialDelay, maximumDelay, onAbandoned,
             () => _outstanding.Release(),
             enqueuedAt);
+
         if (Volatile.Read(ref _disposed) != 0)
         {
             cleanup.Report("client_disposed");
@@ -89,19 +111,37 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
 
         _queue.Writer.TryComplete();
         await _stopping.CancelAsync().ConfigureAwait(false);
         Task[] workers;
-        lock (_workerGate) workers = _workers ?? [];
-        try { await Task.WhenAll(workers).ConfigureAwait(false); }
+
+        lock (_workerGate)
+        {
+            workers = _workers ?? [];
+        }
+
+        try
+        {
+            await Task.WhenAll(workers).ConfigureAwait(false);
+        }
         catch (OperationCanceledException) { }
 
         Task[] retries;
         // Only workers schedule retries. Awaiting them first closes additions before this snapshot.
-        lock (_scheduledGate) retries = [.. _scheduledRetries];
-        try { await Task.WhenAll(retries).ConfigureAwait(false); }
+        lock (_scheduledGate)
+        {
+            retries = [.. _scheduledRetries];
+        }
+
+        try
+        {
+            await Task.WhenAll(retries).ConfigureAwait(false);
+        }
         catch (OperationCanceledException) { }
 
         while (_queue.Reader.TryRead(out var cleanup))
@@ -115,11 +155,17 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
 
     private void StartWorkers()
     {
-        if (Volatile.Read(ref _disposed) != 0) return;
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
         lock (_workerGate)
         {
             if (_workers is null && Volatile.Read(ref _disposed) == 0)
+            {
                 _workers = Enumerable.Range(0, WorkerCount).Select(_ => RunWorkerAsync()).ToArray();
+            }
         }
     }
 
@@ -128,7 +174,9 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         try
         {
             await foreach (var cleanup in _queue.Reader.ReadAllAsync(_stoppingToken).ConfigureAwait(false))
+            {
                 await RunCleanupAsync(cleanup).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested) { }
     }
@@ -143,25 +191,53 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
                 cleanup.Complete(false);
                 return;
             }
+
             if (cleanup.ShouldContinue is not null && !cleanup.ShouldContinue())
             {
                 // The caller no longer needs cleanup, so this is not abandonment.
                 cleanup.Complete(false);
                 return;
             }
+
             if (cleanup.HasAttempted && Stopwatch.GetElapsedTime(cleanup.EnqueuedAt) >= cleanup.RetryLimit)
-            { cleanup.Report("exhausted"); cleanup.Complete(false); return; }
+            {
+                cleanup.Report("exhausted");
+                cleanup.Complete(false);
+                return;
+            }
+
             cleanup.HasAttempted = true;
             var outcome = await cleanup.Attempt(_stoppingToken).ConfigureAwait(false);
+
             if (outcome == CleanupAttemptResult.Succeeded)
-            { cleanup.Complete(true); return; }
+            {
+                cleanup.Complete(true);
+                return;
+            }
+
             if (outcome == CleanupAttemptResult.Abandoned)
-            { cleanup.Report("client_disposed"); cleanup.Complete(false); return; }
+            {
+                cleanup.Report("client_disposed");
+                cleanup.Complete(false);
+                return;
+            }
+
             var remaining = cleanup.RetryLimit - Stopwatch.GetElapsedTime(cleanup.EnqueuedAt);
+
             if (remaining <= TimeSpan.Zero)
-            { cleanup.Report("exhausted"); cleanup.Complete(false); return; }
+            {
+                cleanup.Report("exhausted");
+                cleanup.Complete(false);
+                return;
+            }
+
             var delay = CoordinationCleanupRetry.WithJitter(TimeSpan.FromTicks(Math.Min(cleanup.NextDelay.Ticks, remaining.Ticks)));
-            if (delay > remaining) delay = remaining;
+
+            if (delay > remaining)
+            {
+                delay = remaining;
+            }
+
             cleanup.NextDelay = CoordinationCleanupRetry.NextDelay(cleanup.NextDelay, cleanup.MaximumDelay);
             ScheduleRetry(cleanup, delay);
         }
@@ -185,7 +261,12 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
     private void ScheduleRetry(Cleanup cleanup, TimeSpan delay)
     {
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        lock (_scheduledGate) _scheduledRetries.Add(completion.Task);
+
+        lock (_scheduledGate)
+        {
+            _scheduledRetries.Add(completion.Task);
+        }
+
         _ = RequeueAfterDelayAsync(cleanup, delay, completion);
     }
 
@@ -208,7 +289,11 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         }
         finally
         {
-            lock (_scheduledGate) _scheduledRetries.Remove(completion.Task);
+            lock (_scheduledGate)
+            {
+                _scheduledRetries.Remove(completion.Task);
+            }
+
             completion.TrySetResult();
         }
     }
@@ -223,22 +308,60 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         Action onComplete,
         long enqueuedAt)
     {
-        internal Func<CancellationToken, ValueTask<CleanupAttemptResult>> Attempt { get; } = attempt;
-        internal Func<bool>? ShouldContinue { get; } = shouldContinue;
-        internal TimeSpan RetryLimit { get; } = retryLimit;
-        internal TimeSpan MaximumDelay { get; } = maximumDelay;
-        internal long EnqueuedAt { get; } = enqueuedAt;
-        internal TimeSpan NextDelay { get; set; } = initialDelay;
-        internal bool HasAttempted { get; set; }
-        internal TaskCompletionSource<bool> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal Func<CancellationToken, ValueTask<CleanupAttemptResult>> Attempt
+        {
+            get;
+        } = attempt;
+
+        internal Func<bool>? ShouldContinue
+        {
+            get;
+        } = shouldContinue;
+
+        internal TimeSpan RetryLimit
+        {
+            get;
+        } = retryLimit;
+
+        internal TimeSpan MaximumDelay
+        {
+            get;
+        } = maximumDelay;
+
+        internal long EnqueuedAt
+        {
+            get;
+        } = enqueuedAt;
+
+        internal TimeSpan NextDelay
+        {
+            get; set;
+        } = initialDelay;
+
+        internal bool HasAttempted
+        {
+            get; set;
+        }
+
+        internal TaskCompletionSource<bool> Completion
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         internal void Complete(bool result)
         {
             if (Completion.TrySetResult(result))
+            {
                 onComplete();
+            }
         }
+
         internal void Report(string reason)
         {
-            try { onAbandoned(reason); }
+            try
+            {
+                onAbandoned(reason);
+            }
             catch { /* Diagnostics must not stop cleanup workers. */ }
         }
     }

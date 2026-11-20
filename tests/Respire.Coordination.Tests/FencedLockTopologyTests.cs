@@ -9,7 +9,10 @@ namespace Respire.Coordination.Tests;
 public class FencedLockTopologyTests
 {
     [ClassDataSource<SharedRedis74Cluster>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis74Cluster Cluster { get; init; }
+    public required SharedRedis74Cluster Cluster
+    {
+        get; init;
+    }
 
     [Test]
     [NotInParallel(SharedClusterSubscriptions.Key)]
@@ -52,21 +55,32 @@ public class FencedLockTopologyTests
         await using var firstReader = await coordination.TryAcquireReadLockAsync(readKey, TimeSpan.FromSeconds(30));
         await using var secondReader = await coordination.TryAcquireReadLockAsync(readKey, TimeSpan.FromSeconds(30));
         await Assert.That(firstReader.Acquired && secondReader.Acquired).IsTrue();
+
         await using (var rejectedWriter = await coordination.TryAcquireWriteLockAsync(readKey, TimeSpan.FromSeconds(30)))
+        {
             await Assert.That(rejectedWriter.Acquired).IsFalse();
+        }
+
         await firstReader.Lock.DisposeAsync();
         await secondReader.Lock.DisposeAsync();
         await using var writer = await coordination.TryAcquireWriteLockAsync(readKey, TimeSpan.FromSeconds(30));
         await Assert.That(writer.Acquired).IsTrue();
+
         await using (var rejectedReader = await coordination.TryAcquireReadLockAsync(readKey, TimeSpan.FromSeconds(30)))
+        {
             await Assert.That(rejectedReader.Acquired).IsFalse();
+        }
 
         var semaphore = new RespireSemaphore(view, "{job}:semaphore", capacity: 2);
         await using var firstPermit = await semaphore.TryAcquireAsync(TimeSpan.FromSeconds(30));
         await using var secondPermit = await semaphore.TryAcquireAsync(TimeSpan.FromSeconds(30));
         await Assert.That(firstPermit.Acquired && secondPermit.Acquired).IsTrue();
+
         await using (var atCapacity = await semaphore.TryAcquireAsync())
+        {
             await Assert.That(atCapacity.Acquired).IsFalse();
+        }
+
         await Assert.That(await firstPermit.Permit.ReleaseAsync()).IsTrue();
         var crossSlot = await Assert.That(async () => await coordination.TryAcquireFencedLockAsync("{first}:lease", "{second}:counter", TimeSpan.FromSeconds(30)))
             .Throws<RespireServerException>();
@@ -82,20 +96,30 @@ public class FencedLockTopologyTests
         await using var fixture = await RedisReplicaPair.StartAsync("redis:7.2-alpine");
         await using var primary = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [fixture.Primary], Connections = 1, AllowAdmin = true,
+            Endpoints = [fixture.Primary],
+            Connections = 1,
+            AllowAdmin = true,
         });
         await using var old = await new RespireCoordination(primary).TryAcquireFencedLockAsync("lease", "counter", TimeSpan.FromSeconds(2));
         // This fixture deliberately uses one physical connection so WAIT acknowledges
         // the preceding acquisition. Raw ExecuteAsync correctly rejects affinity commands.
         using (var replicated = await primary.Core.Multiplexer.GetConnection().SendAsync(
             new Cmd2(new Verb(-1, "WAIT"), 1, 5000), default))
+        {
             await Assert.That(replicated.AsInteger()).IsEqualTo(1);
+        }
+
         await using var promoted = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [fixture.Replica], Connections = 1, AllowAdmin = true,
+            Endpoints = [fixture.Replica],
+            Connections = 1,
+            AllowAdmin = true,
         });
+
         using (var promotion = await promoted.ExecuteAsync(RespireCommands.Server.REPLICAOF, "NO", "ONE"))
+        {
             await Assert.That(promotion.AsString()).IsEqualTo("OK");
+        }
         // Redis starts the lease when it runs the script, after the local estimate started, and the
         // Docker VM clock can lag under load; leave a full second of headroom past the estimate.
         await Task.Delay(old.Lock.RemainingEstimate + TimeSpan.FromSeconds(1));
@@ -112,7 +136,9 @@ public class FencedLockTopologyTests
         await using var fixture = await RedisReplicaPair.StartAsync("redis:7.2-alpine");
         await using var primary = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [fixture.Primary], Connections = 1, AllowAdmin = true,
+            Endpoints = [fixture.Primary],
+            Connections = 1,
+            AllowAdmin = true,
         });
         var key = (RespireKey)$"{{{Guid.NewGuid():N}}}:rw";
         await using var reader = await new RespireCoordination(primary).TryAcquireReadLockAsync(key, TimeSpan.FromSeconds(30));
@@ -120,14 +146,21 @@ public class FencedLockTopologyTests
 
         using (var replicated = await primary.Core.Multiplexer.GetConnection().SendAsync(
             new Cmd2(new Verb(-1, "WAIT"), 1, 5000), default))
+        {
             await Assert.That(replicated.AsInteger()).IsEqualTo(1);
+        }
 
         await using var promoted = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [fixture.Replica], Connections = 1, AllowAdmin = true,
+            Endpoints = [fixture.Replica],
+            Connections = 1,
+            AllowAdmin = true,
         });
+
         using (var promotion = await promoted.ExecuteAsync(RespireCommands.Server.REPLICAOF, "NO", "ONE"))
+        {
             await Assert.That(promotion.AsString()).IsEqualTo("OK");
+        }
 
         await using var blockedWriter = await new RespireCoordination(promoted).TryAcquireWriteLockAsync(key, TimeSpan.FromSeconds(30));
         await Assert.That(blockedWriter.Acquired).IsFalse();
@@ -141,7 +174,9 @@ public class FencedLockTopologyTests
         await using var fixture = await RedisReplicaPair.StartAsync("redis:7.2-alpine");
         await using var primary = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [fixture.Primary], Connections = 1, AllowAdmin = true,
+            Endpoints = [fixture.Primary],
+            Connections = 1,
+            AllowAdmin = true,
         });
         var key = (RespireKey)$"{{{Guid.NewGuid():N}}}:semaphore";
         var semaphore = new RespireSemaphore(primary, key, capacity: 1);
@@ -150,14 +185,21 @@ public class FencedLockTopologyTests
 
         using (var replicated = await primary.Core.Multiplexer.GetConnection().SendAsync(
             new Cmd2(new Verb(-1, "WAIT"), 1, 5000), default))
+        {
             await Assert.That(replicated.AsInteger()).IsEqualTo(1);
+        }
 
         await using var promoted = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [fixture.Replica], Connections = 1, AllowAdmin = true,
+            Endpoints = [fixture.Replica],
+            Connections = 1,
+            AllowAdmin = true,
         });
+
         using (var promotion = await promoted.ExecuteAsync(RespireCommands.Server.REPLICAOF, "NO", "ONE"))
+        {
             await Assert.That(promotion.AsString()).IsEqualTo("OK");
+        }
 
         await using var blocked = await new RespireSemaphore(promoted, key, capacity: 1).TryAcquireAsync();
         await Assert.That(blocked.Acquired).IsFalse();

@@ -16,6 +16,7 @@ public sealed class RespireZstdValueCodec : RespireValueCodec
     private static readonly ObjectPool<Compressor, CompressorPolicy> Compressors = new(Math.Min(Environment.ProcessorCount, 8));
     private static readonly ObjectPool<Decompressor, DecompressorPolicy> Decompressors = new(Math.Min(Environment.ProcessorCount, 8));
     private const int MaximumRetainedInputLength = 64 * 1024;
+
     private static ReadOnlySpan<byte> FrameMagic => [0x28, 0xb5, 0x2f, 0xfd];
 
     /// <summary>Creates a codec with compression level 3 by default. Supported levels are -131072 through 22;
@@ -24,7 +25,10 @@ public sealed class RespireZstdValueCodec : RespireValueCodec
         : base(4, options, allowReservedAlgorithm: true)
     {
         if (level < Compressor.MinCompressionLevel || level > Compressor.MaxCompressionLevel)
+        {
             throw new ArgumentOutOfRangeException(nameof(level), "Zstandard compression level is outside the supported range.");
+        }
+
         _level = level;
     }
 
@@ -32,12 +36,21 @@ public sealed class RespireZstdValueCodec : RespireValueCodec
     protected override byte[] Compress(ReadOnlySpan<byte> payload)
     {
         var capacity = Compressor.GetCompressBound(payload.Length);
-        if (capacity <= 0) throw new InvalidDataException("Zstandard input exceeds its supported frame size.");
+
+        if (capacity <= 0)
+        {
+            throw new InvalidDataException("Zstandard input exceeds its supported frame size.");
+        }
+
         var buffer = ArrayPool<byte>.Shared.Rent(capacity);
+
         try
         {
             if (!TryCompress(payload, buffer.AsSpan(0, capacity), out var written))
+            {
                 throw new InvalidDataException("Zstandard could not encode the value within its output bound.");
+            }
+
             return buffer.AsSpan(0, written).ToArray();
         }
         finally
@@ -52,6 +65,7 @@ public sealed class RespireZstdValueCodec : RespireValueCodec
         // Large values bypass the pool so they do not displace reusable small-value workspaces.
         var compressor = RentContext(Compressors, payload.Length);
         var reusable = false;
+
         try
         {
             // Settings belong to the codec, not the previous renter. No context loads a dictionary.
@@ -72,13 +86,20 @@ public sealed class RespireZstdValueCodec : RespireValueCodec
         // The base validates the outer decoded length against MaximumDecodedLength before
         // allocating this exact-sized destination. Unwrap remains bounded by that span.
         if (!IsSingleFrame(payload))
+        {
             throw new InvalidDataException("Zstandard payload must contain exactly one ordinary frame.");
+        }
+
         var decompressor = RentContext(Decompressors, destination.Length);
         var reusable = false;
+
         try
         {
             if (decompressor.Unwrap(payload, destination) != destination.Length)
+            {
                 throw new InvalidDataException("Zstandard payload has an unexpected decoded length.");
+            }
+
             reusable = true;
         }
         catch (ZstdException error)
@@ -101,29 +122,39 @@ public sealed class RespireZstdValueCodec : RespireValueCodec
         where TPolicy : struct, IPooledObjectPolicy<T>
     {
         // Both directions share the retention rule. Failure and large workspaces never enter the pool.
-        if (reusable && length <= MaximumRetainedInputLength) pool.Return(context);
-        else context.Dispose();
+        if (reusable && length <= MaximumRetainedInputLength)
+        {
+            pool.Return(context);
+        }
+        else
+        {
+            context.Dispose();
+        }
     }
 
     internal readonly struct CompressorPolicy : IPooledObjectPolicy<Compressor>
     {
         public Compressor Create() => new();
+
         public bool TryReset(Compressor context)
         {
             context.ResetStream();
             return true;
         }
+
         public void Destroy(Compressor context) => context.Dispose();
     }
 
     internal readonly struct DecompressorPolicy : IPooledObjectPolicy<Decompressor>
     {
         public Decompressor Create() => new();
+
         public bool TryReset(Decompressor context)
         {
             context.ResetStream();
             return true;
         }
+
         public void Destroy(Decompressor context) => context.Dispose();
     }
 
@@ -131,8 +162,14 @@ public sealed class RespireZstdValueCodec : RespireValueCodec
     {
         // The dependency's decoder also accepts concatenated and skippable frames. Our wire ID
         // deliberately denotes one ordinary frame, so reject those before bounded decoding.
-        if (!payload.StartsWith(FrameMagic)) return false;
+        if (!payload.StartsWith(FrameMagic))
+        {
+            return false;
+        }
+
         fixed (byte* source = payload)
+        {
             return Methods.ZSTD_findFrameCompressedSize(source, (nuint)payload.Length) == (nuint)payload.Length;
+        }
     }
 }

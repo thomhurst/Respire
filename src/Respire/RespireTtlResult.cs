@@ -18,21 +18,26 @@ public readonly struct RespireTtlResult
     }
 
     /// <summary>Whether the key or field exists.</summary>
-    public bool Exists { get; }
+    public bool Exists
+    {
+        get;
+    }
 
     /// <summary>Whether the key or field exists and has an expiry set.</summary>
     public bool HasExpiry => TimeToLive.HasValue;
 
     /// <summary>Remaining time to live, or null when the value is missing or has no expiry.</summary>
-    public TimeSpan? TimeToLive { get; }
+    public TimeSpan? TimeToLive
+    {
+        get;
+    }
 
-    internal static RespireTtlResult FromRedisMilliseconds(long milliseconds)
-        => milliseconds switch
-        {
-            -2 => new RespireTtlResult(exists: false, timeToLive: null),
-            -1 => new RespireTtlResult(exists: true, timeToLive: null),
-            _ => new RespireTtlResult(exists: true, timeToLive: TimeSpan.FromMilliseconds(milliseconds)),
-        };
+    internal static RespireTtlResult FromRedisMilliseconds(long milliseconds) => milliseconds switch
+    {
+        -2 => new RespireTtlResult(exists: false, timeToLive: null),
+        -1 => new RespireTtlResult(exists: true, timeToLive: null),
+        _ => new RespireTtlResult(exists: true, timeToLive: TimeSpan.FromMilliseconds(milliseconds)),
+    };
 
     /// <inheritdoc/>
     public override string ToString()

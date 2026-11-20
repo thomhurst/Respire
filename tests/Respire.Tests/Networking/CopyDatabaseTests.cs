@@ -72,7 +72,9 @@ public class CopyDatabaseTests
 #pragma warning disable RESP010 // This COPY scenario owns its client and scripted cluster slot owner.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
@@ -98,13 +100,25 @@ public class CopyDatabaseTests
     private static async Task<bool> Copy(IRespireClient client, string mode,
         RespireKey source, RespireKey destination, int database, bool replace)
     {
-        if (mode == "immediate") return await client.Keys.CopyAsync(source, destination, database, replace);
+        if (mode == "immediate")
+        {
+            return await client.Keys.CopyAsync(source, destination, database, replace);
+        }
+
         using var batch = mode == "batch" ? client.CreateBatch() : null;
         await using var transaction = mode == "transaction" ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = queue.Keys.Copy(source, destination, database, replace);
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         return pending.Result;
     }
 }

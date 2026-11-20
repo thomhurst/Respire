@@ -11,6 +11,7 @@ internal sealed class LifecycleTestStore(RedisServerFixture server, RespireProto
     protected override async Task StartAsync()
     {
         _client = await RespireClient.ConnectAsync(RespireOptions.Parse(server.ConnectionString) with { Protocol = protocol }).ConfigureAwait(false);
+
         try
         {
             var store = new RespireVectorStore(_client, "official-lifecycle:" + Guid.NewGuid().ToString("N"));
@@ -31,10 +32,13 @@ internal sealed class LifecycleTestStore(RedisServerFixture server, RespireProto
         if (_client is { } client)
         {
             _client = null;
+
             try
             {
                 await foreach (var name in DefaultVectorStore.ListCollectionNamesAsync().ConfigureAwait(false))
+                {
                     await DefaultVectorStore.EnsureCollectionDeletedAsync(name).ConfigureAwait(false);
+                }
             }
             finally
             {
@@ -46,7 +50,10 @@ internal sealed class LifecycleTestStore(RedisServerFixture server, RespireProto
     public override VectorStoreCollection<TKey, TRecord> CreateCollection<TKey, TRecord>(string name, VectorStoreCollectionDefinition definition)
     {
         if (typeof(TKey) != typeof(string) || typeof(TRecord) != typeof(Record))
+        {
             throw new NotSupportedException("This fixture maps the official string-keyed lifecycle record only.");
+        }
+
         var store = (RespireVectorStore)DefaultVectorStore;
         var collection = json ? store.GetJsonCollection<Record>(name) : store.GetHashCollection<Record>(name);
         return (VectorStoreCollection<TKey, TRecord>)(object)collection;

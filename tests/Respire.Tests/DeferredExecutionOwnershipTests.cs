@@ -58,7 +58,12 @@ public class DeferredExecutionOwnershipTests
             {
                 var ready = transaction ? command == "EXEC"
                     : command.StartsWith("SET ", StringComparison.Ordinal) && Interlocked.Increment(ref writes) == 2;
-                if (ready) received.TrySetResult();
+
+                if (ready)
+                {
+                    received.TrySetResult();
+                }
+
                 return outcome is "pending" or "cancelled"
                     && (transaction ? command == "EXEC" : command.StartsWith("SET ", StringComparison.Ordinal));
             },
@@ -74,31 +79,58 @@ public class DeferredExecutionOwnershipTests
         using var cancellation = new CancellationTokenSource();
         RespireBatchResult result = default;
         Exception? executionError = null;
+
         async Task Execute()
         {
             try
             {
-                if (commit is not null) await commit.CommitAsync(cancellation.Token);
-                else result = await batch!.TryExecuteAsync(cancellation.Token);
+                if (commit is not null)
+                {
+                    await commit.CommitAsync(cancellation.Token);
+                }
+                else
+                {
+                    result = await batch!.TryExecuteAsync(cancellation.Token);
+                }
             }
             catch (Exception error) { executionError = error; }
         }
+
         Task? execution = null;
+
         if (outcome != "idle")
         {
             execution = Execute();
             await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            if (outcome == "cancelled") cancellation.Cancel();
-            if (outcome is "cancelled" or "success") await execution.WaitAsync(TimeSpan.FromSeconds(5));
+
+            if (outcome == "cancelled")
+            {
+                cancellation.Cancel();
+            }
+
+            if (outcome is "cancelled" or "success")
+            {
+                await execution.WaitAsync(TimeSpan.FromSeconds(5));
+            }
         }
+
         await server.DisposeAsync();
         await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));
-        if (execution is not null) await execution.WaitAsync(TimeSpan.FromSeconds(5));
+
+        if (execution is not null)
+        {
+            await execution.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
         if (outcome is "pending" or "cancelled")
         {
             await Assert.That(first.Status).IsEqualTo(RespirePendingStatus.Faulted);
             await Assert.That(second.Status).IsEqualTo(RespirePendingStatus.Faulted);
-            if (transaction) await Assert.That(ReferenceEquals(executionError, first.Error)).IsTrue();
+
+            if (transaction)
+            {
+                await Assert.That(ReferenceEquals(executionError, first.Error)).IsTrue();
+            }
             else
             {
                 await Assert.That(result.FailureCount).IsEqualTo(2);
@@ -109,19 +141,27 @@ public class DeferredExecutionOwnershipTests
             // Concurrent inspection is independent of the execution owner and never republishes.
             await Task.WhenAll(InspectFailure(first, first.Error!), InspectFailure(first, first.Error!),
                 InspectFailure(second, second.Error!));
+
             if (outcome == "cancelled")
             {
                 await Assert.That(((OperationCanceledException)first.Error!).CancellationToken).IsEqualTo(cancellation.Token);
                 await Assert.That(((OperationCanceledException)second.Error!).CancellationToken).IsEqualTo(cancellation.Token);
             }
-            else await Assert.That(first.Error).IsTypeOf<RespireConnectionException>();
+            else
+            {
+                await Assert.That(first.Error).IsTypeOf<RespireConnectionException>();
+            }
         }
         else if (outcome == "success")
         {
             await Assert.That(first.Result).IsTrue();
             await Assert.That(second.Result).IsTrue();
         }
-        else await Assert.That(first.Status).IsEqualTo(RespirePendingStatus.Pending);
+        else
+        {
+            await Assert.That(first.Status).IsEqualTo(RespirePendingStatus.Pending);
+        }
+
         var items = capture.Items.ToArray();
         await Assert.That(items.Count(item => item.Internal)).IsEqualTo(1);
         await Assert.That(items.Count(item => !item.Internal)).IsEqualTo(outcome is "pending" or "cancelled" ? 2 : 0);
@@ -150,21 +190,35 @@ public class DeferredExecutionOwnershipTests
         outer.Retry();
         nested.Handled(new IOException("recovered outer"));
         nested.Retry();
-        if (!transaction) second.Observation.Handled(new IOException("independent retry"));
+
+        if (!transaction)
+        {
+            second.Observation.Handled(new IOException("independent retry"));
+        }
+
         var beforeExecution = capture.Items.Count;
         var rentals = 0;
         ErrorObservation.RentalObserverForTests = () => rentals++;
+
         try
         {
-            if (commit is not null) await commit.CommitAsync();
-            else await batch!.TryExecuteAsync();
+            if (commit is not null)
+            {
+                await commit.CommitAsync();
+            }
+            else
+            {
+                await batch!.TryExecuteAsync();
+            }
         }
         finally { ErrorObservation.RentalObserverForTests = null; }
+
         await Assert.That(rentals).IsEqualTo(success ? 0 : transaction ? 1 : 0);
         await Assert.That(outer.Attempts).IsEqualTo(3);
         await Assert.That(second.Observation.Attempts).IsEqualTo(transaction ? 3 : 1);
         outer.Handled(new IOException("too late"));
         nested.Retry();
+
         if (success)
         {
             await Assert.That(first.Result).IsTrue();
@@ -175,10 +229,15 @@ public class DeferredExecutionOwnershipTests
             await InspectFailure(first, first.Error!);
             await InspectFailure(second, second.Error!);
         }
+
         var final = capture.Items.Skip(beforeExecution).ToArray();
         await Assert.That(final.Length).IsEqualTo(success ? 0 : 2);
+
         if (!success)
+        {
             await Assert.That(final.Select(item => item.Attempts).ToArray()).IsEquivalentTo(transaction ? new[] { 3, 3 } : new[] { 3, 1 });
+        }
+
         await Assert.That(final.All(item => !item.Internal)).IsTrue();
     }
 
@@ -201,8 +260,16 @@ public class DeferredExecutionOwnershipTests
         var queue = (IRespireCommandQueue?)commit ?? batch!;
         var first = queue.Set("one", "value");
         var second = queue.Set("two", "value");
-        if (commit is not null) await commit.DisposeAsync();
-        else batch!.Dispose();
+
+        if (commit is not null)
+        {
+            await commit.DisposeAsync();
+        }
+        else
+        {
+            batch!.Dispose();
+        }
+
         await Assert.That(capture.Items.Count).IsEqualTo(0);
         await Task.WhenAll(InspectFailure(first, first.Error!), InspectFailure(first, first.Error!),
             InspectFailure(second, second.Error!));
@@ -226,10 +293,18 @@ public class DeferredExecutionOwnershipTests
         var pending = queue.Set("key", "value");
         var rentals = 0;
         ErrorObservation.RentalObserverForTests = () => rentals++;
+
         try
         {
-            if (commit is not null) await commit.CommitAsync();
-            else await batch!.ExecuteAsync();
+            if (commit is not null)
+            {
+                await commit.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
+
             await Assert.That(pending.Result).IsTrue();
             await Assert.That(rentals).IsEqualTo(0);
             // Positive control detects warmed pool rentals as well as newly allocated storage.
@@ -256,14 +331,21 @@ public class DeferredExecutionOwnershipTests
     private sealed class Capture : IDisposable
     {
         private readonly MeterListener _listener = new();
-        internal ConcurrentQueue<Item> Items { get; } = new();
+
+        internal ConcurrentQueue<Item> Items
+        {
+            get;
+        } = new();
+
         internal Capture(bool commandMetrics)
         {
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (ReferenceEquals(instrument.Meter, RespireTelemetry.Meter) && (instrument.Name == "redis.client.errors"
                     || commandMetrics && instrument.Name == "db.client.operation.duration"))
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
@@ -272,9 +354,12 @@ public class DeferredExecutionOwnershipTests
                     (int)values["redis.client.operation.retry_attempts"]!, (string?)values["error.type"]));
                 throw new InvalidOperationException("Listener failures must not replace caller errors.");
             });
-            _listener.SetMeasurementEventCallback<double>((_, _, _, _) => { });
+            _listener.SetMeasurementEventCallback<double>((_, _, _, _) =>
+            {
+            });
             _listener.Start();
         }
+
         public void Dispose() => _listener.Dispose();
     }
 }

@@ -38,8 +38,11 @@ public class ClusterTopologyRefreshTests
         clock.Advance(TimeSpan.FromMilliseconds(50));
         timer.Fire();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
         while (seed.ReceivedCommands.Count(command => command == "CLUSTER SLOTS") < 2)
+        {
             await Task.Delay(10, timeout.Token);
+        }
     }
 
     [Test]
@@ -50,8 +53,16 @@ public class ClusterTopologyRefreshTests
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         seed.ReplyOverride = (_, command) =>
         {
-            if (command != "CLUSTER SLOTS") return null;
-            if (Interlocked.Increment(ref calls) >= 2) refreshed.TrySetResult();
+            if (command != "CLUSTER SLOTS")
+            {
+                return null;
+            }
+
+            if (Interlocked.Increment(ref calls) >= 2)
+            {
+                refreshed.TrySetResult();
+            }
+
             return Topology(seed.Port, seed.Port);
         };
         var clock = new ManualTopologyRefreshClock();
@@ -111,11 +122,28 @@ public class ClusterTopologyRefreshTests
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         seed.ReplyOverride = (_, command) =>
         {
-            if (command != "CLUSTER SLOTS") return null;
+            if (command != "CLUSTER SLOTS")
+            {
+                return null;
+            }
+
             var call = Interlocked.Increment(ref calls);
-            if (call == 2) secondRefresh.TrySetResult();
-            if (call >= 3) thirdRefresh.TrySetResult();
-            if (call >= 4) fourthRefresh.TrySetResult();
+
+            if (call == 2)
+            {
+                secondRefresh.TrySetResult();
+            }
+
+            if (call >= 3)
+            {
+                thirdRefresh.TrySetResult();
+            }
+
+            if (call >= 4)
+            {
+                fourthRefresh.TrySetResult();
+            }
+
             return Topology(seed.Port, seed.Port);
         };
 #pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
@@ -150,10 +178,23 @@ public class ClusterTopologyRefreshTests
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         seed.ReplyOverride = (_, command) =>
         {
-            if (command != "CLUSTER SLOTS") return null;
+            if (command != "CLUSTER SLOTS")
+            {
+                return null;
+            }
+
             var count = Interlocked.Increment(ref refreshes);
-            if (count == 2) secondRefresh.TrySetResult();
-            if (count >= 3) thirdRefresh.TrySetResult();
+
+            if (count == 2)
+            {
+                secondRefresh.TrySetResult();
+            }
+
+            if (count >= 3)
+            {
+                thirdRefresh.TrySetResult();
+            }
+
             return Topology(seed.Port, seed.Port);
         };
         var clock = new ManualTopologyRefreshClock();
@@ -196,10 +237,23 @@ public class ClusterTopologyRefreshTests
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         seed.ReplyOverride = (_, command) =>
         {
-            if (command != "CLUSTER SLOTS") return null;
+            if (command != "CLUSTER SLOTS")
+            {
+                return null;
+            }
+
             var count = Interlocked.Increment(ref refreshes);
-            if (count == 2) secondRefresh.TrySetResult();
-            if (count >= 3) thirdRefresh.TrySetResult();
+
+            if (count == 2)
+            {
+                secondRefresh.TrySetResult();
+            }
+
+            if (count >= 3)
+            {
+                thirdRefresh.TrySetResult();
+            }
+
             return Topology(seed.Port, seed.Port);
         };
         // The manual clock never ends the MOVED debounce on its own.
@@ -242,10 +296,20 @@ public class ClusterTopologyRefreshTests
             if (command == "CLUSTER SLOTS")
             {
                 var count = Interlocked.Increment(ref refreshes);
-                if (count == 2) secondRefresh.TrySetResult();
-                if (count >= 3) unexpectedRefresh.TrySetResult();
+
+                if (count == 2)
+                {
+                    secondRefresh.TrySetResult();
+                }
+
+                if (count >= 3)
+                {
+                    unexpectedRefresh.TrySetResult();
+                }
+
                 return Topology(seed.Port, seed.Port);
             }
+
             return null;
         };
         var clock = new ManualTopologyRefreshClock();
@@ -287,8 +351,16 @@ public class ClusterTopologyRefreshTests
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         seed.ReplyOverride = (_, command) =>
         {
-            if (command != "CLUSTER SLOTS") return null;
-            if (Interlocked.Increment(ref calls) >= 2) refreshed.TrySetResult();
+            if (command != "CLUSTER SLOTS")
+            {
+                return null;
+            }
+
+            if (Interlocked.Increment(ref calls) >= 2)
+            {
+                refreshed.TrySetResult();
+            }
+
             return Topology(seed.Port, seed.Port);
         };
         var clock = new ManualTopologyRefreshClock();
@@ -361,7 +433,11 @@ public class ClusterTopologyRefreshTests
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
         seed.SuppressReply = command =>
         {
-            if (command == "CLUSTER SLOTS") refreshStarted.TrySetResult();
+            if (command == "CLUSTER SLOTS")
+            {
+                refreshStarted.TrySetResult();
+            }
+
             return command == "CLUSTER SLOTS";
         };
 
@@ -377,7 +453,11 @@ public class ClusterTopologyRefreshTests
         await using var alternative = new FakeRespServer(FakeRespServer.OkReply);
         alternative.ReplyOverride = (_, command) =>
         {
-            if (command == "CLUSTER SLOTS") alternativeRefresh.TrySetResult();
+            if (command == "CLUSTER SLOTS")
+            {
+                alternativeRefresh.TrySetResult();
+            }
+
             return TwoMasterTopology(alternative.Port, 8191, 8192, alternative.Port);
         };
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
@@ -407,7 +487,11 @@ public class ClusterTopologyRefreshTests
         await using var alternative = new FakeRespServer(FakeRespServer.OkReply);
         alternative.ReplyOverride = (_, command) =>
         {
-            if (command == "CLUSTER SLOTS") alternativeRefresh.TrySetResult();
+            if (command == "CLUSTER SLOTS")
+            {
+                alternativeRefresh.TrySetResult();
+            }
+
             return TwoMasterTopology(alternative.Port, 8191, 8192, alternative.Port);
         };
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
@@ -423,8 +507,13 @@ public class ClusterTopologyRefreshTests
             // Preserve backoff > I/O timeout without a 50 ms scheduling race on loaded CI.
             CommandTimeout = TimeSpan.FromSeconds(1),
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
-            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(2), MaxDelay = TimeSpan.FromSeconds(2),
-                JitterRatio = 0, MaxAttempts = 2 },
+            ReconnectPolicy = new()
+            {
+                InitialDelay = TimeSpan.FromSeconds(2),
+                MaxDelay = TimeSpan.FromSeconds(2),
+                JitterRatio = 0,
+                MaxAttempts = 2
+            },
         });
 #pragma warning restore RESP010
         seed.SuppressReply = command => command == "CLUSTER SLOTS";
@@ -443,7 +532,11 @@ public class ClusterTopologyRefreshTests
         await using var replica = new FakeRespServer(FakeRespServer.OkReply);
         replica.ReplyOverride = (_, command) =>
         {
-            if (command != "CLUSTER SLOTS") return null;
+            if (command != "CLUSTER SLOTS")
+            {
+                return null;
+            }
+
             replicaRefresh.TrySetResult();
             return Topology(replica.Port, replica.Port, "127.0.0.1");
         };
@@ -463,7 +556,11 @@ public class ClusterTopologyRefreshTests
 #pragma warning restore RESP010
         seed.SuppressReply = command =>
         {
-            if (command != "CLUSTER SLOTS") return false;
+            if (command != "CLUSTER SLOTS")
+            {
+                return false;
+            }
+
             seedRefresh.TrySetResult();
             return true;
         };
@@ -500,7 +597,11 @@ public class ClusterTopologyRefreshTests
         var router = client.Core.Cluster!;
         seed.CloseConnections();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (router.GetMultiplexer(seedEndpoint).IsConnected) await Task.Delay(10, timeout.Token);
+
+        while (router.GetMultiplexer(seedEndpoint).IsConnected)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
 
         var firstNode = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", firstMaster.Port));
         var secondNode = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", secondMaster.Port));
@@ -564,8 +665,16 @@ public class ClusterTopologyRefreshTests
         var replicaEndpoint = new RespireEndpoint("127.0.0.1", 1);
         seed.ReplyOverride = (_, command) =>
         {
-            if (command != "CLUSTER SLOTS") return null;
-            if (Interlocked.Increment(ref calls) >= 2) refreshed.TrySetResult();
+            if (command != "CLUSTER SLOTS")
+            {
+                return null;
+            }
+
+            if (Interlocked.Increment(ref calls) >= 2)
+            {
+                refreshed.TrySetResult();
+            }
+
             return Topology(seed.Port, replicaEndpoint.Port);
         };
 #pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
@@ -585,11 +694,14 @@ public class ClusterTopologyRefreshTests
 
         var identities = (ClusterNodeIdentityIndex)typeof(ClusterRouter).GetField("_identities",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(router)!;
+
         lock (router.NodeStateGate)
         {
             // A connected primary answered first, so no transport exists for the replica or its alias.
             if (identities.TryGet(replicaEndpoint) is not null || identities.TryGet(new RespireEndpoint("replica", 1)) is not null)
+            {
                 throw new InvalidOperationException("A healthy refresh created a replica transport.");
+            }
         }
     }
 
@@ -602,8 +714,16 @@ public class ClusterTopologyRefreshTests
         {
             SuppressReply = command =>
             {
-                if (command != "CLUSTER SLOTS") return false;
-                if (Interlocked.Increment(ref slotsCalls) == 1) return false;
+                if (command != "CLUSTER SLOTS")
+                {
+                    return false;
+                }
+
+                if (Interlocked.Increment(ref slotsCalls) == 1)
+                {
+                    return false;
+                }
+
                 refreshStarted.TrySetResult();
                 return true;
             },
@@ -634,7 +754,12 @@ public class ClusterTopologyRefreshTests
             + $"*4\r\n$9\r\n127.0.0.1\r\n:{replicaPort}\r\n$10\r\nreplica-id\r\n%1\r\n+hostname\r\n$7\r\nreplica\r\n"));
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (router.GetReplicas().Length == 0) await Task.Delay(10, deadline.Token);
+
+        while (router.GetReplicas().Length == 0)
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+
         await Task.Delay(TimeSpan.FromMilliseconds(100));
 
         var replica = router.GetReplicas().Single();
@@ -652,8 +777,16 @@ public class ClusterTopologyRefreshTests
         await using var seed = new FakeRespServer(FakeRespServer.OkReply);
         seed.ReplyOverride = (_, command) =>
         {
-            if (command != "CLUSTER SLOTS") return null;
-            if (Interlocked.Increment(ref slotsCalls) >= 2) fullRefresh.TrySetResult();
+            if (command != "CLUSTER SLOTS")
+            {
+                return null;
+            }
+
+            if (Interlocked.Increment(ref slotsCalls) >= 2)
+            {
+                fullRefresh.TrySetResult();
+            }
+
             return Topology(seed.Port, seed.Port);
         };
 #pragma warning disable RESP010 // Test-owned client isolates topology refresh signals, clocks, and published generations for this scenario.
@@ -673,8 +806,15 @@ public class ClusterTopologyRefreshTests
             new RespireEndpoint("127.0.0.1", seed.Port), () => (flightCancellation, (IDisposable?)null)).Flight;
 
         router.SignalTopologyRefresh(force: true);
+
         using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
-            while (Volatile.Read(ref flight.Waiters) < 2) await Task.Delay(1, timeout.Token);
+        {
+            while (Volatile.Read(ref flight.Waiters) < 2)
+            {
+                await Task.Delay(1, timeout.Token);
+            }
+        }
+
         await Task.Delay(50);
         // The READONLY repair does not answer a topology request.
         await Assert.That(Volatile.Read(ref slotsCalls)).IsEqualTo(1);
@@ -707,6 +847,7 @@ public class ClusterTopologyRefreshTests
         var firstJoin = router.SharedRefreshCoordinator.JoinReadOnly(0, source,
             () => (flightCancellation, (IDisposable?)null));
         var flight = firstJoin.Flight;
+
         if (waiters == 2)
         {
             var secondJoin = router.SharedRefreshCoordinator.JoinReadOnly(0, source,
@@ -715,6 +856,7 @@ public class ClusterTopologyRefreshTests
             await Assert.That(secondJoin.Flight).IsSameReferenceAs(flight);
             await Assert.That(flight.Waiters).IsEqualTo(2);
         }
+
         var round = new ClusterRouter.DiscoveryRound(router, policy);
         using var caller = new CancellationTokenSource();
         await caller.CancelAsync();
@@ -782,7 +924,10 @@ public class ClusterTopologyRefreshTests
 
         seed.SuppressReply = command =>
         {
-            if (command != "CLUSTER SLOTS") return false;
+            if (command != "CLUSTER SLOTS")
+            {
+                return false;
+            }
             // Join while the server holds the response, so the worker cannot finish
             // before the test captures its publication/retirement completion.
             router.SharedRefreshCoordinator.JoinTopology(false, out var flight, out var started);
@@ -791,6 +936,7 @@ public class ClusterTopologyRefreshTests
         };
         router.SignalTopologyRefresh();
         var (refresh, started) = await refreshReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         try
         {
             await Assert.That(started).IsFalse();
@@ -848,6 +994,7 @@ public class ClusterTopologyRefreshTests
 
         router.SignalTopologyRefresh(force: true);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (!second.ReceivedCommands.Contains("CLUSTER SLOTS")
             || router.GetSlotOwnerEndpoint(0) != secondEndpoint
             || router.GetSlotOwnerEndpoint(100) != secondEndpoint
@@ -855,7 +1002,9 @@ public class ClusterTopologyRefreshTests
             || router.GetSlotOwnerEndpoint(8191) != secondEndpoint
             || router.GetSlotOwnerEndpoint(8192) != secondEndpoint
             || router.GetSlotOwnerEndpoint(16383) != secondEndpoint)
+        {
             await Task.Delay(10, timeout.Token);
+        }
 
         await Assert.That(router.GetSlotOwnerEndpoint(0)).IsEqualTo(secondEndpoint);
         await Assert.That(router.GetSlotOwnerEndpoint(100)).IsEqualTo(secondEndpoint);
@@ -880,7 +1029,11 @@ public class ClusterTopologyRefreshTests
             : Interlocked.Increment(ref seedSlotsCalls) == 1 ? initial : partial;
         second.ReplyOverride = (_, command) =>
         {
-            if (command != "CLUSTER SLOTS") return null;
+            if (command != "CLUSTER SLOTS")
+            {
+                return null;
+            }
+
             secondRefreshReceived.TrySetResult();
             return initial;
         };
@@ -902,8 +1055,11 @@ public class ClusterTopologyRefreshTests
         router.SignalTopologyRefresh(force: true);
         await secondRefreshReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (PublishedDiscoveryGeneration(router) < initialGeneration + 2)
+        {
             await Task.Delay(10, timeout.Token);
+        }
 
         await Assert.That(router.GetSlotOwnerEndpoint(0)).IsEqualTo(secondOwner);
         await Assert.That(router.GetSlotOwnerEndpoint(100)).IsEqualTo(secondOwner);
@@ -926,8 +1082,12 @@ public class ClusterTopologyRefreshTests
         {
             new(null, new RespireEndpoint("seed", 1), IsConfiguredSeed: true),
         };
+
         for (var port = 10; port < 14; port++)
+        {
             candidates.Add(new(null, new RespireEndpoint("replica", port), IsConfiguredSeed: false));
+        }
+
         var random = new Random(1234);
         var firstFallbacks = new HashSet<int>();
 
@@ -959,9 +1119,16 @@ public class ClusterTopologyRefreshTests
     {
         private readonly Channel<ManualTimer> _timers = Channel.CreateUnbounded<ManualTimer>();
         private long _timestamp;
-        internal TaskCompletionSource<ManualTimer> Created { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource<ManualTimer> Created
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
         public override long GetTimestamp() => Volatile.Read(ref _timestamp);
+
         internal void Advance(TimeSpan elapsed) => Interlocked.Add(ref _timestamp, elapsed.Ticks);
 
         /// <summary>Returns the next timer created with <paramref name="dueTime"/>, skipping
@@ -972,7 +1139,11 @@ public class ClusterTopologyRefreshTests
             while (true)
             {
                 var timer = await _timers.Reader.ReadAsync();
-                if (timer.DueTime == dueTime && !ReferenceEquals(timer, superseded)) return timer;
+
+                if (timer.DueTime == dueTime && !ReferenceEquals(timer, superseded))
+                {
+                    return timer;
+                }
             }
         }
 
@@ -988,13 +1159,28 @@ public class ClusterTopologyRefreshTests
     private sealed class ManualTimer(TimerCallback callback, object? state, TimeSpan dueTime) : ITimer
     {
         private int _fired;
-        internal TimeSpan DueTime { get; } = dueTime;
+
+        internal TimeSpan DueTime
+        {
+            get;
+        } = dueTime;
+
         internal void Fire()
         {
-            if (Interlocked.Exchange(ref _fired, 1) == 0) callback(state);
+            if (Interlocked.Exchange(ref _fired, 1) == 0)
+            {
+                callback(state);
+            }
         }
+
         public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _fired) == 0;
+
         public void Dispose() => Interlocked.Exchange(ref _fired, 1);
-        public ValueTask DisposeAsync() { Dispose(); return default; }
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return default;
+        }
     }
 }

@@ -78,6 +78,7 @@ public class ClusterRecoveryBudgetTests
         using var budget = new ClusterRecoveryBudget(caller.Token, TimeSpan.FromSeconds(2), clock);
         var early = budget.GetFallbackToken(last: false);
         caller.Cancel();
+
         foreach (var token in new[] { budget.Token, budget.PrimaryToken, early })
         {
             await Assert.That(token.IsCancellationRequested).IsTrue();

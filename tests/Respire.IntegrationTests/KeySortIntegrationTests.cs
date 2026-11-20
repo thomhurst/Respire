@@ -7,7 +7,12 @@ namespace Respire.IntegrationTests;
 [SkipOnGarnet("Garnet 2.2.12 has no SORT or SORT_RO command.")]
 public class KeySortIntegrationTests(RedisTestContainer fixture)
 {
-    public enum Mode { Immediate, Batch, Transaction }
+    public enum Mode
+    {
+        Immediate,
+        Batch,
+        Transaction
+    }
 
     [Test]
     [Arguments(2, Mode.Immediate)]
@@ -28,7 +33,8 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
         await view.Hashes.SetAsync(">object:2", "name", "two");
         (await Sort(view, mode, "items", new RespireSortOptions
         {
-            By = ">weight:*", Get = new RespireKey[] { ">object:*->name" },
+            By = ">weight:*",
+            Get = new RespireKey[] { ">object:*->name" },
         })).Should().Equal("one", "two");
     }
 
@@ -103,7 +109,9 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
         values[1].Should().Equal(0xff, 0);
         var missing = await SortBytes(view, mode, "values", new RespireSortOptions
         {
-            Alpha = true, ReadOnly = readOnly, Get = new RespireKey[] { "missing:*" },
+            Alpha = true,
+            ReadOnly = readOnly,
+            Get = new RespireKey[] { "missing:*" },
         });
         missing.Should().Equal(new byte[]?[] { null, null });
     }
@@ -137,6 +145,7 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
         const int scratch = RedisTestContainer.ScratchDatabase;
         await using var other = await RespireClient.ConnectAsync($"redis://{fixture.Host}:{fixture.Port}/{scratch}?protocol={protocol}");
         var target = other.WithKeyPrefix(prefix);
+
         try
         {
             (await Move(view, mode, "source", scratch)).Should().BeTrue();
@@ -168,29 +177,46 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
         await client.SetAsync("wrong", "string");
-        Func<Task> wrong = async () => { await Sort(client, mode, "wrong", new RespireSortOptions { ReadOnly = readOnly }); };
+        Func<Task> wrong = async () =>
+        {
+            await Sort(client, mode, "wrong", new RespireSortOptions { ReadOnly = readOnly });
+        };
         await wrong.Should().ThrowAsync<RespireServerException>().WithMessage("*WRONGTYPE*");
         await client.Lists.RightPushAsync("words", "word");
-        Func<Task> numeric = async () => { await Sort(client, mode, "words", new RespireSortOptions { ReadOnly = readOnly }); };
+        Func<Task> numeric = async () =>
+        {
+            await Sort(client, mode, "words", new RespireSortOptions { ReadOnly = readOnly });
+        };
         await numeric.Should().ThrowAsync<RespireServerException>().WithMessage("*convert*double*");
-        Func<Task> database = async () => { await Move(client, mode, "wrong", int.MaxValue); };
+        Func<Task> database = async () =>
+        {
+            await Move(client, mode, "wrong", int.MaxValue);
+        };
         await database.Should().ThrowAsync<RespireServerException>();
     }
 
     private static Task<string?[]> Sort(IRespireClient client, Mode mode, RespireKey key, RespireSortOptions options)
         => Execute(client, mode, () => client.Keys.SortAsync(key, options), queue => queue.Keys.Sort(key, options));
+
     private static Task<byte[]?[]> SortBytes(IRespireClient client, Mode mode, RespireKey key, RespireSortOptions options)
         => Execute(client, mode, () => client.Keys.SortAsync<byte[]>(key, options), queue => queue.Keys.Sort<byte[]>(key, options));
+
     private static Task<long> Store(IRespireClient client, Mode mode, RespireKey key, RespireKey destination, RespireSortOptions? options)
         => Execute(client, mode, () => client.Keys.SortStoreAsync(key, destination, options), queue => queue.Keys.SortStore(key, destination, options));
+
     private static Task<RespireKey?> Random(IRespireClient client, Mode mode)
         => Execute(client, mode, () => client.Keys.RandomAsync(), queue => queue.Keys.Random());
+
     private static Task<bool> Move(IRespireClient client, Mode mode, RespireKey key, int database)
         => Execute(client, mode, () => client.Keys.MoveAsync(key, database), queue => queue.Keys.Move(key, database));
 
     private static async Task<T> Execute<T>(IRespireClient client, Mode mode, Func<ValueTask<T>> immediate, Func<IRespireCommandQueue, RespirePending<T>> enqueue)
     {
-        if (mode == Mode.Immediate) return await immediate();
+        if (mode == Mode.Immediate)
+        {
+            return await immediate();
+        }
+
         if (mode == Mode.Batch)
         {
             using var batch = client.CreateBatch();
@@ -198,6 +224,7 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
             await batch.TryExecuteAsync();
             return pending.Result;
         }
+
         await using var transaction = client.CreateTransaction();
         var result = enqueue(transaction);
         await transaction.CommitAsync();

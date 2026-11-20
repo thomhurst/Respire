@@ -39,10 +39,13 @@ public sealed partial class RespireClient
     private static void ValidateCacheAside<T>(Func<CancellationToken, ValueTask<T?>> factory, RespireExpiry expiry)
     {
         ArgumentNullException.ThrowIfNull(factory);
+
         if (!(expiry.TryGetRelativeMilliseconds(out var milliseconds)
                 || expiry.TryGetAbsoluteUnixMilliseconds(out milliseconds)) || milliseconds <= 0)
+        {
             throw new ArgumentOutOfRangeException(nameof(expiry),
                 "Expiry must be a relative duration of at least one millisecond or an absolute instant after the Unix epoch.");
+        }
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -53,18 +56,30 @@ public sealed partial class RespireClient
         ValidateCacheAside(factory, expiry);
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
+
         if (_core.ClientCache is null)
+        {
             throw new InvalidOperationException("GetOrSetAsync requires ClientSideCache to be enabled.");
+        }
+
         var resolvedKey = ResolveKey(key);
+
         if (ReadCache is not { } cache)
+        {
             return GetOrSetUncachedAsync(resolvedKey.Snapshot(), factory, expiry, cancellationToken, observation);
+        }
+
         if (typeof(T) == typeof(string))
         {
             if (cache.TryGetString(in resolvedKey, out var cachedText) && cachedText is not null)
+            {
                 return new ValueTask<T?>((T)(object)cachedText);
+            }
         }
         else if (cache.TryGet(in resolvedKey, out var cached) && !cached.IsNull)
+        {
             return new ValueTask<T?>(DeserializeBorrowed<T>(in cached));
+        }
 
         return GetOrSetMissAsync(resolvedKey.Snapshot(), factory, expiry, cache, cancellationToken, observation);
     }
@@ -98,7 +113,12 @@ public sealed partial class RespireClient
         // A factory is not a GET producer. Types and expiry forms/values with different contracts never join.
         // Within one identity the first factory wins; callers must agree on its meaning.
         var absolute = expiry.TryGetAbsoluteUnixMilliseconds(out var milliseconds);
-        if (!absolute) expiry.TryGetRelativeMilliseconds(out milliseconds);
+
+        if (!absolute)
+        {
+            expiry.TryGetRelativeMilliseconds(out milliseconds);
+        }
+
         using var response = cache.CoalesceConcurrentMisses
             ? await cache.CoalesceReadAsync(
                 new ClientCacheCommandKey("GETORSET", key.AsValue(), CacheAsideType<T>.Identity,
@@ -134,13 +154,22 @@ public sealed partial class RespireClient
                 ? cached.ToOwned()
                 : await GetAndCacheAsync(key, cache, cancellationToken,
                     static (RespireClient _, in RespValue value) => value.ToOwned(), observation).ConfigureAwait(false);
-        if (!existing.IsNull) return existing;
+
+        if (!existing.IsNull)
+        {
+            return existing;
+        }
+
         existing.Dispose();
 
         var created = await factory(cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
-        if (created is null) return RespValue.Null;
+
+        if (created is null)
+        {
+            return RespValue.Null;
+        }
 
         var serialized = Serialize(created);
         RespireValue.ThrowIfNull(serialized, nameof(factory));

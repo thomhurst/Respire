@@ -15,7 +15,8 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", 1)],
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -50,6 +51,7 @@ public partial class ErrorMetricsTests
         long get = 0, getString = 0, getOrSetInt = 0, getOrSetString = 0, control = 0;
         var firstIteration = -1;
         var previous = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
             var start = previous;
@@ -79,12 +81,22 @@ public partial class ErrorMetricsTests
             current = GC.GetAllocatedBytesForCurrentThread();
             getOrSetString += current - previous;
             previous = current;
-            if (firstIteration < 0 && current != start) firstIteration = index;
-            if (allocate) Volatile.Write(ref _cacheAllocationControl, new byte[37]);
+
+            if (firstIteration < 0 && current != start)
+            {
+                firstIteration = index;
+            }
+
+            if (allocate)
+            {
+                Volatile.Write(ref _cacheAllocationControl, new byte[37]);
+            }
+
             current = GC.GetAllocatedBytesForCurrentThread();
             control += current - previous;
             previous = current;
         }
+
         return new(get, getString, getOrSetInt, getOrSetString, control, firstIteration);
     }
 

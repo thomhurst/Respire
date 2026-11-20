@@ -15,6 +15,10 @@
     <!-- The public API uses C# 13 params collections (params ReadOnlySpan<T>). -->
     <LangVersion>14</LangVersion>
     <Deterministic>true</Deterministic>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!-- Preserve the shared profile's warning severities in projects that treat warnings as errors.
+         Missing braces (IDE0011) remain an error, as do the existing performance and API rules. -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);IDE0007;IDE0008;IDE0021;IDE0022;IDE0023;IDE0024;IDE0025;IDE0026;IDE0027;IDE0040;IDE0044;IDE0049;IDE0053;IDE0055;IDE0061;IDE0065;IDE0161;IDE1006;IDE2000;IDE2001;IDE2002;IDE2003</WarningsNotAsErrors>
     <!-- Repo implementation, tests, samples, and benchmarks deliberately opt in to these
          experimental features. This props file is not distributed to package consumers. -->
     <NoWarn>$(NoWarn);RSP0001;RSP0002;RSP0003;RSP0004;RSP0005;RSP0006</NoWarn>

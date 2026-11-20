@@ -67,8 +67,11 @@ public class KeyMetadataTests
         await Assert.That(idle.Result).IsEqualTo(TimeSpan.FromSeconds(2));
         await Assert.That(frequency.Result).IsEqualTo(3);
         await Assert.That(references.Result).IsEqualTo(1);
+
         foreach (var arguments in server.ReceivedArguments)
+        {
             await Assert.That(arguments[^1].SequenceEqual(new byte[] { (byte)'p', (byte)':', 0xff, 0, (byte)'x' })).IsTrue();
+        }
     }
 
     [Test]
@@ -109,6 +112,7 @@ public class KeyMetadataTests
     public async Task MetadataDescriptorsRouteByTheirKeyAfterInlineSubcommands()
     {
         RespireValue key = "tenant:{route}:value";
+
         foreach (var descriptor in new[] { RespireCommands.Key.EXPIRETIME, RespireCommands.Key.PEXPIRETIME,
             RespireCommands.Key.OBJECT_ENCODING, RespireCommands.Key.OBJECT_IDLETIME,
             RespireCommands.Key.OBJECT_FREQ, RespireCommands.Key.OBJECT_REFCOUNT })

@@ -16,9 +16,11 @@ internal sealed class DefaultHubMessageSerializer
             ?? hubProtocolResolver.AllProtocols.Select(static protocol => protocol.Name).ToArray();
         _hubProtocols = new List<IHubProtocol>(supportedProtocols.Count);
         var protocolNames = supportedProtocols as IReadOnlyList<string> ?? supportedProtocols.ToArray();
+
         foreach (var protocolName in supportedProtocols)
         {
             var protocol = hubProtocolResolver.GetProtocol(protocolName, protocolNames);
+
             if (protocol != null)
             {
                 _hubProtocols.Add(protocol);
@@ -29,6 +31,7 @@ internal sealed class DefaultHubMessageSerializer
     public IReadOnlyList<SerializedMessage> SerializeMessage(HubMessage message)
     {
         var list = new List<SerializedMessage>(_hubProtocols.Count);
+
         foreach (var protocol in _hubProtocols)
         {
             list.Add(new SerializedMessage(protocol.Name, protocol.GetMessageBytes(message)));

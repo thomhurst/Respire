@@ -24,7 +24,11 @@ public class DedicatedPoolOptionsTests
     {
         var configured = new RespireDedicatedPoolOptions
         {
-            MinimumSize = 2, MaximumSize = 3, MaximumIdle = 8, IdleTimeout = TimeSpan.FromMinutes(2), UnblockOnCancel = true,
+            MinimumSize = 2,
+            MaximumSize = 3,
+            MaximumIdle = 8,
+            IdleTimeout = TimeSpan.FromMinutes(2),
+            UnblockOnCancel = true,
         };
         var source = new RespireOptions { Endpoints = [new("localhost")], Connections = 7, DedicatedPool = configured };
         var snapshot = source.ValidateAndSnapshot();
@@ -87,7 +91,8 @@ public class DedicatedPoolOptionsTests
     {
         await Assert.That(() => new RespireOptions
         {
-            Endpoints = [new("localhost")], DedicatedPool = null!,
+            Endpoints = [new("localhost")],
+            DedicatedPool = null!,
         }.ValidateAndSnapshot()).ThrowsExactly<RespireConfigurationException>();
     }
 }

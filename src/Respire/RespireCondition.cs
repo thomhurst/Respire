@@ -11,9 +11,21 @@ public sealed class RespireCondition
         Operand = operand.Snapshot();
     }
 
-    internal string Token { get; }
-    internal RespireKey Key { get; }
-    internal RespireValue Operand { get; }
+    internal string Token
+    {
+        get;
+    }
+
+    internal RespireKey Key
+    {
+        get;
+    }
+
+    internal RespireValue Operand
+    {
+        get;
+    }
+
     internal bool HasOperand => Token is "IFEQ" or "IFNE";
 
     /// <summary>Require an existing string key whose bytes equal the supplied value (IFEQ).</summary>

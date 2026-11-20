@@ -16,17 +16,26 @@ internal sealed class RedisChannels
     /// The payload on this channel is <see cref="RedisInvocation"/> objects containing
     /// invocations to be sent to all connections
     /// </remarks>
-    public string All { get; }
+    public string All
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the name of the internal channel for group management messages.
     /// </summary>
-    public string GroupManagement { get; }
+    public string GroupManagement
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the name of the internal channel for receiving client results.
     /// </summary>
-    public string ReturnResults { get; }
+    public string ReturnResults
+    {
+        get;
+    }
 
     public RedisChannels(string prefix, string serverName)
     {

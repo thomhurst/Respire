@@ -46,7 +46,9 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
         _onLifetimeCancelled = onLifetimeCancelled;
         _streamCancellationToken = streamCancellationToken;
         PrepareForUse(prefixReplyCount + 1);
+
         if (streamCancellationToken.CanBeCanceled)
+        {
             _streamCancellationRegistration = streamCancellationToken.UnsafeRegister(
                 static (state, token) =>
                 {
@@ -55,11 +57,15 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
                     source.AbortPayload(error);
                     source._onLifetimeCancelled?.Invoke();
                 }, this);
+        }
     }
 
     internal override string? CommandName => _commandName;
+
     internal int PrefixReplyCount => _prefixReplyCount;
+
     internal Action<Exception?>? OnFrameCompleted => _onFrameCompleted;
+
     internal CancellationToken StreamCancellationToken => _streamCancellationToken;
 
     internal ValueTask<Stream?> Task => new(this, _core.Version);
@@ -73,9 +79,16 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     internal void ObservePrefix(in RespValue result)
     {
-        if (Volatile.Read(ref _prefixReceived) >= _prefixReplyCount) return;
+        if (Volatile.Read(ref _prefixReceived) >= _prefixReplyCount)
+        {
+            return;
+        }
+
         if (result.IsError)
+        {
             Interlocked.CompareExchange(ref _prefixError, ResponseReader.ServerError(in result, _commandName, ErrorEndpoint), null);
+        }
+
         Interlocked.Increment(ref _prefixReceived);
     }
 
@@ -94,8 +107,12 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
         var payload = new RespBulkPayloadPipe(ErrorEndpoint);
         Volatile.Write(ref _payload, payload);
+
         if (Volatile.Read(ref _payloadAbortError) is { } lateAbort)
+        {
             payload.Complete(lateAbort);
+        }
+
         if (base.TrySetResult(default))
         {
             return payload;
@@ -117,6 +134,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     internal void CompleteMissing()
     {
         DisposeStreamCancellationRegistration();
+
         if (Volatile.Read(ref _prefixError) is { } prefixError)
         {
             TrySetException(prefixError);
@@ -132,6 +150,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     internal void CompleteDiscardedPayload()
     {
         DisposeStreamCancellationRegistration();
+
         if (Volatile.Read(ref _prefixError) is { } prefixError)
         {
             TrySetException(prefixError);
@@ -168,8 +187,16 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
         {
             RespireTelemetry.RecordDiscardedError(in result, _commandName, ErrorAttempts, ErrorEndpoint);
             result.Dispose();
-            if (reserved) SetExceptionCore(PrepareException(prefixError));
-            else TrySetException(prefixError);
+
+            if (reserved)
+            {
+                SetExceptionCore(PrepareException(prefixError));
+            }
+            else
+            {
+                TrySetException(prefixError);
+            }
+
             return true;
         }
 
@@ -207,7 +234,8 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
         result.Dispose();
         _core.SetException(new RespireProtocolException(
-            $"{_commandName ?? "GET"} expected a bulk string or null reply.") { Endpoint = ErrorEndpoint });
+            $"{_commandName ?? "GET"} expected a bulk string or null reply.")
+        { Endpoint = ErrorEndpoint });
     }
 
     protected override void SetExceptionCore(Exception exception)
@@ -221,7 +249,12 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
         // The abort reason explains why the socket stopped. A subsequent read may surface
         // SocketException or cancellation from that same abort; do not let it mask the cause.
         var completionError = Volatile.Read(ref _payloadAbortError) ?? exception;
-        if (completionError is not null) RespireException.PopulateEndpoint(completionError, ErrorEndpoint);
+
+        if (completionError is not null)
+        {
+            RespireException.PopulateEndpoint(completionError, ErrorEndpoint);
+        }
+
         Volatile.Read(ref _payload)?.Complete(completionError);
         DisposeStreamCancellationRegistration();
         _onFrameCompleted?.Invoke(
@@ -264,7 +297,9 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
         // Prefix errors retained before cancellation need an owner after both replies drain.
         if (_prefixError is { } prefixError && _completionError is { } completionError
             && !ReferenceEquals(prefixError, completionError))
+        {
             RespireTelemetry.RecordError(prefixError, internallyHandled: true, ErrorAttempts, ErrorEndpoint);
+        }
         // One-shot source. The caller and receive loop own its only references.
     }
 }
@@ -296,15 +331,24 @@ internal sealed class RespBulkPayloadPipe : IDisposable
 
     internal static void SetErrorAttempts(Stream? stream, int attempts)
     {
-        if (stream is ProgressTrackingStream tracked) tracked.SetErrorAttempts(attempts);
-        else if (stream is CircuitCompletionStream guarded) guarded.SetErrorAttempts(attempts);
+        if (stream is ProgressTrackingStream tracked)
+        {
+            tracked.SetErrorAttempts(attempts);
+        }
+        else if (stream is CircuitCompletionStream guarded)
+        {
+            guarded.SetErrorAttempts(attempts);
+        }
     }
 
     private void RecordReadError(Exception error, CancellationToken readCancellation = default)
     {
         // Invalid Stream API usage does not establish a failed Redis payload. A failed
         // payload can throw on every later read; report its caller boundary only once.
-        if (error is ArgumentException or ObjectDisposedException or NotSupportedException) return;
+        if (error is ArgumentException or ObjectDisposedException or NotSupportedException)
+        {
+            return;
+        }
         // Canceling one read does not terminate the payload; a later read may succeed or fail.
         if (error is OperationCanceledException cancelled && readCancellation.IsCancellationRequested
             && cancelled.CancellationToken == readCancellation)
@@ -312,8 +356,11 @@ internal sealed class RespBulkPayloadPipe : IDisposable
             ErrorObservation.FinishFinal(default, error, retryAttempts: _errorAttempts, endpoint: _endpoint);
             return;
         }
+
         if (Interlocked.Exchange(ref _reportedReadError, 1) == 0)
+        {
             ErrorObservation.FinishFinal(default, error, retryAttempts: _errorAttempts, endpoint: _endpoint);
+        }
     }
 
     internal Memory<byte> GetMemory(int sizeHint) => _pipe.Writer.GetMemory(sizeHint);
@@ -334,7 +381,11 @@ internal sealed class RespBulkPayloadPipe : IDisposable
     {
         lock (_flushGate)
         {
-            if (_completed != 0) return;
+            if (_completed != 0)
+            {
+                return;
+            }
+
             _completed = 1;
             _pipe.Writer.Complete(exception);
         }
@@ -344,7 +395,11 @@ internal sealed class RespBulkPayloadPipe : IDisposable
     {
         lock (_flushGate)
         {
-            if (_completed != 0) return;
+            if (_completed != 0)
+            {
+                return;
+            }
+
             _flushCancelled = true;
             _pipe.Writer.CancelPendingFlush();
             _pipe.Reader.CancelPendingRead();
@@ -365,73 +420,123 @@ internal sealed class RespBulkPayloadPipe : IDisposable
     private sealed class ProgressTrackingStream(Stream inner, RespBulkPayloadPipe owner) : Stream
     {
         internal void SetErrorAttempts(int attempts) => owner._errorAttempts = attempts;
+
         public override bool CanRead => inner.CanRead;
+
         public override bool CanSeek => inner.CanSeek;
+
         public override bool CanWrite => inner.CanWrite;
+
         public override long Length => inner.Length;
-        public override long Position { get => inner.Position; set => inner.Position = value; }
+
+        public override long Position
+        {
+            get => inner.Position; set => inner.Position = value;
+        }
+
         public override void Flush() => inner.Flush();
+
         public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+
         public override void SetLength(long value) => inner.SetLength(value);
+
         public override void Write(byte[] buffer, int offset, int count) => inner.Write(buffer, offset, count);
+
         public override void Write(ReadOnlySpan<byte> buffer) => inner.Write(buffer);
+
         public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
             => inner.WriteAsync(buffer, offset, count, cancellationToken);
+
         public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
             => inner.WriteAsync(buffer, cancellationToken);
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            try { return RecordProgress(inner.Read(buffer, offset, count)); }
+            try
+            {
+                return RecordProgress(inner.Read(buffer, offset, count));
+            }
             catch (Exception error) { owner.RecordReadError(error); throw; }
         }
+
         public override int Read(Span<byte> buffer)
         {
-            try { return RecordProgress(inner.Read(buffer)); }
+            try
+            {
+                return RecordProgress(inner.Read(buffer));
+            }
             catch (Exception error) { owner.RecordReadError(error); throw; }
         }
+
         public override int ReadByte()
         {
             try
             {
                 var value = inner.ReadByte();
-                if (value >= 0) owner.MarkReaderProgress();
+
+                if (value >= 0)
+                {
+                    owner.MarkReaderProgress();
+                }
+
                 return value;
             }
             catch (Exception error) { owner.RecordReadError(error); throw; }
         }
+
         public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
-            try { return RecordProgressAsync(inner.ReadAsync(buffer, offset, count, cancellationToken), cancellationToken); }
+            try
+            {
+                return RecordProgressAsync(inner.ReadAsync(buffer, offset, count, cancellationToken), cancellationToken);
+            }
             catch (Exception error) { owner.RecordReadError(error, cancellationToken); throw; }
         }
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            try { return RecordProgressAsync(inner.ReadAsync(buffer, cancellationToken), cancellationToken); }
+            try
+            {
+                return RecordProgressAsync(inner.ReadAsync(buffer, cancellationToken), cancellationToken);
+            }
             catch (Exception error) { owner.RecordReadError(error, cancellationToken); throw; }
         }
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) inner.Dispose();
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
             base.Dispose(disposing);
         }
 
         private int RecordProgress(int read)
         {
-            if (read > 0) owner.MarkReaderProgress();
+            if (read > 0)
+            {
+                owner.MarkReaderProgress();
+            }
+
             return read;
         }
 
         private async Task<int> RecordProgressAsync(Task<int> read, CancellationToken cancellationToken)
         {
-            try { return RecordProgress(await read.ConfigureAwait(false)); }
+            try
+            {
+                return RecordProgress(await read.ConfigureAwait(false));
+            }
             catch (Exception error) { owner.RecordReadError(error, cancellationToken); throw; }
         }
 
         private async ValueTask<int> RecordProgressAsync(ValueTask<int> read, CancellationToken cancellationToken)
         {
-            try { return RecordProgress(await read.ConfigureAwait(false)); }
+            try
+            {
+                return RecordProgress(await read.ConfigureAwait(false));
+            }
             catch (Exception error) { owner.RecordReadError(error, cancellationToken); throw; }
         }
     }

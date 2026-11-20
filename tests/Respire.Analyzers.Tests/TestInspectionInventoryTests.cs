@@ -223,6 +223,7 @@ public class TestInspectionInventoryTests
         var expected = lines.Where(line => !line.StartsWith('#')).ToArray();
         var counts = lines.Where(line => line.StartsWith("# Count: ", StringComparison.Ordinal))
             .Select(line => line[9..].Split(" | ")).ToDictionary(parts => parts[0], parts => int.Parse(parts[1]), StringComparer.Ordinal);
+
         foreach (var configuration in ReadSourceConfigurations())
         {
             var library = Library(configuration);
@@ -233,17 +234,22 @@ public class TestInspectionInventoryTests
                 .Order(StringComparer.Ordinal).ToArray();
             // An empty inventory is deliberately a failure, never an automatic snapshot update.
             if (expected.Length == 0)
+            {
                 throw new InvalidOperationException("Missing reviewed inventory:\n" + string.Join('\n', actual));
+            }
+
             await Assert.That(actual).IsEquivalentTo(expected).Because(
                 $"{configuration.Framework}: Review changes using docs/TEST_INSPECTION.md. Only for approved operational changes, copy the exact unreviewed lines into TestInspectionOwnerSurface.txt and remove the exact removed lines. Never accept a new inspection bypass.\n"
                 + "Unreviewed signatures:\n" + string.Join('\n', actual.Except(expected, StringComparer.Ordinal))
                 + "\nRemoved signatures:\n" + string.Join('\n', expected.Except(actual, StringComparer.Ordinal)));
             await Assert.That(counts).IsNotEmpty();
+
             foreach (var group in actual.GroupBy(signature => signature.Split(" | ")[0], StringComparer.Ordinal))
             {
                 await Assert.That(counts.ContainsKey(group.Key)).IsTrue().Because("Missing reviewed count for " + group.Key);
                 await Assert.That(group.Count()).IsEqualTo(counts[group.Key]).Because("Reviewed count for " + group.Key);
             }
+
             await Assert.That(counts.Keys).IsEquivalentTo(actual.Select(signature => signature.Split(" | ")[0]).Distinct());
         }
     }

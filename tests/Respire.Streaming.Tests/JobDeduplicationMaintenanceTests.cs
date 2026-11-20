@@ -19,7 +19,8 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
     public async Task ReclaimsManuallyRemovedEnvelopes(string removal, bool scheduled, int protocol)
     {
         await using var root = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-            with { Protocol = (RespireProtocol)protocol });
+            with
+        { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix("tenant:");
         var queue = Queue(client);
         var entry = scheduled
@@ -33,7 +34,11 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
             "XTRIM" => [physicalStream, "MAXLEN", 0],
             _ => [physicalStream],
         };
-        using (await client.ExecuteAsync(removal, arguments)) { }
+
+        using (await client.ExecuteAsync(removal, arguments))
+        {
+        }
+
         await Assert.That(await queue.ReclaimOrphanedDeduplicationAsync()).IsEqualTo(1);
         await Assert.That(await Length(client, queue)).IsEqualTo(0);
         await Assert.That(await queue.ReclaimOrphanedDeduplicationAsync()).IsEqualTo(0);
@@ -49,7 +54,11 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
         var queue = Queue(client);
         await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "job", "obsolete");
         var latest = await queue.EnqueueAsync("job", "current");
-        using (await client.ExecuteAsync("XDEL", [queue.StreamKey, latest.EntryId.Value])) { }
+
+        using (await client.ExecuteAsync("XDEL", [queue.StreamKey, latest.EntryId.Value]))
+        {
+        }
+
         await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(1);
         await Assert.That(await queue.ReclaimOrphanedDeduplicationAsync()).IsEqualTo(1);
     }
@@ -96,8 +105,16 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
         var queue = Queue(client);
         await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "orphan", "orphan");
         await client.Keys.DeleteAsync(queue.StreamKey);
-        if (hashLimit) await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "live", "live");
-        else await queue.EnqueueAsync("live", "live");
+
+        if (hashLimit)
+        {
+            await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "live", "live");
+        }
+        else
+        {
+            await queue.EnqueueAsync("live", "live");
+        }
+
         var before = await Length(client, queue);
         var error = await Assert.That(async () => await queue.ReclaimOrphanedDeduplicationAsync(1))
             .Throws<RespireServerException>();
@@ -129,10 +146,12 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
         await admin.Keys.DeleteAsync(queue.StreamKey);
         var user = "maintenance-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-hdel"]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = user, Password = "password" });
+                with
+            { Username = user, Password = "password" });
             var error = await Assert.That(async () => await Queue(restricted).ReclaimOrphanedDeduplicationAsync())
                 .Throws<RespireServerException>();
             await Assert.That(error!.Message).Contains("NOPERM");
@@ -148,7 +167,12 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
         var queue = Queue(client);
         await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "orphan", "orphan");
         await client.Keys.DeleteAsync(queue.StreamKey);
-        for (var i = 0; i < 260; i++) await queue.EnqueueAsync("live-" + i, "legacy");
+
+        for (var i = 0; i < 260; i++)
+        {
+            await queue.EnqueueAsync("live-" + i, "legacy");
+        }
+
         await queue.EnqueueScheduledAsync("scheduled", "pending", new() { DeduplicationMode = RespireJobDeduplicationMode.Replace });
         await Assert.That(await queue.ReclaimOrphanedDeduplicationAsync(263)).IsEqualTo(1);
         await Assert.That(await Length(client, queue)).IsEqualTo(1);
@@ -166,7 +190,9 @@ public class JobDeduplicationMaintenanceTests(RedisTestContainer redis)
     }
 
     private static RespireJobQueue<string> Queue(IRespireClient client) => new(client, "maintenance", Encoding.UTF8.GetBytes);
+
     private static string Lifecycle(RespireJobQueue<string> queue) => queue.StreamKey + ":dedup-deliveries";
+
     private static ValueTask<long> Length(IRespireClient client, RespireJobQueue<string> queue)
         => client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return redis.call('HLEN', KEYS[1])"), [Lifecycle(queue)], []);
 }

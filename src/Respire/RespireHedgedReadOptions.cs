@@ -17,7 +17,10 @@ namespace Respire;
 public sealed record RespireHedgedReadOptions
 {
     /// <summary>Delay after the first read is dispatched before trying one additional server. Defaults to 10 ms.</summary>
-    public TimeSpan Delay { get; init; } = TimeSpan.FromMilliseconds(10);
+    public TimeSpan Delay
+    {
+        get; init;
+    } = TimeSpan.FromMilliseconds(10);
 
     /// <summary>
     /// Maximum percentage of eligible reads that can start a hedge, from 1 through 100.
@@ -27,13 +30,21 @@ public sealed record RespireHedgedReadOptions
     /// reads and reads with no second peer. It is not a percentage of only slow reads.
     /// Primary-only reads and excluded commands do not contribute credit.
     /// </summary>
-    public int MaximumExtraLoadPercent { get; init; } = 5;
+    public int MaximumExtraLoadPercent
+    {
+        get; init;
+    } = 5;
 
     internal void Validate()
     {
         if (Delay < TimeSpan.FromMilliseconds(1) || Delay > TimeSpan.FromMinutes(1))
+        {
             throw new RespireConfigurationException("RespireOptions.HedgedReads.Delay must be between one millisecond and one minute.");
+        }
+
         if (MaximumExtraLoadPercent is < 1 or > 100)
+        {
             throw new RespireConfigurationException("RespireOptions.HedgedReads.MaximumExtraLoadPercent must be between 1 and 100.");
+        }
     }
 }

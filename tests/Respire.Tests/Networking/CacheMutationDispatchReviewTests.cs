@@ -31,7 +31,8 @@ public class CacheMutationDispatchReviewTests
 #pragma warning disable RESP010 // Each dispatch scenario owns and disposes its client to isolate tracking, protocol, and mutation state.
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            Connections = 1,
             ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
             Endpoints = [new("127.0.0.1", server.Port)],
         });
@@ -41,10 +42,18 @@ public class CacheMutationDispatchReviewTests
         var bypass = client.WithoutClientCache();
         // Raw commands take physical keys; pass the view's prefix explicitly.
         RespireKey key = prefix ? "tenant:key" : "key";
+
         if (fireAndForget)
         {
-            if (interpolated) await bypass.ExecuteFireAndForgetAsync($"GET {key}");
-            else await bypass.ExecuteFireAndForgetAsync("GET", key);
+            if (interpolated)
+            {
+                await bypass.ExecuteFireAndForgetAsync($"GET {key}");
+            }
+            else
+            {
+                await bypass.ExecuteFireAndForgetAsync("GET", key);
+            }
+
             using var barrier = await bypass.ExecuteAsync("PING");
             await Assert.That(barrier.AsString()).IsEqualTo("PONG");
         }
@@ -55,6 +64,7 @@ public class CacheMutationDispatchReviewTests
                 : await bypass.ExecuteAsync("GET", key);
             await Assert.That(result.AsString()).IsEqualTo("new");
         }
+
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         await Assert.That(Volatile.Read(ref gets)).IsEqualTo(2);
         await Assert.That(root.ClientSideCache!.Count).IsEqualTo(1);
@@ -80,13 +90,16 @@ public class CacheMutationDispatchReviewTests
 #pragma warning disable RESP010 // Each dispatch scenario owns and disposes its client to isolate tracking, protocol, and mutation state.
         await using var owner = RespireClient.Create(new RespireOptions
         {
-            Protocol = (RespireProtocol)protocol, ClientSideCache = new(),
+            Protocol = (RespireProtocol)protocol,
+            ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var options = owner.Core.CreateConnectionOptions(enableClientTracking: protocol == 3) with
         {
-            Database = 2, RequireClusterDatabaseSupport = true, ReadOnly = true,
+            Database = 2,
+            RequireClusterDatabaseSupport = true,
+            ReadOnly = true,
         };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, options);
         using var pong = await connection.SendAsync(new Cmd(new Verb(-1, "PING")));
@@ -95,8 +108,11 @@ public class CacheMutationDispatchReviewTests
         await Assert.That(commands.IndexOf("INFO SERVER")).IsLessThan(commands.IndexOf("SELECT 2"));
         await Assert.That(commands.IndexOf("SELECT 2")).IsLessThan(commands.IndexOf("READONLY"));
         await Assert.That(commands.IndexOf("READONLY")).IsGreaterThanOrEqualTo(0);
+
         if (protocol == 3)
+        {
             await Assert.That(commands.IndexOf("READONLY")).IsLessThan(commands.IndexOf("CLIENT TRACKING ON OPTIN"));
+        }
     }
 
     [Test]
@@ -118,7 +134,9 @@ public class CacheMutationDispatchReviewTests
 #pragma warning disable RESP010 // Each dispatch scenario owns and disposes its client to isolate tracking, protocol, and mutation state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, Connections = 1, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            Connections = 1,
+            ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -129,7 +147,10 @@ public class CacheMutationDispatchReviewTests
         await Assert.That(result).IsEqualTo(expected);
         await Assert.That(attempts).IsEqualTo(expected);
         await Assert.That(Volatile.Read(ref execs)).IsEqualTo(expected);
+
         foreach (var command in new[] { "WATCH watched", "MULTI", "EXEC" })
+        {
             await Assert.That(server.ReceivedCommands.Count(value => value == command)).IsEqualTo(expected);
+        }
     }
 }

@@ -11,10 +11,16 @@ public readonly record struct RespireStreamConfigurationOptions
     internal const int MaximumIdempotencyMaxSize = 10000;
 
     /// <summary>Retention in whole seconds, from 1 through 86400. Null preserves the current value.</summary>
-    public int? IdempotencyDurationSeconds { get; init; }
+    public int? IdempotencyDurationSeconds
+    {
+        get; init;
+    }
 
     /// <summary>Maximum tracked identities per producer, from 1 through 10000. Null preserves the current value.</summary>
-    public int? IdempotencyMaxSize { get; init; }
+    public int? IdempotencyMaxSize
+    {
+        get; init;
+    }
 }
 
 public partial interface IRespireStreamCommands
@@ -31,7 +37,11 @@ internal sealed partial class StreamCommands
 
     public ValueTask<bool> ConfigureAsync(RespireKey key, RespireStreamConfigurationOptions options, CancellationToken cancellationToken = default)
     {
-        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         return client.ConvertResponseAsync("XCFGSET", BuildConfigurationCommand(client, key, options),
             cancellationToken, this, static (StreamCommands _, in RespValue value) => ResponseReader.Ok(in value));
     }
@@ -39,23 +49,35 @@ internal sealed partial class StreamCommands
     internal static Cmd1N BuildConfigurationCommand(RespireClient client, RespireKey key, RespireStreamConfigurationOptions options)
     {
         if (options.IdempotencyDurationSeconds is null && options.IdempotencyMaxSize is null)
+        {
             throw new ArgumentException("At least one stream configuration setting is required.", nameof(options));
+        }
+
         if (options.IdempotencyDurationSeconds is < 1 or > RespireStreamConfigurationOptions.MaximumIdempotencyDurationSeconds)
+        {
             throw new ArgumentOutOfRangeException(nameof(options), $"IdempotencyDurationSeconds must be between 1 and {RespireStreamConfigurationOptions.MaximumIdempotencyDurationSeconds}.");
+        }
+
         if (options.IdempotencyMaxSize is < 1 or > RespireStreamConfigurationOptions.MaximumIdempotencyMaxSize)
+        {
             throw new ArgumentOutOfRangeException(nameof(options), $"IdempotencyMaxSize must be between 1 and {RespireStreamConfigurationOptions.MaximumIdempotencyMaxSize}.");
+        }
+
         var arguments = new RespireValue[(options.IdempotencyDurationSeconds.HasValue ? 2 : 0) + (options.IdempotencyMaxSize.HasValue ? 2 : 0)];
         var index = 0;
+
         if (options.IdempotencyDurationSeconds is { } duration)
         {
             arguments[index++] = "IDMP-DURATION";
             arguments[index++] = duration;
         }
+
         if (options.IdempotencyMaxSize is { } size)
         {
             arguments[index++] = "IDMP-MAXSIZE";
             arguments[index] = size;
         }
+
         return new(XCfgSet, client.Key(key), arguments);
     }
 }

@@ -67,6 +67,7 @@ public class ClientCacheInvalidationWireTests
             release.Task.GetAwaiter().GetResult();
             returned.TrySetResult();
         });
+
         try
         {
             await Assert.That(await view.GetStringAsync("key")).IsEqualTo("value");
@@ -78,6 +79,7 @@ public class ClientCacheInvalidationWireTests
             await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
         }
         finally { release.TrySetResult(); }
+
         await returned.Task.WaitAsync(Limit);
         await Assert.That(subscription.LastObserverException).IsNull();
     }
@@ -103,13 +105,16 @@ public class ClientCacheInvalidationWireTests
             }
             catch (Exception error) { completed.TrySetException(error); }
         });
+
         using (subscription)
         {
             await client.GetStringAsync("tenant:key");
             await server.SendRawAsync(Invalidation);
             await completed.Task.WaitAsync(Limit);
             await Assert.That(subscription.IsDisposed).IsTrue();
-            await Assert.That(() => client.ClientSideCache.SubscribeInvalidations("tenant:key", _ => { }))
+            await Assert.That(() => client.ClientSideCache.SubscribeInvalidations("tenant:key", _ =>
+                {
+                }))
                 .ThrowsExactly<ObjectDisposedException>();
         }
     }
@@ -127,27 +132,50 @@ public class ClientCacheInvalidationWireTests
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
+            if (change.State == RespireConnectionState.Connected)
+            {
+                recovered.TrySetResult();
+            }
         };
         using var subscription = client.ClientSideCache!.SubscribeInvalidations("tenant:key", change =>
         {
-            if (change.Reasons.HasFlag(RespireClientCacheInvalidationReason.LocalMutation)) mutation.TrySetResult();
-            if (change.Reasons.HasFlag(RespireClientCacheInvalidationReason.ContinuityLost)) lost.TrySetResult();
-            if (change.Reasons.HasFlag(RespireClientCacheInvalidationReason.ServerInvalidation)) afterReconnect.TrySetResult();
+            if (change.Reasons.HasFlag(RespireClientCacheInvalidationReason.LocalMutation))
+            {
+                mutation.TrySetResult();
+            }
+
+            if (change.Reasons.HasFlag(RespireClientCacheInvalidationReason.ContinuityLost))
+            {
+                lost.TrySetResult();
+            }
+
+            if (change.Reasons.HasFlag(RespireClientCacheInvalidationReason.ServerInvalidation))
+            {
+                afterReconnect.TrySetResult();
+            }
         });
         await client.GetStringAsync("tenant:key");
         await client.SetAsync("tenant:key", "new");
         await mutation.Task.WaitAsync(Limit);
         await client.GetStringAsync("tenant:key");
         server.CloseConnectionAfterCommand = server.CommandsSeen + 1;
-        try { await client.PingAsync().AsTask().WaitAsync(Limit); }
+
+        try
+        {
+            await client.PingAsync().AsTask().WaitAsync(Limit);
+        }
         catch (RespireException) { }
+
         await lost.Task.WaitAsync(Limit);
         await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
         // Ordinary sends can fail fast while scheduling replacement. Wait for its actual
         // publication before reading, rather than racing the background recovery task.
-        try { await client.PingAsync().AsTask().WaitAsync(Limit); }
+        try
+        {
+            await client.PingAsync().AsTask().WaitAsync(Limit);
+        }
         catch (RespireConnectionException) { }
+
         await recovered.Task.WaitAsync(Limit);
         await Assert.That(await client.GetStringAsync("tenant:key").AsTask().WaitAsync(Limit)).IsEqualTo("value");
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("CLIENT TRACKING ON")))

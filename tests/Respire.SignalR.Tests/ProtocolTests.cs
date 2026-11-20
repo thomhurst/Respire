@@ -65,12 +65,18 @@ public class ProtocolTests
     {
         var fallback = typeof(RespireHubLifetimeManager<BackplaneTestHub>)
             .GetNestedType("FakeInvocationBinder", BindingFlags.NonPublic)!;
-        if (fallback.ContainsGenericParameters) fallback = fallback.MakeGenericType(typeof(BackplaneTestHub));
+
+        if (fallback.ContainsGenericParameters)
+        {
+            fallback = fallback.MakeGenericType(typeof(BackplaneTestHub));
+        }
+
         var binders = new IInvocationBinder[]
         {
             new ClientResultsManager(),
             (IInvocationBinder)fallback.GetField("Instance")!.GetValue(null)!,
         };
+
         foreach (var binder in binders)
         {
             var invocation = await Assert.That(() => binder.GetParameterTypes("method")).ThrowsExactly<NotSupportedException>();
@@ -112,9 +118,14 @@ public class ProtocolTests
             1 => new byte[] { 0x92, 0x90, 0xdf, 0x7f, 0xff, 0xff, 0xff },
             _ => new byte[] { 0x91, 0x00 },
         };
+
         if (shape < 2)
+        {
             await Assert.That(() => RedisProtocol.ReadInvocation(bytes)).ThrowsExactly<EndOfStreamException>();
+        }
         else
+        {
             await Assert.That(() => RedisProtocol.ReadInvocation(bytes)).ThrowsExactly<InvalidDataException>();
+        }
     }
 }

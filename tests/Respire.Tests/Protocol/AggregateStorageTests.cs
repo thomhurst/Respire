@@ -1,10 +1,10 @@
-using System.Runtime.CompilerServices;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Respire.Protocol;
 
 namespace Respire.Tests.Protocol;
 
@@ -37,17 +37,24 @@ public class AggregateStorageTests
     private static long Measure(byte[] header, bool resumable, bool control)
     {
         var start = GC.GetAllocatedBytesForCurrentThread();
+
         if (control)
         {
             GC.KeepAlive(new byte[128 * 1024]);
             return GC.GetAllocatedBytesForCurrentThread() - start;
         }
+
         using var parser = resumable ? new RespParseState(int.MaxValue) : null;
         var pos = 0;
         var status = parser is null
             ? RespParser.TryParseValue(header, ref pos, out _)
             : parser.TryParse(header, ref pos, out _, out _);
-        if (status != RespParseStatus.NeedMoreData) throw new InvalidOperationException(status.ToString());
+
+        if (status != RespParseStatus.NeedMoreData)
+        {
+            throw new InvalidOperationException(status.ToString());
+        }
+
         return GC.GetAllocatedBytesForCurrentThread() - start;
     }
 
@@ -90,17 +97,23 @@ public class AggregateStorageTests
         var status = resumable
             ? parser.TryParseResumable(bytes, ref pos, out var value, out _)
             : RespParser.TryParseValue(bytes, ref pos, out value);
+
         using (value)
         {
             await Assert.That(status).IsEqualTo(depth <= 512 ? RespParseStatus.Done : RespParseStatus.InvalidData);
+
             if (status == RespParseStatus.Done)
             {
                 await Assert.That(pos).IsEqualTo(bytes.Length);
                 using var owned = value.ToOwned();
                 await Assert.That(owned.GetOwnedSize()).IsGreaterThan(0);
                 var child = owned;
+
                 for (var i = 0; i < depth - 1; i++)
+                {
                     child = child.AsArray()[^1];
+                }
+
                 await Assert.That(child.Type).IsEqualTo(RespireDataType.Array);
                 await Assert.That(child.AsArray().Length).IsEqualTo(0);
             }
@@ -112,12 +125,14 @@ public class AggregateStorageTests
     {
         using var parser = new RespParseState(int.MaxValue);
         var header = "*2147483647\r\n"u8.ToArray();
+
         for (var i = 0; i < 512; i++)
         {
             var pos = 0;
             await Assert.That(parser.TryParse(header, ref pos, out _, out _)).IsEqualTo(RespParseStatus.NeedMoreData);
             await Assert.That(pos).IsEqualTo(header.Length);
         }
+
         await Assert.That(FrameArrays(parser).Sum(array => array.Length)).IsEqualTo(0);
         var finalPos = 0;
         await Assert.That(parser.TryParse(header, ref finalPos, out _, out _)).IsEqualTo(RespParseStatus.InvalidData);
@@ -147,21 +162,31 @@ public class AggregateStorageTests
             + (prefix == '|' ? ":99\r\n" : ""));
         using var parser = new RespParseState(int.MaxValue);
         var pos = 0;
+
         if (fragmented)
         {
             for (var end = 1; end < bytes.Length; end += 257)
+            {
                 if (parser.TryParse(bytes.AsSpan(0, end), ref pos, out _, out _) != RespParseStatus.NeedMoreData)
+                {
                     throw new InvalidOperationException("An incomplete aggregate completed early.");
+                }
+            }
         }
+
         var status = fragmented
             ? parser.TryParse(bytes, ref pos, out var value, out _)
             : RespParser.TryParseValue(bytes, ref pos, out value);
+
         using (value)
         {
             await Assert.That(status).IsEqualTo(RespParseStatus.Done);
             await Assert.That(pos).IsEqualTo(bytes.Length);
+
             if (prefix == '|')
+            {
                 await Assert.That(value.AsInteger()).IsEqualTo(99);
+            }
             else
             {
                 await Assert.That(value.AsArray().Length).IsEqualTo(count);
@@ -174,7 +199,12 @@ public class AggregateStorageTests
     private static long Sum(RespValue value)
     {
         long total = 0;
-        foreach (var child in value.AsArray()) total += child.AsInteger();
+
+        foreach (var child in value.AsArray())
+        {
+            total += child.AsInteger();
+        }
+
         return total;
     }
 
@@ -186,13 +216,22 @@ public class AggregateStorageTests
         var bytes = "*2\r\n|1\r\n+k\r\n*2\r\n:1\r\n:2\r\n:42\r\n%1\r\n+k\r\n~1\r\n:7\r\n"u8.ToArray();
         using var parser = new RespParseState(int.MaxValue);
         var pos = 0;
+
         if (fragmented)
+        {
             for (var end = 1; end < bytes.Length; end++)
+            {
                 if (parser.TryParse(bytes.AsSpan(0, end), ref pos, out _, out _) != RespParseStatus.NeedMoreData)
+                {
                     throw new InvalidOperationException("Nested attributes completed the parent early.");
+                }
+            }
+        }
+
         var status = fragmented
             ? parser.TryParse(bytes, ref pos, out var value, out _)
             : RespParser.TryParseValue(bytes, ref pos, out value);
+
         using (value)
         {
             await Assert.That(status).IsEqualTo(RespParseStatus.Done);
@@ -233,8 +272,12 @@ public class AggregateStorageTests
         var grown = FrameArrays(parser).Single(array => array.Length != 0);
         await Assert.That(grown.Length).IsEqualTo(expectedCapacity);
         await Assert.That(old.All(value => value.Type == default)).IsTrue();
+
         for (var i = 0; i < completedChildren; i++)
+        {
             await Assert.That(grown[i].AsArray()[0].AsString()).IsEqualTo("payload");
+        }
+
         pos = 0;
         await Assert.That(parser.TryParse("?\r\n"u8, ref pos, out _, out _)).IsEqualTo(RespParseStatus.InvalidData);
         parser.Dispose();
@@ -245,8 +288,13 @@ public class AggregateStorageTests
     private static IEnumerable<RespValue[]> FrameArrays(RespParseState parser)
     {
         var frames = (Array)typeof(RespParseState).GetField("_frames", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(parser)!;
+
         foreach (var frame in frames)
+        {
             if (frame!.GetType().GetField("Elements")!.GetValue(frame) is RespValue[] elements)
+            {
                 yield return elements;
+            }
+        }
     }
 }

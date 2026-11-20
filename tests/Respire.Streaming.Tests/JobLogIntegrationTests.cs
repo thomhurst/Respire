@@ -118,10 +118,12 @@ public partial class JobQueueIntegrationTests
         var entry = await PendingJobAsync(admin, queue);
         var username = "logs-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">log-test-password", "~*", "+@all", "-" + command]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = username, Password = "log-test-password" });
+                with
+            { Username = username, Password = "log-test-password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(JobScript("Log"),
                 [queue.StreamKey, JobLogKeys.ForJob(queue.StreamKey, "job")],
                 [RespireJobQueue<string>.ConsumerGroup, "crashed", entry.Value, 1, "line", 100, 86400000]))
@@ -135,11 +137,14 @@ public partial class JobQueueIntegrationTests
         Func<RespireJob<string>, CancellationToken, Task> inspect)
     {
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var state = new HandlerState { OnHandle = async token =>
+        var state = new HandlerState
+        {
+            OnHandle = async token =>
         {
             await release.Task.WaitAsync(token);
             return RespireStreamWorkerResult.Ack;
-        } };
+        }
+        };
         var services = new ServiceCollection().AddSingleton(client).AddSingleton(state);
         services.AddRespireJobQueue<Handler, string>("test", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
             new() { ReadWait = TimeSpan.FromMilliseconds(20), MinimumIdleTime = TimeSpan.FromMinutes(1) }, policy);
@@ -147,7 +152,11 @@ public partial class JobQueueIntegrationTests
         var worker = provider.GetRequiredService<IHostedService>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await worker.StartAsync(deadline.Token);
-        try { await inspect(await state.Received.Task.WaitAsync(deadline.Token), deadline.Token); }
+
+        try
+        {
+            await inspect(await state.Received.Task.WaitAsync(deadline.Token), deadline.Token);
+        }
         finally
         {
             release.TrySetResult();

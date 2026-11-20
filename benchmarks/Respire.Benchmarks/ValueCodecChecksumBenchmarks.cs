@@ -12,7 +12,10 @@ namespace Respire.Benchmarks;
 public class ValueCodecChecksumBenchmarks
 {
     [Params(64, 16384)]
-    public int Length { get; set; }
+    public int Length
+    {
+        get; set;
+    }
 
     private readonly RespireBrotliValueCodec _versionOne = new(new() { FrameVersion = 1, MinimumLength = int.MaxValue });
     private readonly RespireBrotliValueCodec _versionTwo = new(new() { MinimumLength = int.MaxValue });
@@ -29,20 +32,26 @@ public class ValueCodecChecksumBenchmarks
         _frameOne = _versionOne.Encode(_payload);
         _frameTwo = _versionTwo.Encode(_payload);
         _destination = new ArrayBufferWriter<byte>(Length + RespireValueCodec.HeaderLength);
+
         if (_frameOne[4] != 1 || _frameTwo[4] != 2 || _frameOne[5] != 0 || _frameTwo[5] != 0
             || !EncodeVersionOne().Span.SequenceEqual(_frameOne)
             || !EncodeVersionTwo().Span.SequenceEqual(_frameTwo)
             || !DecodeVersionOne().Span.SequenceEqual(_payload)
             || !DecodeVersionTwo().Span.SequenceEqual(_payload))
+        {
             throw new InvalidOperationException("Codec frame comparison failed validation.");
+        }
     }
 
     [Benchmark(Baseline = true), BenchmarkCategory("Encode")]
     public ReadOnlyMemory<byte> EncodeVersionOne() => Encode(_versionOne);
+
     [Benchmark, BenchmarkCategory("Encode")]
     public ReadOnlyMemory<byte> EncodeVersionTwo() => Encode(_versionTwo);
+
     [Benchmark(Baseline = true), BenchmarkCategory("Decode")]
     public ReadOnlyMemory<byte> DecodeVersionOne() => Decode(_frameOne);
+
     [Benchmark, BenchmarkCategory("Decode")]
     public ReadOnlyMemory<byte> DecodeVersionTwo() => Decode(_frameTwo);
 

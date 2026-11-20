@@ -229,7 +229,10 @@ public class SetExpiryWireTests
 
     private sealed class ThrowingSerializer : IRespireSerializer
     {
-        public int SerializeCalls { get; private set; }
+        public int SerializeCalls
+        {
+            get; private set;
+        }
 
         public void Serialize(IBufferWriter<byte> destination, Type type, object? value)
             => Serialize(destination, value);

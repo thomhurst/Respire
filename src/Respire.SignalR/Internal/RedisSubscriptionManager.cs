@@ -30,11 +30,19 @@ internal sealed class RedisSubscriptionManager
             // Subscribe once
             if (subscription.Count == 1)
             {
-                try { await subscribeMethod(id, subscription).ConfigureAwait(false); }
+                try
+                {
+                    await subscribeMethod(id, subscription).ConfigureAwait(false);
+                }
                 catch
                 {
                     subscription.Remove(connection);
-                    if (subscription.Count == 0) _subscriptions.TryRemove(id, out _);
+
+                    if (subscription.Count == 0)
+                    {
+                        _subscriptions.TryRemove(id, out _);
+                    }
+
                     throw;
                 }
             }

@@ -11,7 +11,12 @@ public static class RespireSignalRServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         var options = builder.Services.AddOptions<RespireSignalROptions>();
-        if (configure is not null) options.Configure(configure);
+
+        if (configure is not null)
+        {
+            options.Configure(configure);
+        }
+
         options.Validate(static value => value.ChannelPrefix is not null
             && value.SubscriptionBufferSize > 0 && value.GroupAckTimeout > TimeSpan.Zero
             && value.GroupAckTimeout <= TimeSpan.FromMilliseconds(uint.MaxValue - 1), "Invalid Respire SignalR options.");

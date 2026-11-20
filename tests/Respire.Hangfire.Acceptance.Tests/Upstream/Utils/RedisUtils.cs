@@ -18,11 +18,16 @@ public static class RedisUtils
 
     public static void Initialize(RedisTestContainer fixture)
     {
-        if (_connection is not null) throw new InvalidOperationException("Upstream tests must run sequentially.");
+        if (_connection is not null)
+        {
+            throw new InvalidOperationException("Upstream tests must run sequentially.");
+        }
+
         var connection = RespireConnectionMultiplexer.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         {
             Connections = 1,
         });
+
         try
         {
             _control = ConnectionMultiplexer.Connect(fixture.IsolatedStackExchangeConnectionString);
@@ -43,9 +48,13 @@ public static class RedisUtils
         _connection = null;
         _control = null;
         _fixture = null;
+
         try
         {
-            if (connection is not null) await connection.DisposeAsync();
+            if (connection is not null)
+            {
+                await connection.DisposeAsync();
+            }
         }
         finally
         {
@@ -54,14 +63,20 @@ public static class RedisUtils
     }
 
     public static IServer GetFirstServer() => Connection.GetServer(Connection.GetEndPoints()[0]);
+
     // Upstream setup and assertions use an independent client. Production
     // constructors always receive Connection, ShimDatabase or CreateSubscriber.
     public static IDatabase CreateClient() =>
         (_control ?? throw new InvalidOperationException("The control client is not initialized.")).GetDatabase(GetDb());
+
     public static ISubscriber CreateSubscriber() => Connection.GetSubscriber();
+
     public static string GetHostAndPort() => $"{GetHost()}:{GetPort()}";
+
     public static string GetHost() => Fixture.Host;
+
     public static int GetPort() => Fixture.Port;
+
     public static int GetDb() => Fixture.IsolatedDatabase;
 
     private static RedisTestContainer Fixture =>

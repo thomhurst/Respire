@@ -11,6 +11,7 @@ namespace Respire.Tests.Networking;
 public class ClusterNotificationRoutingTests
 {
     private static readonly byte[] Hello = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
+
     [Test, NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
@@ -39,7 +40,11 @@ public class ClusterNotificationRoutingTests
         var thirdAckPending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         third.SuppressReply = command =>
         {
-            if (!command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             thirdAckPending.TrySetResult();
             return true;
         };
@@ -51,6 +56,7 @@ public class ClusterNotificationRoutingTests
         await third.SendRawAsync(Confirmation("psubscribe", descriptor.ToString(), resp3),
             third.ReceivedConnectionIds[ackCommandIndex]);
         await using var subscription = await activation.WaitAsync(TimeSpan.FromSeconds(10));
+
         foreach (var server in new[] { first, second, third })
         {
             await Assert.That(server.ReceivedCommands).Contains($"PSUBSCRIBE {descriptor}");
@@ -65,12 +71,14 @@ public class ClusterNotificationRoutingTests
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
+
         for (var index = 0; index < 3; index++)
         {
             await Assert.That(await reader.MoveNextAsync()).IsTrue();
             await Assert.That(reader.Current.TryParseKeyNotification(out var notification)).IsTrue();
             await Assert.That(notification.Type).IsEqualTo(RespireKeyNotificationType.Set);
         }
+
         await capture.WaitForCountAsync(3);
         await Assert.That(capture.Items.Count).IsEqualTo(3);
         await Assert.That(capture.Items.All(item => item.Value == 1
@@ -154,20 +162,29 @@ public class ClusterNotificationRoutingTests
 
         var firstSubscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         var secondSubscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
         await using (firstSubscription)
         await using (secondSubscription)
         {
             foreach (var server in new[] { first, second })
+            {
                 await Assert.That(server.ReceivedCommands.Count(command => command == $"SUBSCRIBE {descriptor}"))
                     .IsEqualTo(1);
+            }
 
             await firstSubscription.DisposeAsync();
+
             foreach (var server in new[] { first, second })
+            {
                 await Assert.That(server.ReceivedCommands).DoesNotContain($"UNSUBSCRIBE {descriptor}");
+            }
 
             await secondSubscription.DisposeAsync();
+
             foreach (var server in new[] { first, second })
+            {
                 await Assert.That(server.ReceivedCommands).Contains($"UNSUBSCRIBE {descriptor}");
+            }
         }
     }
 
@@ -182,12 +199,18 @@ public class ClusterNotificationRoutingTests
         var firstUnsubscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Configure(first, () => topology, resp3: false, command =>
         {
-            if (command.StartsWith("PUNSUBSCRIBE ", StringComparison.Ordinal)) firstUnsubscribed.TrySetResult();
+            if (command.StartsWith("PUNSUBSCRIBE ", StringComparison.Ordinal))
+            {
+                firstUnsubscribed.TrySetResult();
+            }
         });
         Configure(second, () => topology, resp3: false);
         Configure(third, () => topology, resp3: false, command =>
         {
-            if (command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal)) thirdSubscribed.TrySetResult();
+            if (command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal))
+            {
+                thirdSubscribed.TrySetResult();
+            }
         });
         await using var client = CreateClusterClient(first.Port, resp3: false);
         var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
@@ -212,7 +235,10 @@ public class ClusterNotificationRoutingTests
         var firstUnsubscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Configure(first, () => topology, resp3: false, command =>
         {
-            if (command.StartsWith("PUNSUBSCRIBE ", StringComparison.Ordinal)) firstUnsubscribed.TrySetResult();
+            if (command.StartsWith("PUNSUBSCRIBE ", StringComparison.Ordinal))
+            {
+                firstUnsubscribed.TrySetResult();
+            }
         });
         Configure(second, () => topology, resp3: false);
         await using var client = CreateClusterClient(first.Port, resp3: false);
@@ -220,6 +246,7 @@ public class ClusterNotificationRoutingTests
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         topology = PartialTopology(second.Port);
+
         try
         {
             _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
@@ -246,7 +273,10 @@ public class ClusterNotificationRoutingTests
         var firstUnsubscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Configure(first, () => topology, resp3: false, command =>
         {
-            if (command.StartsWith("PUNSUBSCRIBE ", StringComparison.Ordinal)) firstUnsubscribed.TrySetResult();
+            if (command.StartsWith("PUNSUBSCRIBE ", StringComparison.Ordinal))
+            {
+                firstUnsubscribed.TrySetResult();
+            }
         });
         Configure(second, () => topology, resp3: false);
         Configure(third, () => topology, resp3: false);
@@ -255,6 +285,7 @@ public class ClusterNotificationRoutingTests
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         topology = PartialTopology(second.Port);
+
         try
         {
             _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
@@ -264,12 +295,17 @@ public class ClusterNotificationRoutingTests
         {
             // Partial discovery is published before cluster-wide discovery reports the missing slots.
         }
+
         await firstUnsubscribed.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         var router = client.Core.Cluster!;
         router.SetSlotOwner(0, router.GetMultiplexer(new("127.0.0.1", third.Port)));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!third.ReceivedCommands.Contains($"PSUBSCRIBE {descriptor}")) await Task.Delay(10, deadline.Token);
+
+        while (!third.ReceivedCommands.Contains($"PSUBSCRIBE {descriptor}"))
+        {
+            await Task.Delay(10, deadline.Token);
+        }
 
         await Assert.That(first.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {descriptor}")).IsEqualTo(1);
     }
@@ -284,11 +320,17 @@ public class ClusterNotificationRoutingTests
         var oldUnsubscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Configure(first, () => topology, resp3: false, command =>
         {
-            if (command.StartsWith("UNSUBSCRIBE ", StringComparison.Ordinal)) oldUnsubscribed.TrySetResult();
+            if (command.StartsWith("UNSUBSCRIBE ", StringComparison.Ordinal))
+            {
+                oldUnsubscribed.TrySetResult();
+            }
         });
         Configure(second, () => topology, resp3: false, command =>
         {
-            if (command.StartsWith("SUBSCRIBE __keyspace", StringComparison.Ordinal)) movedSubscription.TrySetResult();
+            if (command.StartsWith("SUBSCRIBE __keyspace", StringComparison.Ordinal))
+            {
+                movedSubscription.TrySetResult();
+            }
         });
         await using var client = CreateClusterClient(first.Port, resp3: false);
         var descriptor = RespireChannel.KeySpaceSingleKey("tenant:key", 0);
@@ -325,11 +367,15 @@ public class ClusterNotificationRoutingTests
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         while (!first.ReceivedCommands.Contains($"SUBSCRIBE {secondChannel}")
             || !second.ReceivedCommands.Contains($"SUBSCRIBE {firstChannel}")
             || !first.ReceivedCommands.Contains($"UNSUBSCRIBE {firstChannel}")
             || !second.ReceivedCommands.Contains($"UNSUBSCRIBE {secondChannel}"))
+        {
             await Task.Delay(10, deadline.Token);
+        }
+
         await Assert.That(first.ReceivedCommands).Contains($"UNSUBSCRIBE {firstChannel}");
         await Assert.That(second.ReceivedCommands).Contains($"UNSUBSCRIBE {secondChannel}");
         var firstAdded = first.ReceivedCommands.ToList().FindIndex(command => command == $"SUBSCRIBE {secondChannel}");
@@ -356,7 +402,11 @@ public class ClusterNotificationRoutingTests
         var resolvingSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         second.SuppressReply = command =>
         {
-            if (command != "HELLO 3") return false;
+            if (command != "HELLO 3")
+            {
+                return false;
+            }
+
             resolvingSecond.TrySetResult();
             return true;
         };
@@ -390,6 +440,7 @@ public class ClusterNotificationRoutingTests
         await Assert.That(newSecondOwner.ReceivedCommands).Contains($"SUBSCRIBE {secondChannel}");
         await Assert.That(second.ReceivedCommands).Contains($"SUBSCRIBE {firstChannel}");
         await Assert.That(second.ReceivedCommands).DoesNotContain($"SUBSCRIBE {secondChannel}");
+
         if (includeAllPrimaries)
         {
             await Assert.That(first.ReceivedCommands).DoesNotContain($"SUBSCRIBE {allChannel}");
@@ -411,7 +462,11 @@ public class ClusterNotificationRoutingTests
         var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         second.SuppressReply = command =>
         {
-            if (command != "HELLO 3") return false;
+            if (command != "HELLO 3")
+            {
+                return false;
+            }
+
             connecting.TrySetResult();
             return true;
         };
@@ -475,7 +530,11 @@ public class ClusterNotificationRoutingTests
         var ackPending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         first.SuppressReply = command =>
         {
-            if (!command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             ackPending.TrySetResult();
             return true;
         };
@@ -495,6 +554,7 @@ public class ClusterNotificationRoutingTests
         await first.SendRawAsync(Confirmation("subscribe", descriptor.ToString(), false), first.ReceivedConnectionIds[commandIndex]);
         await Task.WhenAny(activation, Task.Delay(100));
         await Assert.That(activation.IsCompleted).IsFalse();
+
         if (cancel)
         {
             await cancellation.CancelAsync();
@@ -517,15 +577,22 @@ public class ClusterNotificationRoutingTests
             InstrumentPublished = (instrument, meterListener) =>
             {
                 if (instrument.Name is "respire.connection.reconnect.attempt" or "respire.pubsub.delivery.gaps")
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             },
         };
         telemetryListener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             if (tags.ToArray().Any(tag => tag.Key == "respire.connection.source" && Equals(tag.Value, "pubsub")))
+            {
                 throw new InvalidOperationException("Injected reconnect telemetry failure.");
+            }
+
             if (tags.ToArray().Any(tag => tag.Key == "respire.subscription.gap.reason"))
+            {
                 throw new InvalidOperationException("Injected delivery-gap telemetry failure.");
+            }
         });
         telemetryListener.Start();
         await using var first = new FakeRespServer(20);
@@ -540,7 +607,9 @@ public class ClusterNotificationRoutingTests
         {
             if (command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal)
                 && Interlocked.Increment(ref thirdSubscribeCount) == 2)
+            {
                 reconnectSubscribed.TrySetResult();
+            }
         });
         await using var client = CreateClusterClient(first.Port, resp3: false, reconnectPolicy: new RespireReconnectPolicy
         {
@@ -557,10 +626,19 @@ public class ClusterNotificationRoutingTests
         subscription.DeliveryGap += _ => gapObserved.TrySetResult();
         client.ConnectionStateChanged += change =>
         {
-            if (change.Endpoint.Port != third.Port) return;
-            if (change.State == RespireConnectionState.Reconnecting) Interlocked.Exchange(ref sawReconnect, 1);
+            if (change.Endpoint.Port != third.Port)
+            {
+                return;
+            }
+
+            if (change.State == RespireConnectionState.Reconnecting)
+            {
+                Interlocked.Exchange(ref sawReconnect, 1);
+            }
             else if (change.State == RespireConnectionState.Connected && Volatile.Read(ref sawReconnect) != 0)
+            {
                 endpointReconnected.TrySetResult();
+            }
         };
         var initialIndex = third.ReceivedCommands.ToList().FindIndex(command => command == $"PSUBSCRIBE {descriptor}");
         third.CloseConnection(third.ReceivedConnectionIds[initialIndex]);
@@ -573,11 +651,19 @@ public class ClusterNotificationRoutingTests
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
+
         for (var index = 0; index < 2; index++)
         {
             await Assert.That(await reader.MoveNextAsync()).IsTrue();
-            if (reader.Current.Kind == RespireMessageKind.Gap) index--;
-            else await Assert.That(reader.Current.TryParseKeyNotification(out _)).IsTrue();
+
+            if (reader.Current.Kind == RespireMessageKind.Gap)
+            {
+                index--;
+            }
+            else
+            {
+                await Assert.That(reader.Current.TryParseKeyNotification(out _)).IsTrue();
+            }
         }
 
         await reconnectSubscribed.Task.WaitAsync(deadline.Token);
@@ -585,8 +671,12 @@ public class ClusterNotificationRoutingTests
         await endpointReconnected.Task.WaitAsync(deadline.Token);
         var reconnectIndex = third.ReceivedCommands.ToList().FindLastIndex(command => command == $"PSUBSCRIBE {descriptor}");
         await third.SendRawAsync(Data(descriptor, resp3: false, "set"), third.ReceivedConnectionIds[reconnectIndex]);
+
         while (!reader.Current.TryParseKeyNotification(out _))
+        {
             await Assert.That(await reader.MoveNextAsync()).IsTrue();
+        }
+
         await Assert.That(reader.Current.TryParseKeyNotification(out var restored)).IsTrue();
         await Assert.That(restored.Type).IsEqualTo(RespireKeyNotificationType.Set);
     }
@@ -601,15 +691,20 @@ public class ClusterNotificationRoutingTests
             InstrumentPublished = (instrument, meterListener) =>
             {
                 if (instrument.Name == "respire.connection.reconnect.exhausted")
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             },
         };
         listener.SetMeasurementEventCallback<long>((instrument, _, tags, _) =>
         {
             var values = tags.ToArray();
+
             if (values.Any(tag => tag.Key == "respire.connection.source" && Equals(tag.Value, "pubsub"))
                 && values.Any(tag => tag.Key == "server.port" && Equals(tag.Value, server.Port)))
+            {
                 Interlocked.Increment(ref exhaustionMeasurements);
+            }
         });
         listener.Start();
         Configure(server, SinglePrimaryTopology(server.Port), resp3: false);
@@ -672,7 +767,11 @@ public class ClusterNotificationRoutingTests
         var suppress = true;
         third.SuppressReply = command =>
         {
-            if (!suppress || !command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal)) return false;
+            if (!suppress || !command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             pendingAck.TrySetResult();
             return true;
         };
@@ -686,9 +785,12 @@ public class ClusterNotificationRoutingTests
 
         suppress = false;
         await using var retry = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
         foreach (var server in new[] { first, second, third })
+        {
             await Assert.That(server.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {descriptor}"))
                 .IsEqualTo(2);
+        }
     }
 
     [Test]
@@ -703,7 +805,11 @@ public class ClusterNotificationRoutingTests
         var pendingAck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         second.SuppressReply = command =>
         {
-            if (!command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             pendingAck.TrySetResult();
             return true;
         };
@@ -729,17 +835,37 @@ public class ClusterNotificationRoutingTests
         var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
         second.ReplyOverride = (_, command) =>
         {
-            if (command == "HELLO 3") return Hello;
-            if (command == "INFO SERVER") return ClusterDatabaseTests.Info();
-            if (command == "CLUSTER SLOTS") return topology;
+            if (command == "HELLO 3")
+            {
+                return Hello;
+            }
+
+            if (command == "INFO SERVER")
+            {
+                return ClusterDatabaseTests.Info();
+            }
+
+            if (command == "CLUSTER SLOTS")
+            {
+                return topology;
+            }
+
             if (command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal))
+            {
                 return Confirmation("psubscribe", command[11..], resp3: false);
+            }
+
             return FakeRespServer.OkReply;
         };
         second.SuppressReply = command =>
         {
             var suppress = Volatile.Read(ref suppressReplay) && command == $"PSUBSCRIBE {descriptor}";
-            if (suppress) replayStarted.TrySetResult();
+
+            if (suppress)
+            {
+                replayStarted.TrySetResult();
+            }
+
             return suppress;
         };
         var options = new RespireOptions
@@ -763,7 +889,9 @@ public class ClusterNotificationRoutingTests
         client.ConnectionStateChanged += change =>
         {
             if (change.Endpoint.Port == second.Port && change.State == RespireConnectionState.Reconnecting)
+            {
                 reconnecting.TrySetResult();
+            }
         };
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask()
             .WaitAsync(TimeSpan.FromSeconds(10));
@@ -799,7 +927,11 @@ public class ClusterNotificationRoutingTests
         var pendingAck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         third.SuppressReply = command =>
         {
-            if (!command.StartsWith("PSUBSCRIBE __keyspace@0__:tenant:*", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("PSUBSCRIBE __keyspace@0__:tenant:*", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             pendingAck.TrySetResult();
             return true;
         };
@@ -811,11 +943,17 @@ public class ClusterNotificationRoutingTests
             .Throws<OperationCanceledException>();
 
         foreach (var server in new[] { first, second })
+        {
             await Assert.That(server.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {stableDescriptor}"))
                 .IsEqualTo(1);
+        }
+
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (third.ReceivedCommands.Count(command => command == $"PSUBSCRIBE {stableDescriptor}") < 2)
+        {
             await Task.Delay(10, deadline.Token);
+        }
         // Closing the shared socket interrupts the surviving subscription, which must learn of it.
         var gap = await stableGap.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(gap.Reason).IsEqualTo(RespireSubscriptionGapReason.Reconnect);
@@ -842,7 +980,9 @@ public class ClusterNotificationRoutingTests
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         foreach (var server in new[] { first, second })
+        {
             await Assert.That(server.ReceivedCommands).DoesNotContain($"PUNSUBSCRIBE {descriptor}");
+        }
     }
 
     [Test]
@@ -886,17 +1026,23 @@ public class ClusterNotificationRoutingTests
         var topology = SinglePrimaryTopology(first.Port);
         Configure(first, () => topology, resp3: false);
         var secondRejected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         foreach (var (server, rejected) in new (FakeRespServer, TaskCompletionSource?)[] { (second, secondRejected), (third, null) })
         {
             Configure(server, () => topology, resp3: false);
             var configured = server.ReplyOverride!;
             server.ReplyOverride = (connectionId, command) =>
             {
-                if (!command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal)) return configured(connectionId, command);
+                if (!command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal))
+                {
+                    return configured(connectionId, command);
+                }
+
                 rejected?.TrySetResult();
                 return "-NOPERM denied\r\n"u8.ToArray();
             };
         }
+
         await using var client = CreateClusterClient(first.Port, resp3: false, new RespireReconnectPolicy
         {
             InitialDelay = TimeSpan.FromMilliseconds(200),
@@ -962,12 +1108,18 @@ public class ClusterNotificationRoutingTests
         Configure(second, () => Volatile.Read(ref topology), resp3: false, command =>
         {
             if (command == $"PSUBSCRIBE {stableDescriptor}" && Interlocked.Increment(ref stableReplays) == 2)
+            {
                 stableReplayed.TrySetResult();
+            }
         });
         var tenantAdmitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         second.SuppressReply = command =>
         {
-            if (command != $"PSUBSCRIBE {tenantDescriptor}") return false;
+            if (command != $"PSUBSCRIBE {tenantDescriptor}")
+            {
+                return false;
+            }
+
             tenantAdmitted.TrySetResult();
             return true;
         };
@@ -1039,10 +1191,19 @@ public class ClusterNotificationRoutingTests
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub) return;
-            if (change.State == RespireConnectionState.Reconnecting) reconnecting.TrySetResult();
+            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub)
+            {
+                return;
+            }
+
+            if (change.State == RespireConnectionState.Reconnecting)
+            {
+                reconnecting.TrySetResult();
+            }
             else if (change.State == RespireConnectionState.Connected && reconnecting.Task.IsCompleted)
+            {
                 recovered.TrySetResult();
+            }
         };
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -1086,10 +1247,19 @@ public class ClusterNotificationRoutingTests
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub) return;
-            if (change.State == RespireConnectionState.Reconnecting) reconnecting.TrySetResult();
+            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub)
+            {
+                return;
+            }
+
+            if (change.State == RespireConnectionState.Reconnecting)
+            {
+                reconnecting.TrySetResult();
+            }
             else if (change.State == RespireConnectionState.Connected && reconnecting.Task.IsCompleted)
+            {
                 recovered.TrySetResult();
+            }
         };
         var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -1122,6 +1292,7 @@ public class ClusterNotificationRoutingTests
                 rejected.TrySetResult();
                 return "-NOPERM denied\r\n"u8.ToArray();
             }
+
             return configuredReply(connectionId, command);
         };
 #pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
@@ -1143,8 +1314,15 @@ public class ClusterNotificationRoutingTests
         var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub) return;
-            if (change.State == RespireConnectionState.Reconnecting) reconnecting.TrySetResult();
+            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub)
+            {
+                return;
+            }
+
+            if (change.State == RespireConnectionState.Reconnecting)
+            {
+                reconnecting.TrySetResult();
+            }
         };
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -1157,8 +1335,11 @@ public class ClusterNotificationRoutingTests
         await rejected.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var hub = client.Core.Hub!;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         while (hub.IsClusterNotificationEndpointRetrying(new("127.0.0.1", second.Port)))
+        {
             await Task.Delay(10, deadline.Token);
+        }
     }
 
     [Test]
@@ -1175,7 +1356,10 @@ public class ClusterNotificationRoutingTests
         server.ReplyOverride = (connectionId, command) =>
         {
             if (command == $"PSUBSCRIBE {stableDescriptor}" && Interlocked.Increment(ref stableSubscribes) == 2)
+            {
                 stableReplayed.TrySetResult();
+            }
+
             return reject && command == $"PSUBSCRIBE {tenantDescriptor}"
                 ? "-NOPERM denied\r\n"u8.ToArray()
                 : configured(connectionId, command);
@@ -1219,12 +1403,17 @@ public class ClusterNotificationRoutingTests
         var configured = first.ReplyOverride!;
         first.ReplyOverride = (connectionId, command) =>
         {
-            if (command == $"SUBSCRIBE {stableDescriptor}") Interlocked.Increment(ref stableSubscribes);
+            if (command == $"SUBSCRIBE {stableDescriptor}")
+            {
+                Interlocked.Increment(ref stableSubscribes);
+            }
+
             if (reject && command == $"SUBSCRIBE {movedDescriptor}")
             {
                 rejected.TrySetResult();
                 return "-NOPERM denied\r\n"u8.ToArray();
             }
+
             return configured(connectionId, command);
         };
         await using var client = CreateClusterClient(first.Port, resp3: false);
@@ -1266,9 +1455,16 @@ public class ClusterNotificationRoutingTests
         var configured = server.ReplyOverride!;
         server.ReplyOverride = (connectionId, command) =>
         {
-            if (command == $"SUBSCRIBE {stableDescriptor}") Interlocked.Increment(ref stableSubscribes);
+            if (command == $"SUBSCRIBE {stableDescriptor}")
+            {
+                Interlocked.Increment(ref stableSubscribes);
+            }
+
             if (reject && command == $"SUBSCRIBE {rejectedDescriptor}")
+            {
                 return "-NOPERM denied\r\n"u8.ToArray();
+            }
+
             return configured(connectionId, command);
         };
         await using var client = CreateClusterClient(server.Port, resp3: false);
@@ -1303,9 +1499,16 @@ public class ClusterNotificationRoutingTests
         var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.ReplyOverride = (connectionId, command) =>
         {
-            if (command != $"PSUBSCRIBE {descriptor}" || !Volatile.Read(ref reject)) return configured(connectionId, command);
+            if (command != $"PSUBSCRIBE {descriptor}" || !Volatile.Read(ref reject))
+            {
+                return configured(connectionId, command);
+            }
             // Reject the replay and the first reconciliation attempt, then accept the route again.
-            if (Interlocked.Increment(ref rejections) <= 2) return "-NOPERM denied\r\n"u8.ToArray();
+            if (Interlocked.Increment(ref rejections) <= 2)
+            {
+                return "-NOPERM denied\r\n"u8.ToArray();
+            }
+
             accepted.TrySetResult();
             return configured(connectionId, command);
         };
@@ -1342,6 +1545,7 @@ public class ClusterNotificationRoutingTests
         var reject = false;
         var firstRejected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondRejected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         foreach (var (server, rejected) in new[] { (first, firstRejected), (second, secondRejected) })
         {
             var configured = server.ReplyOverride!;
@@ -1352,9 +1556,11 @@ public class ClusterNotificationRoutingTests
                     rejected.TrySetResult();
                     return "-NOPERM denied\r\n"u8.ToArray();
                 }
+
                 return configured(connectionId, command);
             };
         }
+
         await using var client = CreateClusterClient(first.Port, resp3: false, new RespireReconnectPolicy
         {
             InitialDelay = TimeSpan.FromSeconds(2),
@@ -1393,7 +1599,11 @@ public class ClusterNotificationRoutingTests
         var secondAckPending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         second.SuppressReply = command =>
         {
-            if (command != $"PSUBSCRIBE {descriptor}") return false;
+            if (command != $"PSUBSCRIBE {descriptor}")
+            {
+                return false;
+            }
+
             secondAckPending.TrySetResult();
             return true;
         };
@@ -1427,14 +1637,24 @@ public class ClusterNotificationRoutingTests
         Configure(second, () => topology, resp3: false, command =>
         {
             if (command == $"PSUBSCRIBE {stableDescriptor}" && Interlocked.Increment(ref stableSubscribes) == 2)
+            {
                 stableReplayed.TrySetResult();
+            }
         });
         var suppress = true;
         // Suppressed commands never reach the reply override, so count them here.
         second.SuppressReply = command =>
         {
-            if (command != $"PSUBSCRIBE {tenantDescriptor}" || !Volatile.Read(ref suppress)) return false;
-            if (Interlocked.Increment(ref tenantSubscribes) == 3) tenantRetried.TrySetResult();
+            if (command != $"PSUBSCRIBE {tenantDescriptor}" || !Volatile.Read(ref suppress))
+            {
+                return false;
+            }
+
+            if (Interlocked.Increment(ref tenantSubscribes) == 3)
+            {
+                tenantRetried.TrySetResult();
+            }
+
             return true;
         };
 #pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
@@ -1454,12 +1674,25 @@ public class ClusterNotificationRoutingTests
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub) return;
-            if (change.State == RespireConnectionState.Reconnecting) Interlocked.Exchange(ref reconnecting, 1);
+            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub)
+            {
+                return;
+            }
+
+            if (change.State == RespireConnectionState.Reconnecting)
+            {
+                Interlocked.Exchange(ref reconnecting, 1);
+            }
             else if (change.State == RespireConnectionState.Connected && Volatile.Read(ref reconnecting) != 0)
             {
-                if (Volatile.Read(ref suppress)) Interlocked.Exchange(ref connectedWhileRouteMissing, 1);
-                else recovered.TrySetResult();
+                if (Volatile.Read(ref suppress))
+                {
+                    Interlocked.Exchange(ref connectedWhileRouteMissing, 1);
+                }
+                else
+                {
+                    recovered.TrySetResult();
+                }
             }
         };
 
@@ -1494,18 +1727,27 @@ public class ClusterNotificationRoutingTests
         var stableAttempts = 0;
         second.SuppressReply = command =>
         {
-            if (command != $"PSUBSCRIBE {stableDescriptor}") return false;
+            if (command != $"PSUBSCRIBE {stableDescriptor}")
+            {
+                return false;
+            }
+
             if (Interlocked.Increment(ref stableAttempts) == 1)
             {
                 stableAttempt.TrySetResult();
                 return true;
             }
+
             return false;
         };
         var configured = second.ReplyOverride!;
         second.ReplyOverride = (connectionId, command) =>
         {
-            if (command == $"PSUBSCRIBE {laterDescriptor}") laterAdded.TrySetResult();
+            if (command == $"PSUBSCRIBE {laterDescriptor}")
+            {
+                laterAdded.TrySetResult();
+            }
+
             return configured(connectionId, command);
         };
 #pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
@@ -1538,10 +1780,19 @@ public class ClusterNotificationRoutingTests
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub) return;
-            if (change.State == RespireConnectionState.Reconnecting) reconnecting.TrySetResult();
+            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub)
+            {
+                return;
+            }
+
+            if (change.State == RespireConnectionState.Reconnecting)
+            {
+                reconnecting.TrySetResult();
+            }
             else if (change.State == RespireConnectionState.Connected && reconnecting.Task.IsCompleted)
+            {
                 recovered.TrySetResult();
+            }
         };
         topology = Topology(first.Port, second.Port);
         // A real topology notification follows publication of the routing snapshot.
@@ -1614,7 +1865,11 @@ public class ClusterNotificationRoutingTests
         Configure(second, () => topology, resp3: false);
         second.SuppressReply = command =>
         {
-            if (command != $"PSUBSCRIBE {delayedDescriptor}" || !Volatile.Read(ref rejectDelayed)) return false;
+            if (command != $"PSUBSCRIBE {delayedDescriptor}" || !Volatile.Read(ref rejectDelayed))
+            {
+                return false;
+            }
+
             delayedAttempt.TrySetResult();
             return true;
         };
@@ -1626,7 +1881,12 @@ public class ClusterNotificationRoutingTests
                 replayRejected.TrySetResult();
                 return "-NOPERM denied\r\n"u8.ToArray();
             }
-            if (command == $"PSUBSCRIBE {rejectedDescriptor}") rejectedAdded.TrySetResult();
+
+            if (command == $"PSUBSCRIBE {rejectedDescriptor}")
+            {
+                rejectedAdded.TrySetResult();
+            }
+
             return configured(connectionId, command);
         };
 #pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
@@ -1697,10 +1957,24 @@ public class ClusterNotificationRoutingTests
     private sealed class NotificationRecoveryTimer(TimerCallback callback, object? state) : ITimer
     {
         private int _finished;
-        internal void Fire() { if (Interlocked.Exchange(ref _finished, 1) == 0) callback(state); }
+
+        internal void Fire()
+        {
+            if (Interlocked.Exchange(ref _finished, 1) == 0)
+            {
+                callback(state);
+            }
+        }
+
         public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _finished) == 0;
+
         public void Dispose() => Interlocked.Exchange(ref _finished, 1);
-        public ValueTask DisposeAsync() { Dispose(); return default; }
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return default;
+        }
     }
 
     [Test]
@@ -1724,7 +1998,9 @@ public class ClusterNotificationRoutingTests
         await using var secondSubscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         foreach (var server in new[] { first, second, third })
+        {
             await Assert.That(server.ReceivedCommands).Contains($"SUBSCRIBE {descriptor}");
+        }
     }
 
     [Test]
@@ -1761,10 +2037,19 @@ public class ClusterNotificationRoutingTests
         var connectedAfterExhaustion = 0;
         client.ConnectionStateChanged += change =>
         {
-            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub) return;
-            if (change.State == RespireConnectionState.Disconnected) disconnected.TrySetResult();
+            if (change.Endpoint.Port != second.Port || change.ReconnectSource != RespireReconnectSource.PubSub)
+            {
+                return;
+            }
+
+            if (change.State == RespireConnectionState.Disconnected)
+            {
+                disconnected.TrySetResult();
+            }
             else if (change.State == RespireConnectionState.Connected && disconnected.Task.IsCompleted)
+            {
                 Interlocked.Exchange(ref connectedAfterExhaustion, 1);
+            }
         };
 
         // Activation refreshed the topology, which queued a reconciliation pass behind it. A
@@ -1839,11 +2124,20 @@ public class ClusterNotificationRoutingTests
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
         var delivered = 0;
+
         for (var index = 0; index < iterations; index++)
         {
-            if (hub.TryDeliverClusterNotification(endpoint, channel, payload)) delivered++;
-            if (allocate) GC.KeepAlive(AllocateDeliveryControl());
+            if (hub.TryDeliverClusterNotification(endpoint, channel, payload))
+            {
+                delivered++;
+            }
+
+            if (allocate)
+            {
+                GC.KeepAlive(AllocateDeliveryControl());
+            }
         }
+
         return (GC.GetAllocatedBytesForCurrentThread() - before, delivered);
     }
 
@@ -1870,6 +2164,7 @@ public class ClusterNotificationRoutingTests
             RespireChannel.KeySpaceSingleKey(key, 0),
         ];
         List<RespireSubscription> live = [];
+
         try
         {
             for (var iteration = 0; iteration < 6; iteration++)
@@ -1890,20 +2185,28 @@ public class ClusterNotificationRoutingTests
                     live.Remove(subscription);
                 }
             }
+
             foreach (var subscription in live)
+            {
                 await Assert.That(subscription.Completion.IsCompleted).IsFalse();
+            }
         }
         finally
         {
             foreach (var subscription in live)
+            {
                 await subscription.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            }
         }
 
         // Every route, node and coverage entry is released once the last subscription ends.
         var hub = client.Core.Hub!;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         while (hub.ClusterNotificationNodeCount != 0 || hub.ClusterNotificationCoverageCount != 0)
+        {
             await Task.Delay(10, deadline.Token);
+        }
     }
 
     private static void Configure(FakeRespServer server, byte[] topology, bool resp3)
@@ -1914,17 +2217,42 @@ public class ClusterNotificationRoutingTests
         server.ReplyOverride = (_, command) =>
         {
             onCommand?.Invoke(command);
-            if (command == "HELLO 3") return Hello;
-            if (command == "INFO SERVER") return ClusterDatabaseTests.Info();
-            if (command == "CLUSTER SLOTS") return topology();
+
+            if (command == "HELLO 3")
+            {
+                return Hello;
+            }
+
+            if (command == "INFO SERVER")
+            {
+                return ClusterDatabaseTests.Info();
+            }
+
+            if (command == "CLUSTER SLOTS")
+            {
+                return topology();
+            }
+
             if (command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal))
+            {
                 return Confirmation("subscribe", command[10..], resp3);
+            }
+
             if (command.StartsWith("PSUBSCRIBE ", StringComparison.Ordinal))
+            {
                 return Confirmation("psubscribe", command[11..], resp3);
+            }
+
             if (command.StartsWith("UNSUBSCRIBE ", StringComparison.Ordinal))
+            {
                 return Confirmation("unsubscribe", command[12..], resp3);
+            }
+
             if (command.StartsWith("PUNSUBSCRIBE ", StringComparison.Ordinal))
+            {
                 return Confirmation("punsubscribe", command[13..], resp3);
+            }
+
             return FakeRespServer.OkReply;
         };
     }

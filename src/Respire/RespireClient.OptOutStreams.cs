@@ -16,9 +16,11 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         var preferredZone = GetTransportReadZone(in command);
+
         if (ShouldSkipTracking(operation, in command) && connection.ClientTrackingEnabled)
         {
             var caching = new ClientCachingCommand(optOut: true);
+
             if (sendAsking)
             {
                 var asking = new ProtocolCommand<Cmd>(new Cmd(new Verb(-1, "ASKING")));
@@ -26,10 +28,12 @@ public sealed partial class RespireClient
                     in asking, in caching, in command, cancellationToken, operation, onFrameCompleted,
                     preferredZone, observation, pinToConnection, commandDeadline);
             }
+
             return connection.SendPrefixedBulkStreamAsync(
                 in caching, in command, cancellationToken, operation, onFrameCompleted,
                 preferredZone, observation, pinToConnection, commandDeadline);
         }
+
         return sendAsking
             ? ClusterRouter.SendAskingBulkStreamAsync(connection, in command, cancellationToken, operation,
                 onFrameCompleted, preferredZone, observation, pinToConnection, commandDeadline)

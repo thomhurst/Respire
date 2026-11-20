@@ -19,7 +19,12 @@ public class ZstdValueCodecTests
         var random = new byte[16384];
         new Random(980).NextBytes(random);
         var repeated = new byte[16384];
-        for (var index = 0; index < repeated.Length; index++) repeated[index] = (byte)(index % 97);
+
+        for (var index = 0; index < repeated.Length; index++)
+        {
+            repeated[index] = (byte)(index % 97);
+        }
+
         var boundary = new byte[65536];
         var large = new byte[65537];
         // Alternate incompressible input (TryWrap returns false), compressed input, and discarded
@@ -27,6 +32,7 @@ public class ZstdValueCodecTests
         foreach (var level in new[] { 3, 10, -1, 0, 22, 1, -131072, 3 })
         {
             var codec = new RespireZstdValueCodec(new() { MinimumLength = 0 }, level);
+
             foreach (var payload in new[] { random, repeated, boundary, large, repeated })
             {
                 using var fresh = new Compressor(level);
@@ -36,7 +42,9 @@ public class ZstdValueCodecTests
                 await Assert.That(frame.AsSpan(RespireValueCodec.HeaderLength).SequenceEqual(expected)).IsTrue();
                 await Assert.That(new RespireZstdValueCodec().Decode(frame).AsSpan().SequenceEqual(payload)).IsTrue();
             }
+
             byte[] block = [0x28, 0xb5, 0x2f, 0xfd, 0x20, 64, 0x03, 0x02, 0, 0x41];
+
             foreach (var invalidLength in new[] { 63, 65 })
             {
                 await Assert.That(() => codec.Decode(Frame(block, invalidLength))).Throws<InvalidDataException>();
@@ -50,11 +58,18 @@ public class ZstdValueCodecTests
     {
         await Task.WhenAll(Enumerable.Range(0, 16).Select(worker => Task.Run(async () =>
         {
-            var level = (worker % 4) switch { 0 => -1, 1 => 0, 2 => 3, _ => 10 };
+            var level = (worker % 4) switch
+            {
+                0 => -1,
+                1 => 0,
+                2 => 3,
+                _ => 10
+            };
             var codec = new RespireZstdValueCodec(new() { MinimumLength = 0 }, level);
             var payload = Enumerable.Range(0, 16384).Select(index => (byte)((index + worker) % 127)).ToArray();
             using var fresh = new Compressor(level);
             var expected = fresh.Wrap(payload).ToArray();
+
             for (var iteration = 0; iteration < 32; iteration++)
             {
                 var frame = codec.Encode(payload);
@@ -96,13 +111,21 @@ public class ZstdValueCodecTests
 
     private static bool IsAlive(Compressor context)
     {
-        try { context.ResetStream(); return true; }
+        try
+        {
+            context.ResetStream();
+            return true;
+        }
         catch (ObjectDisposedException) { return false; }
     }
 
     private static bool IsAlive(Decompressor context)
     {
-        try { context.ResetStream(); return true; }
+        try
+        {
+            context.ResetStream();
+            return true;
+        }
         catch (ObjectDisposedException) { return false; }
     }
 
@@ -112,15 +135,21 @@ public class ZstdValueCodecTests
         foreach (var level in new[] { -131072, -1, 0, 1, 3, 10, 22 })
         {
             var codec = new RespireZstdValueCodec(new() { MinimumLength = 0 }, level);
+
             foreach (var length in new[] { 0, 1, 2, 16, 64, 4096 })
             {
                 var payload = Enumerable.Repeat((byte)'A', length).ToArray();
                 var frame = codec.Encode(payload);
                 await Assert.That(new RespireZstdValueCodec().Decode(frame)).IsEquivalentTo(payload);
                 await Assert.That(frame.Length).IsLessThanOrEqualTo(length + RespireValueCodec.HeaderLength);
-                if (length <= 2) await Assert.That(frame[5]).IsEqualTo((byte)0);
+
+                if (length <= 2)
+                {
+                    await Assert.That(frame[5]).IsEqualTo((byte)0);
+                }
             }
         }
+
         await Assert.That(new RespireZstdValueCodec().Encode(new byte[4096])[5]).IsEqualTo((byte)4);
     }
 
@@ -128,7 +157,9 @@ public class ZstdValueCodecTests
     public async Task InvalidLevelsFailAtConstruction()
     {
         foreach (var level in new[] { int.MinValue, -131073, 23, int.MaxValue })
+        {
             await Assert.That(() => new RespireZstdValueCodec(level: level)).Throws<ArgumentOutOfRangeException>();
+        }
     }
 
     [Test]
@@ -144,6 +175,7 @@ public class ZstdValueCodecTests
         byte[] skippable = [0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0];
         var badBlock = block.ToArray();
         badBlock[6] = 0x07; // Reserved block type.
+
         foreach (var invalid in new[]
         {
             block[..^1], block.Concat(new byte[] { 0 }).ToArray(), badBlock,
@@ -157,8 +189,11 @@ public class ZstdValueCodecTests
             await Assert.That(() => codec.Decode(frame, writer)).Throws<InvalidDataException>();
             await Assert.That(writer.WrittenCount).IsEqualTo(1);
         }
+
         foreach (var length in new[] { 63, 65 })
+        {
             await Assert.That(() => codec.Decode(Frame(block, length))).Throws<InvalidDataException>();
+        }
     }
 
     [Test]
@@ -184,7 +219,9 @@ public class ZstdValueCodecTests
     private sealed class RejectingWriter : IBufferWriter<byte>
     {
         public void Advance(int count) => throw new InvalidOperationException("Invalid input must not advance the writer.");
+
         public Memory<byte> GetMemory(int sizeHint = 0) => throw new InvalidOperationException("Size validation must precede allocation.");
+
         public Span<byte> GetSpan(int sizeHint = 0) => throw new InvalidOperationException("Size validation must precede allocation.");
     }
 }

@@ -96,6 +96,7 @@ public class OptOutClientCacheIntegrationTests(RedisTestContainer fixture)
         await Assert.That(await reader.GetStringAsync(trackedKey)).IsEqualTo("tracked");
         var hits = reader.ClientSideCache!.GetStatistics().Hits;
         var bypass = reader.WithoutClientCache();
+
         if (surface == "raw")
         {
             using var fresh = await bypass.ExecuteAsync(RespireCommands.String.GET, freshKey);
@@ -155,8 +156,12 @@ public class OptOutClientCacheIntegrationTests(RedisTestContainer fixture)
         var fenced = surface == "batch" || surface.Contains("transaction", StringComparison.Ordinal);
         await Assert.That(reader.ClientSideCache.Count).IsEqualTo(fenced ? 0 : 1);
         await Assert.That(reader.ClientSideCache.GetStatistics().Hits).IsEqualTo(hits);
+
         if (fenced)
+        {
             await Assert.That(await reader.GetStringAsync(trackedKey)).IsEqualTo("tracked");
+        }
+
         var invalidations = reader.ClientSideCache.GetStatistics().Invalidations;
         await writer.SetAsync(freshKey, "changed fresh");
         await writer.SetAsync(trackedKey, "changed tracked");

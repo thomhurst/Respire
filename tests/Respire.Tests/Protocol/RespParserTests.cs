@@ -1,8 +1,8 @@
 using System.Text;
 using Respire.Protocol;
-using TUnit.Core;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
+using TUnit.Core;
 
 namespace Respire.Tests.Protocol;
 

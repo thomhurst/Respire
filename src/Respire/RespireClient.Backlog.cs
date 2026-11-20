@@ -1,5 +1,5 @@
-using Respire.Infrastructure;
 using Respire.Commands;
+using Respire.Infrastructure;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
@@ -13,8 +13,12 @@ public sealed partial class RespireClient
     {
         var connection = UsesPrimaryBacklog ? SelectPrimaryBacklogConnection(cancellationToken)
             : GetCircuitAwareConnection(_core.Multiplexer, cancellationToken);
+
         if (connection is not null)
+        {
             return SendBulkStreamOnConnectionAsync(operation, connection, command, cancellationToken, observation: observation);
+        }
+
         var deadline = CreateCircuitDeadline();
         var snapshot = new BacklogCommand<TCommand>(command, operation);
         return RunPrimaryBacklogAsync(operation, cancellationToken, deadline, (ready, originalDeadline) =>
@@ -29,8 +33,12 @@ public sealed partial class RespireClient
         var connection = UsesPrimaryBacklog && !CursorCommandMetadata.IsServerCursorContinuation(in command)
             ? SelectPrimaryBacklogConnection(cancellationToken)
             : GetCircuitAwareConnection(_core.Multiplexer, cancellationToken);
+
         if (connection is null)
+        {
             return SendBackloggedFireAndForgetAsync(operation, command, cancellationToken, storedProcedureName, observation, awaitReply);
+        }
+
         return awaitReply
             ? SendDiscardedReplyAsync(operation, connection, command, cancellationToken, storedProcedureName, observation)
             : SendFireAndForgetOnConnectionAsync(operation, connection, command, cancellationToken, storedProcedureName, observation);
@@ -45,11 +53,16 @@ public sealed partial class RespireClient
         await RunPrimaryBacklogAsync(operation, cancellationToken, deadline, async (ready, originalDeadline) =>
         {
             if (!awaitReply)
+            {
                 await SendFireAndForgetOnConnectionAsync(operation, ready, snapshot, cancellationToken,
                     storedProcedureName, observation, originalDeadline).ConfigureAwait(false);
+            }
             else
+            {
                 await SendDiscardedReplyAsync(operation, ready, snapshot, cancellationToken, storedProcedureName,
                     observation, originalDeadline).ConfigureAwait(false);
+            }
+
             return true;
         }, observation).ConfigureAwait(false);
     }
@@ -89,7 +102,10 @@ public sealed partial class RespireClient
         // A retired Sentinel endpoint cannot veto discovery of the new elected primary.
         // The actual dispatch still acquires that selected endpoint's circuit permit.
         if (_core.Circuits is not null && (_core.Sentinel is null
-            || _core.TryGetReadyPrimaryMultiplexer(out _))) RejectOpenCircuit(cancellationToken);
+            || _core.TryGetReadyPrimaryMultiplexer(out _)))
+        {
+            RejectOpenCircuit(cancellationToken);
+        }
     }
 
     // Only connection selection failures enter the backlog. Errors from dispatch (including
@@ -99,17 +115,20 @@ public sealed partial class RespireClient
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
         var multiplexer = _core.Multiplexer;
+
         if (_core.Sentinel is { } sentinel
             && (sentinel.IsBacklogDraining || !_core.TryGetReadyPrimaryMultiplexer(out multiplexer)))
         {
             RejectOpenBacklogCircuit(cancellationToken);
             return null;
         }
+
         if (multiplexer.IsBacklogDraining)
         {
             RejectOpenBacklogCircuit(cancellationToken);
             return null;
         }
+
         try
         {
             // Unit callers use a deferred client view, but selection still owns availability
@@ -132,12 +151,20 @@ public sealed partial class RespireClient
             if (_core.Circuits is not null)
             {
                 var opened = false;
-                try { RejectOpenCircuit(cancellationToken); }
+
+                try
+                {
+                    RejectOpenCircuit(cancellationToken);
+                }
                 catch (RespireCircuitOpenException) { opened = true; }
                 // Selection recorded the availability failure. Preserve that first outcome
                 // if it opened the circuit; later callers see the circuit rejection.
-                if (opened) throw;
+                if (opened)
+                {
+                    throw;
+                }
             }
+
             return null;
         }
     }
@@ -150,6 +177,7 @@ public sealed partial class RespireClient
         var acquisition = new CommandAcquisitionScope(callerToken, deadline, _core.Options.CommandTimeout);
         var dispatched = false;
         BacklogDiscoveryObservation? discoveryObservation = null;
+
         try
         {
             RejectOpenBacklogCircuit(callerToken);
@@ -157,18 +185,24 @@ public sealed partial class RespireClient
             var backlog = _core.Sentinel is { } sentinel
                 ? sentinel.GetReconnectBacklog()
                 : _core.Multiplexer.GetReconnectBacklog(_core.Options.BacklogCapacity);
+
             if (_core.Sentinel is { } router)
             {
                 discoveryObservation = observation.IsEmpty ? null : new(observation);
                 return await backlog.EnqueueAsync((connection, _) => Dispatch(connection), acquisition.Token,
                     token => router.WaitForBacklogConnectionAsync(token, discoveryObservation?.Observation ?? default)).ConfigureAwait(false);
             }
+
             return await backlog.EnqueueAsync((connection, _) => Dispatch(connection), acquisition.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (acquisition.IsCallerCancellation(error))
-        { throw new OperationCanceledException(error.Message, error, callerToken); }
+        {
+            throw new OperationCanceledException(error.Message, error, callerToken);
+        }
         catch (OperationCanceledException error) when (acquisition.IsDeadlineCancellation(error))
-        { throw acquisition.CreateTimeout(operation, _core, cause: error); }
+        {
+            throw acquisition.CreateTimeout(operation, _core, cause: error);
+        }
         catch (RespireTimeoutException error) when (!dispatched && _core.Sentinel is not null)
         {
             throw RespireTimeoutException.BeforeConnectionSelection(operation,
@@ -214,9 +248,13 @@ public sealed partial class RespireClient
             _hasCacheKey = command.TryGetClientCacheKey(operation, out var cacheKey);
             _cacheKey = _hasCacheKey ? cacheKey.Snapshot() : default;
         }
+
         public void Write(ref RespWriter writer) => _snapshot.Write(ref writer);
+
         public int GetWriteSizeHint() => _snapshot.GetWriteSizeHint();
+
         public bool TryGetClusterSlot(out int slot) => _snapshot.TryGetClusterSlot(out slot);
+
         public bool TryGetArgument(int index, out RespireValue value)
         {
             if ((uint)index < (uint)_arguments.Length)
@@ -224,6 +262,7 @@ public sealed partial class RespireClient
                 value = _arguments[index];
                 return true;
             }
+
             value = default;
             return false;
         }
@@ -233,8 +272,12 @@ public sealed partial class RespireClient
             // Reply classification (including scripting engine detection) must observe the
             // same arguments as the wire frame, even if the caller reuses borrowed storage.
             List<RespireValue>? arguments = null;
+
             for (var index = 0; command.TryGetArgument(index, out var value); index++)
+            {
                 (arguments ??= []).Add(value.Snapshot());
+            }
+
             return arguments?.ToArray() ?? [];
         }
 
@@ -243,22 +286,34 @@ public sealed partial class RespireClient
             key = _primaryKey;
             return _hasPrimaryKey;
         }
+
         public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
         {
             key = _cacheKey;
             return _hasCacheKey;
         }
+
         public ReadCommandKind ReadKind => _command.ReadKind;
+
         public RespireCommandRetryCategory RetryCategory => _command.RetryCategory;
+
         public int CursorArgumentIndex => _command.CursorArgumentIndex;
+
         public bool HasOpaqueCursor => _command.HasOpaqueCursor;
+
         public bool IsConnectionProtocol => CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in _command);
+
         public ClientSideCacheCoordinator.MutationFence GetMutationFence() => CommandDispatchAdmission<TCommand>.GetMutationFence(in _command);
+
         // Classification is immutable verb/declaration metadata, independent of borrowed argument bytes.
         public RespireCacheMutation GetCacheMutation(string operation) => _command.GetCacheMutation(operation);
+
         public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => _command.GetClientCacheMetadata(operation);
+
         public void ValidateAdmission() => _command.ValidateAdmission();
+
         public CancellationToken GetResponseCancellationToken(CancellationToken token) => _command.GetResponseCancellationToken(token);
+
         public void OnAccepted() => _command.OnAccepted();
     }
 }

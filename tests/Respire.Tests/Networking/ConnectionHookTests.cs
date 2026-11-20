@@ -25,14 +25,21 @@ public class ConnectionHookTests
         {
             Before = (_, _) =>
             {
-                if (server.ReceivedCommands.Count != 0) throw new InvalidOperationException("Transport started before hook.");
+                if (server.ReceivedCommands.Count != 0)
+                {
+                    throw new InvalidOperationException("Transport started before hook.");
+                }
+
                 return ValueTask.CompletedTask;
             },
             After = (_, outcome, _) =>
             {
                 if (outcome != RespireConnectionOutcome.Succeeded
                     || !server.ReceivedCommands.Contains("SELECT 2"))
+                {
                     throw new InvalidOperationException("Completion preceded handshake.");
+                }
+
                 return ValueTask.CompletedTask;
             },
         };
@@ -40,8 +47,12 @@ public class ConnectionHookTests
 #pragma warning disable RESP010 // This connection hook scenario owns the client and its handshake/topology transports.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-            Protocol = RespireProtocol.Resp2, Password = "secret", Database = 2, ConnectionHook = hook,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Password = "secret",
+            Database = 2,
+            ConnectionHook = hook,
             ConnectionFactory = OpenStreamAsync,
         }, cancellation.Token);
 #pragma warning restore RESP010
@@ -63,8 +74,13 @@ public class ConnectionHookTests
         var hook = new Hook { Before = (_, _) => throw rejection };
         var options = new RespireConnectionOptions
         {
-            ConnectionHook = hook, CredentialProvider = provider,
-            TestingStreamFactory = (_, _, _) => { transports++; throw new InvalidOperationException(); },
+            ConnectionHook = hook,
+            CredentialProvider = provider,
+            TestingStreamFactory = (_, _, _) =>
+            {
+                transports++;
+                throw new InvalidOperationException();
+            },
         };
         var error = await CaptureAsync(() => RespireConnection.ConnectAsync("blocked", 6379, options));
         await Assert.That(ReferenceEquals(error, rejection)).IsTrue();
@@ -83,14 +99,19 @@ public class ConnectionHookTests
         var hook = new Hook { After = (_, _, _) => throw new InvalidOperationException("audit failed") };
         var options = new RespireConnectionOptions
         {
-            ConnectionHook = hook, Protocol = RespireProtocol.Resp2,
+            ConnectionHook = hook,
+            Protocol = RespireProtocol.Resp2,
             CredentialProvider = handshake ? new CountingProvider() : null,
             TestingStreamFactory = handshake ? null : (_, _, _) => throw failure,
         };
         var error = await CaptureAsync(() => RespireConnection.ConnectAsync("127.0.0.1", server.Port, options));
         await Assert.That(handshake ? error is RespireAuthenticationException : ReferenceEquals(error, failure)).IsTrue();
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireConnectionOutcome.Failed);
-        if (handshake) await server.PeerClosed.WaitAsync(Limit);
+
+        if (handshake)
+        {
+            await server.PeerClosed.WaitAsync(Limit);
+        }
     }
 
     [Test]
@@ -105,8 +126,16 @@ public class ConnectionHookTests
         {
             After = (_, _, token) =>
             {
-                if (token != cancellation.Token) throw new InvalidOperationException("Wrong token.");
-                if (!cancel) throw rejection;
+                if (token != cancellation.Token)
+                {
+                    throw new InvalidOperationException("Wrong token.");
+                }
+
+                if (!cancel)
+                {
+                    throw rejection;
+                }
+
                 cancellation.Cancel();
                 return ValueTask.CompletedTask; // An uncooperative hook cannot publish after cancellation.
             },
@@ -158,14 +187,22 @@ public class ConnectionHookTests
             new RespireConnectionOptions
             {
                 ConnectionHook = hook,
-                ConnectionFactory = (endpoint, token) => { opened++; return OpenStreamAsync(endpoint, token); },
+                ConnectionFactory = (endpoint, token) =>
+                {
+                    opened++;
+                    return OpenStreamAsync(endpoint, token);
+                },
                 ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0 },
             });
         using var cancellation = new CancellationTokenSource(Limit);
         await multiplexer.EnsureConnectedAsync(cancellation.Token);
         var original = multiplexer.GetConnection();
+
         using (var initial = await original.SendAsync(new RawCommand(FakeRespServer.PingFrame), cancellation.Token))
+        {
             await Assert.That(initial.AsString()).IsEqualTo("PONG");
+        }
+
         server.CloseConnections();
         await original.Closed.WaitAsync(Limit);
         // Recovery is demand-driven and must remain usable after the hook rejects a replacement.
@@ -189,8 +226,13 @@ public class ConnectionHookTests
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireOptions
             {
-                ConnectionHook = hook, Protocol = RespireProtocol.Resp2,
-                ConnectionFactory = (endpoint, token) => { opened++; return OpenStreamAsync(endpoint, token); },
+                ConnectionHook = hook,
+                Protocol = RespireProtocol.Resp2,
+                ConnectionFactory = (endpoint, token) =>
+                {
+                    opened++;
+                    return OpenStreamAsync(endpoint, token);
+                },
             }.ToConnectionOptions(), null);
         var first = await pool.RentAsync(default);
         pool.Return(first);
@@ -227,9 +269,17 @@ public class ConnectionHookTests
 #pragma warning disable RESP010 // This connection hook scenario owns the client and its handshake/topology transports.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", primary.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
-            UseCluster = cluster, ClusterTopologyRefreshInterval = null, ConnectionHook = hook,
-            ConnectionFactory = (endpoint, token) => { opened.Enqueue(endpoint); return OpenStreamAsync(endpoint, token); },
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = cluster,
+            ClusterTopologyRefreshInterval = null,
+            ConnectionHook = hook,
+            ConnectionFactory = (endpoint, token) =>
+            {
+                opened.Enqueue(endpoint);
+                return OpenStreamAsync(endpoint, token);
+            },
             ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
         }, cancellation.Token);
 #pragma warning restore RESP010
@@ -240,7 +290,11 @@ public class ConnectionHookTests
         await Assert.That(hook.Completed.All(attempt => attempt.Outcome == RespireConnectionOutcome.Succeeded)).IsTrue();
         await Assert.That(opened.Any(endpoint => endpoint.Port == primary.Port)).IsTrue();
         await Assert.That(opened.Any(endpoint => endpoint.Port == replica.Port)).IsTrue();
-        if (cluster) await Assert.That(replica.ReceivedCommands.Contains("READONLY")).IsTrue();
+
+        if (cluster)
+        {
+            await Assert.That(replica.ReceivedCommands.Contains("READONLY")).IsTrue();
+        }
     }
 
     [Test]
@@ -260,17 +314,27 @@ public class ConnectionHookTests
             After = (context, outcome, _) =>
             {
                 if (!context.UseTls || outcome != RespireConnectionOutcome.Succeeded || !handshake.Task.IsCompletedSuccessfully)
+                {
                     throw new InvalidOperationException("Hook completed before encrypted setup.");
+                }
+
                 return ValueTask.CompletedTask;
             },
         };
+
         await using (var connection = await RespireConnection.ConnectAsync("127.0.0.1", port,
             new RespireConnectionOptions
             {
-                ConnectionHook = hook, UseTls = true, ClientName = "tls-hook", Protocol = RespireProtocol.Resp2,
+                ConnectionHook = hook,
+                UseTls = true,
+                ClientName = "tls-hook",
+                Protocol = RespireProtocol.Resp2,
                 ConnectionFactory = factoryStream ? OpenStreamAsync : null,
                 TlsOptions = new() { RemoteCertificateValidationCallback = (_, _, _, _) => true },
-            }, cancellationToken: cancellation.Token)) { }
+            }, cancellationToken: cancellation.Token))
+        {
+        }
+
         await peerClosed.WaitAsync(cancellation.Token);
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireConnectionOutcome.Succeeded);
 
@@ -285,7 +349,11 @@ public class ConnectionHookTests
             await Assert.That(actual).IsEquivalentTo(expected);
             handshake.SetResult();
             await tls.WriteAsync(FakeRespServer.OkReply, cancellation.Token);
-            try { await Assert.That(await tls.ReadAsync(new byte[1], cancellation.Token)).IsEqualTo(0); }
+
+            try
+            {
+                await Assert.That(await tls.ReadAsync(new byte[1], cancellation.Token)).IsEqualTo(0);
+            }
             catch (IOException) { /* Abortive client disposal may reset the peer. */ }
         }
     }
@@ -301,6 +369,7 @@ public class ConnectionHookTests
         await Assert.That(ReferenceEquals(options.ToControlConnectionOptions().ConnectionFactory, factory)).IsTrue();
         var discovery = SentinelResolver.CreateSentinelConnectionOptions(options);
         var monitor = SentinelMonitoring.CreateOptions(options, new("sentinel", 26379)).ToConnectionOptions();
+
         foreach (var connectionOptions in new[] { discovery, monitor })
         {
             await Assert.That(ReferenceEquals(connectionOptions.ConnectionHook, hook)).IsTrue();
@@ -309,20 +378,26 @@ public class ConnectionHookTests
             var error = await CaptureAsync(() => RespireConnection.ConnectAsync("sentinel", 26379, connectionOptions));
             await Assert.That(ReferenceEquals(error, failure)).IsTrue();
         }
+
         await Assert.That(hook.Completed.All(attempt => !attempt.Context.UseTls
             && attempt.Context.Endpoint == new RespireEndpoint("sentinel", 26379))).IsTrue();
     }
 
     private static async Task<Exception> CaptureAsync(Func<Task> action)
     {
-        try { await action().WaitAsync(Limit); }
+        try
+        {
+            await action().WaitAsync(Limit);
+        }
         catch (Exception error) when (error is not TimeoutException) { return error; }
+
         throw new InvalidOperationException("Expected failure.");
     }
 
     private static async ValueTask<Stream> OpenStreamAsync(RespireEndpoint endpoint, CancellationToken token)
     {
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
         try
         {
             await socket.ConnectAsync(endpoint.Host, endpoint.Port, token);
@@ -334,6 +409,7 @@ public class ConnectionHookTests
     private sealed class CountingProvider : IRespireCredentialProvider
     {
         internal int Calls;
+
         public ValueTask<RespireCredentials> GetCredentialsAsync(CancellationToken cancellationToken = default)
         {
             Calls++;
@@ -345,13 +421,23 @@ public class ConnectionHookTests
     {
         internal Func<RespireConnectionContext, CancellationToken, ValueTask>? Before;
         internal Func<RespireConnectionContext, RespireConnectionOutcome, CancellationToken, ValueTask>? After;
-        internal ConcurrentQueue<RespireConnectionContext> Started { get; } = new();
-        internal ConcurrentQueue<(RespireConnectionContext Context, RespireConnectionOutcome Outcome, TimeSpan Elapsed)> Completed { get; } = new();
+
+        internal ConcurrentQueue<RespireConnectionContext> Started
+        {
+            get;
+        } = new();
+
+        internal ConcurrentQueue<(RespireConnectionContext Context, RespireConnectionOutcome Outcome, TimeSpan Elapsed)> Completed
+        {
+            get;
+        } = new();
+
         public override ValueTask OnConnectingAsync(RespireConnectionContext context, CancellationToken cancellationToken)
         {
             Started.Enqueue(context);
             return Before?.Invoke(context, cancellationToken) ?? ValueTask.CompletedTask;
         }
+
         public override ValueTask OnCompletedAsync(RespireConnectionContext context, RespireConnectionOutcome outcome,
             TimeSpan elapsed, CancellationToken cancellationToken)
         {

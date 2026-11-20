@@ -14,7 +14,10 @@ public class InflightRingBenchmarks
     public bool EnqueueAndDequeue()
     {
         if (!_ring.TryEnqueue(_source))
+        {
             throw new InvalidOperationException("The preceding invocation must drain the ring.");
+        }
+
         return _ring.TryDequeue(out var source) && ReferenceEquals(source, _source);
     }
 }

@@ -15,7 +15,10 @@ public enum RespireJobFlowFailurePolicy
 public sealed record RespireJobFlow<T>(string Id, T Payload)
 {
     /// <summary>Children that must finish before this job can run. Defaults to no children.</summary>
-    public IReadOnlyList<RespireJobFlow<T>> Children { get; init; } = [];
+    public IReadOnlyList<RespireJobFlow<T>> Children
+    {
+        get; init;
+    } = [];
 }
 
 /// <summary>A retained flow node snapshot. Result is owned binary data, or null if none was supplied.</summary>

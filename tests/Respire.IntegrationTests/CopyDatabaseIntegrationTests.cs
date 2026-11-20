@@ -6,7 +6,12 @@ namespace Respire.IntegrationTests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class CopyDatabaseIntegrationTests(RedisTestContainer fixture)
 {
-    public enum ExecutionMode { Immediate, Batch, Transaction }
+    public enum ExecutionMode
+    {
+        Immediate,
+        Batch,
+        Transaction
+    }
 
     [Test]
     [Arguments(2, ExecutionMode.Immediate)]
@@ -64,13 +69,25 @@ public class CopyDatabaseIntegrationTests(RedisTestContainer fixture)
     private static async Task<bool> Copy(IRespireClient client, ExecutionMode mode,
         RespireKey source, RespireKey destination, int database, bool replace = false)
     {
-        if (mode == ExecutionMode.Immediate) return await client.Keys.CopyAsync(source, destination, database, replace);
+        if (mode == ExecutionMode.Immediate)
+        {
+            return await client.Keys.CopyAsync(source, destination, database, replace);
+        }
+
         using var batch = mode == ExecutionMode.Batch ? client.CreateBatch() : null;
         await using var transaction = mode == ExecutionMode.Transaction ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = queue.Keys.Copy(source, destination, database, replace);
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         return pending.Result;
     }
 }

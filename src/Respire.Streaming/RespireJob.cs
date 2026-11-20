@@ -6,13 +6,18 @@ public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId
 {
     /// <summary>The application group identity from enqueue, or null for an ungrouped job.</summary>
     /// <remarks>This is envelope metadata, not the Redis consumer group or a scheduling guarantee.</remarks>
-    public string? Group { get; init; }
+    public string? Group
+    {
+        get; init;
+    }
 
     private TimeSpan? _retryDelay;
+
     TimeSpan? IJobRetry.RetryDelay => _retryDelay;
 
     private JobProgress? _progress;
     private byte[]? _result;
+
     byte[]? IJobDelivery.Result => _result;
 
     void IJobDelivery.Attach(JobProgress progress) => _progress = progress;
@@ -36,8 +41,12 @@ public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId
     public RespireStreamWorkerResult Complete(byte[] result)
     {
         ArgumentNullException.ThrowIfNull(result);
+
         if (result.Length > JobQueueFlows.MaximumResultBytes)
+        {
             throw new ArgumentOutOfRangeException(nameof(result), "Job results must not exceed 4096 bytes.");
+        }
+
         _result = result.ToArray();
         return RespireStreamWorkerResult.Ack;
     }

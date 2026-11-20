@@ -35,7 +35,10 @@ public class JobQueueBenchmarks
     private long _operations;
 
     [Params(false, true)]
-    public bool SchedulingEnabled { get; set; }
+    public bool SchedulingEnabled
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public async Task Setup()
@@ -44,7 +47,8 @@ public class JobQueueBenchmarks
         {
             Endpoints = [new(Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1",
                 int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379"))],
-            Connections = 1, Protocol = RespireProtocol.Resp3,
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
         });
         var name = "benchmark-" + Guid.NewGuid().ToString("N");
         var services = new ServiceCollection().AddSingleton<IRespireClient>(_client);
@@ -69,12 +73,24 @@ public class JobQueueBenchmarks
     public async Task<long> EnqueueAndConsume()
     {
         var enqueued = await _queue.EnqueueAsync(_jobId, _payload, cancellationToken: _stop.Token);
-        if (!enqueued.Enqueued) throw new InvalidOperationException("Benchmark job was deduplicated.");
+
+        if (!enqueued.Enqueued)
+        {
+            throw new InvalidOperationException("Benchmark job was deduplicated.");
+        }
+
         if (!await _events.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)))
+        {
             throw new InvalidOperationException("Completion stream ended.");
+        }
+
         var completed = _events.Current;
+
         if (completed.Kind != "completed" || completed.JobId != _jobId || completed.EntryId != enqueued.EntryId)
+        {
             throw new InvalidOperationException("The worker did not durably complete this benchmark job.");
+        }
+
         using var reset = await _client.Scripts.ExecuteAsync(Reset, _resetKeys,
             [enqueued.EntryId.ToString(), completed.Id.ToString()], _stop.Token);
         _operations++;
@@ -87,7 +103,8 @@ public class JobQueueBenchmarks
         _process.Refresh();
         Console.WriteLine("JOB_QUEUE_PROCESS_METRICS " + JsonSerializer.Serialize(new
         {
-            SchedulingEnabled, operations = _operations,
+            SchedulingEnabled,
+            operations = _operations,
             cpuMilliseconds = (_process.TotalProcessorTime - _cpu).TotalMilliseconds,
             elapsedSeconds = Stopwatch.GetElapsedTime(_started).TotalSeconds,
         }));
@@ -95,7 +112,12 @@ public class JobQueueBenchmarks
         await _worker.StopAsync(CancellationToken.None);
         await _events.DisposeAsync();
         await _provider.DisposeAsync();
-        foreach (var key in _resetKeys) await _client.DeleteAsync(key);
+
+        foreach (var key in _resetKeys)
+        {
+            await _client.DeleteAsync(key);
+        }
+
         await _client.DisposeAsync();
         _stop.Dispose();
         _process.Dispose();
@@ -106,7 +128,10 @@ public class JobQueueBenchmarks
         public ValueTask<RespireStreamWorkerResult> HandleAsync(RespireJob<string> job, CancellationToken cancellationToken)
         {
             if (job.Group is not null || job.Payload.Length != 128)
+            {
                 throw new InvalidOperationException("Unexpected benchmark payload.");
+            }
+
             return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
         }
     }

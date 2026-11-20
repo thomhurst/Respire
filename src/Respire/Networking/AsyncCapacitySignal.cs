@@ -37,6 +37,7 @@ internal sealed class AsyncCapacitySignal
         }
 
         TaskCompletionSource? waiters;
+
         lock (_gate)
         {
             waiters = _waiters;

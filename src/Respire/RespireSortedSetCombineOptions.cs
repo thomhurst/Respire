@@ -18,8 +18,14 @@ public sealed class RespireSortedSetCombineOptions
 {
     /// <summary>One weight per input key, in key order. Empty means a weight of one for every key.</summary>
     /// <remarks>Weights are copied into command arguments when the command is called or queued.</remarks>
-    public ReadOnlyMemory<double> Weights { get; init; }
+    public ReadOnlyMemory<double> Weights
+    {
+        get; init;
+    }
 
     /// <summary>How to combine weighted scores. COUNT requires Redis 8.8 or later.</summary>
-    public RespireSortedSetAggregate Aggregate { get; init; }
+    public RespireSortedSetAggregate Aggregate
+    {
+        get; init;
+    }
 }

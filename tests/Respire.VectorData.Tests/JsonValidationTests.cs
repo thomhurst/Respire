@@ -104,12 +104,16 @@ public class JsonValidationTests
         : RespireVectorDataJsonMapper<JsonMovie>(metadataMissing ? null! : MovieJsonContext.Default.JsonMovie)
     {
         public override IReadOnlyList<RespireVectorDataVectorField> VectorFields => [new("Vector", "vector", 2) { JsonPath = path }];
+
         public override IReadOnlyList<RespireSearchField> DataFields => scalar ? [new("$.details.movie_title", RespireSearchFieldType.Text, Alias: alias)] : [];
+
         public override string GetKey(JsonMovie record) => record.Id;
     }
 
     private static async Task Collect<T>(IAsyncEnumerable<T> source)
     {
-        await foreach (var value in source) { }
+        await foreach (var value in source)
+        {
+        }
     }
 }

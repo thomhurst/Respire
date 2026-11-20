@@ -44,8 +44,15 @@ public class ConditionalTransactionTests
         await Assert.That(server.ReceivedCommands.Last()).IsEqualTo(
             $"EXEC {token} key" + (token is "IFEQ" or "IFNE" ? " old" : ""));
         await Assert.That(pending.Status).IsEqualTo(commit ? RespirePendingStatus.Succeeded : RespirePendingStatus.Aborted);
-        if (commit) await Assert.That(pending.Result).IsEqualTo(1);
-        else await Assert.That(() => _ = pending.Result).ThrowsExactly<RespireTransactionAbortedException>();
+
+        if (commit)
+        {
+            await Assert.That(pending.Result).IsEqualTo(1);
+        }
+        else
+        {
+            await Assert.That(() => _ = pending.Result).ThrowsExactly<RespireTransactionAbortedException>();
+        }
     }
 
     [Test]
@@ -118,8 +125,10 @@ public class ConditionalTransactionTests
 #pragma warning disable RESP010 // This transaction scenario owns its client and pipeline hook to observe only the scripted abort.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
-            Endpoints = [new("127.0.0.1", server.Port)], PipelineHook = hook,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            PipelineHook = hook,
         });
 #pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
@@ -130,8 +139,13 @@ public class ConditionalTransactionTests
 
     private sealed class AbortHook : RespirePipelineHook
     {
-        public RespirePipelineOutcome? Outcome { get; private set; }
+        public RespirePipelineOutcome? Outcome
+        {
+            get; private set;
+        }
+
         public override object? OnExecuting(RespirePipelineContext context) => null;
+
         public override void OnCompleted(RespirePipelineContext context, object? state, RespirePipelineOutcome outcome, Exception? error)
             => Outcome = outcome;
     }

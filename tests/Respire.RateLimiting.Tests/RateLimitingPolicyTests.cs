@@ -50,6 +50,7 @@ public class RateLimitingPolicyTests
         await using var limiter = new TestLimiter(TimeSpan.FromMilliseconds(1001));
         var calls = 0;
         var sawDefaults = false;
+
         ValueTask Reject(OnRejectedContext context, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref calls);
@@ -62,9 +63,17 @@ public class RateLimitingPolicyTests
 
         await using var app = new RateLimitingApplication(options =>
         {
-            if (configureBefore) options.OnRejected = Reject;
+            if (configureBefore)
+            {
+                options.OnRejected = Reject;
+            }
+
             options.AddRespirePartitionedLimiter("api", _ => "shared", _ => limiter);
-            if (!configureBefore) options.OnRejected = Reject;
+
+            if (!configureBefore)
+            {
+                options.OnRejected = Reject;
+            }
         });
         using var http = app.CreateClient();
         using var response = await http.GetAsync("/api");
@@ -84,8 +93,16 @@ public class RateLimitingPolicyTests
         var secondCalls = 0;
         await using var app = new RateLimitingApplication(options =>
         {
-            options.AddRespirePartitionedLimiter("api", _ => 0, _ => { firstCalls++; return first; });
-            options.AddRespirePartitionedLimiter("other", _ => 0, _ => { secondCalls++; return second; });
+            options.AddRespirePartitionedLimiter("api", _ => 0, _ =>
+            {
+                firstCalls++;
+                return first;
+            });
+            options.AddRespirePartitionedLimiter("other", _ => 0, _ =>
+            {
+                secondCalls++;
+                return second;
+            });
         });
         using var http = app.CreateClient();
         using var firstResponse = await http.GetAsync("/api");
@@ -101,6 +118,7 @@ public class RateLimitingPolicyTests
     public async Task StoppingHostDisposesCachedLimiter()
     {
         var limiter = new TestLimiter();
+
         await using (var app = new RateLimitingApplication(options =>
             options.AddRespirePartitionedLimiter("api", _ => "shared", _ => limiter)))
         {
@@ -108,6 +126,7 @@ public class RateLimitingPolicyTests
             using var response = await http.GetAsync("/api");
             await Assert.That(limiter.Disposals).IsEqualTo(0);
         }
+
         await Assert.That(limiter.Disposals).IsEqualTo(1);
     }
 
@@ -115,6 +134,7 @@ public class RateLimitingPolicyTests
     public async Task QueuedRequestCanCompleteBeforeHostStops()
     {
         var limiter = new TestLimiter(waitForPermit: true);
+
         await using (var app = new RateLimitingApplication(options =>
             options.AddRespirePartitionedLimiter("api", _ => "shared", _ => limiter)))
         {
@@ -130,6 +150,7 @@ public class RateLimitingPolicyTests
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(limiter.Disposals).IsEqualTo(0);
         }
+
         await Assert.That(limiter.Disposals).IsEqualTo(1);
     }
 
@@ -139,6 +160,7 @@ public class RateLimitingPolicyTests
         var first = new TestLimiter();
         var second = new TestLimiter();
         var factoryCalls = 0;
+
         await using (var app = new RateLimitingApplication(options =>
             options.AddRespirePartitionedLimiter("api", _ => "shared",
                 _ => Interlocked.Increment(ref factoryCalls) == 1 ? first : second)))
@@ -156,6 +178,7 @@ public class RateLimitingPolicyTests
             await Assert.That(second.Attempts).IsEqualTo(1);
             await Assert.That(second.Disposals).IsEqualTo(0);
         }
+
         await Assert.That(first.Disposals).IsEqualTo(1);
         await Assert.That(second.Disposals).IsEqualTo(1);
     }
@@ -197,32 +220,66 @@ public class RateLimitingPolicyTests
         public int Disposals;
         public int Attempts;
         public CancellationToken AcquisitionToken;
-        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource<RateLimitLease> PendingLease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Entered
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Disposed
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<RateLimitLease> PendingLease
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public void MarkIdle() => Volatile.Write(ref _idle, 1);
+
         public override TimeSpan? IdleDuration => Volatile.Read(ref _idle) != 0 ? TimeSpan.FromMinutes(1) : null;
+
         public override RateLimiterStatistics? GetStatistics() => null;
+
         protected override RateLimitLease AttemptAcquireCore(int permitCount) => new TestLease(null);
+
         protected override async ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
         {
             Attempts++;
             AcquisitionToken = cancellationToken;
             Entered.TrySetResult();
-            if (waitForCancellation) await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            if (waitForPermit) return await PendingLease.Task.WaitAsync(cancellationToken);
+
+            if (waitForCancellation)
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+
+            if (waitForPermit)
+            {
+                return await PendingLease.Task.WaitAsync(cancellationToken);
+            }
+
             return new TestLease(retryAfter);
         }
+
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
                 Interlocked.Increment(ref Disposals);
-                if (waitForPermit) PendingLease.TrySetException(new ObjectDisposedException(nameof(TestLimiter)));
+
+                if (waitForPermit)
+                {
+                    PendingLease.TrySetException(new ObjectDisposedException(nameof(TestLimiter)));
+                }
+
                 Disposed.TrySetResult();
             }
+
             base.Dispose(disposing);
         }
+
         protected override ValueTask DisposeAsyncCore()
         {
             Dispose(true);
@@ -233,7 +290,9 @@ public class RateLimitingPolicyTests
     private sealed class TestLease(TimeSpan? retryAfter, bool acquired = false) : RateLimitLease
     {
         public override bool IsAcquired => acquired;
+
         public override IEnumerable<string> MetadataNames => retryAfter.HasValue ? [MetadataName.RetryAfter.Name] : [];
+
         public override bool TryGetMetadata(string metadataName, out object? metadata)
         {
             metadata = metadataName == MetadataName.RetryAfter.Name ? retryAfter : null;

@@ -4,15 +4,34 @@ namespace Respire.Testing;
 public sealed class RespireFakeCommand
 {
     /// <summary>The receipt order across all connections, starting at one after reset.</summary>
-    public long Sequence { get; }
+    public long Sequence
+    {
+        get;
+    }
+
     /// <summary>The fake connection which received this command.</summary>
-    public long ConnectionId { get; }
+    public long ConnectionId
+    {
+        get;
+    }
+
     /// <summary>The uppercase command name.</summary>
-    public string Command { get; }
+    public string Command
+    {
+        get;
+    }
+
     /// <summary>Copies of the complete wire arguments, excluding the command name.</summary>
-    public IReadOnlyList<ReadOnlyMemory<byte>> Arguments { get; }
+    public IReadOnlyList<ReadOnlyMemory<byte>> Arguments
+    {
+        get;
+    }
+
     /// <summary>Whether an expectation with remaining occurrences matched.</summary>
-    public bool Matched { get; }
+    public bool Matched
+    {
+        get;
+    }
 
     internal RespireFakeCommand(long sequence, long connectionId, string command, byte[][] arguments, bool matched)
     {

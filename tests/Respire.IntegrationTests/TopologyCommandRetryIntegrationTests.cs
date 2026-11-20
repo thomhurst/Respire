@@ -28,7 +28,8 @@ public class TopologyCommandRetryIntegrationTests
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
             Topology = RespireContainerTopology.Sentinel,
-            SentinelDownAfter = TimeSpan.FromSeconds(3), SentinelFailoverTimeout = TimeSpan.FromSeconds(3),
+            SentinelDownAfter = TimeSpan.FromSeconds(3),
+            SentinelFailoverTimeout = TimeSpan.FromSeconds(3),
         }, deadline.Token);
         var former = fixture.DataEndpoints[0];
         var promoted = fixture.DataEndpoints[1];
@@ -46,7 +47,12 @@ public class TopologyCommandRetryIntegrationTests
             """, replace: true);
         await observer.Functions.LoadAsync(library, deadline.Token);
         var function = library.Function("topology_increment").WithRetryCategory(RespireCommandRetryCategory.WriteAccumulating);
-        var fault = new LostReply(shape switch { "script" => "EVALSHA", "function" => "FCALL", _ => "INCR" });
+        var fault = new LostReply(shape switch
+        {
+            "script" => "EVALSHA",
+            "function" => "FCALL",
+            _ => "INCR"
+        });
         fault.BeforeDrop = async _ =>
         {
             var token = deadline.Token;
@@ -57,20 +63,33 @@ public class TopologyCommandRetryIntegrationTests
             replicated.AsInteger().Should().Be(1);
             (await replica.GetStringAsync(key, token)).Should().Be("1");
             await fixture.StopDataNodeAsync(0, token);
+
             while (true)
             {
                 using var role = await replica.ExecuteAsync(RespireCommands.Server.ROLE, [], cancellationToken: token);
-                if (role[0].AsString() == "master") break;
+
+                if (role[0].AsString() == "master")
+                {
+                    break;
+                }
+
                 await Task.Delay(100, token);
             }
+
             foreach (var endpoint in fixture.SentinelEndpoints)
             {
                 await using var sentinel = await RespireClient.ConnectAsync(DirectOptions(endpoint), token);
+
                 while (true)
                 {
                     using var discovered = await sentinel.ExecuteAsync("SENTINEL GET-MASTER-ADDR-BY-NAME",
                         [RespireContainerFixture.SentinelServiceName], cancellationToken: token);
-                    if (int.Parse(discovered[1].AsString()!) == promoted.Port) break;
+
+                    if (int.Parse(discovered[1].AsString()!) == promoted.Port)
+                    {
+                        break;
+                    }
+
                     await Task.Delay(100, token);
                 }
             }
@@ -84,27 +103,48 @@ public class TopologyCommandRetryIntegrationTests
         await using var client = topology == "Sentinel" ? await RespireClient.ConnectAsync(options, deadline.Token) : null;
         await using var group = topology == "group" ? await RespireFailoverGroup.ConnectAsync(
             [new(WithFault(DirectOptions(former), fault), 0), new(DirectOptions(promoted), 1)],
-            new() { RetryPolicy = policy, ProbeInterval = TimeSpan.FromHours(1), ProbeTimeout = TimeSpan.FromSeconds(2),
-                FailureThreshold = 1, CircuitOpenDuration = TimeSpan.FromMinutes(1) }, deadline.Token) : null;
+            new()
+            {
+                RetryPolicy = policy,
+                ProbeInterval = TimeSpan.FromHours(1),
+                ProbeTimeout = TimeSpan.FromSeconds(2),
+                FailureThreshold = 1,
+                CircuitOpenDuration = TimeSpan.FromMinutes(1)
+            }, deadline.Token) : null;
         fault.Armed = true;
+
         async ValueTask<long> Increment(IRespireClient member, CancellationToken token)
         {
-            if (shape == "script") return await member.Scripts.ExecuteIntegerAsync(script, [key], cancellationToken: token);
-            if (shape == "function") return await member.Functions.ExecuteIntegerAsync(function, [key], cancellationToken: token);
+            if (shape == "script")
+            {
+                return await member.Scripts.ExecuteIntegerAsync(script, [key], cancellationToken: token);
+            }
+
+            if (shape == "function")
+            {
+                return await member.Functions.ExecuteIntegerAsync(function, [key], cancellationToken: token);
+            }
+
             if (shape == "raw")
             {
                 using var result = await member.ExecuteAsync(RespireCommand.Create("INCR").WithRetryCategory(RespireCommandRetryCategory.WriteAccumulating),
                     [key], cancellationToken: token);
                 return result.AsInteger();
             }
+
             return await member.IncrementAsync(key, cancellationToken: token);
         }
+
         Exception? failure = null;
+
         try
         {
             var result = group is null ? await Increment(client!, deadline.Token) : await group.ExecuteAsync(async (member, token) =>
             {
-                try { return await Increment(member, token); }
+                try
+                {
+                    return await Increment(member, token);
+                }
                 catch (RespireConnectionException)
                 {
                     await fault.RouteReady.Task.WaitAsync(token);
@@ -119,15 +159,27 @@ public class TopologyCommandRetryIntegrationTests
             result.Should().Be(2);
         }
         catch (Exception error) { failure = error; }
-        if (allowDuplicate) failure.Should().BeNull();
-        else failure.Should().BeAssignableTo<RespireConnectionException>();
+
+        if (allowDuplicate)
+        {
+            failure.Should().BeNull();
+        }
+        else
+        {
+            failure.Should().BeAssignableTo<RespireConnectionException>();
+        }
+
         fault.Dropped.Should().Be(1);
         // The old primary is stopped. Observe the actual promoted Redis directly, with
         // retry disabled, rather than deriving its value from fault counters.
         await fault.RouteReady.Task.WaitAsync(deadline.Token);
         await using var promotedObserver = await RespireClient.ConnectAsync(DirectOptions(promoted), deadline.Token);
         (await promotedObserver.GetStringAsync(key, deadline.Token)).Should().Be(allowDuplicate ? "2" : "1");
-        if (allowDuplicate) (group?.ActiveClient.Endpoint ?? client!.Endpoint).Should().Be(promoted);
+
+        if (allowDuplicate)
+        {
+            (group?.ActiveClient.Endpoint ?? client!.Endpoint).Should().Be(promoted);
+        }
     }
 
     [Test]
@@ -151,9 +203,18 @@ public class TopologyCommandRetryIntegrationTests
             await using var newNode = await RespireClient.ConnectAsync(DirectOptions(replacement), token);
             using var sourceId = await oldNode.ExecuteAsync("CLUSTER MYID", [], cancellationToken: token);
             using var targetId = await newNode.ExecuteAsync("CLUSTER MYID", [], cancellationToken: token);
-            using (await newNode.ExecuteAsync("CLUSTER SETSLOT", [slot, "IMPORTING", sourceId.AsString()!], cancellationToken: token)) { }
-            using (await oldNode.ExecuteAsync("CLUSTER SETSLOT", [slot, "MIGRATING", targetId.AsString()!], cancellationToken: token)) { }
-            using (await oldNode.ExecuteAsync("MIGRATE", [replacement.Host, replacement.Port, key, "0", "5000"], cancellationToken: token)) { }
+
+            using (await newNode.ExecuteAsync("CLUSTER SETSLOT", [slot, "IMPORTING", sourceId.AsString()!], cancellationToken: token))
+            {
+            }
+
+            using (await oldNode.ExecuteAsync("CLUSTER SETSLOT", [slot, "MIGRATING", targetId.AsString()!], cancellationToken: token))
+            {
+            }
+
+            using (await oldNode.ExecuteAsync("MIGRATE", [replacement.Host, replacement.Port, key, "0", "5000"], cancellationToken: token))
+            {
+            }
             // Commit ownership on the destination before notifying the source and peers.
             foreach (var endpoint in new[] { replacement, source }.Concat(fixture.DataEndpoints.Where(endpoint => endpoint != replacement && endpoint != source)))
             {
@@ -161,19 +222,35 @@ public class TopologyCommandRetryIntegrationTests
                 using var moved = await node.ExecuteAsync("CLUSTER SETSLOT", [slot, "NODE", targetId.AsString()!], cancellationToken: token);
                 moved.AsString().Should().Be("OK");
             }
+
             (await newNode.GetStringAsync(key, token)).Should().Be("1");
         };
         await using var client = await RespireClient.ConnectAsync(WithFault(fixture.CreateOptions(), fault) with
         {
-            RetryPolicy = new() { InitialBackoff = TimeSpan.Zero,
-                MaxCommandRetryCategory = allowDuplicate ? RespireCommandRetryCategory.WriteAccumulating : RespireCommandRetryCategory.ReadOnly },
+            RetryPolicy = new()
+            {
+                InitialBackoff = TimeSpan.Zero,
+                MaxCommandRetryCategory = allowDuplicate ? RespireCommandRetryCategory.WriteAccumulating : RespireCommandRetryCategory.ReadOnly
+            },
         }, deadline.Token);
         fault.Armed = true;
         Exception? failure = null;
-        try { (await client.IncrementAsync(key, cancellationToken: deadline.Token)).Should().Be(2); }
+
+        try
+        {
+            (await client.IncrementAsync(key, cancellationToken: deadline.Token)).Should().Be(2);
+        }
         catch (Exception error) { failure = error; }
-        if (allowDuplicate) failure.Should().BeNull();
-        else failure.Should().BeAssignableTo<RespireConnectionException>();
+
+        if (allowDuplicate)
+        {
+            failure.Should().BeNull();
+        }
+        else
+        {
+            failure.Should().BeAssignableTo<RespireConnectionException>();
+        }
+
         fault.Dropped.Should().Be(1);
         // Surface migration failures instead of mistaking them for the injected reply loss.
         await fault.RouteReady.Task.WaitAsync(deadline.Token);
@@ -188,18 +265,29 @@ public class TopologyCommandRetryIntegrationTests
 
     private static RespireOptions DirectOptions(RespireEndpoint endpoint) => new()
     {
-        Endpoints = [endpoint], Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
-        Connections = 1, CommandTimeout = TimeSpan.FromSeconds(30), ConnectTimeout = TimeSpan.FromSeconds(2),
+        Endpoints = [endpoint],
+        Protocol = RespireProtocol.Resp2,
+        ThreadPoolMonitoring = false,
+        Connections = 1,
+        CommandTimeout = TimeSpan.FromSeconds(30),
+        ConnectTimeout = TimeSpan.FromSeconds(2),
     };
 
     private static RespireOptions WithFault(RespireOptions options, LostReply fault) => options with
     {
-        Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false, Connections = 1, CommandTimeout = TimeSpan.FromSeconds(30),
+        Protocol = RespireProtocol.Resp2,
+        ThreadPoolMonitoring = false,
+        Connections = 1,
+        CommandTimeout = TimeSpan.FromSeconds(30),
         TestingStreamFactory = async (host, port, token) =>
         {
             if (Volatile.Read(ref fault.Dropped) != 0 && fault.BeforeDrop is not null)
+            {
                 await fault.RouteReady.Task.WaitAsync(token);
+            }
+
             var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
             try
             {
                 await socket.ConnectAsync(host, port, token);

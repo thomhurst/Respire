@@ -48,6 +48,7 @@ public class RespFramingTests
     {
         var cases = new List<long> { long.MinValue, long.MinValue + 1, long.MaxValue - 1, long.MaxValue, 0 };
         long power = 1;
+
         for (var exponent = 0; exponent <= 18; exponent++)
         {
             foreach (var value in new[] { power - 1, power, power + 1 })
@@ -55,10 +56,20 @@ public class RespFramingTests
                 cases.Add(value);
                 cases.Add(-value);
             }
-            if (exponent < 18) power *= 10;
+
+            if (exponent < 18)
+            {
+                power *= 10;
+            }
         }
+
         var random = new Random(1134);
-        for (var index = 0; index < 1_000; index++) cases.Add(random.NextInt64(long.MinValue, long.MaxValue));
+
+        for (var index = 0; index < 1_000; index++)
+        {
+            cases.Add(random.NextInt64(long.MinValue, long.MaxValue));
+        }
+
         foreach (var value in cases)
         {
             var actual = SerializeWithGrowth((buffer) =>
@@ -88,6 +99,7 @@ public class RespFramingTests
         var text = value.ToString(CultureInfo.InvariantCulture);
         var expected = Encoding.ASCII.GetBytes($"${text.Length}\r\n{text}\r\n");
         var buffer = new WriteBuffer(64);
+
         try
         {
             var capacity = buffer.Capacity;
@@ -108,8 +120,12 @@ public class RespFramingTests
         var published = buffer.Count;
         var writer = new RespWriter(buffer, bound);
         writer.WriteBulkInteger(value);
+
         if (buffer.Count != published)
+        {
             throw new InvalidOperationException("Integer serialization published an unfinished frame.");
+        }
+
         writer.Complete();
     }
 
@@ -128,11 +144,13 @@ public class RespFramingTests
         var text = value.ToString(CultureInfo.InvariantCulture);
         var expected = Encoding.ASCII.GetBytes($"${text.Length}\r\n{text}\r\n");
         var buffer = new WriteBuffer(64);
+
         try
         {
             var capacity = buffer.Capacity;
             var prefix = new byte[capacity - remaining];
             Array.Fill(prefix, (byte)0xA5);
+
             foreach (var publishPrefix in new[] { false, true })
             {
                 buffer.Reset();
@@ -148,13 +166,26 @@ public class RespFramingTests
 
     private static void WriteGrowingInteger(WriteBuffer buffer, byte[] prefix, long value, bool publishPrefix)
     {
-        if (publishPrefix) buffer.Append(prefix);
+        if (publishPrefix)
+        {
+            buffer.Append(prefix);
+        }
+
         var published = buffer.Count;
         var writer = new RespWriter(buffer);
-        if (!publishPrefix) writer.WriteRaw(prefix);
+
+        if (!publishPrefix)
+        {
+            writer.WriteRaw(prefix);
+        }
+
         writer.WriteBulkInteger(value);
+
         if (buffer.Count != published)
+        {
             throw new InvalidOperationException("Integer serialization published an unfinished frame.");
+        }
+
         writer.Complete();
     }
 
@@ -165,6 +196,7 @@ public class RespFramingTests
     public async Task WarmedIntegerPathsAllocateNothing(bool reserve)
     {
         var buffer = new WriteBuffer(256);
+
         try
         {
             for (var index = 0; index < 32; index++)
@@ -172,6 +204,7 @@ public class RespFramingTests
                 MeasureIntegerFrames(buffer, reserve, false);
                 MeasureIntegerFrames(buffer, reserve, true);
             }
+
             var measured = AllocationMeasurement.WithoutConcurrentGc(() => (
                 Actual: MeasureIntegerFrames(buffer, reserve, false),
                 Control: MeasureIntegerFrames(buffer, reserve, true)));
@@ -185,6 +218,7 @@ public class RespFramingTests
     private static long MeasureIntegerFrames(WriteBuffer buffer, bool reserve, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
             buffer.Reset();
@@ -194,8 +228,13 @@ public class RespFramingTests
             writer.WriteBulkInteger(long.MaxValue);
             writer.WriteBulkInteger(long.MinValue);
             writer.Complete();
-            if (allocate) GC.KeepAlive(new byte[37]);
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -252,6 +291,7 @@ public class RespFramingTests
     public async Task RollbackAndInvalidSetPreservePriorFrames()
     {
         var buffer = new WriteBuffer(16);
+
         try
         {
             var actual = WriteRollbackControl(buffer);
@@ -271,13 +311,19 @@ public class RespFramingTests
         writer.Complete();
         buffer.TruncateTo(mark);
         writer = new RespWriter(buffer);
+
         try
         {
             new SetCommand("key", "value", RespireExpiry.Persist, RespireSetWhen.Always, false).Write(ref writer);
             throw new InvalidOperationException("Invalid expiry was accepted.");
         }
         catch (ArgumentException) { }
-        if (buffer.Count != mark) throw new InvalidOperationException("Rejected SET published bytes.");
+
+        if (buffer.Count != mark)
+        {
+            throw new InvalidOperationException("Rejected SET published bytes.");
+        }
+
         return buffer.WrittenMemory.ToArray();
     }
 
@@ -287,6 +333,7 @@ public class RespFramingTests
     public async Task WarmedFramingAllocatesNothing()
     {
         var buffer = new WriteBuffer(256);
+
         try
         {
             for (var index = 0; index < 32; index++)
@@ -294,6 +341,7 @@ public class RespFramingTests
                 Measure(buffer, false);
                 Measure(buffer, true);
             }
+
             var measured = AllocationMeasurement.WithoutConcurrentGc(() => (Measure(buffer, false), Measure(buffer, true)));
             await Assert.That(measured.Item1).IsEqualTo(0L);
             await Assert.That(measured.Item2).IsGreaterThanOrEqualTo(37_000L);
@@ -305,6 +353,7 @@ public class RespFramingTests
     private static long Measure(WriteBuffer buffer, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
             buffer.Reset();
@@ -315,22 +364,32 @@ public class RespFramingTests
             CommandOptionFrames.REVValue.WriteTo(ref writer);
             CommandOptionFrames.WITHSCORESValue.WriteTo(ref writer);
             writer.Complete();
-            if (allocate) GC.KeepAlive(new byte[37]);
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
     private static byte[] SerializeWithGrowth(Action<WriteBuffer> write)
     {
         var buffer = new WriteBuffer(16);
+
         try
         {
             var prefix = new byte[buffer.Capacity - 1];
             Array.Fill(prefix, (byte)0xA5);
             buffer.Append(prefix);
             write(buffer);
+
             if (!buffer.WrittenMemory.Span[..prefix.Length].SequenceEqual(prefix))
+            {
                 throw new InvalidOperationException("Buffer growth changed previously written bytes.");
+            }
+
             return buffer.WrittenMemory.Span[prefix.Length..].ToArray();
         }
         finally { buffer.Release(); }

@@ -15,6 +15,7 @@ public class Lz4ValueCodecTests
     public async Task ZeroThresholdHandlesEmptyAndTinyCompressionDestinations()
     {
         var codec = new RespireLz4ValueCodec(new() { MinimumLength = 0 });
+
         for (var length = 0; length <= 32; length++)
         {
             var payload = Enumerable.Range(0, length).Select(value => (byte)value).ToArray();
@@ -40,8 +41,12 @@ public class Lz4ValueCodecTests
     {
         var payload = new byte[8192];
         new Random(525).NextBytes(payload.AsSpan(0, 64));
+
         for (var offset = 64; offset < payload.Length; offset += 64)
+        {
             payload.AsSpan(0, 64).CopyTo(payload.AsSpan(offset));
+        }
+
         var frame = new RespireLz4ValueCodec(level: level).Encode(payload);
         await Assert.That(frame[4]).IsEqualTo((byte)2);
         await Assert.That(frame[5]).IsEqualTo((byte)3);
@@ -54,10 +59,15 @@ public class Lz4ValueCodecTests
     public async Task InvalidLevelsAndOptionsFailAtConstruction()
     {
         foreach (var level in new[] { int.MinValue, -1, 1, 2, 13, int.MaxValue })
+        {
             await Assert.That(() => new RespireLz4ValueCodec(level: level)).Throws<ArgumentOutOfRangeException>();
+        }
+
         foreach (var options in new RespireValueCodecOptions[]
-                 { new() { MinimumLength = -1 }, new() { MaximumDecodedLength = 0 }, new() { MaximumDecodedLength = int.MaxValue } })
+        { new() { MinimumLength = -1 }, new() { MaximumDecodedLength = 0 }, new() { MaximumDecodedLength = int.MaxValue } })
+        {
             await Assert.That(() => new RespireLz4ValueCodec(options)).Throws<ArgumentOutOfRangeException>();
+        }
     }
 
     [Test]
@@ -67,6 +77,7 @@ public class Lz4ValueCodecTests
         byte[] block = [0x1f, 0x41, 1, 0, 7, 0x50, 0x41, 0x41, 0x41, 0x41, 0x41];
         var codec = new RespireLz4ValueCodec();
         await Assert.That(codec.Decode(Frame(block, 32))).IsEquivalentTo(Enumerable.Repeat((byte)'A', 32));
+
         foreach (var invalid in new[] { block[..^1], new byte[] { 0xff }, block.Concat(new byte[] { 0 }).ToArray() })
         {
             var frame = Frame(invalid, 32); // Correct checksum forces block-level validation.
@@ -99,7 +110,9 @@ public class Lz4ValueCodecTests
     private sealed class RejectingWriter : IBufferWriter<byte>
     {
         public void Advance(int count) => throw new InvalidOperationException("Invalid input must not advance the writer.");
+
         public Memory<byte> GetMemory(int sizeHint = 0) => throw new InvalidOperationException("Size validation must precede allocation.");
+
         public Span<byte> GetSpan(int sizeHint = 0) => throw new InvalidOperationException("Size validation must precede allocation.");
     }
 }

@@ -10,14 +10,25 @@ internal sealed class ReadRetirementFailures
 
     internal void Add(Exception error)
     {
-        if (_errors.Contains(error)) return;
-        if (_errors.Count < MaximumRetained) _errors.Add(error);
-        else _omitted++;
+        if (_errors.Contains(error))
+        {
+            return;
+        }
+
+        if (_errors.Count < MaximumRetained)
+        {
+            _errors.Add(error);
+        }
+        else
+        {
+            _omitted++;
+        }
     }
 
     internal List<Exception> Snapshot()
     {
         var errors = _errors.ToList();
+
         if (_omitted > 0)
         {
             // Use a leaf exception so bulk cleanup's AggregateException.Flatten preserves
@@ -27,6 +38,7 @@ internal sealed class ReadRetirementFailures
             summary.Data["OmittedRetirementFailureCount"] = _omitted;
             errors.Add(summary);
         }
+
         return errors;
     }
 }

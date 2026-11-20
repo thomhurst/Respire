@@ -120,7 +120,11 @@ public class PathHashCommandTests
         var firstPage = "*2\r\n$4\r\n"u8.ToArray().Concat(cursor).Concat("\r\n*0\r\n"u8.ToArray()).ToArray();
         await using var server = new FakeRespServer(firstPage, "*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        await foreach (var _ in client.PathHashes.ScanAsync("tree")) { }
+
+        await foreach (var _ in client.PathHashes.ScanAsync("tree"))
+        {
+        }
+
         await Assert.That(server.ReceivedArguments.Count).IsEqualTo(2);
         await Assert.That(server.ReceivedArguments[1][2].AsSpan().SequenceEqual(cursor)).IsTrue();
     }
@@ -134,7 +138,12 @@ public class PathHashCommandTests
             Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n" + entry));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var entries = new List<RespirePathHashEntry>();
-        await foreach (var item in client.PathHashes.ScanAsync("tree", prefix: "/", count: 1)) entries.Add(item);
+
+        await foreach (var item in client.PathHashes.ScanAsync("tree", prefix: "/", count: 1))
+        {
+            entries.Add(item);
+        }
+
         await Assert.That(entries.Count).IsEqualTo(1);
         await Assert.That(entries[0].Fields[0].Value).IsEquivalentTo("v"u8.ToArray());
         await Assert.That(server.ReceivedCommands).IsEquivalentTo([
@@ -147,8 +156,10 @@ public class PathHashCommandTests
         var entry = "*2\r\n" + Path + Fields;
         var firstPage = Encoding.ASCII.GetBytes("*2\r\n$7\r\nopaque!\r\n*1\r\n" + entry);
         var lastPage = "*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray();
+
         byte[]? Pages(string command) => command.StartsWith("PHSCAN tree 0 ", StringComparison.Ordinal) ? firstPage
             : command.StartsWith("PHSCAN tree opaque! ", StringComparison.Ordinal) ? lastPage : null;
+
         var replicaRole = "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray();
         await using var primary = new FakeRespServer(FakeRespServer.OkReply);
         await using var first = new FakeRespServer(replicaRole) { ReplyOverride = (_, command) => Pages(command) };
@@ -156,7 +167,8 @@ public class PathHashCommandTests
 #pragma warning disable RESP010 // One client serves both enumerations against this test's isolated replica topology.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
         });
@@ -164,15 +176,25 @@ public class PathHashCommandTests
         await client.Core.ReadRouter.GetReplicaFromEndpointsAsync([new("127.0.0.1", first.Port)], default, default);
         await client.Core.ReadRouter.GetReplicaFromEndpointsAsync([new("127.0.0.1", second.Port)], default, default);
         var view = client.WithReadFrom(RespireReadFrom.Replica);
+
         for (var i = 0; i < 2; i++)
         {
             var entries = new List<RespirePathHashEntry>();
-            await foreach (var item in view.PathHashes.ScanAsync("tree", count: 1)) entries.Add(item);
+
+            await foreach (var item in view.PathHashes.ScanAsync("tree", count: 1))
+            {
+                entries.Add(item);
+            }
+
             await Assert.That(entries.Count).IsEqualTo(1);
         }
+
         foreach (var replica in new[] { first, second })
+        {
             await Assert.That(replica.ReceivedCommands.Where(command => command.StartsWith("PHSCAN ", StringComparison.Ordinal)))
                 .IsEquivalentTo(["PHSCAN tree 0 COUNT 1 WITHVALUES", "PHSCAN tree opaque! COUNT 1 WITHVALUES"]);
+        }
+
         await Assert.That(primary.ReceivedCommands).IsEmpty();
     }
 
@@ -195,7 +217,10 @@ public class PathHashCommandTests
         using var batch = transaction ? null : view.CreateBatch();
         await using var tx = transaction ? view.CreateTransaction() : null;
         IRespireCommandQueue queue = tx ?? (IRespireCommandQueue)batch!;
-        var key = "tree"u8.ToArray(); var path = "/a"u8.ToArray(); var field = "f"u8.ToArray(); var value = "v"u8.ToArray();
+        var key = "tree"u8.ToArray();
+        var path = "/a"u8.ToArray();
+        var field = "f"u8.ToArray();
+        var value = "v"u8.ToArray();
         var write = queue.PathHashes.Set(key, path, field, value, RespireSetWhen.Exists);
         var read = queue.PathHashes.GetBytes(key, path, field);
         var match = queue.PathHashes.LongestPrefix(key, "/abc");
@@ -204,9 +229,21 @@ public class PathHashCommandTests
         var deleted = queue.PathHashes.Remove(key, path);
         var fieldRead = queue.PathHashes.GetFields(key, path, field);
         var fieldDeleted = queue.PathHashes.Remove(key, path, field);
-        key[0] = (byte)'X'; path[0] = (byte)'X'; field[0] = (byte)'X'; value[0] = (byte)'X';
+        key[0] = (byte)'X';
+        path[0] = (byte)'X';
+        field[0] = (byte)'X';
+        value[0] = (byte)'X';
         cursor[0] = (byte)'X';
-        if (tx is not null) await tx.CommitAsync(); else await batch!.ExecuteAsync();
+
+        if (tx is not null)
+        {
+            await tx.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         await Assert.That(write.Result).IsTrue();
         await Assert.That(read.Result!).IsEquivalentTo("v"u8.ToArray());
         await Assert.That(match.Result!.Path).IsEquivalentTo("/a"u8.ToArray());
@@ -286,10 +323,16 @@ public class PathHashCommandTests
         await Assert.That(async () => await client.PathHashes.PrefixesAsync("tree", "a", count: 0)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.PathHashes.ScanPageAsync("tree", count: 0)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.PathHashes.SetAsync("tree", "a", "f", "v", (RespireSetWhen)100)).Throws<ArgumentOutOfRangeException>();
-        using var canceled = new CancellationTokenSource(); canceled.Cancel();
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
         await Assert.That(async () => await client.PathHashes.CountAsync("tree", canceled.Token)).Throws<OperationCanceledException>();
         var stream = client.PathHashes.ScanAsync("tree", cancellationToken: canceled.Token).GetAsyncEnumerator();
-        await using (stream) await Assert.That(async () => await stream.MoveNextAsync()).Throws<OperationCanceledException>();
+
+        await using (stream)
+        {
+            await Assert.That(async () => await stream.MoveNextAsync()).Throws<OperationCanceledException>();
+        }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 }

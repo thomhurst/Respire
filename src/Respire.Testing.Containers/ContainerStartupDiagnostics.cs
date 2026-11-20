@@ -13,13 +13,17 @@ internal static class ContainerStartupDiagnostics
         // A custom TextWriter can block even in WriteLineAsync. Isolate the write and
         // permit only one outstanding report so a stalled sink cannot accumulate workers.
         using var deadline = new CancellationTokenSource(s_timeout);
+
         try
         {
             await s_reporting.WaitAsync(deadline.Token).ConfigureAwait(false);
             var writer = Console.Error;
             var pending = Task.Run(() =>
             {
-                try { writer.WriteLine(diagnostics); }
+                try
+                {
+                    writer.WriteLine(diagnostics);
+                }
                 catch (Exception) { }
                 finally { s_reporting.Release(); }
             });
@@ -30,7 +34,10 @@ internal static class ContainerStartupDiagnostics
 
     internal static async Task<string> CaptureAsync(IContainer container, int[] ports, TimeProvider? timeProvider = null)
     {
-        if (ports.Length == 0) return "Daemon logs unavailable: no daemon ports were selected.";
+        if (ports.Length == 0)
+        {
+            return "Daemon logs unavailable: no daemon ports were selected.";
+        }
         // Startup's token is commonly already cancelled. Diagnostics get a separate, short
         // deadline; even a transport that ignores cancellation must not delay fixture cleanup.
         using var deadline = new CancellationTokenSource(s_timeout, timeProvider ?? TimeProvider.System);
@@ -44,6 +51,7 @@ internal static class ContainerStartupDiagnostics
     private static async Task<string> CapturePortAsync(IContainer container, int port, int budget, CancellationToken cancellationToken)
     {
         var path = RespireContainerFixture.DaemonLogPath(port);
+
         try
         {
             // One file per command uses portable tail options. Labels are generated here,
@@ -68,13 +76,20 @@ internal static class ContainerStartupDiagnostics
 
     private static async Task ObserveFaultAsync(Task pending)
     {
-        try { await pending.ConfigureAwait(false); }
+        try
+        {
+            await pending.ConfigureAwait(false);
+        }
         catch (Exception) { }
     }
 
     private static string Bound(string text, int maximumCharacters, string label = "")
     {
-        if (text.Length <= maximumCharacters) return text;
+        if (text.Length <= maximumCharacters)
+        {
+            return text;
+        }
+
         var prefix = "[truncated]\n" + label;
         return prefix.Length >= maximumCharacters ? prefix[..maximumCharacters]
             : prefix + text[^(maximumCharacters - prefix.Length)..];

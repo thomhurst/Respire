@@ -22,7 +22,10 @@ internal abstract partial class CompatDatabaseAsync
     public Task<RedisValue[]> SortedSetRangeByValueAsync(RedisKey key, RedisValue min, RedisValue max, Exclude exclude,
         Order order, long skip, long take, CommandFlags flags)
     {
-        if (order is not (Order.Ascending or Order.Descending)) throw new ArgumentOutOfRangeException(nameof(order));
+        if (order is not (Order.Ascending or Order.Descending))
+        {
+            throw new ArgumentOutOfRangeException(nameof(order));
+        }
         // Preserve upstream's bound reversal, including null/open bounds and numeric RedisValues.
         if ((order == Order.Ascending) == (max != default && min.CompareTo(max) > 0))
         {
@@ -34,8 +37,14 @@ internal abstract partial class CompatDatabaseAsync
                 _ => exclude,
             };
         }
+
         RedisValue[] arguments = [Key(key), LexBound(min, exclude, Exclude.Start, order), LexBound(max, exclude, Exclude.Stop, order)];
-        if (skip != 0 || take != -1) arguments = [.. arguments, "LIMIT", skip, take];
+
+        if (skip != 0 || take != -1)
+        {
+            arguments = [.. arguments, "LIMIT", skip, take];
+        }
+
         return Send(order == Order.Ascending ? RespireCommands.SortedSet.ZRANGEBYLEX : RespireCommands.SortedSet.ZREVRANGEBYLEX,
             arguments, flags, Values);
     }
@@ -47,8 +56,16 @@ internal abstract partial class CompatDatabaseAsync
 
     private static RedisValue LexBound(RedisValue value, Exclude exclude, Exclude edge, Order order)
     {
-        if ((exclude & ~Exclude.Both) != 0) throw new ArgumentOutOfRangeException(nameof(exclude));
-        if (value.IsNull) return (edge == Exclude.Start) == (order == Order.Ascending) ? "-" : "+";
+        if ((exclude & ~Exclude.Both) != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(exclude));
+        }
+
+        if (value.IsNull)
+        {
+            return (edge == Exclude.Start) == (order == Order.Ascending) ? "-" : "+";
+        }
+
         byte[] bytes = ((byte[]?)value)!;
         var bound = new byte[bytes.Length + 1];
         bound[0] = (exclude & edge) == 0 ? (byte)'[' : (byte)'(';

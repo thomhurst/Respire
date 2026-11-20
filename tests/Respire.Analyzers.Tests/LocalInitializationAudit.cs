@@ -56,23 +56,37 @@ internal static partial class LocalInitializationAudit
         var roots = configurations.Select(configuration => (configuration.Framework, Root: TestInspectionSource.Parse(source, configuration))).ToArray();
         var lexical = LexicalStackAllocPositions(roots[0].Root).ToHashSet();
         var active = new Dictionary<int, (SyntaxNode Node, List<string> Configurations)>();
+
         foreach (var (name, root) in roots)
         {
             var allocations = root.DescendantNodes().Where(node => node.IsKind(SyntaxKind.StackAllocArrayCreationExpression)
                 || node.IsKind(SyntaxKind.ImplicitStackAllocArrayCreationExpression)).ToArray();
             // New syntax must fail closed if Roslyn recovers the keyword without an allocation node.
             if (root.DescendantTokens().Count(token => token.IsKind(SyntaxKind.StackAllocKeyword)) != allocations.Length)
+            {
                 throw new InvalidOperationException("Unrecognized stackalloc syntax: " + path);
+            }
+
             foreach (var allocation in allocations)
             {
                 var position = allocation.GetFirstToken().SpanStart;
-                if (!active.TryGetValue(position, out var entry)) active[position] = entry = (allocation, []);
+
+                if (!active.TryGetValue(position, out var entry))
+                {
+                    active[position] = entry = (allocation, []);
+                }
+
                 entry.Configurations.Add(name);
             }
         }
+
         var unreachable = lexical.Except(active.Keys).ToArray();
+
         if (unreachable.Length != 0)
+        {
             throw new InvalidOperationException($"stackalloc in a branch no audited configuration compiles: {path} at offsets {string.Join(", ", unreachable)}");
+        }
+
         return active.OrderBy(pair => pair.Key).Select(pair =>
         {
             var node = pair.Value.Node;
@@ -86,10 +100,23 @@ internal static partial class LocalInitializationAudit
     private static IEnumerable<int> LexicalStackAllocPositions(SyntaxNode root)
     {
         foreach (var token in root.DescendantTokens(descendIntoTrivia: true))
-            if (token.IsKind(SyntaxKind.StackAllocKeyword)) yield return token.SpanStart;
+        {
+            if (token.IsKind(SyntaxKind.StackAllocKeyword))
+            {
+                yield return token.SpanStart;
+            }
+        }
+
         foreach (var trivia in root.DescendantTrivia(descendIntoTrivia: true).Where(trivia => trivia.IsKind(SyntaxKind.DisabledTextTrivia)))
+        {
             foreach (var token in SyntaxFactory.ParseTokens(trivia.ToString()))
-                if (token.IsKind(SyntaxKind.StackAllocKeyword)) yield return trivia.SpanStart + token.SpanStart;
+            {
+                if (token.IsKind(SyntaxKind.StackAllocKeyword))
+                {
+                    yield return trivia.SpanStart + token.SpanStart;
+                }
+            }
+        }
     }
 
     /// <summary>The statement whose leading comments carry the site's justification, or the member for expression bodies.</summary>
@@ -105,14 +132,21 @@ internal static partial class LocalInitializationAudit
     private static string Fingerprint(IEnumerable<SyntaxNode> roots, int position)
     {
         var text = new StringBuilder();
+
         foreach (var root in roots)
         {
             var token = root.FindToken(position);
             SyntaxNode member = token.Parent?.AncestorsAndSelf().OfType<MemberDeclarationSyntax>()
                 .FirstOrDefault(node => node is not BaseTypeDeclarationSyntax and not BaseNamespaceDeclarationSyntax) ?? root;
-            foreach (var memberToken in member.DescendantTokens()) text.Append(memberToken.RawKind).Append(':').Append(memberToken.Text).Append('\n');
+
+            foreach (var memberToken in member.DescendantTokens())
+            {
+                text.Append(memberToken.RawKind).Append(':').Append(memberToken.Text).Append('\n');
+            }
+
             text.Append("\u0001\n");
         }
+
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())))[..16];
     }
 
@@ -121,20 +155,35 @@ internal static partial class LocalInitializationAudit
     {
         var comments = new List<string>();
         var lineBreaks = 0;
+
         foreach (var trivia in anchor.GetLeadingTrivia().Reverse())
         {
             // A comment above a framework branch covers the sites inside it.
-            if (trivia.IsKind(SyntaxKind.WhitespaceTrivia) || trivia.IsDirective || trivia.IsKind(SyntaxKind.DisabledTextTrivia)) continue;
+            if (trivia.IsKind(SyntaxKind.WhitespaceTrivia) || trivia.IsDirective || trivia.IsKind(SyntaxKind.DisabledTextTrivia))
+            {
+                continue;
+            }
+
             if (trivia.IsKind(SyntaxKind.EndOfLineTrivia))
             {
                 // A blank line ends the block: the comment must sit directly above the statement.
-                if (++lineBreaks > 1) break;
+                if (++lineBreaks > 1)
+                {
+                    break;
+                }
+
                 continue;
             }
-            if (!trivia.IsKind(SyntaxKind.SingleLineCommentTrivia)) break;
+
+            if (!trivia.IsKind(SyntaxKind.SingleLineCommentTrivia))
+            {
+                break;
+            }
+
             lineBreaks = 0;
             comments.Insert(0, trivia.ToString()[2..].Trim());
         }
+
         var block = string.Join(' ', comments);
         return JustificationPattern().Matches(block).Select(match => new Justification(match.Groups["fingerprint"].Value,
             match.Groups["init"].Value.Trim(), match.Groups["read"].Value.Trim(), match.Groups["failure"].Value.Trim())).ToArray();
@@ -146,6 +195,7 @@ internal static partial class LocalInitializationAudit
         var sites = FindSites(path, source, configurations);
         var errors = new List<string>();
         var parsed = configurations.ToDictionary(configuration => configuration.Framework, configuration => TestInspectionSource.Parse(source, configuration));
+
         SyntaxNode AnchorOf(Site site) => Anchor(parsed[site.Configurations[0]].FindToken(site.Position).Parent!);
         // Positions index the same source text in every configuration, so one statement groups its sites.
         foreach (var group in sites.GroupBy(site => AnchorOf(site).SpanStart))
@@ -153,22 +203,32 @@ internal static partial class LocalInitializationAudit
             var first = group.First();
             var justifications = ReadJustifications(AnchorOf(first));
             var expected = group.Count();
+
             if (justifications.Length != expected)
             {
                 errors.Add($"{first.Location}: {expected} stackalloc site(s) in `{first.Statement}` need {expected} "
                     + $"`// {Marker}[{first.Fingerprint}]: init: ...; read: ...; failure: ...` comment(s) directly above the statement; found {justifications.Length}.");
                 continue;
             }
+
             foreach (var justification in justifications)
             {
                 if (justification.Fingerprint != first.Fingerprint)
+                {
                     errors.Add($"{first.Location}: the enclosing member changed since review; re-audit the site and update its {Marker} fingerprint "
                         + $"{justification.Fingerprint} -> {first.Fingerprint}.");
+                }
+
                 foreach (var (field, value) in new[] { ("init", justification.Initialization), ("read", justification.ReadBoundary), ("failure", justification.FailurePath) })
+                {
                     if (value.Length < MinimumFieldLength)
+                    {
                         errors.Add($"{first.Location}: {Marker} `{field}` justification is missing or too short.");
+                    }
+                }
             }
         }
+
         return errors.ToArray();
     }
 
@@ -180,24 +240,41 @@ internal static partial class LocalInitializationAudit
         var reader = pe.GetMetadataReader();
         var assembly = reader.GetString(reader.GetAssemblyDefinition().Name);
         var sites = new List<CompiledSite>();
+
         foreach (var typeHandle in reader.TypeDefinitions)
         {
             var type = reader.GetTypeDefinition(typeHandle);
+
             foreach (var methodHandle in type.GetMethods())
             {
                 var method = reader.GetMethodDefinition(methodHandle);
-                if (method.RelativeVirtualAddress == 0) continue;
+
+                if (method.RelativeVirtualAddress == 0)
+                {
+                    continue;
+                }
+
                 var body = pe.GetMethodBody(method.RelativeVirtualAddress);
                 var count = CountLocalloc(body.GetILBytes()!);
+
                 if (count != 0)
+                {
                     sites.Add(new CompiledSite(assembly, framework, MethodName(reader, methodHandle), count, body.LocalVariablesInitialized));
+                }
             }
         }
+
         var targets = new List<string>();
+
         foreach (var attributeHandle in reader.CustomAttributes)
         {
             var attribute = reader.GetCustomAttribute(attributeHandle);
-            if (AttributeTypeName(reader, attribute) != "System.Runtime.CompilerServices.SkipLocalsInitAttribute") continue;
+
+            if (AttributeTypeName(reader, attribute) != "System.Runtime.CompilerServices.SkipLocalsInitAttribute")
+            {
+                continue;
+            }
+
             targets.Add(attribute.Parent.Kind switch
             {
                 HandleKind.ModuleDefinition => "module",
@@ -206,6 +283,7 @@ internal static partial class LocalInitializationAudit
                 _ => attribute.Parent.Kind.ToString(),
             });
         }
+
         return (sites.OrderBy(site => site.Method, StringComparer.Ordinal).ToArray(), targets.Order(StringComparer.Ordinal).ToArray());
     }
 
@@ -221,31 +299,48 @@ internal static partial class LocalInitializationAudit
     {
         public string GetArrayType(string elementType, ArrayShape shape)
             => elementType + "[" + shape.Rank + ";" + string.Join(",", shape.Sizes) + ";" + string.Join(",", shape.LowerBounds) + "]";
+
         public string GetByReferenceType(string elementType) => elementType + "&";
+
         public string GetFunctionPointerType(MethodSignature<string> signature)
             => "fn[" + signature.Header.RawValue + ";" + signature.GenericParameterCount + ";" + signature.RequiredParameterCount
                 + "](" + string.Join(",", signature.ParameterTypes) + "):" + signature.ReturnType;
+
         public string GetGenericInstantiation(string genericType, ImmutableArray<string> typeArguments)
             => genericType + "<" + string.Join(",", typeArguments) + ">";
+
         public string GetGenericMethodParameter(object? genericContext, int index) => "!!" + index;
+
         public string GetGenericTypeParameter(object? genericContext, int index) => "!" + index;
+
         public string GetModifiedType(string modifier, string unmodifiedType, bool isRequired)
             => unmodifiedType + (isRequired ? " modreq(" : " modopt(") + modifier + ")";
+
         public string GetPinnedType(string elementType) => elementType + " pinned";
+
         public string GetPointerType(string elementType) => elementType + "*";
+
         public string GetPrimitiveType(PrimitiveTypeCode typeCode) => typeCode.ToString();
+
         public string GetSZArrayType(string elementType) => elementType + "[]";
+
         public string GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte rawTypeKind)
             => TypeName(reader, reader.GetTypeDefinition(handle));
+
         public string GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind)
         {
             var type = reader.GetTypeReference(handle);
             var name = reader.GetString(type.Name);
+
             if (type.ResolutionScope.Kind == HandleKind.TypeReference)
+            {
                 return GetTypeFromReference(reader, (TypeReferenceHandle)type.ResolutionScope, rawTypeKind) + "+" + name;
+            }
+
             var space = reader.GetString(type.Namespace);
             return space.Length == 0 ? name : space + "." + name;
         }
+
         public string GetTypeFromSpecification(MetadataReader reader, object? genericContext, TypeSpecificationHandle handle, byte rawTypeKind)
             => reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
     }
@@ -254,7 +349,12 @@ internal static partial class LocalInitializationAudit
     {
         var name = reader.GetString(type.Name);
         var declaring = type.GetDeclaringType();
-        if (!declaring.IsNil) return TypeName(reader, reader.GetTypeDefinition(declaring)) + "+" + name;
+
+        if (!declaring.IsNil)
+        {
+            return TypeName(reader, reader.GetTypeDefinition(declaring)) + "+" + name;
+        }
+
         var space = reader.GetString(type.Namespace);
         return space.Length == 0 ? name : space + "." + name;
     }
@@ -280,16 +380,24 @@ internal static partial class LocalInitializationAudit
     internal static int CountLocalloc(byte[] il)
     {
         var count = 0;
+
         for (var offset = 0; offset < il.Length;)
         {
             int code = il[offset++];
+
             if (code == 0xFE)
             {
                 code = 0xFE00 | il[offset++];
-                if (code == (int)ILOpCode.Localloc) count++;
+
+                if (code == (int)ILOpCode.Localloc)
+                {
+                    count++;
+                }
             }
+
             offset += OperandSize((ILOpCode)code, il, offset);
         }
+
         return count;
     }
 

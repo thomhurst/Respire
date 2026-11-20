@@ -1,7 +1,7 @@
+using System.Buffers.Binary;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
-using System.Buffers.Binary;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -40,14 +40,25 @@ public partial class RespireHybridCacheCoherenceTests
         {
             Interlocked.Increment(ref calls);
             entered.TrySetResult();
-            if (parked) await release.Task;
+
+            if (parked)
+            {
+                await release.Task;
+            }
+
             return "original";
         }, localOnly, [firstTag]).AsTask();
         Task<string>? second = null;
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            if (!parked) await first.WaitAsync(TimeSpan.FromSeconds(10));
+
+            if (!parked)
+            {
+                await first.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+
             await Assert.That(Coherent(reader).ObservationCount).IsEqualTo(1);
             second = cache.GetOrCreateAsync(key, _ =>
             {
@@ -62,7 +73,11 @@ public partial class RespireHybridCacheCoherenceTests
         {
             release.TrySetResult();
             await first.WaitAsync(TimeSpan.FromSeconds(10));
-            if (second is not null) await second.WaitAsync(TimeSpan.FromSeconds(10));
+
+            if (second is not null)
+            {
+                await second.WaitAsync(TimeSpan.FromSeconds(10));
+            }
         }
     }
 
@@ -100,11 +115,13 @@ public partial class RespireHybridCacheCoherenceTests
         var unrelated = NewKey();
         var codec = new CountingCodec();
         var writerCodec = new CountingCodec();
+
         void Configure(RespireHybridCacheCoherenceOptions options)
         {
             options.TagInvalidationChannel = channel;
             options.TagInvalidationNamespace = InstanceName;
         }
+
         await using var writer = BuildProvider(true, configure: Configure, valueCodec: writerCodec);
         await using var reader = BuildProvider(true, configure: Configure, valueCodec: codec);
         var write = writer.GetRequiredService<HybridCache>();
@@ -125,8 +142,14 @@ public partial class RespireHybridCacheCoherenceTests
         var payload = await backend.GetAsync(affected);
         var writes = writerCodec.Encodes;
 
-        if (multiple) await write.RemoveByTagAsync(["absent:" + tag, tag]);
-        else await write.RemoveByTagAsync(wildcard ? "*" : tag);
+        if (multiple)
+        {
+            await write.RemoveByTagAsync(["absent:" + tag, tag]);
+        }
+        else
+        {
+            await write.RemoveByTagAsync(wildcard ? "*" : tag);
+        }
 
         var factoryCalls = 0;
         var localOnly = new HybridCacheEntryOptions
@@ -143,6 +166,7 @@ public partial class RespireHybridCacheCoherenceTests
 
         await Assert.That(factoryCalls).IsEqualTo(1);
         var decodes = codec.Decodes;
+
         if (!wildcard)
         {
             await Assert.That(await ReadTaggedAsync(read, unrelated, ["unrelated:" + tag])).IsEqualTo("unrelated");
@@ -153,6 +177,7 @@ public partial class RespireHybridCacheCoherenceTests
             await Assert.That(await read.GetOrCreateAsync(unrelated, _ => ValueTask.FromResult("wildcard fresh"), localOnly))
                 .IsEqualTo("wildcard fresh");
         }
+
         var after = await backend.GetAsync(affected);
         await Assert.That(after!.AsSpan().SequenceEqual(payload)).IsTrue();
         await Assert.That(codec.Encodes).IsEqualTo(0);
@@ -205,6 +230,7 @@ public partial class RespireHybridCacheCoherenceTests
             LocalCacheExpiration = TimeSpan.FromHours(1),
             Flags = HybridCacheEntryFlags.DisableDistributedCacheWrite,
         }, [tag]).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -356,13 +382,21 @@ public partial class RespireHybridCacheCoherenceTests
         await using var root = RespireClient.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with { PubSubPrefix = "source-only:" });
         var source = prefixedView ? (RespireClient)root.WithPubSubPrefix("view-only:") : root;
         var provider = BuildProvider(true, source, configure: TagOptions(channel));
+
         try
         {
             await provider.GetRequiredService<HybridCache>().GetOrCreateAsync(NewKey(), _ => ValueTask.FromResult("value"),
                 new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableDistributedCacheWrite });
             await Assert.That((await source.Server.PubSubSubscriberCountsAsync([channel]))[0].Subscribers).IsEqualTo(1);
-            if (synchronous) provider.Dispose();
-            else await provider.DisposeAsync();
+
+            if (synchronous)
+            {
+                provider.Dispose();
+            }
+            else
+            {
+                await provider.DisposeAsync();
+            }
             // Disposal closes the owned PubSub socket. Redis may process that disconnect
             // after a NUMSUB query on the independent, externally registered client.
             await UntilAsync(async () => (await source.Server.PubSubSubscriberCountsAsync([channel]))[0].Subscribers == 0);
@@ -415,7 +449,11 @@ public partial class RespireHybridCacheCoherenceTests
         var username = "tag-subscriber-" + NewKey();
         const string password = "ephemeral-tag-test-password";
         await using var admin = RespireClient.Create(fixture.IsolatedConnectionString);
-        using (var created = await admin.ExecuteAsync("ACL", "SETUSER", username, "on", ">" + password, "~*", "&*", "+@all")) { }
+
+        using (var created = await admin.ExecuteAsync("ACL", "SETUSER", username, "on", ">" + password, "~*", "&*", "+@all"))
+        {
+        }
+
         try
         {
             await using var source = RespireClient.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with
@@ -436,21 +474,42 @@ public partial class RespireHybridCacheCoherenceTests
             var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             Coherent(reader).TrackingClient.ConnectionStateChanged += change =>
             {
-                if (change.ReconnectSource != RespireReconnectSource.PubSub) return;
-                if ((change.SourceState ?? change.State) == RespireConnectionState.Connected) connected.TrySetResult();
-                else disconnected.TrySetResult();
+                if (change.ReconnectSource != RespireReconnectSource.PubSub)
+                {
+                    return;
+                }
+
+                if ((change.SourceState ?? change.State) == RespireConnectionState.Connected)
+                {
+                    connected.TrySetResult();
+                }
+                else
+                {
+                    disconnected.TrySetResult();
+                }
             };
             // Revoke only this owned user's SUBSCRIBE permission so reconnect cannot close
             // the publication gap before the shared marker is changed.
             var gapsBeforeReconnect = Coherent(reader).TagGapsConsumed;
-            using (var denied = await admin.ExecuteAsync("ACL", "SETUSER", username, "-subscribe")) { }
-            using (var killed = await admin.ExecuteAsync("CLIENT", "KILL", "ID", subscription.Id.ToString(System.Globalization.CultureInfo.InvariantCulture))) { }
+
+            using (var denied = await admin.ExecuteAsync("ACL", "SETUSER", username, "-subscribe"))
+            {
+            }
+
+            using (var killed = await admin.ExecuteAsync("CLIENT", "KILL", "ID", subscription.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+            {
+            }
+
             await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await write.RemoveByTagAsync(tag);
             await Assert.That((await admin.Server.PubSubSubscriberCountsAsync([channel]))[0].Subscribers).IsEqualTo(0);
             await Assert.That(await FreshTaggedAsync(read, key, tag, "fresh during gap")).IsEqualTo("fresh during gap");
             await Assert.That(Coherent(reader).ObservationCount).IsEqualTo(0);
-            using (var restored = await admin.ExecuteAsync("ACL", "SETUSER", username, "+subscribe")) { }
+
+            using (var restored = await admin.ExecuteAsync("ACL", "SETUSER", username, "+subscribe"))
+            {
+            }
+
             await connected.Task.WaitAsync(TimeSpan.FromSeconds(10));
             // The resubscribe acknowledgement queues a reconnect Gap message that the tag worker
             // consumes asynchronously, retiring every observation. Read only after the worker has
@@ -507,12 +566,14 @@ public partial class RespireHybridCacheCoherenceTests
         await Assert.That(async () => await cache.RemoveByTagAsync(new string('x', 128))).Throws<ArgumentException>();
         await Assert.That(codec.Encodes).IsEqualTo(0);
         var calls = 0;
+
         async ValueTask<string> Fill(CancellationToken _)
         {
             Interlocked.Increment(ref calls);
             await Task.Yield();
             return "local";
         }
+
         var localOnly = new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableDistributedCacheWrite };
         await cache.GetOrCreateAsync(key, Fill, localOnly, ["one"]);
         await cache.GetOrCreateAsync(key, Fill, localOnly, ["two"]);
@@ -545,12 +606,17 @@ public partial class RespireHybridCacheCoherenceTests
         var removes = 0;
         memory.OnRemove = () =>
         {
-            if (Interlocked.Increment(ref removes) != 1) return;
+            if (Interlocked.Increment(ref removes) != 1)
+            {
+                return;
+            }
+
             entered.TrySetResult();
             release.Task.GetAwaiter().GetResult();
         };
         var protocol = new TagInvalidationMessage(InstanceName, 4096);
         var sender = Guid.NewGuid();
+
         try
         {
             await publisher.PublishAsync(channel, protocol.Encode(sender, "*", DateTimeOffset.UtcNow.AddDays(-1)));
@@ -559,8 +625,11 @@ public partial class RespireHybridCacheCoherenceTests
             // wildcard timestamp does not expire the stored value.
             await Assert.That(await ReadTaggedAsync(read, key, [tag])).IsEqualTo("old");
             await write.RemoveByTagAsync(tag); // authoritative marker changes without a publication
+
             for (var index = 0; index < 4; index++)
+            {
                 await publisher.PublishAsync(channel, protocol.Encode(sender, "buffer:" + index, DateTimeOffset.UtcNow));
+            }
             // The overflow callback must fence L1 on the receive path. The consumer cannot
             // yet see a stream gap or process any queued tag message.
             await UntilAsync(async () => await FreshTaggedAsync(read, key, tag, "fresh before resume") == "fresh before resume");
@@ -578,8 +647,12 @@ public partial class RespireHybridCacheCoherenceTests
         var username = "tag-denied-" + NewKey();
         const string password = "ephemeral-tag-test-password";
         await using var admin = RespireClient.Create(fixture.IsolatedConnectionString);
+
         using (var created = await admin.ExecuteAsync("ACL", "SETUSER", username, "on", ">" + password,
-            "~*", "&*", "+@all", "-subscribe")) { }
+            "~*", "&*", "+@all", "-subscribe"))
+        {
+        }
+
         try
         {
             await using var source = RespireClient.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with

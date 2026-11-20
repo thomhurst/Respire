@@ -56,10 +56,15 @@ internal sealed partial class ListCommands
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string[]?>.Start();
+
         try
         {
             // Both converted routes admit configured hooks before observing caller cancellation.
-            if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
+            if (client.Core.Options.CommandHook is null)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             var (operation, command) = MoveManyCommand(client, source, destination, count, from, to, countMode, order, waitFor);
             return owner.Attach(waitFor.HasValue
                 ? MoveManyBlockingAsync(operation, command, cancellationToken, owner.Observation)
@@ -97,7 +102,12 @@ internal sealed partial class ListCommands
             RespireListMoveOrder.Bulk => "BULK",
             _ => throw new ArgumentOutOfRangeException(nameof(order), order, null),
         };
-        if (waitFor is { } wait) MultiKeyPop.ValidateWait(wait);
+
+        if (waitFor is { } wait)
+        {
+            MultiKeyPop.ValidateWait(wait);
+        }
+
         var operation = waitFor.HasValue ? "BLMOVEM" : "LMOVEM";
         var arguments = new RespireValue[waitFor.HasValue ? 8 : 7];
         MultiKeyPop.CopyPopKeys(client, [source, destination], arguments.AsSpan(0, 2), operation);
@@ -105,7 +115,11 @@ internal sealed partial class ListCommands
         arguments[3] = toToken;
         var index = 4;
         // TimeSpan.Zero maps to 1 ms: Redis interprets a wire timeout of zero as infinite.
-        if (waitFor is { } timeout) arguments[index++] = MultiKeyPop.ToSeconds(timeout);
+        if (waitFor is { } timeout)
+        {
+            arguments[index++] = MultiKeyPop.ToSeconds(timeout);
+        }
+
         arguments[index++] = selector;
         arguments[index++] = count;
         arguments[index] = ordering;

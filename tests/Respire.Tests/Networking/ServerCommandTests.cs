@@ -214,6 +214,7 @@ public class ServerCommandTests
     {
         using var stream = new MemoryStream();
         WriteAscii(stream, $"{type}{count}\r\n");
+
         foreach (var element in elements)
         {
             stream.Write(element);

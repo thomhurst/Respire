@@ -39,7 +39,11 @@ public class ClientCacheStringPublicationTests
         await using var server = CreateServer(FakeRespServer.OkReply);
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("GET ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("GET ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -78,13 +82,18 @@ public class ClientCacheStringPublicationTests
         await using var server = CreateServer(FakeRespServer.OkReply);
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("GET ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("GET ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
         await using var client = await ConnectAsync(server, coalesce: true);
         Task<string?> textRead;
         Task<byte[]?> byteRead;
+
         if (stringOwner)
         {
             textRead = client.GetStringAsync("key").AsTask();
@@ -95,6 +104,7 @@ public class ClientCacheStringPublicationTests
             byteRead = client.GetBytesAsync("key").AsTask();
             textRead = client.GetStringAsync("key").AsTask();
         }
+
         await received.Task.WaitAsync(Limit);
         await server.SendRawAsync("$7\r\né😀x\r\n"u8.ToArray());
         var text = await textRead.WaitAsync(Limit);
@@ -126,7 +136,11 @@ public class ClientCacheStringPublicationTests
         await using var server = CreateServer(FakeRespServer.OkReply);
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("GET ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("GET ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -135,22 +149,45 @@ public class ClientCacheStringPublicationTests
         Task<byte[]?>? byteRead = null;
         Task<Payload?>? customRead = null;
         Task<string?>? stringRead = null;
-        if (producer == 0) byteRead = client.GetBytesAsync("key").AsTask();
-        else if (producer == 1) customRead = client.GetAsync<Payload>("key").AsTask();
-        else stringRead = client.GetStringAsync("key").AsTask();
+
+        if (producer == 0)
+        {
+            byteRead = client.GetBytesAsync("key").AsTask();
+        }
+        else if (producer == 1)
+        {
+            customRead = client.GetAsync<Payload>("key").AsTask();
+        }
+        else
+        {
+            stringRead = client.GetStringAsync("key").AsTask();
+        }
+
         await received.Task.WaitAsync(Limit);
         var first = client.GetStringAsync("key").AsTask();
         var second = client.GetStringAsync("key").AsTask();
         var key = new RespireKey("key");
-        if (rejection == 2) client.Core.ClientCache!.Invalidate(in key);
-        else if (rejection == 3) client.ClientSideCache!.Clear();
+
+        if (rejection == 2)
+        {
+            client.Core.ClientCache!.Invalidate(in key);
+        }
+        else if (rejection == 3)
+        {
+            client.ClientSideCache!.Clear();
+        }
+
         var expected = new string('x', 100);
         await server.SendRawAsync(Encoding.UTF8.GetBytes("$100\r\n" + expected + "\r\n"));
         var text = await first.WaitAsync(Limit);
         await Assert.That(text).IsEqualTo(expected);
         await Assert.That(await second.WaitAsync(Limit)).IsSameReferenceAs(text);
+
         if (stringRead is not null)
+        {
             await Assert.That(await stringRead.WaitAsync(Limit)).IsSameReferenceAs(text);
+        }
+
         if (byteRead is not null)
         {
             var bytes = (await byteRead.WaitAsync(Limit))!;
@@ -158,11 +195,13 @@ public class ClientCacheStringPublicationTests
             bytes[0] = 0;
             await Assert.That(text).IsEqualTo(expected);
         }
+
         if (customRead is not null)
         {
             await Assert.That((await customRead.WaitAsync(Limit))!.Text).IsEqualTo("transformed-1");
             await Assert.That(serializer.Calls).IsEqualTo(1);
         }
+
         await Assert.That(client.Core.ClientCache!.Count).IsEqualTo(0);
         await Assert.That(client.Core.ClientCache.SizeBytes).IsEqualTo(0);
         await Assert.That(client.Core.ClientCache.ActiveSharedReadCount).IsEqualTo(0);
@@ -184,8 +223,16 @@ public class ClientCacheStringPublicationTests
         var binarySize = client.Core.ClientCache!.SizeBytes;
         var text = await client.GetStringAsync("key");
         await Assert.That(text).IsEqualTo("é😀x");
-        if (stringFirst) await Assert.That(text).IsSameReferenceAs(firstString);
-        else await Assert.That(client.Core.ClientCache.SizeBytes).IsGreaterThan(binarySize);
+
+        if (stringFirst)
+        {
+            await Assert.That(text).IsSameReferenceAs(firstString);
+        }
+        else
+        {
+            await Assert.That(client.Core.ClientCache.SizeBytes).IsGreaterThan(binarySize);
+        }
+
         await Assert.That((await client.GetAsync<Payload>("key"))!.Text).IsEqualTo("transformed-2");
         await Assert.That(await client.GetStringAsync("key")).IsSameReferenceAs(text);
         await Assert.That(serializer.Calls).IsEqualTo(2);
@@ -214,8 +261,11 @@ public class ClientCacheStringPublicationTests
         var size = client.Core.ClientCache!.SizeBytes;
         await Assert.That(await client.GetStringAsync("key")).IsSameReferenceAs(first);
         await Assert.That(client.Core.ClientCache.SizeBytes).IsEqualTo(size);
+
         if (kind == 1)
+        {
             await Assert.That((await client.GetBytesAsync("key"))!).IsEquivalentTo(new byte[] { 0xff, 0, 65 });
+        }
     }
 
     [Test]
@@ -231,7 +281,10 @@ public class ClientCacheStringPublicationTests
         server.SuppressReply = command =>
         {
             if (!command.StartsWith("GET ", StringComparison.Ordinal) || Interlocked.Increment(ref reads) != 1)
+            {
                 return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -239,8 +292,16 @@ public class ClientCacheStringPublicationTests
         var first = client.GetStringAsync("key").AsTask();
         await received.Task.WaitAsync(Limit);
         var key = new RespireKey("key");
-        if (clear) client.Core.ClientCache!.Clear();
-        else client.Core.ClientCache!.Invalidate(in key);
+
+        if (clear)
+        {
+            client.Core.ClientCache!.Clear();
+        }
+        else
+        {
+            client.Core.ClientCache!.Invalidate(in key);
+        }
+
         await server.SendRawAsync("$3\r\nold\r\n"u8.ToArray());
         await Assert.That(await first.WaitAsync(Limit)).IsEqualTo("old");
         await Assert.That(client.Core.ClientCache!.Count).IsEqualTo(0);
@@ -262,7 +323,12 @@ public class ClientCacheStringPublicationTests
         var response = RespValue.BulkString("old"u8.ToArray());
         var entry = cache.CompleteRead(in token, in response, allowInsert: true);
         var result = new ClientSideCacheCoordinator.GetReadResult(response, key, token.Store, entry, null);
-        if (retire) cache.Clear();
+
+        if (retire)
+        {
+            cache.Clear();
+        }
+
         token = cache.BeginRead(in key);
         response = RespValue.BulkString("new"u8.ToArray());
         cache.CompleteRead(in token, in response, allowInsert: true, decodedText: "new");
@@ -320,7 +386,11 @@ public class ClientCacheStringPublicationTests
         await using var server = CreateServer(FakeRespServer.OkReply);
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("GET ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("GET ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -328,6 +398,7 @@ public class ClientCacheStringPublicationTests
         using var cancellation = new CancellationTokenSource();
         Task<string?> canceled;
         Task<string?> survivor;
+
         if (cancelOwner)
         {
             canceled = client.GetStringAsync("key", cancellation.Token).AsTask();
@@ -338,8 +409,10 @@ public class ClientCacheStringPublicationTests
             survivor = client.GetStringAsync("key").AsTask();
             canceled = client.GetStringAsync("key", cancellation.Token).AsTask();
         }
+
         await received.Task.WaitAsync(Limit);
         cancellation.Cancel();
+
         try
         {
             await canceled.WaitAsync(Limit);
@@ -349,6 +422,7 @@ public class ClientCacheStringPublicationTests
         {
             await Assert.That(error.CancellationToken).IsEqualTo(cancellation.Token);
         }
+
         await server.SendRawAsync("$7\r\né😀x\r\n"u8.ToArray());
         var text = await survivor.WaitAsync(Limit);
         await Assert.That(text).IsEqualTo("é😀x");
@@ -365,6 +439,7 @@ public class ClientCacheStringPublicationTests
     {
         await using var server = CreateServer("$7\r\né😀x\r\n"u8.ToArray());
         await using var client = await ConnectAsync(server, coalesce);
+
         for (var index = 0; index < 32; index++)
         {
             client.ClientSideCache!.Clear();
@@ -372,6 +447,7 @@ public class ClientCacheStringPublicationTests
             MeasureFirstReuse(client, false);
             MeasureFirstReuse(client, true);
         }
+
         client.ClientSideCache!.Clear();
         var first = await client.GetStringAsync("key");
         var measured = AllocationMeasurement.WithoutConcurrentGc(() => (
@@ -386,11 +462,21 @@ public class ClientCacheStringPublicationTests
     {
         var start = GC.GetAllocatedBytesForCurrentThread();
         var pending = client.GetStringAsync("key");
-        if (!pending.IsCompletedSuccessfully) throw new InvalidOperationException("Expected a local hit.");
+
+        if (!pending.IsCompletedSuccessfully)
+        {
+            throw new InvalidOperationException("Expected a local hit.");
+        }
+
 #pragma warning disable RESP009 // IsCompletedSuccessfully above guarantees this local-hit allocation probe cannot block.
         GC.KeepAlive(pending.Result);
+
 #pragma warning restore RESP009
-        if (control) GC.KeepAlive(new byte[37]);
+        if (control)
+        {
+            GC.KeepAlive(new byte[37]);
+        }
+
         return GC.GetAllocatedBytesForCurrentThread() - start;
     }
 
@@ -403,7 +489,11 @@ public class ClientCacheStringPublicationTests
         await using var server = CreateServer(FakeRespServer.OkReply);
         server.SuppressReply = command =>
         {
-            if (command != "GET key") return false;
+            if (command != "GET key")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -420,7 +510,11 @@ public class ClientCacheStringPublicationTests
                 await connected!.GetStringAsync("gate-probe");
                 connected.ClientSideCache!.Clear();
             }).WaitAsync(Limit).GetAwaiter().GetResult();
-            if (throwFromConverter) throw expectedError;
+
+            if (throwFromConverter)
+            {
+                throw expectedError;
+            }
         });
         await using var client = await ConnectAsync(server, coalesce: true, maxSizeBytes: 80, serializer: serializer);
         connected = client;
@@ -432,12 +526,17 @@ public class ClientCacheStringPublicationTests
         var expected = new string('é', 40_000);
         var payload = Encoding.UTF8.GetBytes(expected);
         await server.SendRawAsync(Encoding.UTF8.GetBytes($"${payload.Length}\r\n{expected}\r\n"));
+
         if (throwFromConverter)
         {
             var error = await Assert.That(async () => await custom.WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
             await Assert.That(error).IsSameReferenceAs(expectedError);
         }
-        else await Assert.That((await custom.WaitAsync(Limit))!.Text).IsEqualTo("transformed-1");
+        else
+        {
+            await Assert.That((await custom.WaitAsync(Limit))!.Text).IsEqualTo("transformed-1");
+        }
+
         var text = await first.WaitAsync(Limit);
         await Assert.That(text).IsEqualTo(expected);
         await Assert.That(await second.WaitAsync(Limit)).IsSameReferenceAs(text);
@@ -462,9 +561,11 @@ public class ClientCacheStringPublicationTests
         long maxSizeBytes = 1_000_000, IRespireSerializer? serializer = null)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
             ClientSideCache = new() { CoalesceConcurrentMisses = coalesce, MaxSizeBytes = maxSizeBytes },
-            CommandTimeout = Limit, ConnectTimeout = Limit,
+            CommandTimeout = Limit,
+            ConnectTimeout = Limit,
             Serializer = serializer ?? new RespireSystemTextJsonSerializer(),
         });
 
@@ -473,14 +574,18 @@ public class ClientCacheStringPublicationTests
     private sealed class TransformingSerializer(Action? onDeserialize = null) : IRespireSerializer
     {
         internal int Calls;
+
         public void Serialize(IBufferWriter<byte> destination, Type type, object? value)
             => throw new NotSupportedException();
+
         public void Serialize<T>(IBufferWriter<byte> destination, T value) => throw new NotSupportedException();
+
         public object Deserialize(Type type, ReadOnlySpan<byte> payload)
         {
             onDeserialize?.Invoke();
             return new Payload("transformed-" + Interlocked.Increment(ref Calls));
         }
+
         public T? Deserialize<T>(ReadOnlySpan<byte> payload) => (T)Deserialize(typeof(T), payload);
     }
 }

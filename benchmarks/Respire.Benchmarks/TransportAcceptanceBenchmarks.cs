@@ -28,9 +28,13 @@ public class TransportAcceptanceBenchmarks
     private ErrorMetricBenchmarkScope _errorMetrics = null!;
 
     [Params(1, 2)]
-    public int Connections { get; set; }
+    public int Connections
+    {
+        get; set;
+    }
 
     internal RespireClient DiagnosticClient => _client;
+
     internal RespireClient DiagnosticCircuitClient => _circuitClient;
 
     [GlobalSetup]
@@ -62,9 +66,18 @@ public class TransportAcceptanceBenchmarks
         await _errorMetrics.WarmAsync(_client, _errorKey);
         ReportMemory("connected");
         // Exercise bounded source reuse and both ordinary write layouts outside the timed region.
-        for (var i = 0; i < 64; i++) await PublicPipeline();
+        for (var i = 0; i < 64; i++)
+        {
+            await PublicPipeline();
+        }
+
         await SmallSet();
-        for (var i = 0; i < Connections * 2; i++) await LargeSet();
+
+        for (var i = 0; i < Connections * 2; i++)
+        {
+            await LargeSet();
+        }
+
         await StreamedSetWithInstantSource();
         await CircuitStreamedGet();
         ReportMemory("after-churn");
@@ -91,20 +104,34 @@ public class TransportAcceptanceBenchmarks
     [Benchmark(OperationsPerInvoke = BatchSize)]
     public async Task Pipeline()
     {
-        for (var i = 0; i < BatchSize; i++) _replies[i] = _multiplexer.SendAsync(Ping);
+        for (var i = 0; i < BatchSize; i++)
+        {
+            _replies[i] = _multiplexer.SendAsync(Ping);
+        }
+
         for (var i = 0; i < BatchSize; i++)
         {
             using var reply = await _replies[i];
+
             if (!reply.AsSpan().SequenceEqual("PONG"u8))
+            {
                 throw new InvalidOperationException("Unexpected pipelined PING response.");
+            }
         }
     }
 
     [Benchmark(OperationsPerInvoke = BatchSize)]
     public async Task PublicPipeline()
     {
-        for (var i = 0; i < BatchSize; i++) _publicReplies[i] = _client.PingAsync();
-        for (var i = 0; i < BatchSize; i++) await _publicReplies[i];
+        for (var i = 0; i < BatchSize; i++)
+        {
+            _publicReplies[i] = _client.PingAsync();
+        }
+
+        for (var i = 0; i < BatchSize; i++)
+        {
+            await _publicReplies[i];
+        }
     }
 
     [Benchmark]
@@ -114,7 +141,12 @@ public class TransportAcceptanceBenchmarks
     {
         using var batch = _client.CreateBatch();
         var last = batch.Increment("transport-acceptance:batch");
-        for (var index = 1; index < count; index++) _ = batch.Increment("transport-acceptance:batch");
+
+        for (var index = 1; index < count; index++)
+        {
+            _ = batch.Increment("transport-acceptance:batch");
+        }
+
         await batch.ExecuteAsync();
         return last.Result;
     }
@@ -123,14 +155,18 @@ public class TransportAcceptanceBenchmarks
     public async Task SmallSet()
     {
         if (!await _client.Strings.SetAsync("transport-acceptance:small", "value"))
+        {
             throw new InvalidOperationException("Unexpected SET response.");
+        }
     }
 
     [Benchmark]
     public async Task LargeSet()
     {
         if (!await _client.Strings.SetAsync("transport-acceptance:large", (RespireValue)_largePayload))
+        {
             throw new InvalidOperationException("Unexpected large SET response.");
+        }
     }
 
     private void ReportMemory(string stage)
@@ -140,12 +176,17 @@ public class TransportAcceptanceBenchmarks
         using var process = Process.GetCurrentProcess();
         Console.WriteLine("TRANSPORT_MEMORY " + JsonSerializer.Serialize(new
         {
-            stage, connections = Connections, pipelineCommands = BatchSize * 64,
+            stage,
+            connections = Connections,
+            pipelineCommands = BatchSize * 64,
             callerPayloadBytes = _largePayload.Length + 2 * StreamPayloadLength,
-            managedBytes = GC.GetTotalMemory(false), heapBytes = info.HeapSizeBytes,
-            fragmentedBytes = info.FragmentedBytes, pohBytes = info.GenerationInfo[4].SizeAfterBytes,
+            managedBytes = GC.GetTotalMemory(false),
+            heapBytes = info.HeapSizeBytes,
+            fragmentedBytes = info.FragmentedBytes,
+            pohBytes = info.GenerationInfo[4].SizeAfterBytes,
             pohFragmentedBytes = info.GenerationInfo[4].FragmentationAfterBytes,
-            workingSetBytes = process.WorkingSet64, privateMemoryBytes = process.PrivateMemorySize64,
+            workingSetBytes = process.WorkingSet64,
+            privateMemoryBytes = process.PrivateMemorySize64,
         }));
     }
 
@@ -153,16 +194,22 @@ public class TransportAcceptanceBenchmarks
     public async Task StreamedSetWithDelayedSource()
     {
         _stream.Position = 0;
+
         if (!await _client.Strings.SetAsync("transport-acceptance:stream", _stream, StreamPayloadLength))
+        {
             throw new InvalidOperationException("Unexpected streamed SET response.");
+        }
     }
 
     [Benchmark]
     public async Task StreamedSetWithInstantSource()
     {
         _instantStream.Position = 0;
+
         if (!await _client.Strings.SetAsync("transport-acceptance:stream", _instantStream, StreamPayloadLength))
+        {
             throw new InvalidOperationException("Unexpected streamed SET response.");
+        }
     }
 
     [Benchmark]
@@ -174,8 +221,17 @@ public class TransportAcceptanceBenchmarks
         var buffer = _largePayload.AsMemory(0, 32 * 1024);
         long total = 0;
         int read;
-        while ((read = await stream.ReadAsync(buffer).ConfigureAwait(false)) != 0) total += read;
-        if (total != StreamPayloadLength) throw new InvalidOperationException("Unexpected streamed GET length.");
+
+        while ((read = await stream.ReadAsync(buffer).ConfigureAwait(false)) != 0)
+        {
+            total += read;
+        }
+
+        if (total != StreamPayloadLength)
+        {
+            throw new InvalidOperationException("Unexpected streamed GET length.");
+        }
+
         return total;
     }
 
@@ -194,8 +250,12 @@ public class TransportAcceptanceBenchmarks
     [Benchmark]
     public async Task<string> ClientServerError()
     {
-        try { await _client.Strings.IncrementAsync(_errorKey); }
+        try
+        {
+            await _client.Strings.IncrementAsync(_errorKey);
+        }
         catch (RespireServerException error) when (error.Code == "ERR") { return error.Code; }
+
         throw new InvalidOperationException("Expected Redis ERR for a non-integer value.");
     }
 }

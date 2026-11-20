@@ -18,14 +18,32 @@ internal sealed class MigrationPlan
         Replacements = replacements;
     }
 
-    internal MethodDeclarationSyntax Method { get; }
-    internal ParameterSyntax Parameter { get; }
-    internal List<InvocationExpressionSyntax> Calls { get; }
-    private Dictionary<SyntaxNode, Func<SyntaxNode, SyntaxNode>> Replacements { get; }
+    internal MethodDeclarationSyntax Method
+    {
+        get;
+    }
+
+    internal ParameterSyntax Parameter
+    {
+        get;
+    }
+
+    internal List<InvocationExpressionSyntax> Calls
+    {
+        get;
+    }
+
+    private Dictionary<SyntaxNode, Func<SyntaxNode, SyntaxNode>> Replacements
+    {
+        get;
+    }
 
     private static bool IsStackExchangeType(INamedTypeSymbol? type, string name)
-        => type?.Name == name && type.ContainingNamespace is { Name: "Redis", ContainingNamespace:
-            { Name: "StackExchange", ContainingNamespace.IsGlobalNamespace: true } }
+        => type?.Name == name && type.ContainingNamespace is
+        {
+            Name: "Redis", ContainingNamespace:
+            { Name: "StackExchange", ContainingNamespace.IsGlobalNamespace: true }
+        }
             && type.ContainingAssembly.Name == "StackExchange.Redis";
 
     internal static bool IsDatabaseCall(IInvocationOperation operation)
@@ -44,33 +62,64 @@ internal sealed class MigrationPlan
             || method.Modifiers.Any(SyntaxKind.PartialKeyword)
             || method.DescendantNodes().Any(n => n is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax)
             || model.GetDeclaredSymbol(method, cancellationToken) is not { } symbol
-            || symbol.IsExtensionMethod || symbol.ExplicitInterfaceImplementations.Length != 0) return null;
+            || symbol.IsExtensionMethod || symbol.ExplicitInterfaceImplementations.Length != 0)
+        {
+            return null;
+        }
 
         var parameters = symbol.Parameters.Where(p => IsStackExchangeType(p.Type as INamedTypeSymbol, "IDatabase")).ToArray();
-        if (parameters.Length != 1 || parameters[0].RefKind != RefKind.None) return null;
+
+        if (parameters.Length != 1 || parameters[0].RefKind != RefKind.None)
+        {
+            return null;
+        }
+
         var parameter = method.ParameterList.Parameters[parameters[0].Ordinal];
-        if (parameter.Default is not null || parameter.AttributeLists.Count != 0) return null;
+
+        if (parameter.Default is not null || parameter.AttributeLists.Count != 0)
+        {
+            return null;
+        }
 
         var calls = new List<InvocationExpressionSyntax>();
         var replacements = new Dictionary<SyntaxNode, Func<SyntaxNode, SyntaxNode>>();
+
         foreach (var reference in method.DescendantNodes().OfType<IdentifierNameSyntax>())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(reference, cancellationToken).Symbol, parameters[0])) continue;
+
+            if (!SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(reference, cancellationToken).Symbol, parameters[0]))
+            {
+                continue;
+            }
+
             if (reference.Parent is not MemberAccessExpressionSyntax member || member.Expression != reference
                 || member.Parent is not InvocationExpressionSyntax invocation
                 || model.GetOperation(invocation, cancellationToken) is not IInvocationOperation operation
                 || !IsDatabaseCall(operation)
-                || !TryRewrite(invocation, operation, model, cancellationToken, out var original, out var replacement)) return null;
+                || !TryRewrite(invocation, operation, model, cancellationToken, out var original, out var replacement))
+            {
+                return null;
+            }
+
             calls.Add(invocation);
             replacements.Add(original!, replacement!);
         }
-        if (calls.Count == 0) return null;
+
+        if (calls.Count == 0)
+        {
+            return null;
+        }
         // Do not let a supported parameter hide diagnostics on other database receivers.
         var callSet = new HashSet<InvocationExpressionSyntax>(calls);
+
         if (method.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(i =>
             model.GetOperation(i, cancellationToken) is IInvocationOperation operation
-            && IsDatabaseCall(operation) && !callSet.Contains(i))) return null;
+            && IsDatabaseCall(operation) && !callSet.Contains(i)))
+        {
+            return null;
+        }
+
         var targetType = parameters[0].NullableAnnotation == NullableAnnotation.Annotated
             ? "global::Respire.RespireClient?" : "global::Respire.RespireClient";
         replacements.Add(parameter.Type!, node => SyntaxFactory.ParseTypeName(targetType).WithTriviaFrom(node));
@@ -86,36 +135,58 @@ internal sealed class MigrationPlan
         original = null;
         replacement = null;
         var name = operation.TargetMethod.Name;
-        if (name is not ("StringGetAsync" or "StringSetAsync" or "KeyExistsAsync" or "KeyDeleteAsync")) return false;
+
+        if (name is not ("StringGetAsync" or "StringSetAsync" or "KeyExistsAsync" or "KeyDeleteAsync"))
+        {
+            return false;
+        }
 
         // Explicit flags, expiry, When, keepTtl and all array overloads require review.
         // Retain the source argument order (including named arguments) to preserve evaluation.
         foreach (var argument in operation.Arguments.Where(a => !a.IsImplicit))
         {
-            if (argument.Parameter?.Name is not ("key" or "value") || argument.Syntax is not ArgumentSyntax syntax) return false;
+            if (argument.Parameter?.Name is not ("key" or "value") || argument.Syntax is not ArgumentSyntax syntax)
+            {
+                return false;
+            }
+
             var type = model.GetTypeInfo(syntax.Expression, cancellationToken).Type;
+
             if (argument.Parameter.Name == "key")
             {
                 if (type?.SpecialType != SpecialType.System_String
-                    || model.GetConstantValue(syntax.Expression, cancellationToken) is { HasValue: true, Value: null }) return false;
+                    || model.GetConstantValue(syntax.Expression, cancellationToken) is { HasValue: true, Value: null })
+                {
+                    return false;
+                }
             }
             else
             {
                 // RedisValue.Null SET deletes a key; Respire rejects a null value. Only a
                 // non-null constant string proves the same write semantics without flow guesses.
                 if (type?.SpecialType != SpecialType.System_String
-                    || model.GetConstantValue(syntax.Expression, cancellationToken) is not { HasValue: true, Value: string }) return false;
+                    || model.GetConstantValue(syntax.Expression, cancellationToken) is not { HasValue: true, Value: string })
+                {
+                    return false;
+                }
             }
         }
 
         ExpressionSyntax awaitedExpression = invocation;
+
         if (invocation.Parent is MemberAccessExpressionSyntax configureMember
             && configureMember.Expression == invocation && configureMember.Name.Identifier.ValueText == "ConfigureAwait"
             && configureMember.Parent is InvocationExpressionSyntax configureInvocation
             && model.GetSymbolInfo(configureInvocation, cancellationToken).Symbol is IMethodSymbol configureSymbol
             && configureSymbol.Parameters.Length == 1 && configureSymbol.Parameters[0].Type.SpecialType == SpecialType.System_Boolean)
+        {
             awaitedExpression = configureInvocation;
-        if (awaitedExpression.Parent is not AwaitExpressionSyntax awaitExpression) return false;
+        }
+
+        if (awaitedExpression.Parent is not AwaitExpressionSyntax awaitExpression)
+        {
+            return false;
+        }
 
         var target = name switch
         {
@@ -125,15 +196,27 @@ internal sealed class MigrationPlan
             _ => "Strings.GetStringAsync",
         };
         SyntaxNode resultNode = awaitExpression;
+
         if (name == "StringGetAsync")
         {
             // An explicit conversion states whether callers want nullable text or raw bytes.
             // RedisValue consumers, IsNull, implicit conversions and Task consumers stay manual.
-            if (awaitExpression.Parent is not CastExpressionSyntax cast) return false;
+            if (awaitExpression.Parent is not CastExpressionSyntax cast)
+            {
+                return false;
+            }
+
             var castType = model.GetTypeInfo(cast.Type, cancellationToken).Type;
+
             if (castType is IArrayTypeSymbol array && array.ElementType.SpecialType == SpecialType.System_Byte && array.Rank == 1)
+            {
                 target = "Strings.GetBytesAsync";
-            else if (castType?.SpecialType != SpecialType.System_String) return false;
+            }
+            else if (castType?.SpecialType != SpecialType.System_String)
+            {
+                return false;
+            }
+
             resultNode = cast;
         }
 
@@ -156,6 +239,7 @@ internal sealed class MigrationPlan
             member.Expression, SyntaxFactory.IdentifierName(names[0]));
         var updatedCall = invocation.WithExpression(member.WithExpression(facet)
             .WithName(SyntaxFactory.IdentifierName(names[1]).WithTriviaFrom(member.Name)));
+
         if (delete)
         {
             // Select the single-key overload even with a C# compiler predating params spans.
@@ -163,8 +247,10 @@ internal sealed class MigrationPlan
                 SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(SyntaxKind.DefaultLiteralExpression))
                     .WithNameColon(SyntaxFactory.NameColon("cancellationToken"))));
         }
+
         var updatedAwait = awaitExpression.ReplaceNode(invocation, updatedCall);
         ExpressionSyntax result = updatedAwait;
+
         if (compareDelete)
         {
             // StackExchange single-key DEL is bool; Respire returns the number deleted.
@@ -173,6 +259,7 @@ internal sealed class MigrationPlan
                     SyntaxKind.NotEqualsExpression, updatedAwait,
                     SyntaxFactory.LiteralExpression(SyntaxKind.NumericLiteralExpression, SyntaxFactory.Literal(0))));
         }
+
         return result.WithTriviaFrom(rewritten);
     }
 }

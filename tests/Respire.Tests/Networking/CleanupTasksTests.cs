@@ -13,7 +13,12 @@ public class CleanupTasksTests
     public async Task RepeatedFailureKeepsIdentity(bool aggregate)
     {
         Exception failure = new InvalidOperationException("cleanup");
-        if (aggregate) failure = new AggregateException(failure);
+
+        if (aggregate)
+        {
+            failure = new AggregateException(failure);
+        }
+
         try
         {
             await CleanupTasks.WhenAllAsync([Task.FromException(failure), Task.FromException(failure)]);

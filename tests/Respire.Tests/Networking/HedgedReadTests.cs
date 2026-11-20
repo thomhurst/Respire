@@ -14,6 +14,7 @@ namespace Respire.Tests.Networking;
 public class HedgedReadTests
 {
     private static readonly byte[] ReplicaRole = "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray();
+
     private static byte[] Bulk(string value) => Encoding.ASCII.GetBytes($"${value.Length}\r\n{value}\r\n");
 
     private static FakeRespServer Replica(bool holdReads = false) => new(16, FakeRespServer.OkReply)
@@ -34,13 +35,19 @@ public class HedgedReadTests
     private static byte[] SlotReply(int primary, params int[] replicas)
     {
         var text = new StringBuilder($"*1\r\n*{3 + replicas.Length}\r\n:0\r\n:16383\r\n");
-        foreach (var port in new[] { primary }.Concat(replicas)) text.Append($"*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
+
+        foreach (var port in new[] { primary }.Concat(replicas))
+        {
+            text.Append($"*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
+        }
+
         return Encoding.ASCII.GetBytes(text.ToString());
     }
 
     private static RespireOptions Options(FakeRespServer primary, params FakeRespServer[] replicas) => new()
     {
-        Protocol = RespireProtocol.Resp2, Connections = 1,
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
         Endpoints = [new("127.0.0.1", primary.Port)],
         ReplicaEndpoints = replicas.Select(replica => new RespireEndpoint("127.0.0.1", replica.Port)).ToArray(),
         ReadFrom = RespireReadFrom.ReplicaPreferred,
@@ -49,7 +56,10 @@ public class HedgedReadTests
 
     private static async Task WaitForCommandAsync(FakeRespServer server, string command, CancellationToken token)
     {
-        while (!server.ReceivedCommands.Contains(command)) await Task.Delay(1, token);
+        while (!server.ReceivedCommands.Contains(command))
+        {
+            await Task.Delay(1, token);
+        }
     }
 
     [Test]
@@ -63,7 +73,8 @@ public class HedgedReadTests
 #pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             ReadFrom = RespireReadFrom.ReplicaPreferred,
@@ -147,13 +158,18 @@ public class HedgedReadTests
         listener.InstrumentPublished = (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.read.hedge.sent")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             foreach (var tag in tags)
             {
-                if (tag.Key != "server.port" || !Equals(tag.Value, primary.Port)) continue;
+                if (tag.Key != "server.port" || !Equals(tag.Value, primary.Port))
+                {
+                    continue;
+                }
                 // This callback runs after selection, immediately before the optional send.
                 client.Core.Multiplexer.GetConnection().StopAcceptingCommands();
                 selected.TrySetResult();
@@ -163,7 +179,10 @@ public class HedgedReadTests
         // Also run this regression with TUNIT_DISABLE_HTML_REPORTER=true: TUnit's automatic
         // ActivityListener otherwise wraps synchronous send errors in an instrumented ValueTask.
         if (string.Equals(Environment.GetEnvironmentVariable("TUNIT_DISABLE_HTML_REPORTER"), "true", StringComparison.OrdinalIgnoreCase))
+        {
             await Assert.That(RespireTelemetry.IsEnabled).IsFalse();
+        }
+
         var read = client.GetStringAsync("held", deadline.Token).AsTask();
         await selected.Task.WaitAsync(deadline.Token);
         await replica.SendRawAsync(Bulk("original"));
@@ -242,14 +261,17 @@ public class HedgedReadTests
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var pause = GC.GetTotalPauseDuration();
         var phases = new ConcurrentQueue<string>();
+
         void Record(string phase) => phases.Enqueue(FormattableString.Invariant(
             $"{System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:F3} ms: {phase}; gc-pause-delta-ms={(GC.GetTotalPauseDuration() - pause).TotalMilliseconds:F3}"));
+
         var reply = replica.ReplyOverride!;
         replica.ReplyOverride = (id, command) =>
         {
             Record($"replica reply prepared for {command}");
             return reply(id, command);
         };
+
         try
         {
             Record("blocker starting (includes ROLE validation)");
@@ -295,7 +317,9 @@ public class HedgedReadTests
 #pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary) with
         {
-            Protocol = protocol, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = protocol,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
         });
 #pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -326,7 +350,8 @@ public class HedgedReadTests
 #pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary) with
         {
-            UseCluster = true, ClusterTopologyRefreshInterval = null,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(200), MaximumExtraLoadPercent = 100 },
         });
 #pragma warning restore RESP010
@@ -397,6 +422,7 @@ public class HedgedReadTests
 #pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var read = client.GetStringAsync("key", deadline.Token).AsTask();
+
         try
         {
             await WaitForCommandAsync(primary, "AUTH secret", deadline.Token);
@@ -420,26 +446,52 @@ public class HedgedReadTests
         listener.InstrumentPublished = (instrument, current) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name.StartsWith("respire.read.hedge.", StringComparison.Ordinal))
+            {
                 current.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((instrument, count, tags, _) =>
         {
-            if (!Matches(tags)) return;
+            if (!Matches(tags))
+            {
+                return;
+            }
+
             counts.AddOrUpdate(instrument.Name, count, (_, current) => current + count);
-            if (throwing) throw new InvalidOperationException("Injected hedge metric failure.");
+
+            if (throwing)
+            {
+                throw new InvalidOperationException("Injected hedge metric failure.");
+            }
         });
         listener.SetMeasurementEventCallback<double>((_, load, tags, _) =>
         {
-            if (!Matches(tags)) return;
+            if (!Matches(tags))
+            {
+                return;
+            }
+
             loads.Enqueue(load);
-            if (throwing) throw new InvalidOperationException("Injected extra-load metric failure.");
+
+            if (throwing)
+            {
+                throw new InvalidOperationException("Injected extra-load metric failure.");
+            }
         });
+
         bool Matches(ReadOnlySpan<KeyValuePair<string, object?>> tags)
         {
             foreach (var tag in tags)
-                if (tag.Key == "server.port" && (Equals(tag.Value, primary.Port) || Equals(tag.Value, replica.Port))) return true;
+            {
+                if (tag.Key == "server.port" && (Equals(tag.Value, primary.Port) || Equals(tag.Value, replica.Port)))
+                {
+                    return true;
+                }
+            }
+
             return false;
         }
+
 #pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica) with
         {
@@ -467,7 +519,12 @@ public class HedgedReadTests
     public async Task WireLoadBudgetIsSharedAcrossViews(bool delayPrimaryReply)
     {
         await using var primary = new FakeRespServer(Bulk("primary"));
-        if (delayPrimaryReply) primary.DelayCommand("GET ", 100);
+
+        if (delayPrimaryReply)
+        {
+            primary.DelayCommand("GET ", 100);
+        }
+
         await using var replica = Replica(holdReads: true);
 #pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica) with
@@ -479,9 +536,12 @@ public class HedgedReadTests
         const int count = 200;
         var reads = Enumerable.Range(0, count).Select(index =>
             client.WithKeyPrefix($"view-{index}:").GetStringAsync("key", deadline.Token).AsTask()).ToArray();
+
         while (replica.ReceivedCommands.Count(command => command.StartsWith("GET ", StringComparison.Ordinal)) != count
             || !primary.ReceivedCommands.Any(command => command.StartsWith("GET ", StringComparison.Ordinal)))
+        {
             await Task.Delay(1, deadline.Token);
+        }
         // Receiving a hedge command does not mean its reply has reached the caller. Keep
         // originals blocked until a hedge actually wins, including with a delayed reply.
         var firstCompleted = await Task.WhenAny(reads).WaitAsync(deadline.Token);
@@ -508,11 +568,13 @@ public class HedgedReadTests
         });
 #pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         for (var i = 0; i < 4; i++)
         {
             await client.SetAsync("excluded", "value", cancellationToken: deadline.Token);
             await client.WithReadFrom(RespireReadFrom.Primary).GetStringAsync("excluded", deadline.Token);
         }
+
         var first = client.GetStringAsync("first", deadline.Token).AsTask();
         await WaitForCommandAsync(replica, "GET first", deadline.Token);
         await Task.Delay(50, deadline.Token);
@@ -524,8 +586,12 @@ public class HedgedReadTests
         // These fast strict-Replica reads cannot hedge with only one replica, but they are
         // eligible logical reads and must contribute to the shared denominator.
         replica.SuppressReply = null;
+
         for (var i = 0; i < 2; i++)
+        {
             await client.WithReadFrom(RespireReadFrom.Replica).GetStringAsync("warm", deadline.Token);
+        }
+
         replica.SuppressReply = command => command.StartsWith("GET ", StringComparison.Ordinal);
         await Assert.That(await client.GetStringAsync("fourth", deadline.Token)).IsEqualTo("primary");
         await replica.SendRawAsync(Bulk("loser"));
@@ -543,9 +609,11 @@ public class HedgedReadTests
 #pragma warning disable RESP010 // This hedge scenario owns and disposes its client to isolate competing replies and the hedge budget.
         await using var client = RespireClient.Create(Options(primary, replica) with
         {
-            ReadFrom = RespireReadFrom.Replica, UseCluster = cluster,
+            ReadFrom = RespireReadFrom.Replica,
+            UseCluster = cluster,
             ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
-            ClusterTopologyRefreshInterval = null, MaxInflightCommands = 1,
+            ClusterTopologyRefreshInterval = null,
+            MaxInflightCommands = 1,
         });
 #pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -564,16 +632,21 @@ public class HedgedReadTests
         await Assert.That(serializations.Value).IsEqualTo(1);
     }
 
-    private sealed class SerializationCount { internal int Value; }
+    private sealed class SerializationCount
+    {
+        internal int Value;
+    }
 
     private readonly struct SerializationProbe(SerializationCount count) : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.Read;
+
         public bool TryGetClusterSlot(out int slot)
         {
             slot = ClusterHash.GetSlot("probe");
             return true;
         }
+
         public void Write(ref RespWriter writer)
         {
             Interlocked.Increment(ref count.Value);
@@ -636,6 +709,7 @@ public class HedgedReadTests
         await using var primary = new FakeRespServer(Bulk("primary"));
         await using var replica = Replica(holdReads: true);
         var client = RespireClient.Create(Options(primary, replica));
+
         try
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -652,7 +726,8 @@ public class HedgedReadTests
     public async Task InvalidPercentagesAreRejected(int percentage)
         => await Assert.That(() => RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], HedgedReads = new() { MaximumExtraLoadPercent = percentage },
+            Endpoints = [new("127.0.0.1", 1)],
+            HedgedReads = new() { MaximumExtraLoadPercent = percentage },
         })).Throws<RespireConfigurationException>();
 
     [Test]
@@ -662,7 +737,8 @@ public class HedgedReadTests
     public async Task InvalidDelaysAreRejected(int milliseconds)
         => await Assert.That(() => RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(milliseconds) },
+            Endpoints = [new("127.0.0.1", 1)],
+            HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(milliseconds) },
         })).Throws<RespireConfigurationException>();
 
     [Test]
@@ -677,7 +753,11 @@ public class HedgedReadTests
         Parallel.For(0, 10_000, _ =>
         {
             budget.RecordRead();
-            if (budget.TrySpend()) Interlocked.Increment(ref hedges);
+
+            if (budget.TrySpend())
+            {
+                Interlocked.Increment(ref hedges);
+            }
         });
         await Assert.That(hedges).IsLessThanOrEqualTo(100 * percentage);
         await Assert.That(hedges).IsGreaterThan(0);
@@ -688,10 +768,20 @@ public class HedgedReadTests
     {
         var budget = new HedgedReadBudget(5);
         await Assert.That(budget.TrySpend()).IsFalse();
-        for (var i = 0; i < 10_000; i++) budget.RecordRead();
+
+        for (var i = 0; i < 10_000; i++)
+        {
+            budget.RecordRead();
+        }
+
         await Assert.That(budget.TrySpend()).IsTrue();
         await Assert.That(budget.TrySpend()).IsFalse();
-        for (var i = 0; i < 19; i++) budget.RecordRead();
+
+        for (var i = 0; i < 19; i++)
+        {
+            budget.RecordRead();
+        }
+
         await Assert.That(budget.TrySpend()).IsFalse();
         budget.RecordRead();
         await Assert.That(budget.TrySpend()).IsTrue();

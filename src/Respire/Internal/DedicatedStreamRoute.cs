@@ -46,7 +46,11 @@ internal readonly struct DedicatedStreamRoute
 
     internal bool IsCurrent()
     {
-        if (_core is not null) return _core.IsDedicatedStreamRouteCurrent(_pool!, _connection!);
+        if (_core is not null)
+        {
+            return _core.IsDedicatedStreamRouteCurrent(_pool!, _connection!);
+        }
+
         return _cluster is null || !_pool!.IsStopping && _pool.IsMovingPublicationCurrent
             && _cluster.IsDedicatedStreamRouteCurrent(_slot, _version, _connection!, _asking ? _pool : null);
     }

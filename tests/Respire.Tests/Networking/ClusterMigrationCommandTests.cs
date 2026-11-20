@@ -41,8 +41,12 @@ public class ClusterMigrationCommandTests
         ];
         var actual = target.ReceivedArguments.Where(row => Encoding.UTF8.GetString(row[0]) == "CLUSTER").ToArray();
         await Assert.That(actual.Length).IsEqualTo(expected.Length);
+
         for (var index = 0; index < actual.Length; index++)
+        {
             await Assert.That(actual[index].Select(bytes => Encoding.UTF8.GetString(bytes))).IsEquivalentTo(expected[index], CollectionOrdering.Matching);
+        }
+
         await Assert.That(seed.ConnectionAccepted.IsCompleted).IsFalse();
     }
 
@@ -84,17 +88,27 @@ public class ClusterMigrationCommandTests
         {
             switch (shape)
             {
-                case "cancel-id": await node.ClusterMigrationCancelAsync(" "); break;
-                case "status-id": await node.ClusterMigrationStatusAsync((string)null!); break;
-                case "scope": await node.ClusterMigrationStatusAsync((RespireClusterMigrationStatusScope)100); break;
+                case "cancel-id":
+                    await node.ClusterMigrationCancelAsync(" ");
+                    break;
+                case "status-id":
+                    await node.ClusterMigrationStatusAsync((string)null!);
+                    break;
+                case "scope":
+                    await node.ClusterMigrationStatusAsync((RespireClusterMigrationStatusScope)100);
+                    break;
                 default:
                     RespireClusterSlotRange[] ranges = shape switch
                     {
-                        "empty" => [], "negative" => [new(-1, 0)], "large" => [new(0, 16384)],
-                        "reverse" => [new(2, 1)], "overlap" => [new(0, 2), new(2, 3)],
+                        "empty" => [],
+                        "negative" => [new(-1, 0)],
+                        "large" => [new(0, 16384)],
+                        "reverse" => [new(2, 1)],
+                        "overlap" => [new(0, 2), new(2, 3)],
                         _ => Enumerable.Range(0, 16384).Select(slot => new RespireClusterSlotRange(slot, slot)).ToArray(),
                     };
-                    await node.ClusterMigrationImportAsync(ranges); break;
+                    await node.ClusterMigrationImportAsync(ranges);
+                    break;
             }
         }).Throws<ArgumentException>();
         await Assert.That(target.ConnectionAccepted.IsCompleted).IsFalse();
@@ -127,7 +141,8 @@ public class ClusterMigrationCommandTests
 #pragma warning disable RESP010 // Test-owned client isolates migration command routing and admin admission on the scripted nodes.
         await using var client = RespireClient.Create(Options(target.Port, 2));
 #pragma warning restore RESP010
-        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
         var node = client.Server.OnNode(new("127.0.0.1", target.Port));
         await Assert.That(async () => await Mutate(node, operation, cancellation.Token)).Throws<OperationCanceledException>();
         await Assert.That(target.ConnectionAccepted.IsCompleted).IsFalse();
@@ -168,8 +183,13 @@ public class ClusterMigrationCommandTests
         var received = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         target.SuppressReply = command =>
         {
-            if (!command.StartsWith("CLUSTER MIGRATION", StringComparison.Ordinal)) return false;
-            received.TrySetResult(target.ReceivedConnectionIds[^1]); return true;
+            if (!command.StartsWith("CLUSTER MIGRATION", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            received.TrySetResult(target.ReceivedConnectionIds[^1]);
+            return true;
         };
 #pragma warning disable RESP010 // Test-owned client isolates migration command routing and admin admission on the scripted nodes.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port, 2) with { ClientSideCache = new() });
@@ -181,6 +201,7 @@ public class ClusterMigrationCommandTests
         var connection = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(cache.Count).IsEqualTo(0);
         Insert();
+
         if (cancel)
         {
             cancellation.Cancel();
@@ -191,6 +212,7 @@ public class ClusterMigrationCommandTests
             await target.SendRawAsync(operation == "import" ? "$4\r\ntask\r\n"u8.ToArray() : ":1\r\n"u8.ToArray(), connection);
             await pending;
         }
+
         await Assert.That(cache.Count).IsEqualTo(0);
         await target.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("CLUSTER MIGRATION", StringComparison.Ordinal))).IsEqualTo(1);
@@ -208,15 +230,23 @@ public class ClusterMigrationCommandTests
     {
         switch (operation)
         {
-            case "import": await node.ClusterMigrationImportAsync([new(0, 1)], token); break;
-            case "cancel": await node.ClusterMigrationCancelAsync("task", token); break;
-            default: await node.ClusterMigrationCancelAllAsync(token); break;
+            case "import":
+                await node.ClusterMigrationImportAsync([new(0, 1)], token);
+                break;
+            case "cancel":
+                await node.ClusterMigrationCancelAsync("task", token);
+                break;
+            default:
+                await node.ClusterMigrationCancelAllAsync(token);
+                break;
         }
     }
 
     private static RespireOptions Options(int port, int protocol) => new()
     {
-        Endpoints = [new("127.0.0.1", port)], AllowAdmin = true, Connections = 1,
+        Endpoints = [new("127.0.0.1", port)],
+        AllowAdmin = true,
+        Connections = 1,
         Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
     };

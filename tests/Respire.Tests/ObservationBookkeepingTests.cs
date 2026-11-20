@@ -90,7 +90,11 @@ public class ObservationBookkeepingTests
         using var owner = new Owner(legacy);
         using var capture = new Capture(internallyHandled =>
         {
-            if (internallyHandled) return;
+            if (internallyHandled)
+            {
+                return;
+            }
+
             owner.Handled(new IOException("late logical retry"));
             owner.Retry();
             owner.SetAttempts(99);
@@ -111,41 +115,84 @@ public class ObservationBookkeepingTests
         internal Owner(bool legacy)
         {
             _legacy = legacy;
-            if (legacy) _observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-            else _owner = ErrorObservation.StartFailure();
+
+            if (legacy)
+            {
+                _observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+            }
+            else
+            {
+                _owner = ErrorObservation.StartFailure();
+            }
         }
 
         internal int Attempts => _legacy ? _observation.Attempts : _owner.RetryAttempts;
+
         internal void SetAttempts(int attempts)
         {
-            if (_legacy) _observation.SetAttempts(attempts);
-            else _owner.SetRetryAttempts(attempts);
+            if (_legacy)
+            {
+                _observation.SetAttempts(attempts);
+            }
+            else
+            {
+                _owner.SetRetryAttempts(attempts);
+            }
         }
+
         internal void Handled(Exception error)
         {
-            if (_legacy) _observation.Handled(error);
+            if (_legacy)
+            {
+                _observation.Handled(error);
+            }
             else
             {
                 var borrower = _owner.Borrow();
                 var nested = borrower.Borrow();
-                try { nested.RecordHandled(error); }
+
+                try
+                {
+                    nested.RecordHandled(error);
+                }
                 finally { nested.Complete(); borrower.Complete(); }
             }
         }
+
         internal void Retry()
         {
-            if (_legacy) _observation.Retry();
-            else _owner.RecordRetry();
+            if (_legacy)
+            {
+                _observation.Retry();
+            }
+            else
+            {
+                _owner.RecordRetry();
+            }
         }
+
         internal void Final(Exception error)
         {
-            if (_legacy) _observation.Final(error);
-            else _owner.PublishFinal(error);
+            if (_legacy)
+            {
+                _observation.Final(error);
+            }
+            else
+            {
+                _owner.PublishFinal(error);
+            }
         }
+
         public void Dispose()
         {
-            if (_legacy) _observation.Dispose();
-            else _owner.Complete();
+            if (_legacy)
+            {
+                _observation.Dispose();
+            }
+            else
+            {
+                _owner.Complete();
+            }
         }
     }
 
@@ -159,17 +206,28 @@ public class ObservationBookkeepingTests
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (ReferenceEquals(instrument.Meter, RespireTelemetry.Meter) && instrument.Name == "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
                 var internallyHandled = false;
                 var attempts = 0;
+
                 foreach (var tag in tags)
                 {
-                    if (tag.Key == "redis.client.errors.internal") internallyHandled = (bool)tag.Value!;
-                    if (tag.Key == "redis.client.operation.retry_attempts") attempts = (int)tag.Value!;
+                    if (tag.Key == "redis.client.errors.internal")
+                    {
+                        internallyHandled = (bool)tag.Value!;
+                    }
+
+                    if (tag.Key == "redis.client.operation.retry_attempts")
+                    {
+                        attempts = (int)tag.Value!;
+                    }
                 }
+
                 Items.Enqueue((internallyHandled, attempts));
                 onMeasurement?.Invoke(internallyHandled);
             });

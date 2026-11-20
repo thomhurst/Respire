@@ -19,32 +19,50 @@ public class BatchReplyGateTests
 #pragma warning disable RESP010 // Test-owned client keeps reply gating and repeated batch ordering on these sockets.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = connections,
-            Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = connections,
+            Protocol = RespireProtocol.Resp2,
+            ThreadPoolMonitoring = false,
             TestingStreamFactory = gate.ConnectAsync,
         });
+
 #pragma warning restore RESP010
         for (var iteration = 0; iteration < 3; iteration++)
         {
             using var batch = client.CreateBatch();
             var pending = new RespirePending<long>[count];
-            for (var i = 0; i < count; i++) pending[i] = batch.Increment($"gate:{i}");
+
+            for (var i = 0; i < count; i++)
+            {
+                pending[i] = batch.Increment($"gate:{i}");
+            }
+
             var received = gate.Arm();
             var executing = batch.ExecuteAsync();
+
             try
             {
                 await received.WaitAsync(TimeSpan.FromSeconds(5));
                 await Assert.That(executing.IsCompleted).IsFalse();
             }
             finally { gate.Release(); }
+
             var result = await executing;
             await Assert.That(result.Count).IsEqualTo(count);
-            for (var i = 0; i < count; i++) await Assert.That(pending[i].Result).IsEqualTo(42L);
+
+            for (var i = 0; i < count; i++)
+            {
+                await Assert.That(pending[i].Result).IsEqualTo(42L);
+            }
         }
+
         var commands = server.ReceivedCommands.Where(command => command.StartsWith("INCR gate:")).ToArray();
         await Assert.That(commands.Length).IsEqualTo(3 * count);
+
         for (var i = 0; i < commands.Length; i++)
+        {
             await Assert.That(commands[i]).IsEqualTo($"INCR gate:{i % count}");
+        }
     }
 
     [Test]
@@ -55,8 +73,10 @@ public class BatchReplyGateTests
 #pragma warning disable RESP010 // Test-owned client is disposed while a gated batch reply is outstanding.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-            Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            ThreadPoolMonitoring = false,
             TestingStreamFactory = gate.ConnectAsync,
         });
 #pragma warning restore RESP010
@@ -64,6 +84,7 @@ public class BatchReplyGateTests
         _ = batch.Increment("gate:dispose");
         var received = gate.Arm();
         var executing = batch.TryExecuteAsync();
+
         try
         {
             await received.WaitAsync(TimeSpan.FromSeconds(5));

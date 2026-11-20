@@ -29,7 +29,9 @@ public class OwnerExceptionEndpointTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 2,
+            Endpoints = [new("127.0.0.1", server.Port)],
             ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
         });
 #pragma warning restore RESP010
@@ -90,7 +92,8 @@ public class OwnerExceptionEndpointTests
 #pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [primary], ReplicaEndpoints = replicas.ToList(),
+            Endpoints = [primary],
+            ReplicaEndpoints = replicas.ToList(),
             TestingStreamFactory = (_, _, _) => ValueTask.FromException<Stream>(new IOException("unavailable")),
         });
 #pragma warning restore RESP010
@@ -100,11 +103,13 @@ public class OwnerExceptionEndpointTests
         router.FailedReplicaCooldown = TimeSpan.FromMinutes(1);
         var error = await Assert.That(async () => await router.SelectAsync(
             RespireReadFrom.Nearest, default, observation: default, attempt: attempt)).Throws<RespireException>();
+
         if (!additionalCandidates)
         {
             await Assert.That(error).IsSameReferenceAs(original);
             return;
         }
+
         var aggregate = (AggregateException)error!.InnerException!;
         await Assert.That(aggregate.InnerExceptions.Count).IsEqualTo(3);
         await Assert.That(aggregate.InnerExceptions[0]).IsSameReferenceAs(original);
@@ -119,7 +124,8 @@ public class OwnerExceptionEndpointTests
         var timeouts = new List<RespireTimeoutException>();
         var options = new RespireOptions
         {
-            UseCluster = true, Endpoints = [source, new("fallback.example"), new("unused.example")],
+            UseCluster = true,
+            Endpoints = [source, new("fallback.example"), new("unused.example")],
             ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
             TestingStreamFactory = (_, _, _) =>
             {
@@ -136,7 +142,10 @@ public class OwnerExceptionEndpointTests
         var disconnected = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         router.DiscoveryStateChanged += change =>
         {
-            if (change.ReconnectExhausted) disconnected.TrySetResult(change);
+            if (change.ReconnectExhausted)
+            {
+                disconnected.TrySetResult(change);
+            }
         };
         var error = await Assert.That(async () => await router.EnsureConnectedAsync(
             default, discovery: null, observation: default)).ThrowsExactly<RespireReconnectLimitException>();
@@ -186,7 +195,9 @@ public class OwnerExceptionEndpointTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var first = await Assert.That(async () => await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync())
@@ -255,6 +266,7 @@ public class OwnerExceptionEndpointTests
         var rejections = Causes(error).OfType<RespireServerException>().ToArray();
         await Assert.That(rejections.Length).IsEqualTo(candidates);
         await Assert.That(rejections.Select(cause => cause.Endpoint!.Value)).IsEquivalentTo(endpoints);
+
         foreach (var rejection in rejections)
         {
             await Assert.That(rejection.CommandName).IsEqualTo("ROLE");
@@ -329,8 +341,11 @@ public class OwnerExceptionEndpointTests
         RespireEndpoint[] endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)];
         var error = await Assert.That(async () => await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-            Endpoints = endpoints, Password = "test-only",
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = endpoints,
+            Password = "test-only",
         })).ThrowsExactly<RespireConnectionException>();
         await Assert.That(error!.Endpoint).IsNull();
         await Assert.That(Causes(error).OfType<RespireException>()
@@ -347,7 +362,8 @@ public class OwnerExceptionEndpointTests
         await using var first = new FakeRespServer { SuppressReply = _ => true };
         await using var second = new FakeRespServer { SuppressReply = _ => true };
         var options = (candidates == 1 ? SentinelOptions(first.Port) : SentinelOptions(first.Port, second.Port))
-            with { CommandTimeout = TimeSpan.FromMilliseconds(100) };
+            with
+        { CommandTimeout = TimeSpan.FromMilliseconds(100) };
         var error = await Assert.That(async () => await SentinelResolver.ResolveAndConnectPrimaryAsync<object>(
             options, static (_, _, _) => throw new InvalidOperationException("No primary was reported."), default))
             .ThrowsExactly<RespireTimeoutException>();
@@ -369,6 +385,7 @@ public class OwnerExceptionEndpointTests
 #pragma warning restore RESP010
         var round = new ClusterRouter.DiscoveryRound(client.Core.Cluster!, new() { MaxAttempts = 0 });
         var rejection = new RespireServerException("MOVED 1 target.example:6380", "GET") { Endpoint = source };
+
         try
         {
             round.Rejected(source, rejection);
@@ -395,7 +412,13 @@ public class OwnerExceptionEndpointTests
         yield return error;
         var causes = error is AggregateException aggregate ? aggregate.InnerExceptions
             : error.InnerException is { } inner ? (IEnumerable<Exception>)[inner] : [];
+
         foreach (var cause in causes)
-            foreach (var nested in Causes(cause)) yield return nested;
+        {
+            foreach (var nested in Causes(cause))
+            {
+                yield return nested;
+            }
+        }
     }
 }

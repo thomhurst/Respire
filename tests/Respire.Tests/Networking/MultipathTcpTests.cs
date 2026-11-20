@@ -101,8 +101,11 @@ public class MultipathTcpTests
         var buffer = new byte[1];
         await accepted.ReceiveAsync(buffer, SocketFlags.None, timeout.Token);
         await Assert.That(buffer[0]).IsEqualTo((byte)42);
+
         if (!OperatingSystem.IsLinux())
+        {
             await Assert.That(logger.Messages.Single()).Contains("only supported on Linux");
+        }
     }
 
     [Test]
@@ -110,8 +113,16 @@ public class MultipathTcpTests
     [Arguments(AddressFamily.InterNetworkV6)]
     public async Task LinuxSocketUsesNativeProtocolOrDocumentedFallback(AddressFamily family)
     {
-        if (!OperatingSystem.IsLinux()) return;
-        if (family == AddressFamily.InterNetworkV6 && !Socket.OSSupportsIPv6) return;
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        if (family == AddressFamily.InterNetworkV6 && !Socket.OSSupportsIPv6)
+        {
+            return;
+        }
+
         var logger = new CaptureLogger();
         using var socket = MultipathTcpSocket.CreateLinux(family, logger);
         var protocol = new byte[4];
@@ -125,7 +136,11 @@ public class MultipathTcpTests
     [Test]
     public async Task LinuxRetriesNextAddressWithFreshNativeSocket()
     {
-        if (!OperatingSystem.IsLinux()) return;
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -150,7 +165,11 @@ public class MultipathTcpTests
     [Test]
     public async Task UnixSocketTakesPrecedence()
     {
-        if (!Socket.OSSupportsUnixDomainSockets) return;
+        if (!Socket.OSSupportsUnixDomainSockets)
+        {
+            return;
+        }
+
         var logger = new CaptureLogger();
         var path = Path.Combine(Path.GetTempPath(), $"mptcp-{Guid.NewGuid():N}.sock");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -168,12 +187,14 @@ public class MultipathTcpTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var logger = new CaptureLogger();
         var options = new RespireOptions { EnableMultipathTcp = true, Protocol = RespireProtocol.Resp2, LibraryName = null };
+
         await using (var connection = await RespireConnection.ConnectAsync("localhost", server.Port,
             options.ToConnectionOptions(), logger, timeout.Token))
         {
             using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token);
             await Assert.That(reply.AsString()).IsEqualTo("PONG");
         }
+
         logger.Messages.Clear();
         var calls = 0;
         options = options with
@@ -182,6 +203,7 @@ public class MultipathTcpTests
             {
                 calls++;
                 var client = new TcpClient();
+
                 try
                 {
                     await client.ConnectAsync(IPAddress.Loopback, server.Port, token);
@@ -198,13 +220,22 @@ public class MultipathTcpTests
 
     private sealed class CaptureLogger : ILogger
     {
-        internal List<string> Messages { get; } = [];
+        internal List<string> Messages
+        {
+            get;
+        } = [];
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (eventId.Id == 143) Messages.Add(formatter(state, exception));
+            if (eventId.Id == 143)
+            {
+                Messages.Add(formatter(state, exception));
+            }
         }
     }
 }

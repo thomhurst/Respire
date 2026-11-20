@@ -18,6 +18,7 @@ public class ImmediateRetryStateTests
         var command = new Cmd1(Verbs.StrLen, (RespireValue)key);
         command.TryGetClusterSlot(out var expectedSlot);
         var state = ImmediateRetryState.Rent(in command);
+
         try
         {
             var frame = state.Frame.ToArray();
@@ -61,6 +62,7 @@ public class ImmediateRetryStateTests
         await Assert.That(() => ImmediateRetryState.Rent(new FailingCommand())).ThrowsExactly<InvalidOperationException>();
         var command = new Cmd1(Verbs.StrLen, "key");
         var state = ImmediateRetryState.Rent(in command);
+
         try
         {
             await Assert.That(System.Text.Encoding.ASCII.GetString(state.Frame.Span))
@@ -74,6 +76,7 @@ public class ImmediateRetryStateTests
     {
         var first = ImmediateRetryState.Rent(new Cmd1(Verbs.StrLen, "first"));
         var second = ImmediateRetryState.Rent(new Cmd1(Verbs.StrLen, "second"));
+
         try
         {
             first.IsRetry = true;
@@ -106,12 +109,18 @@ public class ImmediateRetryStateTests
     private static long Measure(in Cmd1 command, bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1000; i++)
         {
             var state = ImmediateRetryState.Rent(in command);
             state.Return();
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -119,17 +128,24 @@ public class ImmediateRetryStateTests
     private static long MeasurePreviousSnapshot(in Cmd1 command)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1000; i++)
         {
             var frame = SnapshotCommand.Create(in command, captureCacheMetadata: false);
-            if (frame.GetWriteSizeHint() == 0) throw new InvalidOperationException("Missing snapshot.");
+
+            if (frame.GetWriteSizeHint() == 0)
+            {
+                throw new InvalidOperationException("Missing snapshot.");
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
     private readonly struct FailingCommand : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer)
         {
             writer.WriteRaw("secret"u8);

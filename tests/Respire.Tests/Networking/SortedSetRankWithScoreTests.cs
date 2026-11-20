@@ -26,6 +26,7 @@ public class SortedSetRankWithScoreTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var view = client.WithKeyPrefix("tenant:");
         RespireSortedSetRankResult? first, last, absent;
+
         if (mode == "immediate")
         {
             first = await view.SortedSets.RankWithScoreAsync("key", "member");
@@ -40,10 +41,19 @@ public class SortedSetRankWithScoreTests
             var a = queue.SortedSets.RankWithScore("key", "member");
             var d = queue.SortedSets.RankWithScore("key", "member", descending: true);
             var n = queue.SortedSets.RankWithScore("key", "missing");
-            if (mode == "batch") await batch.ExecuteAsync();
-            else await transaction.CommitAsync();
+
+            if (mode == "batch")
+            {
+                await batch.ExecuteAsync();
+            }
+            else
+            {
+                await transaction.CommitAsync();
+            }
+
             (first, last, absent) = (a.Result, d.Result, n.Result);
         }
+
         await Assert.That(first).IsEqualTo(new RespireSortedSetRankResult(2, 2.5));
         await Assert.That(last).IsEqualTo(new RespireSortedSetRankResult(0, 2.5));
         await Assert.That(absent).IsNull();
@@ -62,8 +72,12 @@ public class SortedSetRankWithScoreTests
             RespValue.Array(RespValue.BulkString("1"), RespValue.Double(2)),
             RespValue.Array(RespValue.Integer(1), RespValue.BulkString("2.5junk")),
         ];
+
         foreach (var value in malformed)
+        {
             await Assert.That(() => SortedSetCommands.ParseRankWithScore(value)).Throws<RespireProtocolException>();
+        }
+
         var infinity = RespValue.Array(RespValue.Integer(0), RespValue.BulkString("inf"));
         await Assert.That(SortedSetCommands.ParseRankWithScore(infinity)).IsEqualTo(new RespireSortedSetRankResult(0, double.PositiveInfinity));
     }

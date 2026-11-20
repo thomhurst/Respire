@@ -40,25 +40,41 @@ public sealed partial class RespireFusionCacheBackplane : IFusionCacheBackplane,
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentException.ThrowIfNullOrEmpty(options.ChannelName);
+
         if (options.ConnectHandler is null && options.ConnectHandlerAsync is null)
+        {
             throw new ArgumentException("A connection handler is required.", nameof(options));
+        }
+
         if (options.IncomingMessageHandler is null && options.IncomingMessageHandlerAsync is null)
+        {
             throw new ArgumentException("An incoming message handler is required.", nameof(options));
+        }
 
         SubscriptionState state;
         await _lifecycle.WaitAsync().ConfigureAwait(false);
+
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_retiring?.Cleanup.IsCompletedSuccessfully == true) _retiring = null;
+
+            if (_retiring?.Cleanup.IsCompletedSuccessfully == true)
+            {
+                _retiring = null;
+            }
+
             if (_state is not null || _retiring is not null)
+            {
                 throw new InvalidOperationException("Complete unsubscribe before reusing a backplane instance.");
+            }
+
             var subscription = await _client.SubscribeAsync(options.ChannelName, _subscriptionOptions, default).ConfigureAwait(false);
             state = new SubscriptionState(subscription, options, synchronousCallbacks);
             Volatile.Write(ref _state, state);
             state.Consumer = Task.Run(() => ConsumeAsync(state));
         }
         finally { _lifecycle.Release(); }
+
         await state.Started.Task.ConfigureAwait(false);
     }
 
@@ -73,9 +89,19 @@ public sealed partial class RespireFusionCacheBackplane : IFusionCacheBackplane,
         ArgumentNullException.ThrowIfNull(options);
         token.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
-        if (!message.IsValid()) throw new ArgumentException("The backplane message is invalid.", nameof(message));
+
+        if (!message.IsValid())
+        {
+            throw new ArgumentException("The backplane message is invalid.", nameof(message));
+        }
+
         var state = Volatile.Read(ref _state) ?? throw new InvalidOperationException("Subscribe before publishing.");
-        if (state.Subscription.IsDisposed) throw new InvalidOperationException("The backplane subscription has ended.");
+
+        if (state.Subscription.IsDisposed)
+        {
+            throw new InvalidOperationException("The backplane subscription has ended.");
+        }
+
         await _client.PublishAsync(state.Options.ChannelName!, BackplaneMessage.ToByteArray(message), token).ConfigureAwait(false);
     }
 
@@ -95,65 +121,113 @@ public sealed partial class RespireFusionCacheBackplane : IFusionCacheBackplane,
     {
         SubscriptionState? retiring;
         await _lifecycle.WaitAsync().ConfigureAwait(false);
+
         try
         {
-            if (disposing) Volatile.Write(ref _disposed, true);
-            if (_retiring?.Cleanup.IsCompletedSuccessfully == true) _retiring = null;
+            if (disposing)
+            {
+                Volatile.Write(ref _disposed, true);
+            }
+
+            if (_retiring?.Cleanup.IsCompletedSuccessfully == true)
+            {
+                _retiring = null;
+            }
+
             var state = Interlocked.Exchange(ref _state, null);
+
             if (state is not null)
             {
                 state.BeginStop();
                 _retiring = state;
             }
+
             retiring = _retiring;
         }
         finally { _lifecycle.Release(); }
         // Do not hold the lifecycle gate while an application callback completes or re-enters us.
         // Re-entrant callbacks await transport shutdown only; other callers also join that callback.
         if (retiring is not null)
+        {
             await (CurrentCallback.Value == retiring ? retiring.TransportStop : retiring.Cleanup).ConfigureAwait(false);
+        }
     }
 
     private async Task ConsumeAsync(SubscriptionState state)
     {
         CurrentCallback.Value = state;
+
         try
         {
             if (!state.Stop.IsCancellationRequested)
+            {
                 await NotifyConnectionAsync(state, reconnect: false).ConfigureAwait(false);
+            }
+
             state.Started.TrySetResult();
+
             await foreach (var item in state.Subscription.WithCancellation(state.Stop.Token).ConfigureAwait(false))
             {
-                if (state.Stop.IsCancellationRequested) break;
+                if (state.Stop.IsCancellationRequested)
+                {
+                    break;
+                }
+
                 if (item.Kind == RespireMessageKind.Gap)
                 {
-                    if (_logger is { } gapLogger) LogGap(gapLogger, item.Gap!.Reason);
+                    if (_logger is { } gapLogger)
+                    {
+                        LogGap(gapLogger, item.Gap!.Reason);
+                    }
+
                     await NotifyConnectionAsync(state, reconnect: true).ConfigureAwait(false);
                     continue;
                 }
+
                 try
                 {
                     var message = BackplaneMessage.FromByteArray(item.Payload.ToArray());
-                    if (!message.IsValid()) throw new FormatException("Invalid FusionCache backplane message.");
+
+                    if (!message.IsValid())
+                    {
+                        throw new FormatException("Invalid FusionCache backplane message.");
+                    }
+
                     if (state.SynchronousCallbacks && state.Options.IncomingMessageHandler is { } synchronous)
+                    {
                         synchronous(message);
+                    }
                     else if (state.Options.IncomingMessageHandlerAsync is { } asynchronous)
+                    {
                         await asynchronous(message).ConfigureAwait(false);
-                    else state.Options.IncomingMessageHandler!(message);
+                    }
+                    else
+                    {
+                        state.Options.IncomingMessageHandler!(message);
+                    }
                 }
                 catch (Exception error)
                 {
-                    if (_logger is { } callbackLogger) LogMessageFailure(callbackLogger, error);
+                    if (_logger is { } callbackLogger)
+                    {
+                        LogMessageFailure(callbackLogger, error);
+                    }
                 }
             }
+
             if (!state.Stop.IsCancellationRequested && _logger is { } endLogger)
+            {
                 LogSubscriptionEnded(endLogger, await state.Subscription.Completion.ConfigureAwait(false));
+            }
         }
         catch (OperationCanceledException) when (state.Stop.IsCancellationRequested) { }
         catch (ObjectDisposedException) when (state.Stop.IsCancellationRequested) { }
         catch (Exception error)
         {
-            if (_logger is { } consumerLogger) LogConsumerFailure(consumerLogger, error);
+            if (_logger is { } consumerLogger)
+            {
+                LogConsumerFailure(consumerLogger, error);
+            }
         }
         finally
         {
@@ -167,13 +241,26 @@ public sealed partial class RespireFusionCacheBackplane : IFusionCacheBackplane,
         try
         {
             var info = new BackplaneConnectionInfo(reconnect);
-            if (state.SynchronousCallbacks && state.Options.ConnectHandler is { } synchronous) synchronous(info);
-            else if (state.Options.ConnectHandlerAsync is { } asynchronous) await asynchronous(info).ConfigureAwait(false);
-            else state.Options.ConnectHandler!(info);
+
+            if (state.SynchronousCallbacks && state.Options.ConnectHandler is { } synchronous)
+            {
+                synchronous(info);
+            }
+            else if (state.Options.ConnectHandlerAsync is { } asynchronous)
+            {
+                await asynchronous(info).ConfigureAwait(false);
+            }
+            else
+            {
+                state.Options.ConnectHandler!(info);
+            }
         }
         catch (Exception error)
         {
-            if (_logger is { } connectionLogger) LogConnectionFailure(connectionLogger, error);
+            if (_logger is { } connectionLogger)
+            {
+                LogConnectionFailure(connectionLogger, error);
+            }
         }
     }
 
@@ -194,14 +281,45 @@ public sealed partial class RespireFusionCacheBackplane : IFusionCacheBackplane,
 
     private sealed class SubscriptionState(RespireSubscription subscription, BackplaneSubscriptionOptions options, bool synchronousCallbacks)
     {
-        internal RespireSubscription Subscription { get; } = subscription;
-        internal BackplaneSubscriptionOptions Options { get; } = options;
-        internal bool SynchronousCallbacks { get; } = synchronousCallbacks;
-        internal CancellationTokenSource Stop { get; } = new();
-        internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal Task Consumer { get; set; } = Task.CompletedTask;
-        internal Task TransportStop { get; private set; } = Task.CompletedTask;
-        internal Task Cleanup { get; private set; } = Task.CompletedTask;
+        internal RespireSubscription Subscription
+        {
+            get;
+        } = subscription;
+
+        internal BackplaneSubscriptionOptions Options
+        {
+            get;
+        } = options;
+
+        internal bool SynchronousCallbacks
+        {
+            get;
+        } = synchronousCallbacks;
+
+        internal CancellationTokenSource Stop
+        {
+            get;
+        } = new();
+
+        internal TaskCompletionSource Started
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal Task Consumer
+        {
+            get; set;
+        } = Task.CompletedTask;
+
+        internal Task TransportStop
+        {
+            get; private set;
+        } = Task.CompletedTask;
+
+        internal Task Cleanup
+        {
+            get; private set;
+        } = Task.CompletedTask;
 
         internal void BeginStop()
         {
@@ -217,10 +335,16 @@ public sealed partial class RespireFusionCacheBackplane : IFusionCacheBackplane,
 
         private async Task FinishStopAsync()
         {
-            try { await TransportStop.ConfigureAwait(false); }
+            try
+            {
+                await TransportStop.ConfigureAwait(false);
+            }
             finally
             {
-                try { await Consumer.ConfigureAwait(false); }
+                try
+                {
+                    await Consumer.ConfigureAwait(false);
+                }
                 finally { Stop.Dispose(); }
             }
         }

@@ -22,6 +22,7 @@ internal sealed class ClientCore : IAsyncDisposable
     private readonly Dictionary<RespireEndpoint, RespireConnectionState> _clusterSubscriptionStates = [];
     private SubscriptionHub? _hub;
     private readonly DedicatedPoolLedger _ownedPools;
+
     internal DedicatedPoolLedger OwnedPools => _ownedPools;
     private Dictionary<(bool Sharded, RespireEndpoint Endpoint), RespireConnectionState>? _subscriptionStates;
     private RespireEndpoint? _regularSubscriptionEndpoint;
@@ -29,7 +30,9 @@ internal sealed class ClientCore : IAsyncDisposable
     private IDisposable? _threadPoolMonitor;
 
     private readonly RespireConnectionMultiplexer _multiplexer;
+
     public RespireConnectionMultiplexer Multiplexer => Sentinel?.Current?.Multiplexer ?? _multiplexer;
+
     internal RespireEndpoint Endpoint
     {
         get
@@ -53,22 +56,37 @@ internal sealed class ClientCore : IAsyncDisposable
     internal readonly HedgedReadBudget? HedgedReads;
     public readonly ILogger? Logger;
     private CorrectionCoordinator? _corrections;
+
     internal CorrectionCoordinator Corrections
     {
-        get { lock (_hubGate) return _corrections ??= new(this); }
+        get
+        {
+            lock (_hubGate)
+            {
+                return _corrections ??= new(this);
+            }
+        }
     }
     private CoordinationCleanupQueue? _coordinationCleanupQueue;
+
     internal CoordinationCleanupQueue? CoordinationCleanupQueue
     {
         get
         {
             lock (_hubGate)
+            {
                 return Disposed ? null : _coordinationCleanupQueue ??= new();
+            }
         }
     }
     private DedicatedConnectionPool _dedicatedPool;
+
     // Tests own this override's lifetime and restore it before disposing the client.
-    internal DedicatedConnectionPool? TestingDedicatedPoolOverride { get; set; }
+    internal DedicatedConnectionPool? TestingDedicatedPoolOverride
+    {
+        get; set;
+    }
+
     public DedicatedConnectionPool DedicatedPool => TestingDedicatedPoolOverride ?? Sentinel?.Current?.Pool ?? Volatile.Read(ref _dedicatedPool);
     internal readonly SentinelRouter? Sentinel;
     internal readonly ReadEndpointRouter ReadRouter;
@@ -89,7 +107,10 @@ internal sealed class ClientCore : IAsyncDisposable
     private readonly CancellationTokenSource _lifetime = new();
 
     // Test seam: advance whole-unit backoff only after observing the preceding wire phase.
-    internal TimeProvider UnitRetryClock { get; set; } = TimeProvider.System;
+    internal TimeProvider UnitRetryClock
+    {
+        get; set;
+    } = TimeProvider.System;
 
     /// <summary>
     /// Waits for a whole-unit retry backoff. Disposal ends the wait at once with
@@ -97,9 +118,17 @@ internal sealed class ClientCore : IAsyncDisposable
     /// </summary>
     internal async Task DelayUnitRetryAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
-        if (delay == TimeSpan.Zero) return;
+        if (delay == TimeSpan.Zero)
+        {
+            return;
+        }
+
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
-        try { await Task.Delay(delay, UnitRetryClock, linked.Token).ConfigureAwait(false); }
+
+        try
+        {
+            await Task.Delay(delay, UnitRetryClock, linked.Token).ConfigureAwait(false);
+        }
         catch (OperationCanceledException)
         {
             // Report the caller's own token, as an unlinked delay would.
@@ -114,6 +143,7 @@ internal sealed class ClientCore : IAsyncDisposable
         Options = options;
         var retries = options.RetryPolicy is { } retry ? new CommandRetryPolicy(retry) : null;
         CommandRetries = retries is { IsEnabled: true } ? retries : null;
+
         if (CommandRetries is not null && options.RetryPolicy is { } policy
             && (policy.RetryableErrors & RespireRetryableErrors.ConnectionLoss) != 0
             && policy.MaxCommandRetryCategory is RespireCommandRetryCategory.WriteChecked
@@ -122,13 +152,18 @@ internal sealed class ClientCore : IAsyncDisposable
         {
             _streamProducerId = options.StreamProducerId ?? "respire-" + Guid.NewGuid().ToString("N");
         }
+
         HedgedReads = options.HedgedReads is { } hedging ? new(hedging.MaximumExtraLoadPercent) : null;
         Logger = options.CreateLogger("Respire.RespireClient");
+
         if (Logger is not null)
         {
             foreach (var key in options.IgnoredConnectionStringOptions)
+            {
                 ConfigurationLog.IgnoredConnectionStringOption(Logger, key);
+            }
         }
+
         var endpoint = options.PrimaryEndpoint;
         ClientCache = options.ClientSideCache is { } cacheOptions
             ? new ClientSideCacheCoordinator(cacheOptions)
@@ -158,6 +193,7 @@ internal sealed class ClientCore : IAsyncDisposable
             ? new ClusterRouter(options, Multiplexer, connectionOptions, circuits: Circuits)
             : null;
         Sentinel = string.IsNullOrWhiteSpace(options.SentinelPrimaryName) ? null : new SentinelRouter(this);
+
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged += NotifyCommandStateChanged;
@@ -172,8 +208,11 @@ internal sealed class ClientCore : IAsyncDisposable
             Multiplexer.SlotStateChanged += NotifyCommandStateChanged;
             Multiplexer.MovingHandoffPublished += RefreshStandaloneDedicatedPool;
         }
+
         if (options.ThreadPoolMonitoring)
+        {
             _threadPoolMonitor = ThreadPoolMonitor.Acquire(options.CreateLogger("Respire.ThreadPool"), options.ThreadPoolWarningThreshold);
+        }
     }
 
     public ValueTask EnsureConnectedAsync(CancellationToken cancellationToken, bool observeEstablishmentErrors = false)
@@ -199,6 +238,7 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         var generation = Sentinel.Current;
+
         if (generation is not null && generation.Multiplexer.IsInitialized
             && generation.Multiplexer.IsConnected && !generation.IsRetired)
         {
@@ -222,8 +262,15 @@ internal sealed class ClientCore : IAsyncDisposable
     /// </remarks>
     internal ValueTask EnsureConnectedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        if (Sentinel is not null) return EnsureSentinelConnectedAsync(cancellationToken, observation);
-        if (Cluster is { } cluster) return cluster.EnsureConnectedAsync(cancellationToken, discovery: null, observation);
+        if (Sentinel is not null)
+        {
+            return EnsureSentinelConnectedAsync(cancellationToken, observation);
+        }
+
+        if (Cluster is { } cluster)
+        {
+            return cluster.EnsureConnectedAsync(cancellationToken, discovery: null, observation);
+        }
         // A caller that is already cancelled never dials, so its failure names no node.
         observation.UseEndpoint(Multiplexer.ActiveConnectionEndpoint, cancellationToken);
         return Multiplexer.EnsureConnectedAsync(cancellationToken, observeEstablishmentErrors: false);
@@ -238,9 +285,15 @@ internal sealed class ClientCore : IAsyncDisposable
     internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation)
     {
-        if (TestingDedicatedPoolOverride is { } testingPool) return testingPool;
+        if (TestingDedicatedPoolOverride is { } testingPool)
+        {
+            return testingPool;
+        }
+
         if (Sentinel is { } sentinel)
+        {
             return (await sentinel.GetGenerationAsync(cancellationToken, observation: observation).ConfigureAwait(false)).Pool;
+        }
         // Read the published endpoint here too: a new upload can race the handoff callback.
         RefreshStandaloneDedicatedPool();
         return Volatile.Read(ref _dedicatedPool);
@@ -255,13 +308,24 @@ internal sealed class ClientCore : IAsyncDisposable
     private readonly struct DedicatedLeaseRoute(ClientCore owner) : IDedicatedLeaseRoute
     {
         public void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(owner.Disposed, owner);
+
         public bool CanRetry(int attempt, CancellationToken cancellationToken) => !owner.Disposed;
-        public void RecordRetirement(Exception error, int attempt) { }
+
+        public void RecordRetirement(Exception error, int attempt)
+        {
+        }
+
         public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken,
             RespireTelemetry.ErrorObservation observation)
             => owner.GetDedicatedPoolAsync(cancellationToken, observation);
-        public void SetTerminalError(Exception error) { }
-        public void Dispose() { }
+
+        public void SetTerminalError(Exception error)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
     }
 
     internal bool IsDedicatedStreamRouteCurrent(DedicatedConnectionPool pool, RespireConnection connection)
@@ -271,13 +335,18 @@ internal sealed class ClientCore : IAsyncDisposable
     internal sealed class CorrectionLease(ClientCore owner, DedicatedConnectionPool pool) : IAsyncDisposable
     {
         internal DedicatedConnectionPool Pool => pool;
+
         public ValueTask DisposeAsync() => owner.ReleaseServerPoolAsync(pool);
     }
 
     internal CorrectionLease GetCorrectionLease(RespireEndpoint endpoint, RespireConnection? original)
     {
         var options = CreateConnectionOptions();
-        if (original is not null) options = options.PinToPeer(original.TlsHost);
+
+        if (original is not null)
+        {
+            options = options.PinToPeer(original.TlsHost);
+        }
         // Client IDs belong to the original physical server, not the current MOVING destination.
         lock (_hubGate)
         {
@@ -292,11 +361,21 @@ internal sealed class ClientCore : IAsyncDisposable
     private void RefreshStandaloneDedicatedPool()
     {
         DedicatedConnectionPool previous;
+
         lock (_hubGate)
         {
-            if (Disposed || Cluster is not null || Sentinel is not null) return;
+            if (Disposed || Cluster is not null || Sentinel is not null)
+            {
+                return;
+            }
+
             var publication = _multiplexer.CaptureMovingPublication();
-            if (ReferenceEquals(publication.Publication, _dedicatedPool.MovingPublication)) return;
+
+            if (ReferenceEquals(publication.Publication, _dedicatedPool.MovingPublication))
+            {
+                return;
+            }
+
             previous = _dedicatedPool;
             var replacement = CreateStandaloneDedicatedPool(publication);
             _ownedPools.Add(replacement);
@@ -315,24 +394,39 @@ internal sealed class ClientCore : IAsyncDisposable
             CreateConnectionOptions(enableMaintenanceNotifications: true), Logger, NotifyRecoveryStateChanged,
             connection =>
             {
-                if (Cluster is not null || Sentinel is not null) return;
+                if (Cluster is not null || Sentinel is not null)
+                {
+                    return;
+                }
+
                 void OnMoving(MovingAnnouncement announcement)
                     => _multiplexer.QueueDedicatedMovingHandoff(connection, announcement,
                         () => !Disposed && ReferenceEquals(pool, DedicatedPool) && !pool!.IsStopping);
+
                 connection.MovingNotification += OnMoving;
                 // A server may send MOVING alongside the maintenance opt-in acknowledgement.
-                if (connection.LastMovingAnnouncement is { } announcement) OnMoving(announcement);
-            }) { MovingOwner = _multiplexer, MovingPublication = publication.Publication };
+                if (connection.LastMovingAnnouncement is { } announcement)
+                {
+                    OnMoving(announcement);
+                }
+            })
+        { MovingOwner = _multiplexer, MovingPublication = publication.Publication };
         _multiplexer.RegisterMovingDedicatedPool(pool);
         return pool;
     }
 
     private async Task RetireMovedDedicatedPoolAsync(DedicatedConnectionPool pool)
     {
-        try { await _ownedPools.RetireAsync(pool, moving: true).ConfigureAwait(false); }
+        try
+        {
+            await _ownedPools.RetireAsync(pool, moving: true).ConfigureAwait(false);
+        }
         catch (Exception error)
         {
-            try { Logger?.DedicatedMovingCleanupFailed(error); }
+            try
+            {
+                Logger?.DedicatedMovingCleanupFailed(error);
+            }
             catch { /* Logging cannot fault the background retirement. */ }
         }
     }
@@ -343,11 +437,16 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         lock (_stateGate)
         {
-            if (Disposed) return;
+            if (Disposed)
+            {
+                return;
+            }
+
             _disconnectedCommandSlots.Add((node, 0));
             QueueEndpointStateLocked(new RespireConnectionStateChange(
                 new RespireEndpoint(node.Host, node.Port), RespireConnectionState.Disconnected, error));
         }
+
         PublishQueuedStates();
     }
 
@@ -355,7 +454,11 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         lock (_stateGate)
         {
-            if (Disposed) return;
+            if (Disposed)
+            {
+                return;
+            }
+
             if (previous is not null)
             {
                 _reconnectingCommandSlots.RemoveWhere(slot => ReferenceEquals(slot.Node, previous));
@@ -367,6 +470,7 @@ internal sealed class ClientCore : IAsyncDisposable
             var endpoint = new RespireEndpoint(current.Host, current.Port);
             _publishedEndpointStates.Remove(endpoint);
             var state = GetEndpointStateLocked(endpoint);
+
             if (state == RespireConnectionState.Connected)
             {
                 _pendingStates.Enqueue(new RespireConnectionStateChange(endpoint, state, null));
@@ -376,13 +480,19 @@ internal sealed class ClientCore : IAsyncDisposable
                 QueueEndpointStateLocked(new RespireConnectionStateChange(endpoint, state, null));
             }
         }
+
         PublishQueuedStates();
     }
 
     private void NotifySubscriptionTopologyChanged(long version, RespireEndpoint[] endpoints, bool authoritative)
     {
         SubscriptionHub? hub;
-        lock (_hubGate) hub = _hub;
+
+        lock (_hubGate)
+        {
+            hub = _hub;
+        }
+
         hub?.NotifyTopologyChanged(version, endpoints, authoritative);
     }
 
@@ -390,11 +500,15 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         lock (_stateGate)
         {
-            if (Disposed) return;
+            if (Disposed)
+            {
+                return;
+            }
             // Dedicated rents and discovery rounds are not required command slots. Forward
             // source metadata without adding them to command/subscription health sets.
             QueueEndpointStateLocked(change);
         }
+
         PublishQueuedStates();
     }
 
@@ -402,7 +516,11 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         lock (_stateGate)
         {
-            if (Disposed) return;
+            if (Disposed)
+            {
+                return;
+            }
+
             QueueEndpointStateLocked(change);
         }
         // Acquisition holds ownership gates; observers may synchronously dispose the client.
@@ -419,7 +537,11 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         lock (_stateGate)
         {
-            if (Disposed) return;
+            if (Disposed)
+            {
+                return;
+            }
+
             _subscriptionStates ??= [];
             // Keep recovered sharded endpoints (as Connected) so disposal still reports a
             // terminal state for them. ASK targets are not active Cluster command endpoints.
@@ -431,7 +553,11 @@ internal sealed class ClientCore : IAsyncDisposable
                 QueueEndpointStateLocked(new RespireConnectionStateChange(
                     previous, RespireConnectionState.Connected, null));
             }
-            if (!clusterSharded) _regularSubscriptionEndpoint = change.Endpoint;
+
+            if (!clusterSharded)
+            {
+                _regularSubscriptionEndpoint = change.Endpoint;
+            }
 
             QueueEndpointStateLocked(change);
         }
@@ -443,17 +569,27 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         lock (_stateGate)
         {
-            if (Disposed) return;
+            if (Disposed)
+            {
+                return;
+            }
+
             if (change.State == RespireConnectionState.Connected)
+            {
                 _clusterSubscriptionStates.Remove(change.Endpoint);
+            }
             else
+            {
                 _clusterSubscriptionStates[change.Endpoint] = change.State;
+            }
+
             QueueEndpointStateLocked(change with
             {
                 ReconnectSource = RespireReconnectSource.PubSub,
                 SourceState = change.State,
             });
         }
+
         ThreadPool.UnsafeQueueUserWorkItem(static core => core.PublishQueuedStates(), this, preferLocal: false);
     }
 
@@ -465,13 +601,18 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         lock (_stateGate)
         {
-            if (Disposed || !_clusterSubscriptionStates.Remove(endpoint)) return;
+            if (Disposed || !_clusterSubscriptionStates.Remove(endpoint))
+            {
+                return;
+            }
+
             QueueEndpointStateLocked(new RespireConnectionStateChange(endpoint, RespireConnectionState.Connected, null)
             {
                 ReconnectSource = RespireReconnectSource.PubSub,
                 SourceState = RespireConnectionState.Connected,
             });
         }
+
         ThreadPool.UnsafeQueueUserWorkItem(static core => core.PublishQueuedStates(), this, preferLocal: false);
     }
 
@@ -508,6 +649,7 @@ internal sealed class ClientCore : IAsyncDisposable
             NotifyReadReplicaStateChanged(node, slot, change);
             return;
         }
+
         int? cacheEvictions = null;
 
         lock (_stateGate)
@@ -519,11 +661,14 @@ internal sealed class ClientCore : IAsyncDisposable
                 {
                     return;
                 }
+
                 if (change.State != RespireConnectionState.Connected)
                 {
                     cacheEvictions = ClientCache?.FlushForContinuityLossWithoutMetrics();
                 }
+
                 var commandSlot = (node, slot);
+
                 switch (change.State)
                 {
                     case RespireConnectionState.Reconnecting:
@@ -549,6 +694,7 @@ internal sealed class ClientCore : IAsyncDisposable
         {
             ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed);
         }
+
         PublishQueuedStates();
     }
 
@@ -563,9 +709,11 @@ internal sealed class ClientCore : IAsyncDisposable
                 QueueEndpointStateLocked(new RespireConnectionStateChange(
                     new RespireEndpoint(node.Host, node.Port), RespireConnectionState.Connected, null));
             }
+
             PublishQueuedStates();
             return;
         }
+
         int? cacheEvictions = null;
 
         lock (_stateGate)
@@ -579,6 +727,7 @@ internal sealed class ClientCore : IAsyncDisposable
                 {
                     return;
                 }
+
                 cacheEvictions = ClientCache?.FlushForContinuityLossWithoutMetrics();
                 _reconnectingCommandSlots.RemoveWhere(
                     commandSlot => ReferenceEquals(commandSlot.Node, node));
@@ -594,6 +743,7 @@ internal sealed class ClientCore : IAsyncDisposable
         {
             ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed);
         }
+
         PublishQueuedStates();
     }
 
@@ -606,6 +756,7 @@ internal sealed class ClientCore : IAsyncDisposable
             QueueEndpointStateLocked(new RespireConnectionStateChange(
                 new RespireEndpoint(node.Host, node.Port), RespireConnectionState.Connected, null));
         }
+
         PublishQueuedStates();
     }
 
@@ -620,8 +771,13 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         lock (_stateGate)
         {
-            if (Disposed) return;
+            if (Disposed)
+            {
+                return;
+            }
+
             var commandSlot = (node, slot);
+
             switch (change.State)
             {
                 case RespireConnectionState.Reconnecting:
@@ -652,11 +808,16 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         lock (_stateGate)
         {
-            if (Disposed) return;
+            if (Disposed)
+            {
+                return;
+            }
+
             var removed = _reconnectingCommandSlots.RemoveWhere(
                     commandSlot => ReferenceEquals(commandSlot.Node, node))
                 + _disconnectedCommandSlots.RemoveWhere(
                     commandSlot => ReferenceEquals(commandSlot.Node, node));
+
             if (removed != 0)
             {
                 QueueEndpointStateLocked(new RespireConnectionStateChange(
@@ -673,6 +834,7 @@ internal sealed class ClientCore : IAsyncDisposable
         var publishedState = _publishedEndpointStates.GetValueOrDefault(
             source.Endpoint,
             RespireConnectionState.Connected);
+
         if (state == publishedState && source.ReconnectAttempt == 0)
         {
             return;
@@ -698,6 +860,7 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         var hasClusterSubscriptionState = _clusterSubscriptionStates.TryGetValue(endpoint, out var clusterSubscriptionState);
+
         if (_disconnectedCommandSlots.Any(commandSlot => IsEndpoint(commandSlot.Node, endpoint))
             || HasSubscriptionState(endpoint, RespireConnectionState.Disconnected)
             || hasClusterSubscriptionState && clusterSubscriptionState == RespireConnectionState.Disconnected)
@@ -714,7 +877,11 @@ internal sealed class ClientCore : IAsyncDisposable
 
     private bool HasSubscriptionState(RespireEndpoint endpoint, RespireConnectionState state)
     {
-        if (_subscriptionStates is null) return false;
+        if (_subscriptionStates is null)
+        {
+            return false;
+        }
+
         return (_subscriptionStates.TryGetValue((false, endpoint), out var regular) && regular == state)
             || (_subscriptionStates.TryGetValue((true, endpoint), out var sharded) && sharded == state);
     }
@@ -738,6 +905,7 @@ internal sealed class ClientCore : IAsyncDisposable
         {
             Action<RespireConnectionStateChange>? handlers;
             RespireConnectionStateChange change;
+
             lock (_stateGate)
             {
                 if (!_pendingStates.TryDequeue(out change))
@@ -750,7 +918,10 @@ internal sealed class ClientCore : IAsyncDisposable
                 // observer held the dispatcher. The terminal client event has no recovery source.
                 if (Disposed && change.ReconnectSource is RespireReconnectSource.Dedicated
                     or RespireReconnectSource.PubSub or RespireReconnectSource.ClusterDiscovery
-                    or RespireReconnectSource.SentinelMonitor) continue;
+                    or RespireReconnectSource.SentinelMonitor)
+                {
+                    continue;
+                }
 
                 handlers = ConnectionStateChanged;
             }
@@ -761,7 +932,10 @@ internal sealed class ClientCore : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                try { Logger?.ConnectionStateObserverFailed(ex); }
+                try
+                {
+                    Logger?.ConnectionStateObserverFailed(ex);
+                }
                 catch (Exception) { /* A user logger must not strand queued connection events. */ }
             }
         }
@@ -772,6 +946,7 @@ internal sealed class ClientCore : IAsyncDisposable
         get
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
+
             if (_hub is { } hub)
             {
                 return hub;
@@ -792,14 +967,27 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         // Temporary replica redirect owners pass here for every hop. Run user policy outside
         // internal locks, before constructing options, owning a pool, or connecting.
-        if (replicaRedirect) ValidateReplicaRedirectDestination(endpoint);
+        if (replicaRedirect)
+        {
+            ValidateReplicaRedirectDestination(endpoint);
+        }
+
         lock (_hubGate)
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
             var options = controlConnection ? Options.ToControlConnectionOptions() with { CacheMutationAdmission = ClientCache }
                 : CreateConnectionOptions(enableMaintenanceNotifications: !endpoint.IsUnixSocket);
-            if (replicaRedirect) options = options with { AdvertiseReplicaRedirects = Options.EnableReplicaRedirects };
-            if (commandTimeout is { } timeout) options = options with { CommandTimeout = timeout };
+
+            if (replicaRedirect)
+            {
+                options = options with { AdvertiseReplicaRedirects = Options.EnableReplicaRedirects };
+            }
+
+            if (commandTimeout is { } timeout)
+            {
+                options = options with { CommandTimeout = timeout };
+            }
+
             var pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port, options, Logger,
                 NotifyRecoveryStateChanged);
             _ownedPools.Add(pool);
@@ -809,9 +997,17 @@ internal sealed class ClientCore : IAsyncDisposable
 
     internal void ValidateReplicaRedirectDestination(RespireEndpoint endpoint)
     {
-        if (Options.ReplicaRedirectValidator is not { } validator) return;
+        if (Options.ReplicaRedirectValidator is not { } validator)
+        {
+            return;
+        }
+
         bool allowed;
-        try { allowed = validator(endpoint); }
+
+        try
+        {
+            allowed = validator(endpoint);
+        }
         catch (Exception error)
         {
             // A callback's transport-shaped exception must not turn a policy failure
@@ -819,9 +1015,12 @@ internal sealed class ClientCore : IAsyncDisposable
             throw new RespireException($"Replica redirect destination validation failed for {endpoint}.", error)
             { Endpoint = endpoint, IsCommandNotSubmitted = true };
         }
+
         if (!allowed)
+        {
             throw new RespireException($"Replica redirect destination {endpoint} was rejected by ReplicaRedirectValidator.")
             { Endpoint = endpoint, IsCommandNotSubmitted = true };
+        }
     }
 
     internal ValueTask ReleaseServerPoolAsync(DedicatedConnectionPool pool)
@@ -839,46 +1038,71 @@ internal sealed class ClientCore : IAsyncDisposable
         // Preserve worker ownership through client cleanup awaits without flowing it into
         // unrelated tasks created by callbacks.
         var disposeStartedOnSmigratedWorker = Cluster?.IsOnSmigratedWorker == true;
+
         if (Disposed)
         {
             return;
         }
 
         CoordinationCleanupQueue? cleanupQueue;
+
         lock (_hubGate)
         {
             Disposed = true;
             cleanupQueue = _coordinationCleanupQueue;
         }
+
         await _lifetime.CancelAsync().ConfigureAwait(false);
         // A closed client cannot send queued releases, so cancel its background cleanup before
         // tearing down the transports. Dispose semaphore permits before the client when possible.
         if (cleanupQueue is not null)
+        {
             await cleanupQueue.DisposeAsync().ConfigureAwait(false);
+        }
+
         Interlocked.Exchange(ref _threadPoolMonitor, null)?.Dispose();
         ClientCache?.StopInvalidationObservers();
         ClientCache?.StopSharedReads();
         ClientCache?.Clear();
         RespireEndpoint[] commandEndpoints;
-        if (Cluster is { } clusterRouter) commandEndpoints = clusterRouter.GetActiveEndpoints();
+
+        if (Cluster is { } clusterRouter)
+        {
+            commandEndpoints = clusterRouter.GetActiveEndpoints();
+        }
         // A lazy Sentinel client has no data endpoint until a validated generation is published.
         else if (Sentinel is { } sentinelRouter)
+        {
             commandEndpoints = sentinelRouter.Current is { } generation ? [generation.Endpoint] : [];
-        else commandEndpoints = [Endpoint];
+        }
+        else
+        {
+            commandEndpoints = [Endpoint];
+        }
         // Replica endpoints used by read views are command endpoints too; report their terminal state.
         commandEndpoints = commandEndpoints.Concat(ReadRouter.GetOpenEndpoints()).Distinct().ToArray();
+
         if (RedirectTargets is { } targets)
+        {
             commandEndpoints = commandEndpoints.Concat(targets.GetOpenEndpoints()).Distinct().ToArray();
+        }
+
         lock (_stateGate)
         {
             if (_subscriptionStates is not null)
+            {
                 foreach (var subscription in _subscriptionStates.Keys)
+                {
                     QueueEndpointStateLocked(new RespireConnectionStateChange(
                         subscription.Endpoint, RespireConnectionState.Disconnected, null));
+                }
+            }
 
             foreach (var endpoint in _clusterSubscriptionStates.Keys)
+            {
                 QueueEndpointStateLocked(new RespireConnectionStateChange(
                     endpoint, RespireConnectionState.Disconnected, null));
+            }
 
             foreach (var endpoint in commandEndpoints)
             {
@@ -889,6 +1113,7 @@ internal sealed class ClientCore : IAsyncDisposable
 
         PublishQueuedStates();
         SubscriptionHub? hub;
+
         lock (_hubGate)
         {
             hub = _hub;
@@ -897,11 +1122,24 @@ internal sealed class ClientCore : IAsyncDisposable
         List<Exception>? disposeErrors = null;
         // Disposed already gates RefreshStandaloneDedicatedPool, so an early abort cannot publish another pool.
         await DisposeOwnerAsync(() => new(_ownedPools.DisposeAllAsync())).ConfigureAwait(false);
+
         if (RedirectTargets is { } redirectTargets)
+        {
             await DisposeOwnerAsync(redirectTargets.DisposeAsync).ConfigureAwait(false);
-        if (hub is not null) await DisposeOwnerAsync(hub.DisposeAsync).ConfigureAwait(false);
-        if (Sentinel is { } sentinel) await DisposeOwnerAsync(sentinel.DisposeAsync).ConfigureAwait(false);
+        }
+
+        if (hub is not null)
+        {
+            await DisposeOwnerAsync(hub.DisposeAsync).ConfigureAwait(false);
+        }
+
+        if (Sentinel is { } sentinel)
+        {
+            await DisposeOwnerAsync(sentinel.DisposeAsync).ConfigureAwait(false);
+        }
+
         await DisposeOwnerAsync(ReadRouter.DisposeAsync).ConfigureAwait(false);
+
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged -= NotifyCommandStateChanged;
@@ -925,6 +1163,7 @@ internal sealed class ClientCore : IAsyncDisposable
         {
             // Keep shutdown ordered, but never let one owner's failure skip another or mask an earlier error.
             Task? disposal = null;
+
             try
             {
                 disposal = dispose().AsTask();
@@ -935,10 +1174,15 @@ internal sealed class ClientCore : IAsyncDisposable
                 // Remove only the Task.Exception wrapper here. Flattening a single owner-supplied
                 // aggregate would change its identity; flatten only when combining failures above.
                 disposeErrors ??= [];
+
                 if (disposal?.Exception is { } taskError)
+                {
                     disposeErrors.AddRange(taskError.InnerExceptions);
+                }
                 else
+                {
                     disposeErrors.Add(error);
+                }
             }
         }
     }

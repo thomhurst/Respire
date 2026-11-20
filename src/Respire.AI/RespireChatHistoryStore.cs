@@ -53,13 +53,19 @@ public sealed class RespireChatHistoryStore
             _options.MaximumMessages,
             _options.TimeToLive.Ticks / TimeSpan.TicksPerMillisecond,
         };
+
         foreach (var message in messages)
         {
             ArgumentNullException.ThrowIfNull(message);
             cancellationToken.ThrowIfCancellationRequested();
             arguments.Add(JsonSerializer.SerializeToUtf8Bytes(message, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatMessage))));
         }
-        if (arguments.Count == 2) return;
+
+        if (arguments.Count == 2)
+        {
+            return;
+        }
+
         using var result = await _client.Scripts.ExecuteLeaseAsync(Append, [key], arguments.ToArray(), cancellationToken).ConfigureAwait(false);
     }
 
@@ -70,9 +76,13 @@ public sealed class RespireChatHistoryStore
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumMessages);
         var json = await _client.Lists.RangeAsync(key, -maximumMessages, -1, cancellationToken).ConfigureAwait(false);
         var messages = new ChatMessage[json.Length];
+
         for (var i = 0; i < json.Length; i++)
+        {
             messages[i] = (ChatMessage?)JsonSerializer.Deserialize(json[i], AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatMessage)))
                 ?? throw new JsonException("A stored chat message is null.");
+        }
+
         return messages;
     }
 
@@ -81,18 +91,27 @@ public sealed class RespireChatHistoryStore
     {
         var key = GetKey(conversationId);
         ArgumentOutOfRangeException.ThrowIfNegative(maximumMessages);
+
         if (maximumMessages == 0)
+        {
             await _client.Keys.DeleteAsync(key, cancellationToken).ConfigureAwait(false);
+        }
         else
+        {
             await _client.Lists.TrimAsync(key, -maximumMessages, -1, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>Sets the remaining lifetime of an existing conversation. Returns false when it does not exist.</summary>
     public async ValueTask<bool> ExpireAsync(string conversationId, TimeSpan timeToLive, CancellationToken cancellationToken = default)
     {
         var key = GetKey(conversationId);
+
         if (timeToLive.Ticks < TimeSpan.TicksPerMillisecond)
+        {
             throw new ArgumentOutOfRangeException(nameof(timeToLive));
+        }
+
         return await _client.Keys.ExpireAsync(key, timeToLive, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
