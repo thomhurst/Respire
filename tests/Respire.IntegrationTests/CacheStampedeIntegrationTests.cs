@@ -19,15 +19,21 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         var clients = new List<RespireClient>();
         var key = NewKey();
         var calls = 0;
+
         try
         {
-            for (var index = 0; index < 16; index++) clients.Add(await ConnectAsync());
+            for (var index = 0; index < 16; index++)
+            {
+                clients.Add(await ConnectAsync());
+            }
+
             for (var generation = 1; generation <= 3; generation++)
             {
                 // Expire immediately on Redis, including after each populated generation.
                 await clients[0].ExpireAsync(key, DateTimeOffset.UnixEpoch);
                 var entered = Signal();
                 var release = Signal();
+
                 async ValueTask<string?> Factory(CancellationToken token)
                 {
                     Interlocked.Increment(ref calls);
@@ -35,16 +41,22 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
                     await release.Task.WaitAsync(token);
                     return $"generation-{generation}";
                 }
+
                 var reads = clients.SelectMany(client => Enumerable.Range(0, 4)
                     .Select(_ => client.GetOrSetAsync(key, Options, Factory, Ttl).AsTask())).ToArray();
-                try { await entered.Task.WaitAsync(Limit); }
+
+                try
+                {
+                    await entered.Task.WaitAsync(Limit);
+                }
                 finally { release.TrySetResult(); }
+
                 var results = await Task.WhenAll(reads).WaitAsync(Limit);
                 await Assert.That(calls).IsEqualTo(generation);
                 await Assert.That(results.All(value => value == $"generation-{generation}")).IsTrue();
             }
         }
-        finally { foreach (var client in clients) await client.DisposeAsync(); }
+        finally { foreach (var client in clients) { await client.DisposeAsync(); } }
     }
 
     [Test]
@@ -105,6 +117,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
             await release.Task.WaitAsync(token);
             return "new";
         }, Ttl).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -113,6 +126,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
             await Assert.That(refresh.IsCompleted).IsFalse();
         }
         finally { release.TrySetResult(); }
+
         await Assert.That(await refresh.WaitAsync(Limit)).IsEqualTo("new");
         await Assert.That(await second.GetOrSetAsync<string>(key, options, _ => throw new Exception("hit factory"), Ttl))
             .IsEqualTo("new");
@@ -149,12 +163,14 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
             await release.Task; // Deliberately ignore cancellation to exercise server fencing.
             return "obsolete";
         }, Ttl).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
             await second.SetAsync(lockKey, "successor", Ttl);
         }
         finally { release.TrySetResult(); }
+
         await Assert.That(await pending.WaitAsync(Limit)).IsEqualTo("obsolete");
         await Assert.That(await second.GetStringAsync(lockKey)).IsEqualTo("successor");
         await Assert.That(await second.ExistsAsync(key)).IsFalse();
@@ -230,8 +246,11 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         var release = Signal();
         var holder = client.GetOrSetAsync<string>(key, Options, async token =>
         {
-            entered.TrySetResult(); await release.Task.WaitAsync(token); return "holder";
+            entered.TrySetResult();
+            await release.Task.WaitAsync(token);
+            return "holder";
         }, Ttl).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -242,6 +261,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
             await Assert.That(holder.IsCompleted).IsFalse();
         }
         finally { release.TrySetResult(); }
+
         await Assert.That(await holder.WaitAsync(Limit)).IsEqualTo("holder");
     }
 
@@ -251,7 +271,8 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         var hook = new RecordingHook();
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         {
-            Connections = 1, CommandHook = hook,
+            Connections = 1,
+            CommandHook = hook,
         });
         var key = NewKey();
         await client.GetOrSetAsync<string>(key, Options, async token =>
@@ -275,7 +296,12 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         await using var client = await ConnectAsync();
         var prefix = NewKey();
         IRespireClient view = client.WithKeyPrefix(prefix);
-        if (bypass) view = view.WithoutClientCache();
+
+        if (bypass)
+        {
+            view = view.WithoutClientCache();
+        }
+
         var created = new Payload { Value = "original" };
         var first = await view.GetOrSetAsync<Payload>("key", Options, _ => ValueTask.FromResult<Payload?>(created), Ttl);
         created.Value = "factory mutation";
@@ -304,9 +330,16 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
             StaleWhileRevalidate = TimeSpan.FromMilliseconds(staleMilliseconds)
         };
         await Assert.That(await client.GetOrSetAsync<int>(key, options, _ => ValueTask.FromResult(42), deadline)).IsEqualTo(42);
-        if (past) await Assert.That(await client.ExistsAsync(key)).IsFalse();
-        else await Assert.That((await client.Keys.ExpiryTimeAsync(key)).UnixTimeMilliseconds)
+
+        if (past)
+        {
+            await Assert.That(await client.ExistsAsync(key)).IsFalse();
+        }
+        else
+        {
+            await Assert.That((await client.Keys.ExpiryTimeAsync(key)).UnixTimeMilliseconds)
             .IsEqualTo(deadline.ToUnixTimeMilliseconds() + staleMilliseconds);
+        }
     }
 
     [Test]
@@ -327,6 +360,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
             await release.Task.WaitAsync(token);
             return "new";
         }, Ttl).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -337,6 +371,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
                 .ThrowsExactly<TimeoutException>();
         }
         finally { release.TrySetResult(); }
+
         await Assert.That(await refresh.WaitAsync(Limit)).IsEqualTo("new");
         await Assert.That(await second.GetOrSetAsync<string>(key, Options, _ => throw new Exception("hit"), Ttl)).IsEqualTo("new");
     }
@@ -354,8 +389,12 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     {
         await using var client = await ConnectAsync();
         var key = NewKey();
+
         if (warm)
+        {
             await client.GetOrSetAsync<Payload>(key, Options, _ => ValueTask.FromResult<Payload?>(new() { Value = "old" }), Ttl);
+        }
+
         var entered = Signal();
         var release = Signal();
         var created = new Payload { Value = "computed" };
@@ -366,15 +405,20 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
             await release.Task.WaitAsync(token);
             return created;
         }, Ttl).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
             await client.DeleteAsync(key);
+
             if (replace)
+            {
                 await client.GetOrSetAsync<Payload>(key, Options with { DistributedSingleFlight = false },
                     _ => ValueTask.FromResult<Payload?>(new() { Value = "winner" }), Ttl);
+            }
         }
         finally { release.TrySetResult(); }
+
         var result = await refresh.WaitAsync(Limit);
         await Assert.That(result!.Value).IsEqualTo(replace ? "winner" : "computed");
         created.Value = "mutated";
@@ -407,16 +451,30 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         {
             entered.TrySetResult();
             await release.Task.WaitAsync(token);
-            if (outcome == "failure") throw new InvalidOperationException("original factory");
+
+            if (outcome == "failure")
+            {
+                throw new InvalidOperationException("original factory");
+            }
+
             return null;
         }, Ttl, cancellation.Token).AsTask();
         Task<string?>? successor = null;
+
         try
         {
             await entered.Task.WaitAsync(Limit);
-            if (deleteGeneration) await client.DeleteAsync(key);
+
+            if (deleteGeneration)
+            {
+                await client.DeleteAsync(key);
+            }
+
             if (singleFlight)
+            {
                 await client.DeleteAsync(lockKey); // Simulate lease loss while retaining the pending generation.
+            }
+
             successor = successorClient.GetOrSetAsync<string>(key, options, async token =>
             {
                 successorEntered.TrySetResult();
@@ -426,14 +484,29 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
             await successorEntered.Task.WaitAsync(Limit);
             using var generation = await client.ExecuteAsync("HGET", key, "version");
             await Assert.That(generation.IsNull).IsFalse();
-            if (outcome == "cancellation") cancellation.Cancel();
-            else release.TrySetResult();
-            if (outcome == "failure")
-                await Assert.That(async () => await original.WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
-            else if (outcome == "cancellation")
-                await Assert.That(async () => await original.WaitAsync(Limit)).Throws<OperationCanceledException>();
+
+            if (outcome == "cancellation")
+            {
+                cancellation.Cancel();
+            }
             else
+            {
+                release.TrySetResult();
+            }
+
+            if (outcome == "failure")
+            {
+                await Assert.That(async () => await original.WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
+            }
+            else if (outcome == "cancellation")
+            {
+                await Assert.That(async () => await original.WaitAsync(Limit)).Throws<OperationCanceledException>();
+            }
+            else
+            {
                 await Assert.That(await original.WaitAsync(Limit)).IsNull();
+            }
+
             using var retained = await client.ExecuteAsync("HGET", key, "version");
             await Assert.That(retained.AsString()).IsEqualTo(generation.AsString());
             await Assert.That(await client.ExistsAsync(lockKey)).IsEqualTo(singleFlight);
@@ -442,11 +515,20 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         {
             release.TrySetResult();
             successorRelease.TrySetResult();
-            try { await original.WaitAsync(Limit); }
+
+            try
+            {
+                await original.WaitAsync(Limit);
+            }
             catch (InvalidOperationException) when (outcome == "failure") { }
             catch (OperationCanceledException) when (outcome == "cancellation") { }
-            if (successor is not null) await successor.WaitAsync(Limit);
+
+            if (successor is not null)
+            {
+                await successor.WaitAsync(Limit);
+            }
         }
+
         await Assert.That(await client.GetOrSetAsync<string>(key, options, _ => throw new Exception("hit"), Ttl))
             .IsEqualTo("successor");
     }
@@ -473,20 +555,32 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(hits + 3);
     }
 
-    public sealed class Payload { public string? Value { get; set; } }
+    public sealed class Payload
+    {
+        public string? Value
+        {
+            get; set;
+        }
+    }
+
     private sealed class RecordingHook : RespireCommandHook
     {
         internal readonly List<string> Commands = [];
         internal int Completed;
+
         public override object? OnExecuting(RespireCommandContext context)
         {
             Commands.Add(context.Command);
             return null;
         }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
             => Completed++;
     }
+
     private static string NewKey() => $"stampede:{Guid.NewGuid():N}:";
+
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     private ValueTask<RespireClient> ConnectAsync() => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with { Connections = 1 });
 }

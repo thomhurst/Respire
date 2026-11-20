@@ -138,7 +138,12 @@ public static class RespireLockCommandExtensions
         // A public implementation may forward to a native caller boundary. Let acquisition
         // retain its own final publisher; only keep-alive startup belongs to this extension.
         var attempt = await locks.AcquireAsync(key, leaseDuration, cancellationToken).ConfigureAwait(false);
-        if (!keepAlive || !attempt.Acquired) return attempt;
+
+        if (!keepAlive || !attempt.Acquired)
+        {
+            return attempt;
+        }
+
         return await DispatchResponseSource<RespireLockAttempt>.Run(attempt,
             static (attempt, owner) => StartKeepAliveBorrowedAsync(attempt, owner)).ConfigureAwait(false);
     }
@@ -150,6 +155,7 @@ public static class RespireLockCommandExtensions
         ArgumentNullException.ThrowIfNull(locks);
         var attempt = await ((LockCommands)locks).AcquireBorrowedAsync(key, leaseDuration, cancellationToken, observation)
             .ConfigureAwait(false);
+
         if (!keepAlive || !attempt.Acquired)
         {
             return attempt;
@@ -278,15 +284,18 @@ internal sealed class LockCommands(RespireClient client) : IRespireLockCommands,
         }
 
         var start = Stopwatch.GetTimestamp();
+
         while (true)
         {
             var acquired = await AcquireBorrowedAsync(key, leaseDuration, cancellationToken, observation).ConfigureAwait(false);
+
             if (acquired.Acquired)
             {
                 return acquired;
             }
 
             var remaining = wait - Stopwatch.GetElapsedTime(start);
+
             if (remaining <= TimeSpan.Zero)
             {
                 return default;
@@ -336,7 +345,11 @@ internal sealed class LockCommands(RespireClient client) : IRespireLockCommands,
         => CommandHookScope.RunObservedAsync(Hook, "LOCK ACQUIRE", cancellationToken,
             (Locks: this, Key: key, Token: token, Expiry: leaseDuration, Cancellation: cancellationToken),
             static (state, owner) => state.Locks.TryTakeBorrowedAsync(state.Key, state.Token, state.Expiry, state.Cancellation, owner),
-            static state => { ValidateToken(state.Token); ValidateExpiry(state.Expiry); });
+            static state =>
+            {
+                ValidateToken(state.Token);
+                ValidateExpiry(state.Expiry);
+            });
 
     private ValueTask<bool> TryTakeBorrowedAsync(
         RespireKey key, RespireLockToken token, TimeSpan leaseDuration, CancellationToken cancellationToken,
@@ -391,6 +404,7 @@ internal sealed class LockCommands(RespireClient client) : IRespireLockCommands,
         ValidateToken(token);
         RespireClient.TrackedLockExecution execution;
         bool fenced;
+
         try
         {
             (execution, fenced) = await StartReleaseExecutionAsync(key, token, cancellationToken, observation)
@@ -435,8 +449,7 @@ internal sealed class LockCommands(RespireClient client) : IRespireLockCommands,
                         cancellationToken, observation)
                     .ConfigureAwait(false), true);
             }
-            catch (RespireServerException error) when (
-                Infrastructure.RespireConnectionMultiplexer.IsDefinitiveCorrectionOrderingFailure(error))
+            catch (RespireServerException error) when (Infrastructure.RespireConnectionMultiplexer.IsDefinitiveCorrectionOrderingFailure(error))
             {
                 // ACLs or servers that deny CLIENT ID or CLIENT KILL keep the compatible release.
                 // Other server errors propagate. An uncertain outcome still fails closed, and a
@@ -468,7 +481,11 @@ internal sealed class LockCommands(RespireClient client) : IRespireLockCommands,
         => CommandHookScope.RunObservedAsync(Hook, "LOCK RENEW", cancellationToken,
             (Locks: this, Key: key, Token: token, Duration: newDuration, Cancellation: cancellationToken),
             static (state, owner) => state.Locks.ResetExpiryBorrowedAsync(state.Key, state.Token, state.Duration, state.Cancellation, owner),
-            static state => { ValidateToken(state.Token); ValidateExpiry(state.Duration, "newDuration"); });
+            static state =>
+            {
+                ValidateToken(state.Token);
+                ValidateExpiry(state.Duration, "newDuration");
+            });
 
     private ValueTask<bool> ResetExpiryBorrowedAsync(
         RespireKey key, RespireLockToken token, TimeSpan newDuration, CancellationToken cancellationToken,
@@ -533,9 +550,15 @@ internal sealed class LockCommands(RespireClient client) : IRespireLockCommands,
     internal static void ValidateAcquire(TimeSpan leaseDuration, TimeSpan? wait = null, TimeSpan? retryEvery = null)
     {
         if (wait < TimeSpan.Zero)
+        {
             throw new ArgumentOutOfRangeException(nameof(wait), wait, "Lock wait must not be negative.");
+        }
+
         if (retryEvery <= TimeSpan.Zero)
+        {
             throw new ArgumentOutOfRangeException(nameof(retryEvery), retryEvery, "Lock retry interval must be greater than zero.");
+        }
+
         ValidateExpiry(leaseDuration);
     }
 
@@ -545,6 +568,7 @@ internal sealed class LockCommands(RespireClient client) : IRespireLockCommands,
     private static long ValidateExpiry(TimeSpan leaseDuration, string parameterName)
     {
         var milliseconds = RespireLock.NormalizeDuration(leaseDuration).Ticks / TimeSpan.TicksPerMillisecond;
+
         if (milliseconds <= 0)
         {
             throw new ArgumentOutOfRangeException(

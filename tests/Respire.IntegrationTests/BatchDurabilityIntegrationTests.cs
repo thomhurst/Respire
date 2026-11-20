@@ -23,15 +23,23 @@ public class BatchDurabilityIntegrationTests
             .WithCommand("redis-server", "--replicaof", "primary", "6379", "--appendonly", "yes", "--appendfsync", "always", "--save", "", "--protected-mode", "no")
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
         while (true)
         {
             var info = await replica.ExecAsync(["redis-cli", "INFO", "replication"], timeout.Token);
-            if (info.Stdout.Contains("master_link_status:up", StringComparison.Ordinal)) break;
+
+            if (info.Stdout.Contains("master_link_status:up", StringComparison.Ordinal))
+            {
+                break;
+            }
+
             await Task.Delay(100, timeout.Token);
         }
+
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(primary.Hostname, primary.GetMappedPublicPort(6379))], Connections = 3,
+            Endpoints = [new(primary.Hostname, primary.GetMappedPublicPort(6379))],
+            Connections = 3,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         });
         await using var reader = await RespireClient.ConnectAsync($"redis://{replica.Hostname}:{replica.GetMappedPublicPort(6379)}?protocol={protocol}");
@@ -64,7 +72,8 @@ public class BatchDurabilityIntegrationTests
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(server.Hostname, server.GetMappedPublicPort(6379))], Connections = 2,
+            Endpoints = [new(server.Hostname, server.GetMappedPublicPort(6379))],
+            Connections = 2,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             ClientSideCache = protocol == 3 ? new() : null,
         });
@@ -97,10 +106,14 @@ public class BatchDurabilityIntegrationTests
         await using var client = await RespireClient.ConnectAsync($"redis://{server.Hostname}:{server.GetMappedPublicPort(6379)}?protocol={protocol}");
         using var batch = client.CreateBatch();
         var write = batch.Set("key", "written");
-        Func<Task> execute = async () => { await batch.ExecuteAndWaitForAofAsync(true, 0, TimeSpan.FromSeconds(1)); };
+        Func<Task> execute = async () =>
+        {
+            await batch.ExecuteAndWaitForAofAsync(true, 0, TimeSpan.FromSeconds(1));
+        };
         await execute.Should().ThrowAsync<RespireServerException>();
         write.Result.Should().BeTrue();
         (await client.GetStringAsync("key")).Should().Be("written");
+
         if (image == "redis:8.4-alpine")
         {
             using var withoutLocalRequirement = client.CreateBatch();

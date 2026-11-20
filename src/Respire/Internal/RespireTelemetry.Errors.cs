@@ -18,6 +18,7 @@ internal static partial class RespireTelemetry
         private static readonly Lazy<Counter<long>> Instrument = new(static () => Meter.CreateCounter<long>(
             "redis.client.errors", "{error}", "Errors handled internally or surfaced at a client operation boundary."),
             LazyThreadSafetyMode.PublicationOnly);
+
         internal static Counter<long> Errors => Instrument.Value;
     }
     private static readonly KeyValuePair<string, object?> InternalErrorTag = new("redis.client.errors.internal", true);
@@ -39,7 +40,10 @@ internal static partial class RespireTelemetry
 
     internal static void MarkConnectionError(Exception error)
     {
-        try { ConnectionErrorMarkers.Table.GetValue(error, static _ => ConnectionErrorMarkers.Marker); }
+        try
+        {
+            ConnectionErrorMarkers.Table.GetValue(error, static _ => ConnectionErrorMarkers.Marker);
+        }
         catch (Exception) { /* Observation must preserve the original failure. */ }
     }
 
@@ -49,14 +53,24 @@ internal static partial class RespireTelemetry
         {
             for (var depth = 0; depth < 16; depth++)
             {
-                if (ConnectionErrorMarkers.Table.TryGetValue(error, out _)) return true;
+                if (ConnectionErrorMarkers.Table.TryGetValue(error, out _))
+                {
+                    return true;
+                }
+
                 var cause = error is RespireException respire ? respire.ErrorCause
                     : error is AggregateException { InnerExceptions.Count: 1 } aggregate ? aggregate.InnerExceptions[0] : null;
-                if (cause is null) return false;
+
+                if (cause is null)
+                {
+                    return false;
+                }
+
                 error = cause;
             }
         }
         catch (Exception) { /* Observation must preserve the original failure. */ }
+
         return false;
     }
 
@@ -64,7 +78,10 @@ internal static partial class RespireTelemetry
     {
         get
         {
-            try { return IsMetricEnabled(RespireMetricGroups.Resiliency, ErrorInstruments.Errors); }
+            try
+            {
+                return IsMetricEnabled(RespireMetricGroups.Resiliency, ErrorInstruments.Errors);
+            }
             catch (Exception) { return false; } // Includes instrument publication and listener selection.
         }
     }
@@ -87,13 +104,33 @@ internal static partial class RespireTelemetry
 
         internal ErrorObservation Observation => new(this, 0);
 
-        internal RespireEndpoint? LegEndpoint { get { lock (_gate) return _endpoint; } }
+        internal RespireEndpoint? LegEndpoint
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _endpoint;
+                }
+            }
+        }
 
         public bool IsOpen(long generation) => caller.IsOpen;
+
         public int Attempts(long generation) => caller.Attempts;
+
         public RespireEndpoint? Endpoint(long generation) => LegEndpoint;
-        public void UseEndpoint(long generation, RespireEndpoint? endpoint) { lock (_gate) _endpoint = endpoint; }
+
+        public void UseEndpoint(long generation, RespireEndpoint? endpoint)
+        {
+            lock (_gate)
+            {
+                _endpoint = endpoint;
+            }
+        }
+
         public void SetAttempts(long generation, int attempts) => caller.SetAttempts(attempts);
+
         public void Retry(long generation) => caller.Retry();
 
         // Handled errors always name this leg's node, never the caller's shared retained endpoint.
@@ -103,7 +140,12 @@ internal static partial class RespireTelemetry
         internal static FanOutLegObservation[] Create(int count, ErrorObservation caller)
         {
             var legs = new FanOutLegObservation[count];
-            for (var i = 0; i < legs.Length; i++) legs[i] = new(caller);
+
+            for (var i = 0; i < legs.Length; i++)
+            {
+                legs[i] = new(caller);
+            }
+
             return legs;
         }
 
@@ -113,14 +155,25 @@ internal static partial class RespireTelemetry
         /// </summary>
         internal static async Task<T[]> JoinAsync<T>(Task<T>[] tasks, FanOutLegObservation[] legs, ErrorObservation caller)
         {
-            try { return await Task.WhenAll(tasks).ConfigureAwait(false); }
+            try
+            {
+                return await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
             catch (Exception propagated)
             {
                 var surfaced = Array.FindIndex(tasks, task => task.Exception?.InnerExceptions.Any(
                     inner => ReferenceEquals(inner, propagated)) == true);
+
                 if (surfaced < 0 && propagated is OperationCanceledException)
+                {
                     surfaced = Array.FindIndex(tasks, static task => task.IsCanceled);
-                if (surfaced >= 0) caller.UseEndpoint(legs[surfaced].LegEndpoint);
+                }
+
+                if (surfaced >= 0)
+                {
+                    caller.UseEndpoint(legs[surfaced].LegEndpoint);
+                }
+
                 throw;
             }
         }
@@ -152,9 +205,20 @@ internal static partial class RespireTelemetry
         {
             get
             {
-                if (_dispatch is not null) return _dispatch.IsOpen(_generation);
-                if (_state is null) return false;
-                lock (_state.Gate) return _state.Active && _state.Generation == _generation && !_state.Final;
+                if (_dispatch is not null)
+                {
+                    return _dispatch.IsOpen(_generation);
+                }
+
+                if (_state is null)
+                {
+                    return false;
+                }
+
+                lock (_state.Gate)
+                {
+                    return _state.Active && _state.Generation == _generation && !_state.Final;
+                }
             }
         }
 
@@ -162,10 +226,20 @@ internal static partial class RespireTelemetry
         {
             get
             {
-                if (_dispatch is not null) return _dispatch.Attempts(_generation);
-                if (_state is null) return 0;
+                if (_dispatch is not null)
+                {
+                    return _dispatch.Attempts(_generation);
+                }
+
+                if (_state is null)
+                {
+                    return 0;
+                }
+
                 lock (_state.Gate)
+                {
                     return _state.Active && _state.Generation == _generation ? _state.Attempts : 0;
+                }
             }
         }
 
@@ -173,10 +247,20 @@ internal static partial class RespireTelemetry
         {
             get
             {
-                if (_dispatch is not null) return _dispatch.Endpoint(_generation);
-                if (_state is null) return null;
+                if (_dispatch is not null)
+                {
+                    return _dispatch.Endpoint(_generation);
+                }
+
+                if (_state is null)
+                {
+                    return null;
+                }
+
                 lock (_state.Gate)
+                {
                     return _state.Active && _state.Generation == _generation ? _state.Endpoint : null;
+                }
             }
         }
 
@@ -189,17 +273,36 @@ internal static partial class RespireTelemetry
 
         internal void UseEndpoint(RespireEndpoint? endpoint)
         {
-            if (_dispatch is not null) { _dispatch.UseEndpoint(_generation, endpoint); return; }
-            if (_state is null) return;
+            if (_dispatch is not null)
+            {
+                _dispatch.UseEndpoint(_generation, endpoint);
+                return;
+            }
+
+            if (_state is null)
+            {
+                return;
+            }
+
             lock (_state.Gate)
-                if (IsActive(_state) && !_state.Final) _state.Endpoint = endpoint;
+            {
+                if (IsActive(_state) && !_state.Final)
+                {
+                    _state.Endpoint = endpoint;
+                }
+            }
         }
 
         internal static ErrorObservation Rent(bool force = false)
         {
-            if (!force && !ErrorsEnabled) return default;
+            if (!force && !ErrorsEnabled)
+            {
+                return default;
+            }
+
             var state = Pool.Rent();
             Volatile.Read(ref RentalObserverForTests)?.Invoke();
+
             lock (state.Gate)
             {
                 state.Generation = unchecked(state.Generation + 1);
@@ -210,6 +313,7 @@ internal static partial class RespireTelemetry
                 return new(state, state.Generation);
             }
         }
+
         internal void Handled(Exception error)
             => _ = TryHandled(error);
 
@@ -227,34 +331,71 @@ internal static partial class RespireTelemetry
 
         private bool TryHandledCore(Exception error, RespireEndpoint? endpoint, bool overrideEndpoint)
         {
-            if (_dispatch is not null) return _dispatch.Handled(_generation, error, endpoint, overrideEndpoint);
-            if (_state is null) return false;
+            if (_dispatch is not null)
+            {
+                return _dispatch.Handled(_generation, error, endpoint, overrideEndpoint);
+            }
+
+            if (_state is null)
+            {
+                return false;
+            }
+
             int attempt;
+
             lock (_state.Gate)
             {
-                if (!IsActive(_state)) return false;
-                if (!ErrorPublication.TryRecordHandled(ref _state.Attempts, _state.Final, out attempt)) return false;
-                if (!overrideEndpoint) endpoint = _state.Endpoint;
+                if (!IsActive(_state))
+                {
+                    return false;
+                }
+
+                if (!ErrorPublication.TryRecordHandled(ref _state.Attempts, _state.Final, out attempt))
+                {
+                    return false;
+                }
+
+                if (!overrideEndpoint)
+                {
+                    endpoint = _state.Endpoint;
+                }
             }
+
             RespireException.PopulateEndpoint(error, endpoint);
             RecordError(error, internallyHandled: true, attempt, endpoint);
             return true;
         }
+
         internal void Final(Exception error)
         {
             RespireException.PopulateEndpoint(error, Endpoint);
             // DispatchResponseSource publishes after all response parsing and cleanup.
-            if (_dispatch is not null) return;
-            if (_state is null) return;
+            if (_dispatch is not null)
+            {
+                return;
+            }
+
+            if (_state is null)
+            {
+                return;
+            }
+
             int attempts;
             RespireEndpoint? endpoint;
+
             lock (_state.Gate)
             {
-                if (!IsActive(_state) || !ErrorPublication.TryPublishFinal(_state.Attempts, ref _state.Final, out attempts)) return;
+                if (!IsActive(_state) || !ErrorPublication.TryPublishFinal(_state.Attempts, ref _state.Final, out attempts))
+                {
+                    return;
+                }
+
                 endpoint = _state.Endpoint;
             }
+
             RecordError(error, internallyHandled: false, attempts, endpoint);
         }
+
         // Copy while the independently owned result leg is still live. Preserve the
         // caller's prefix and nested retry history without overflowing into a zero count.
         internal void CopyCompletedAttempts(int prefix, ErrorObservation completed)
@@ -267,11 +408,24 @@ internal static partial class RespireTelemetry
 
         internal void SetAttempts(int attempts)
         {
-            if (_dispatch is not null) { _dispatch.SetAttempts(_generation, attempts); return; }
-            if (_state is null) return;
+            if (_dispatch is not null)
+            {
+                _dispatch.SetAttempts(_generation, attempts);
+                return;
+            }
+
+            if (_state is null)
+            {
+                return;
+            }
+
             lock (_state.Gate)
             {
-                if (!IsActive(_state)) return;
+                if (!IsActive(_state))
+                {
+                    return;
+                }
+
                 ErrorPublication.SetAttempts(ref _state.Attempts, _state.Final, attempts);
             }
         }
@@ -280,38 +434,71 @@ internal static partial class RespireTelemetry
         // retry without publishing again, atomically with parallel selection borrowers.
         internal void Retry()
         {
-            if (_dispatch is not null) { _dispatch.Retry(_generation); return; }
-            if (_state is null) return;
+            if (_dispatch is not null)
+            {
+                _dispatch.Retry(_generation);
+                return;
+            }
+
+            if (_state is null)
+            {
+                return;
+            }
+
             lock (_state.Gate)
-                if (IsActive(_state)) ErrorPublication.TryRecordRetry(ref _state.Attempts, _state.Final);
+            {
+                if (IsActive(_state))
+                {
+                    ErrorPublication.TryRecordRetry(ref _state.Attempts, _state.Final);
+                }
+            }
         }
 
         // Called under the storage gate, so validation and mutation cannot race a return/re-rent.
         private bool IsActive(ObservationState state)
         {
-            if (state.Active && state.Generation == _generation) return true;
+            if (state.Active && state.Generation == _generation)
+            {
+                return true;
+            }
+
 #if DEBUG
             throw new InvalidOperationException("The error observation has already been returned to its pool.");
 #else
             return false;
 #endif
         }
+
         public void Dispose() => DisposeAndGetAttempts();
 
         // The final owner has joined all borrowers. Capture its count and invalidate the
         // handle under one gate, avoiding a second lock per completed deferred command.
         internal int DisposeAndGetAttempts()
         {
-            if (_dispatch is not null) return _dispatch.Attempts(_generation);
-            if (_state is null) return 0;
+            if (_dispatch is not null)
+            {
+                return _dispatch.Attempts(_generation);
+            }
+
+            if (_state is null)
+            {
+                return 0;
+            }
+
             int attempts;
+
             lock (_state.Gate)
             {
-                if (!_state.Active || _state.Generation != _generation) return 0;
+                if (!_state.Active || _state.Generation != _generation)
+                {
+                    return 0;
+                }
+
                 attempts = _state.Attempts;
                 _state.Active = false;
                 _state.Endpoint = null;
             }
+
             Pool.Return(_state);
             return attempts;
         }
@@ -337,33 +524,49 @@ internal static partial class RespireTelemetry
         private readonly struct Policy : IPooledObjectPolicy<ObservationState>
         {
             public ObservationState Create() => new();
+
             // Reset on rent under the storage gate. Returned handles are already inactive.
             public bool TryReset(ObservationState observation) => true;
+
             // Dispose returns a lease; discarded observations own no resources to destroy.
-            public void Destroy(ObservationState observation) { }
+            public void Destroy(ObservationState observation)
+            {
+            }
         }
     }
 
     internal static ValueTask<T> ObserveFinalError<T>(ValueTask<T> response, ErrorObservation observation = default)
     {
-        if (!response.IsCompletedSuccessfully) return AwaitFinalError(response, observation);
+        if (!response.IsCompletedSuccessfully)
+        {
+            return AwaitFinalError(response, observation);
+        }
         // RESP sources can translate server errors in GetResult despite Succeeded status.
         // Consume once here, and keep synchronous success free of an async state machine.
         T result;
-        try { result = response.GetAwaiter().GetResult(); }
+
+        try
+        {
+            result = response.GetAwaiter().GetResult();
+        }
         catch (Exception error)
         {
             // The shared async boundary records, disposes, and preserves cancellation status
             // when a successful-status source translates cancellation during GetResult.
             return AwaitFinalError(ValueTask.FromException<T>(error), observation);
         }
+
         observation.Dispose();
         return new(result);
     }
 
     internal static ValueTask ObserveFinalError(ValueTask response, ErrorObservation observation = default)
     {
-        if (!response.IsCompletedSuccessfully) return AwaitFinalError(response, observation);
+        if (!response.IsCompletedSuccessfully)
+        {
+            return AwaitFinalError(response, observation);
+        }
+
         try
         {
 #pragma warning disable CA1849 // IsCompletedSuccessfully proves this GetResult cannot wait; RESP sources can still throw here.
@@ -374,6 +577,7 @@ internal static partial class RespireTelemetry
         {
             return AwaitFinalError(ValueTask.FromException(error), observation);
         }
+
         observation.Dispose();
         return ValueTask.CompletedTask;
     }
@@ -400,11 +604,21 @@ internal static partial class RespireTelemetry
     [RuntimeAsyncMethodGeneration(false)]
     private static async ValueTask AwaitFinalError(ValueTask response, ErrorObservation observation)
     {
-        try { await response.ConfigureAwait(false); }
+        try
+        {
+            await response.ConfigureAwait(false);
+        }
         catch (Exception error)
         {
-            if (observation.IsEmpty) RecordError(error, internallyHandled: false);
-            else observation.Final(error);
+            if (observation.IsEmpty)
+            {
+                RecordError(error, internallyHandled: false);
+            }
+            else
+            {
+                observation.Final(error);
+            }
+
             throw;
         }
         finally { observation.Dispose(); }
@@ -414,11 +628,21 @@ internal static partial class RespireTelemetry
     [RuntimeAsyncMethodGeneration(false)]
     private static async ValueTask<T> AwaitFinalError<T>(ValueTask<T> response, ErrorObservation observation)
     {
-        try { return await response.ConfigureAwait(false); }
+        try
+        {
+            return await response.ConfigureAwait(false);
+        }
         catch (Exception error)
         {
-            if (observation.IsEmpty) RecordError(error, internallyHandled: false);
-            else observation.Final(error);
+            if (observation.IsEmpty)
+            {
+                RecordError(error, internallyHandled: false);
+            }
+            else
+            {
+                observation.Final(error);
+            }
+
             throw;
         }
         finally { observation.Dispose(); }
@@ -428,7 +652,9 @@ internal static partial class RespireTelemetry
         RespireEndpoint? endpoint = null)
     {
         if (value.IsError && ErrorsEnabled)
+        {
             RecordError(ResponseReader.ServerError(in value, commandName), internallyHandled: true, retryAttempts, endpoint);
+        }
     }
 
     // Call only where the owner handles an error or publishes its final failure. Exception
@@ -444,7 +670,11 @@ internal static partial class RespireTelemetry
     internal static void RecordError(Exception error, bool internallyHandled, int retryAttempts = 0,
         RespireEndpoint? endpoint = null)
     {
-        if (!ErrorsEnabled) return;
+        if (!ErrorsEnabled)
+        {
+            return;
+        }
+
         var relevant = error;
         var notSubmitted = false;
         // Unwrap transport wrappers without losing explicit authentication or timeout meaning.
@@ -453,11 +683,21 @@ internal static partial class RespireTelemetry
         for (var depth = 0; depth < 16; depth++)
         {
             notSubmitted |= IsBeforeAdmission(relevant);
-            if (relevant is RespireException { ErrorCause: { } cause }) relevant = cause;
+
+            if (relevant is RespireException { ErrorCause: { } cause })
+            {
+                relevant = cause;
+            }
             else if (relevant is AggregateException { InnerExceptions.Count: 1 } aggregate)
+            {
                 relevant = aggregate.InnerExceptions[0];
-            else break;
+            }
+            else
+            {
+                break;
+            }
         }
+
         var code = relevant switch
         {
             RespireServerException server => StandardErrorCode(server.Code),
@@ -467,10 +707,17 @@ internal static partial class RespireTelemetry
         // Circuit rejection happens before transport dispatch but carries the exact
         // rejected endpoint. A route observation can still name an earlier selection (for
         // example the primary before Nearest picked a replica), so the circuit wins.
-        if (relevant is RespireCircuitOpenException circuit) endpoint = circuit.Endpoint;
+        if (relevant is RespireCircuitOpenException circuit)
+        {
+            endpoint = circuit.Endpoint;
+        }
         // Cancellation or a capacity timeout before admission (capacity, streaming or credential
         // waits) never reached a node, so it must not keep the endpoint routing retained.
-        else if (notSubmitted || IsBeforeAdmission(relevant)) endpoint = null;
+        else if (notSubmitted || IsBeforeAdmission(relevant))
+        {
+            endpoint = null;
+        }
+
         var category = relevant switch
         {
             // This boundary cannot infer the initiator from an exception token. Count
@@ -493,13 +740,26 @@ internal static partial class RespireTelemetry
             new("redis.client.operation.retry_attempts", retryAttempts <= 0 ? ErrorRetryCounts[0]
                 : retryAttempts < ErrorRetryCounts.Length ? ErrorRetryCounts[retryAttempts] : retryAttempts),
         };
-        if (code is not null) tags.Add("db.response.status_code", code);
+
+        if (code is not null)
+        {
+            tags.Add("db.response.status_code", code);
+        }
+
         if (endpoint is { } target)
         {
             tags.Add("server.address", target.Host);
-            if (target.Port != DefaultRedisPort) tags.Add("server.port", target.Port);
+
+            if (target.Port != DefaultRedisPort)
+            {
+                tags.Add("server.port", target.Port);
+            }
         }
-        try { ErrorInstruments.Errors.Add(1, in tags); }
+
+        try
+        {
+            ErrorInstruments.Errors.Add(1, in tags);
+        }
         catch (Exception) { /* A listener must never replace an application error or prevent recovery. */ }
     }
 

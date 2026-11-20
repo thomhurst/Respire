@@ -21,7 +21,11 @@ public class RespireResultTests
         var materialized = RespireResult.MaterializeAsync(asynchronous
             ? new ValueTask<RespireResult>(source.Task)
             : ValueTask.FromResult(lease));
-        if (asynchronous) source.SetResult(lease);
+
+        if (asynchronous)
+        {
+            source.SetResult(lease);
+        }
 
         var result = await materialized;
 
@@ -46,7 +50,11 @@ public class RespireResultTests
         var materialized = RespireResult.MaterializeAsync(asynchronous
             ? new ValueTask<RespireResult>(source.Task)
             : ValueTask.FromResult(lease));
-        if (asynchronous) source.SetResult(lease);
+
+        if (asynchronous)
+        {
+            source.SetResult(lease);
+        }
 
         try
         {
@@ -68,6 +76,7 @@ public class RespireResultTests
     {
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
+
         try
         {
             await RespireResult.MaterializeAsync(ValueTask.FromCanceled<RespireResult>(cancellation.Token));
@@ -79,6 +88,7 @@ public class RespireResultTests
         }
 
         var serverError = new RespireServerException("ERR test");
+
         try
         {
             await RespireResult.MaterializeAsync(ValueTask.FromException<RespireResult>(serverError));
@@ -203,17 +213,36 @@ public class RespireResultTests
     private sealed class FaultingCopyMemory : MemoryManager<byte>
     {
         private readonly byte[] _bytes = [1];
-        internal bool Fail { get; set; }
-        internal IOException Error { get; } = new("Injected payload copy failure.");
+
+        internal bool Fail
+        {
+            get; set;
+        }
+
+        internal IOException Error
+        {
+            get;
+        } = new("Injected payload copy failure.");
+
         public override Span<byte> GetSpan() => Fail ? throw Error : _bytes;
+
         public override MemoryHandle Pin(int elementIndex = 0) => throw new NotSupportedException();
-        public override void Unpin() { }
-        protected override void Dispose(bool disposing) { }
+
+        public override void Unpin()
+        {
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+        }
     }
 
     private sealed class RecordingSerializer : IRespireSerializer
     {
-        public int DeserializeCalls { get; private set; }
+        public int DeserializeCalls
+        {
+            get; private set;
+        }
 
         public void Serialize(IBufferWriter<byte> destination, Type type, object? value)
             => Serialize(destination, value);

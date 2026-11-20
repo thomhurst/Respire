@@ -16,6 +16,7 @@ if (args[0] == "--verify-only")
         Console.Error.WriteLine(error.Message);
         Environment.ExitCode = 1;
     }
+
     return;
 }
 var endpoint = int.Parse(args[0], System.Globalization.CultureInfo.InvariantCulture);
@@ -56,23 +57,38 @@ async Task Exercise(RespireClient client, string prefix)
 {
     await client.SetAsync(prefix + ":first", "value", cancellationToken: deadline.Token);
     await client.SetAsync(prefix + ":second", "value", cancellationToken: deadline.Token);
+
     if (await client.GetStringAsync(prefix + ":first", deadline.Token) != "value"
         || await client.GetStringAsync(prefix + ":first", deadline.Token) != "value"
         || await client.GetStringAsync(prefix + ":second", deadline.Token) != "value")
+    {
         throw new InvalidOperationException("Cache workload did not round-trip values.");
+    }
+
     try
     {
         await client.Lists.LeftPopAsync(prefix + ":first", cancellationToken: deadline.Token);
         throw new InvalidOperationException("Expected Redis WRONGTYPE.");
     }
     catch (RespireServerException error) when (error.Message.Contains("WRONGTYPE", StringComparison.Ordinal)) { }
+
     await using var subscription = await client.SubscribeAsync(prefix + ":channel", cancellationToken: deadline.Token);
     await client.PublishAsync(prefix + ":channel", "message", deadline.Token);
     await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
-    if (!await reader.MoveNextAsync()) throw new InvalidOperationException("No published message received.");
+
+    if (!await reader.MoveNextAsync())
+    {
+        throw new InvalidOperationException("No published message received.");
+    }
+
     await client.Streams.AddAsync(prefix + ":stream", [("type", "smoke")], cancellationToken: deadline.Token);
     var entries = await client.Streams.ReadAsync(prefix + ":stream", cancellationToken: deadline.Token);
-    if (entries.Length != 1) throw new InvalidOperationException("Expected one stream entry.");
+
+    if (entries.Length != 1)
+    {
+        throw new InvalidOperationException("Expected one stream entry.");
+    }
+
     entries[0].RecordProcessingStart();
 }
 
@@ -83,26 +99,43 @@ try
         await Exercise(defaults, "default");
         await Scrape("default");
     }
+
     RespireMetrics.Configure(new() { Groups = RespireMetricGroups.All });
+
     await using (var optional = await RespireClient.ConnectAsync(Options(), deadline.Token))
     {
         await Exercise(optional, "optional");
         // Hold a real dedicated socket busy until a scrape proves the pending/used state.
         var blocked = optional.Lists.LeftPopAsync("optional:queue", Timeout.InfiniteTimeSpan, deadline.Token).AsTask();
+
         while (true)
         {
             var text = await Scrape("busy");
+
             if (PrometheusCheck.HasPositive(text, "db_client_connection_pending_requests", dedicatedPoolLabel)
-                && PrometheusCheck.HasPositive(text, "db_client_connection_count", dedicatedPoolLabel, "db_client_connection_state=\"used\"")) break;
+                && PrometheusCheck.HasPositive(text, "db_client_connection_count", dedicatedPoolLabel, "db_client_connection_state=\"used\""))
+            {
+                break;
+            }
+
             await Task.Delay(20, deadline.Token);
         }
+
         await optional.Lists.RightPushAsync("optional:queue", "released");
-        if (await blocked != "released") throw new InvalidOperationException("Blocking pop did not complete.");
+
+        if (await blocked != "released")
+        {
+            throw new InvalidOperationException("Blocking pop did not complete.");
+        }
+
         await Scrape("optional");
     }
     // Lifecycle delivery is asynchronous. Wait for the actual application close observation.
     while (!PrometheusCheck.HasPositive(await Scrape("closed"), "redis_client_connection_closed_total"))
+    {
         await Task.Delay(20, deadline.Token);
+    }
+
     PrometheusCheck.Verify(output, args[2], dedicatedPoolLabel);
     Console.WriteLine("PASS: real Redis workload, default/optional exports, lifecycle, and pinned dashboard contract.");
 }

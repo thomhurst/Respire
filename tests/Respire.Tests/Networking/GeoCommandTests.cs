@@ -209,6 +209,7 @@ public class GeoCommandTests
     private static byte[] SerializeOriginMember(RespireValue member)
     {
         var buffer = new WriteBuffer(128);
+
         try
         {
             var writer = new RespWriter(buffer);
@@ -223,6 +224,7 @@ public class GeoCommandTests
             writer.Complete();
             var position = 0;
             var status = RespParser.TryParseValue(buffer.WrittenMemory.Span, ref position, out var frame);
+
             if (status != RespParseStatus.Done || position != buffer.Count)
             {
                 throw new InvalidOperationException("Serialized GEOSEARCH command did not parse completely.");

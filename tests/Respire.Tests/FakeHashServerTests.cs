@@ -51,12 +51,17 @@ public class FakeHashServerTests
         var results = await Task.WhenAll(Enumerable.Range(0, 200).Select(async index =>
             await (index % 2 == 0 ? first : second).Hashes.IncrementAsync("hash", "counter")));
         await Assert.That(results.Order()).IsEquivalentTo(Enumerable.Range(1, 200).Select(value => (long)value), CollectionOrdering.Matching);
+
         foreach (var invalid in new[] { "9223372036854775808", "01", "not-a-number" })
         {
-            await Assert.That(async () => { using var ignored = await first.ExecuteAsync("HINCRBY", "absent", "field", invalid); })
+            await Assert.That(async () =>
+                {
+                    using var ignored = await first.ExecuteAsync("HINCRBY", "absent", "field", invalid);
+                })
                 .Throws<RespireServerException>();
             await Assert.That(await first.ExistsAsync("absent")).IsFalse();
         }
+
         await first.Hashes.SetAsync("hash", "counter", "01");
         await Assert.That(async () => await first.Hashes.IncrementAsync("hash", "counter")).Throws<RespireServerException>();
         await Assert.That(await first.Hashes.GetStringAsync("hash", "counter")).IsEqualTo("01");
@@ -70,13 +75,17 @@ public class FakeHashServerTests
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
 #pragma warning restore RESP010
         await client.Hashes.SetAsync("hash", "field", "value");
+
         foreach (var (command, arguments) in new (string, RespireValue[])[]
         {
             ("HINCRBYFLOAT", ["hash", "field", 1]), ("HRANDFIELD", ["hash"]),
             ("HEXPIRE", ["hash", 1, "FIELDS", 1, "field"]),
         })
         {
-            var error = await Assert.That(async () => { using var ignored = await client.ExecuteAsync(command, arguments); })
+            var error = await Assert.That(async () =>
+                {
+                    using var ignored = await client.ExecuteAsync(command, arguments);
+                })
                 .Throws<RespireServerException>();
             await Assert.That(error!.Message).Contains(command);
             await Assert.That(await client.Hashes.GetStringAsync("hash", "field")).IsEqualTo("value");

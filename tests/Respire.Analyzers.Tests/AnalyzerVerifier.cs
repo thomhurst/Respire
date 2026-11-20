@@ -31,10 +31,13 @@ internal static class AnalyzerVerifier<TAnalyzer>
         test.TestState.OutputKind = outputKind;
         test.TestState.Sources.Add(source);
         test.TestState.Sources.Add(RespireApiStub.Source);
+
         if (allowUnsafe)
+        {
             test.SolutionTransforms.Add((solution, projectId) => solution.WithProjectCompilationOptions(projectId,
                 ((Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions)solution.GetProject(projectId)!.CompilationOptions!)
                     .WithAllowUnsafe(true)));
+        }
 
         return test.RunAsync(CancellationToken.None);
     }
@@ -79,5 +82,8 @@ internal static class TestReferences
     /// net8.0 reference assemblies: the analysed snippets only need ValueTask and IAsyncDisposable,
     /// and this set is the one the testing harness ships support for.
     /// </summary>
-    public static ReferenceAssemblies Assemblies { get; } = ReferenceAssemblies.Net.Net80;
+    public static ReferenceAssemblies Assemblies
+    {
+        get;
+    } = ReferenceAssemblies.Net.Net80;
 }

@@ -147,6 +147,7 @@ public class CacheProducerOwnershipTests
         var rentals = 0;
         ErrorObservation.RentalObserverForTests = () => Interlocked.Increment(ref rentals);
         RespireTelemetry.ErrorObservation.RentalObserverForTests = () => Interlocked.Increment(ref rentals);
+
         try
         {
             var first = producer.Read(0);
@@ -190,8 +191,7 @@ public class CacheProducerOwnershipTests
                         state.Calls++;
                         var response = await state.Reply.Task.ConfigureAwait(false);
                         return new ClientSideCacheCoordinator.GetReadResult(response, "key", null, null, null);
-                    }, converter, static (Func<string>? convert, in ClientSideCacheCoordinator.GetReadResult result)
-                        => convert is null ? result.GetString()! : convert(), token, caller)
+                    }, converter, static (Func<string>? convert, in ClientSideCacheCoordinator.GetReadResult result) => convert is null ? result.GetString()! : convert(), token, caller)
                 : ConvertRawAsync(producer.Cache.CoalesceReadAsync(identity, producer,
                     static (state, _, observation) =>
                     {
@@ -225,17 +225,28 @@ public class CacheProducerOwnershipTests
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (ReferenceEquals(instrument.Meter, RespireTelemetry.Meter) && instrument.Name == "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
                 var internallyHandled = false;
                 var attempts = 0;
+
                 foreach (var tag in tags)
                 {
-                    if (tag.Key == "redis.client.errors.internal") internallyHandled = (bool)tag.Value!;
-                    if (tag.Key == "redis.client.operation.retry_attempts") attempts = (int)tag.Value!;
+                    if (tag.Key == "redis.client.errors.internal")
+                    {
+                        internallyHandled = (bool)tag.Value!;
+                    }
+
+                    if (tag.Key == "redis.client.operation.retry_attempts")
+                    {
+                        attempts = (int)tag.Value!;
+                    }
                 }
+
                 Items.Enqueue((internallyHandled, attempts));
                 throw new InvalidOperationException("Exporter failure must not change caller completion.");
             });

@@ -42,7 +42,10 @@ public class ServerConnectionTests
         Assert.False(await connected.WaitAsync(TimeSpan.FromSeconds(5)));
 
         await connection.CloseAsync();
-        Assert.Throws<ObjectDisposedException>(() => { _ = handle.IsConnected; });
+        Assert.Throws<ObjectDisposedException>(() =>
+        {
+            _ = handle.IsConnected;
+        });
     }
 
     [Test]
@@ -51,7 +54,12 @@ public class ServerConnectionTests
     public async Task FailedServerConnectionReportsFalseAndClosedAdapterStillThrows(bool tls)
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
-        if (!tls) await server.DisposeAsync();
+
+        if (!tls)
+        {
+            await server.DisposeAsync();
+        }
+
         await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
@@ -61,14 +69,19 @@ public class ServerConnectionTests
         });
         var handle = connection.GetServer("127.0.0.1", server.Port);
         var connected = Task.Run(() => handle.IsConnected);
+
         if (tls)
         {
             await server.ConnectionAccepted.WaitAsync(TimeSpan.FromSeconds(10));
             await server.SendRawAsync("not a TLS record\r\n"u8.ToArray());
         }
+
         Assert.False(await connected.WaitAsync(TimeSpan.FromSeconds(10)));
 
         await connection.CloseAsync();
-        Assert.Throws<ObjectDisposedException>(() => { _ = handle.IsConnected; });
+        Assert.Throws<ObjectDisposedException>(() =>
+        {
+            _ = handle.IsConnected;
+        });
     }
 }

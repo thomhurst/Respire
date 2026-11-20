@@ -21,14 +21,25 @@ internal static class RespireNotificationWaiter
             // confirms a write. Do not spin on our own failed acquisition attempt; server
             // invalidations and continuity loss still wake every waiter.
             if ((invalidation.Reasons & ~RespireClientCacheInvalidationReason.LocalMutation)
-                == RespireClientCacheInvalidationReason.None) return;
-            try { signal.Release(); }
+                == RespireClientCacheInvalidationReason.None)
+            {
+                return;
+            }
+
+            try
+            {
+                signal.Release();
+            }
             catch (SemaphoreFullException) { }
             catch (ObjectDisposedException) { }
         }, cancellationToken);
+
         if (!subscription.Stopped.CanBeCanceled)
+        {
             throw new NotSupportedException(
                 "Coordination invalidation subscriptions must expose a cancellable Stopped token.");
+        }
+
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken, subscription.Stopped);
 
@@ -41,9 +52,19 @@ internal static class RespireNotificationWaiter
                 // An invalidation at any point before WaitAsync leaves one queued signal.
                 await target.TrackAsync(linkedCancellation.Token).ConfigureAwait(false);
                 var (succeeded, result) = await target.TryAsync(linkedCancellation.Token).ConfigureAwait(false);
-                if (succeeded) return result;
+
+                if (succeeded)
+                {
+                    return result;
+                }
+
                 var ttl = await target.GetTimeToLiveAsync(linkedCancellation.Token).ConfigureAwait(false);
-                if (!ttl.Exists) continue;
+
+                if (!ttl.Exists)
+                {
+                    continue;
+                }
+
                 if (ttl.TimeToLive is { } remaining)
                 {
                     // Redis may defer expiry invalidations until it actively expires the key.
@@ -71,6 +92,8 @@ internal static class RespireNotificationWaiter
 internal interface IRespireNotificationWaitTarget<TResult>
 {
     ValueTask TrackAsync(CancellationToken cancellationToken);
+
     ValueTask<RespireTtlResult> GetTimeToLiveAsync(CancellationToken cancellationToken);
+
     ValueTask<(bool Succeeded, TResult Result)> TryAsync(CancellationToken cancellationToken);
 }

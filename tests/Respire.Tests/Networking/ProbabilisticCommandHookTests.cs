@@ -81,8 +81,11 @@ public class ProbabilisticCommandHookTests
         await Execute(module, command);
         await Check(hook, command, RespireCommandOutcome.Succeeded, null);
         await Assert.That(server.ReceivedCommands.Count(c => c.StartsWith(command + " tenant:key", StringComparison.Ordinal))).IsEqualTo(1);
+
         if (command is "CMS.MERGE" or "TDIGEST.MERGE")
+        {
             await Assert.That(server.ReceivedCommands.Contains(command + " tenant:key 1 tenant:source")).IsTrue();
+        }
     }
 
     [Test]
@@ -108,7 +111,11 @@ public class ProbabilisticCommandHookTests
         await using var server = Server("BF.SCANDUMP", ValidReply("BF.SCANDUMP"));
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("BF.SCANDUMP ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("BF.SCANDUMP ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -174,7 +181,10 @@ public class ProbabilisticCommandHookTests
         Task? nested = null;
         hook.Before = context =>
         {
-            if (context.Command == "BF.ADD") nested = client.Strings.SetAsync("nested", "value").AsTask();
+            if (context.Command == "BF.ADD")
+            {
+                nested = client.Strings.SetAsync("nested", "value").AsTask();
+            }
         };
         hook.After = () => throw new InvalidOperationException("observer failed");
         await Assert.That(await client.Probabilistic.BloomAddAsync("key", "item")).IsTrue();
@@ -237,8 +247,12 @@ public class ProbabilisticCommandHookTests
 #pragma warning disable RESP010 // This probabilistic mutation scenario owns the client and cache entries inspected around admission.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp3,
-            Connections = 1, ThreadPoolMonitoring = false, CommandHook = hook, ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp3,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            CommandHook = hook,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -287,57 +301,148 @@ public class ProbabilisticCommandHookTests
         await Assert.That(Encoding.UTF8.GetString(chunk.Data!)).IsEqualTo("data");
         await Assert.That(Encoding.UTF8.GetString(evicted[0]!)).IsEqualTo("item");
         await Assert.That(evicted[1]).IsNull();
-        if (hook is not null) await Assert.That(hook.Completed.Count).IsEqualTo(3);
+
+        if (hook is not null)
+        {
+            await Assert.That(hook.Completed.Count).IsEqualTo(3);
+        }
     }
 
     private static async Task Execute(RespireProbabilisticClient module, string command, CancellationToken token = default)
     {
         switch (command)
         {
-            case "BF.RESERVE": await module.BloomReserveAsync("key", 0.01, 100, cancellationToken: token); break;
-            case "BF.ADD": await module.BloomAddAsync("key", "item", token); break;
-            case "BF.EXISTS": await module.BloomExistsAsync("key", "item", token); break;
-            case "BF.MADD": await module.BloomMultiAddAsync("key", ["item"], token); break;
-            case "BF.MEXISTS": await module.BloomMultiExistsAsync("key", ["item"], token); break;
-            case "BF.INSERT": await module.BloomInsertAsync("key", ["item"], cancellationToken: token); break;
-            case "BF.CARD": await module.BloomCardinalityAsync("key", token); break;
-            case "BF.SCANDUMP": await module.BloomScanDumpAsync("key", cancellationToken: token); break;
-            case "BF.LOADCHUNK": await module.BloomLoadChunkAsync("key", new(1, "data"u8.ToArray()), token); break;
-            case "CF.RESERVE": await module.CuckooReserveAsync("key", 100, cancellationToken: token); break;
-            case "CF.ADD": await module.CuckooAddAsync("key", "item", token); break;
-            case "CF.ADDNX": await module.CuckooAddIfAbsentAsync("key", "item", token); break;
-            case "CF.INSERT": await module.CuckooInsertAsync("key", ["item"], cancellationToken: token); break;
-            case "CF.INSERTNX": await module.CuckooInsertIfAbsentAsync("key", ["item"], cancellationToken: token); break;
-            case "CF.DEL": await module.CuckooDeleteAsync("key", "item", token); break;
-            case "CF.EXISTS": await module.CuckooExistsAsync("key", "item", token); break;
-            case "CF.MEXISTS": await module.CuckooMultiExistsAsync("key", ["item"], token); break;
-            case "CF.COUNT": await module.CuckooCountAsync("key", "item", token); break;
-            case "CF.SCANDUMP": await module.CuckooScanDumpAsync("key", cancellationToken: token); break;
-            case "CF.LOADCHUNK": await module.CuckooLoadChunkAsync("key", new(1, "data"u8.ToArray()), token); break;
-            case "CMS.INITBYDIM": await module.CountMinInitializeByDimensionsAsync("key", 100, 5, token); break;
-            case "CMS.INITBYPROB": await module.CountMinInitializeByProbabilityAsync("key", 0.01, 0.01, token); break;
-            case "CMS.INCRBY": await module.CountMinIncrementAsync("key", new Dictionary<RespireValue, long> { ["item"] = 1 }, token); break;
-            case "CMS.QUERY": await module.CountMinQueryAsync("key", ["item"], token); break;
-            case "CMS.MERGE": await module.CountMinMergeAsync("key", "source", cancellationToken: token); break;
-            case "TOPK.RESERVE": await module.TopKReserveAsync("key", 5, cancellationToken: token); break;
-            case "TOPK.ADD": await module.TopKAddAsync("key", ["item"], token); break;
-            case "TOPK.INCRBY": await module.TopKIncrementAsync("key", new Dictionary<RespireValue, long> { ["item"] = 1 }, token); break;
-            case "TOPK.QUERY": await module.TopKQueryAsync("key", ["item"], token); break;
-            case "TOPK.COUNT": await module.TopKCountAsync("key", ["item"], token); break;
-            case "TDIGEST.CREATE": await module.TDigestCreateAsync("key", cancellationToken: token); break;
-            case "TDIGEST.RESET": await module.TDigestResetAsync("key", token); break;
-            case "TDIGEST.MERGE": await module.TDigestMergeAsync("key", "source", cancellationToken: token); break;
-            case "TDIGEST.ADD": await module.TDigestAddAsync("key", [1.0], token); break;
-            case "TDIGEST.MIN": await module.TDigestMinimumAsync("key", token); break;
-            case "TDIGEST.MAX": await module.TDigestMaximumAsync("key", token); break;
-            case "TDIGEST.QUANTILE": await module.TDigestQuantileAsync("key", [0.5], token); break;
-            case "TDIGEST.CDF": await module.TDigestCdfAsync("key", [1.0], token); break;
-            case "TDIGEST.RANK": await module.TDigestRankAsync("key", [1.0], token); break;
-            case "TDIGEST.REVRANK": await module.TDigestReverseRankAsync("key", [1.0], token); break;
-            case "TDIGEST.BYRANK": await module.TDigestByRankAsync("key", [1L], token); break;
-            case "TDIGEST.BYREVRANK": await module.TDigestByReverseRankAsync("key", [1L], token); break;
-            case "TDIGEST.TRIMMED_MEAN": await module.TDigestTrimmedMeanAsync("key", 0.1, 0.9, token); break;
-            default: throw new ArgumentException(command);
+            case "BF.RESERVE":
+                await module.BloomReserveAsync("key", 0.01, 100, cancellationToken: token);
+                break;
+            case "BF.ADD":
+                await module.BloomAddAsync("key", "item", token);
+                break;
+            case "BF.EXISTS":
+                await module.BloomExistsAsync("key", "item", token);
+                break;
+            case "BF.MADD":
+                await module.BloomMultiAddAsync("key", ["item"], token);
+                break;
+            case "BF.MEXISTS":
+                await module.BloomMultiExistsAsync("key", ["item"], token);
+                break;
+            case "BF.INSERT":
+                await module.BloomInsertAsync("key", ["item"], cancellationToken: token);
+                break;
+            case "BF.CARD":
+                await module.BloomCardinalityAsync("key", token);
+                break;
+            case "BF.SCANDUMP":
+                await module.BloomScanDumpAsync("key", cancellationToken: token);
+                break;
+            case "BF.LOADCHUNK":
+                await module.BloomLoadChunkAsync("key", new(1, "data"u8.ToArray()), token);
+                break;
+            case "CF.RESERVE":
+                await module.CuckooReserveAsync("key", 100, cancellationToken: token);
+                break;
+            case "CF.ADD":
+                await module.CuckooAddAsync("key", "item", token);
+                break;
+            case "CF.ADDNX":
+                await module.CuckooAddIfAbsentAsync("key", "item", token);
+                break;
+            case "CF.INSERT":
+                await module.CuckooInsertAsync("key", ["item"], cancellationToken: token);
+                break;
+            case "CF.INSERTNX":
+                await module.CuckooInsertIfAbsentAsync("key", ["item"], cancellationToken: token);
+                break;
+            case "CF.DEL":
+                await module.CuckooDeleteAsync("key", "item", token);
+                break;
+            case "CF.EXISTS":
+                await module.CuckooExistsAsync("key", "item", token);
+                break;
+            case "CF.MEXISTS":
+                await module.CuckooMultiExistsAsync("key", ["item"], token);
+                break;
+            case "CF.COUNT":
+                await module.CuckooCountAsync("key", "item", token);
+                break;
+            case "CF.SCANDUMP":
+                await module.CuckooScanDumpAsync("key", cancellationToken: token);
+                break;
+            case "CF.LOADCHUNK":
+                await module.CuckooLoadChunkAsync("key", new(1, "data"u8.ToArray()), token);
+                break;
+            case "CMS.INITBYDIM":
+                await module.CountMinInitializeByDimensionsAsync("key", 100, 5, token);
+                break;
+            case "CMS.INITBYPROB":
+                await module.CountMinInitializeByProbabilityAsync("key", 0.01, 0.01, token);
+                break;
+            case "CMS.INCRBY":
+                await module.CountMinIncrementAsync("key", new Dictionary<RespireValue, long> { ["item"] = 1 }, token);
+                break;
+            case "CMS.QUERY":
+                await module.CountMinQueryAsync("key", ["item"], token);
+                break;
+            case "CMS.MERGE":
+                await module.CountMinMergeAsync("key", "source", cancellationToken: token);
+                break;
+            case "TOPK.RESERVE":
+                await module.TopKReserveAsync("key", 5, cancellationToken: token);
+                break;
+            case "TOPK.ADD":
+                await module.TopKAddAsync("key", ["item"], token);
+                break;
+            case "TOPK.INCRBY":
+                await module.TopKIncrementAsync("key", new Dictionary<RespireValue, long> { ["item"] = 1 }, token);
+                break;
+            case "TOPK.QUERY":
+                await module.TopKQueryAsync("key", ["item"], token);
+                break;
+            case "TOPK.COUNT":
+                await module.TopKCountAsync("key", ["item"], token);
+                break;
+            case "TDIGEST.CREATE":
+                await module.TDigestCreateAsync("key", cancellationToken: token);
+                break;
+            case "TDIGEST.RESET":
+                await module.TDigestResetAsync("key", token);
+                break;
+            case "TDIGEST.MERGE":
+                await module.TDigestMergeAsync("key", "source", cancellationToken: token);
+                break;
+            case "TDIGEST.ADD":
+                await module.TDigestAddAsync("key", [1.0], token);
+                break;
+            case "TDIGEST.MIN":
+                await module.TDigestMinimumAsync("key", token);
+                break;
+            case "TDIGEST.MAX":
+                await module.TDigestMaximumAsync("key", token);
+                break;
+            case "TDIGEST.QUANTILE":
+                await module.TDigestQuantileAsync("key", [0.5], token);
+                break;
+            case "TDIGEST.CDF":
+                await module.TDigestCdfAsync("key", [1.0], token);
+                break;
+            case "TDIGEST.RANK":
+                await module.TDigestRankAsync("key", [1.0], token);
+                break;
+            case "TDIGEST.REVRANK":
+                await module.TDigestReverseRankAsync("key", [1.0], token);
+                break;
+            case "TDIGEST.BYRANK":
+                await module.TDigestByRankAsync("key", [1L], token);
+                break;
+            case "TDIGEST.BYREVRANK":
+                await module.TDigestByReverseRankAsync("key", [1L], token);
+                break;
+            case "TDIGEST.TRIMMED_MEAN":
+                await module.TDigestTrimmedMeanAsync("key", 0.1, 0.9, token);
+                break;
+            default:
+                throw new ArgumentException(command);
         }
     }
 
@@ -363,8 +468,11 @@ public class ProbabilisticCommandHookTests
     private static ValueTask<RespireClient> Connect(FakeRespServer server, RespireCommandHook? hook)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-            Connections = 1, ThreadPoolMonitoring = false, CommandHook = hook,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            CommandHook = hook,
         });
 
     private static async Task Check(RecordingHook hook, string command, RespireCommandOutcome outcome, Exception? error)
@@ -379,8 +487,12 @@ public class ProbabilisticCommandHookTests
 
     private static async Task<Exception> Failure(Func<Task> call)
     {
-        try { await call(); }
+        try
+        {
+            await call();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure.");
     }
 
@@ -389,9 +501,27 @@ public class ProbabilisticCommandHookTests
     private sealed class CallbackItems(Action firstRead) : IReadOnlyList<RespireValue>
     {
         internal int Reads;
+
         public int Count => 1;
-        public RespireValue this[int index] { get { if (++Reads == 1) firstRead(); return "item"; } }
-        public IEnumerator<RespireValue> GetEnumerator() { yield return this[0]; }
+
+        public RespireValue this[int index]
+        {
+            get
+            {
+                if (++Reads == 1)
+                {
+                    firstRead();
+                }
+
+                return "item";
+            }
+        }
+
+        public IEnumerator<RespireValue> GetEnumerator()
+        {
+            yield return this[0];
+        }
+
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
@@ -399,6 +529,7 @@ public class ProbabilisticCommandHookTests
     {
         internal IRespireClient Inner = null!;
         internal readonly List<string> Methods = [];
+
         protected override object? Invoke(MethodInfo? method, object?[]? arguments)
         {
             Methods.Add(method!.Name);
@@ -412,17 +543,26 @@ public class ProbabilisticCommandHookTests
         internal readonly ConcurrentQueue<(RespireCommandContext Context, RespireCommandOutcome Outcome, Exception? Error)> Completed = new();
         internal Action<RespireCommandContext>? Before;
         internal Action? After;
+
         public override object? OnExecuting(RespireCommandContext context)
         {
             Entered.Enqueue(context);
             Before?.Invoke(context);
             return null;
         }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Completed.Enqueue((context, outcome, error));
             After?.Invoke();
         }
-        internal void Reset() { Entered.Clear(); Completed.Clear(); Before = null; After = null; }
+
+        internal void Reset()
+        {
+            Entered.Clear();
+            Completed.Clear();
+            Before = null;
+            After = null;
+        }
     }
 }

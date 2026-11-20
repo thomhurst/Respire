@@ -112,12 +112,21 @@ public partial class RedlockWireTests
     public async Task ShorterRenewalBoundsVisibleLeaseBeforeNodeReplies()
     {
         await using var nodes = await Nodes.StartAsync(static (_, _) => null);
-        foreach (var server in nodes.Servers) server.DelayReply(1, 250);
+
+        foreach (var server in nodes.Servers)
+        {
+            server.DelayReply(1, 250);
+        }
+
         var group = new RespireRedlockGroup(nodes.Clients);
         await using var attempt = await group.TryAcquireAsync("redlock:short-renew", TimeSpan.FromSeconds(10));
         var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(1)).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (nodes.CommandsSeen < nodes.Servers.Length * 2) await Task.Delay(5, timeout.Token);
+
+        while (nodes.CommandsSeen < nodes.Servers.Length * 2)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
 
         var remaining = attempt.Lock.RemainingEstimate;
         await Assert.That(remaining > TimeSpan.Zero && remaining <= TimeSpan.FromSeconds(1)).IsTrue();
@@ -138,8 +147,12 @@ public partial class RedlockWireTests
         await Assert.That(await attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(10))).IsFalse();
         await Assert.That(attempt.Lock.IsReleased).IsTrue();
         await Assert.That(attempt.Lock.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+
         foreach (var server in nodes.Servers)
+        {
             await Assert.That(server.ReceivedCommands.Count(static c => c.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
+        }
+
         await Assert.That(await attempt.Lock.ReleaseAsync()).IsFalse();
     }
 
@@ -158,13 +171,20 @@ public partial class RedlockWireTests
         var renewalReplies = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var renewalReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var received = 0;
+
         foreach (var server in nodes.Servers)
+        {
             server.GateCommand("SET ", renewalReplies.Task, () =>
             {
                 if (Interlocked.Increment(ref received) == nodes.Servers.Length)
+                {
                     renewalReceived.TrySetResult();
+                }
             });
+        }
+
         using var cancellation = new CancellationTokenSource();
+
         try
         {
             var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
@@ -175,9 +195,12 @@ public partial class RedlockWireTests
             await Assert.That(await renewal.WaitAsync(TimeSpan.FromSeconds(30))).IsFalse();
             await Assert.That(attempt.Lock.IsReleased).IsTrue();
             await Assert.That(attempt.Lock.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+
             foreach (var server in nodes.Servers)
+            {
                 await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("DELEX ", StringComparison.Ordinal)))
                     .IsEqualTo(1);
+            }
         }
         finally
         {
@@ -198,8 +221,14 @@ public partial class RedlockWireTests
         // Hold the renewal SET replies until the test has cancelled. A wall-clock cancel could
         // fire before renewal contacts any node, and then nothing would end the lease.
         var renewalReplies = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        foreach (var server in nodes.Servers) server.GateCommand("SET ", renewalReplies.Task);
+
+        foreach (var server in nodes.Servers)
+        {
+            server.GateCommand("SET ", renewalReplies.Task);
+        }
+
         using var cancellation = new CancellationTokenSource();
+
         try
         {
             var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
@@ -207,17 +236,26 @@ public partial class RedlockWireTests
             using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
             {
                 while (!nodes.Servers.All(static server => server.ReceivedCommands.Count(static c => c.StartsWith("SET ", StringComparison.Ordinal)) == 2))
+                {
                     await Task.Delay(1, limit.Token);
+                }
             }
+
             cancellation.Cancel();
             renewalReplies.SetResult();
             await Assert.That(async () => await renewal).Throws<OperationCanceledException>();
             await Assert.That(attempt.Lock.IsReleased).IsTrue();
+
             foreach (var hook in hooks)
+            {
                 await Assert.That(hook.Completed.Single(static e => e.Context.Command == "REDLOCK RENEW").Outcome)
                     .IsEqualTo(RespireCommandOutcome.Canceled);
+            }
+
             foreach (var server in nodes.Servers)
+            {
                 await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
+            }
         }
         finally
         {
@@ -247,12 +285,17 @@ public partial class RedlockWireTests
     {
         await using var nodes = await Nodes.StartAsync(static (_, _) => null);
         var releaseReplies = new int[2];
+
         for (var i = 0; i < releaseReplies.Length; i++)
         {
             var node = i;
             nodes.Servers[node].ReplyOverride = (_, command) =>
             {
-                if (!command.StartsWith("DELEX ", StringComparison.Ordinal)) return null;
+                if (!command.StartsWith("DELEX ", StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
                 return Interlocked.Increment(ref releaseReplies[node]) == 1 ? ReleaseError : Zero;
             };
         }
@@ -287,8 +330,11 @@ public partial class RedlockWireTests
         var group = new RespireRedlockGroup(nodes.Clients, timeProvider: new ManualClock(frequency: 100));
         await using var attempt = await group.TryAcquireAsync("redlock:coarse", TimeSpan.FromMilliseconds(5));
         await Assert.That(attempt.Acquired).IsFalse();
+
         foreach (var server in nodes.Servers)
+        {
             await Assert.That(server.ReceivedCommands.Count(static c => c.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
+        }
     }
 
     [Test]
@@ -316,9 +362,15 @@ public partial class RedlockWireTests
         var setReplies = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var hooks = CreateHooks();
         await using var nodes = await Nodes.StartAsync(static (_, _) => null, untimedCommands: true, hooks: hooks);
-        foreach (var server in nodes.Servers) server.GateCommand("SET ", setReplies.Task);
+
+        foreach (var server in nodes.Servers)
+        {
+            server.GateCommand("SET ", setReplies.Task);
+        }
+
         var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = RespireRedlockNodes.MaxNodeTimeout });
         using var cancellation = new CancellationTokenSource();
+
         try
         {
             var acquisition = group.TryAcquireAsync("redlock:cancel", TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
@@ -328,17 +380,26 @@ public partial class RedlockWireTests
             using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
             {
                 while (!nodes.Servers.All(static server => server.ReceivedCommands.Any(static c => c.StartsWith("SET ", StringComparison.Ordinal))))
+                {
                     await Task.Delay(1, limit.Token);
+                }
             }
+
             cancellation.Cancel();
             // The late SET replies now land on cancelled waiters; the gate also holds the DELEX
             // that follows on each single-connection node, so cleanup needs it open.
             setReplies.SetResult();
             await Assert.That(async () => await acquisition).Throws<OperationCanceledException>();
+
             foreach (var hook in hooks)
+            {
                 await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Canceled);
+            }
+
             foreach (var server in nodes.Servers)
+            {
                 await Assert.That(server.ReceivedCommands.Count(static c => c.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
+            }
         }
         finally
         {
@@ -378,8 +439,16 @@ public partial class RedlockWireTests
             Clients = clients;
         }
 
-        public FakeRespServer[] Servers { get; }
-        public RespireClient[] Clients { get; }
+        public FakeRespServer[] Servers
+        {
+            get;
+        }
+
+        public RespireClient[] Clients
+        {
+            get;
+        }
+
         public int CommandsSeen => Servers.Sum(static server => server.CommandsSeen);
 
         public static async Task<Nodes> StartAsync(Func<int, string, byte[]?> reply, int delayReleaseMs = 0,
@@ -387,6 +456,7 @@ public partial class RedlockWireTests
         {
             var servers = new FakeRespServer[3];
             var clients = new RespireClient[3];
+
             for (var i = 0; i < servers.Length; i++)
             {
                 var node = i;
@@ -395,7 +465,12 @@ public partial class RedlockWireTests
                     ReplyOverride = (_, command) => reply(node, command)
                         ?? (command.StartsWith("DELEX ", StringComparison.Ordinal) ? One : Ok),
                 };
-                if (delayReleaseMs > 0) servers[i].DelayReply(1, delayReleaseMs);
+
+                if (delayReleaseMs > 0)
+                {
+                    servers[i].DelayReply(1, delayReleaseMs);
+                }
+
                 clients[i] = !untimedCommands && hooks is null
                     ? await FakeRespServer.ConnectClientAsync(servers[i].Port)
                     // A gated command waits for the test, not the clock: disable the command timeout.
@@ -414,8 +489,15 @@ public partial class RedlockWireTests
 
         public async ValueTask DisposeAsync()
         {
-            foreach (var client in Clients) await client.DisposeAsync();
-            foreach (var server in Servers) await server.DisposeAsync();
+            foreach (var client in Clients)
+            {
+                await client.DisposeAsync();
+            }
+
+            foreach (var server in Servers)
+            {
+                await server.DisposeAsync();
+            }
         }
     }
 
@@ -431,11 +513,13 @@ public partial class RedlockWireTests
         public override long GetTimestamp()
         {
             var entered = Interlocked.Exchange(ref _timestampReadEntered, null);
+
             if (entered is not null)
             {
                 entered.TrySetResult();
                 Volatile.Read(ref _releaseTimestampRead)!.Task.GetAwaiter().GetResult();
             }
+
             return Volatile.Read(ref _timestamp);
         }
 

@@ -31,29 +31,48 @@ public class ClusterReplicaRoutingBenchmarks
         _replicaPort = int.TryParse(Environment.GetEnvironmentVariable("REDIS_REPLICA_PORT"), out configured) ? configured : 6381;
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(host, port)], Protocol = RespireProtocol.Resp2,
-            Connections = 1, ThreadPoolMonitoring = false, UseCluster = true,
+            Endpoints = [new(host, port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            UseCluster = true,
         }).ConfigureAwait(false);
         _replica = _client.WithReadFrom(RespireReadFrom.Replica);
         _slot = _key.ClusterSlot;
+
         if (RespireTelemetry.IsOperationEnabled("GET"))
+        {
             throw new InvalidOperationException("Cluster replica benchmarks require uninstrumented command dispatch.");
+        }
+
         if (!await _client.Strings.SetAsync(_key, _payload).ConfigureAwait(false))
+        {
             throw new InvalidOperationException("Failed to initialize the cluster benchmark payload.");
+        }
+
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         // Replication is asynchronous. Confirm the actual replica has this setup write before measuring reads.
         while (await _replica.GetStringAsync(_key, deadline.Token).ConfigureAwait(false) != _payload)
+        {
             await Task.Delay(10, deadline.Token).ConfigureAwait(false);
+        }
+
         for (var i = 0; i < 50; i++)
         {
             if (await _client.Strings.GetStringAsync(_key).ConfigureAwait(false) != _payload
                 || await _replica.GetStringAsync(_key).ConfigureAwait(false) != _payload
                 || PreparedReplicaRoute() != _replicaPort || PreparedPrimaryRoute() != port)
+            {
                 throw new InvalidOperationException("A cluster benchmark selected the wrong role or returned an unexpected reply.");
+            }
         }
+
         if ((await ReplicaStringConcurrent50().ConfigureAwait(false)).Any(value => value != _payload)
             || (await PrimaryStringConcurrent50().ConfigureAwait(false)).Any(value => value != _payload))
+        {
             throw new InvalidOperationException("A concurrent cluster read returned an unexpected reply.");
+        }
+
         _operation = null;
         _operations = 0;
         _process.Refresh();
@@ -81,7 +100,10 @@ public class ClusterReplicaRoutingBenchmarks
         // Refresh timing remains unchanged. A healthy prepared read still completes inline
         // when periodic revalidation starts in the background.
         if (!pending.IsCompletedSuccessfully)
+        {
             throw new InvalidOperationException("Prepared cluster selection did not complete synchronously.");
+        }
+
 #pragma warning disable RESP009 // The completion check above guarantees synchronous prepared-route selection.
         return pending.GetAwaiter().GetResult().Port;
 #pragma warning restore RESP009
@@ -105,7 +127,12 @@ public class ClusterReplicaRoutingBenchmarks
     public Task<string?[]> ReplicaStringConcurrent50()
     {
         Count(nameof(ReplicaStringConcurrent50), 50);
-        for (var i = 0; i < _reads.Length; i++) _reads[i] = _replica.GetStringAsync(_key).AsTask();
+
+        for (var i = 0; i < _reads.Length; i++)
+        {
+            _reads[i] = _replica.GetStringAsync(_key).AsTask();
+        }
+
         return Task.WhenAll(_reads);
     }
 
@@ -113,7 +140,12 @@ public class ClusterReplicaRoutingBenchmarks
     public Task<string?[]> PrimaryStringConcurrent50()
     {
         Count(nameof(PrimaryStringConcurrent50), 50);
-        for (var i = 0; i < _reads.Length; i++) _reads[i] = _client.Strings.GetStringAsync(_key).AsTask();
+
+        for (var i = 0; i < _reads.Length; i++)
+        {
+            _reads[i] = _client.Strings.GetStringAsync(_key).AsTask();
+        }
+
         return Task.WhenAll(_reads);
     }
 
@@ -131,11 +163,19 @@ public class ClusterReplicaRoutingBenchmarks
         // work, rather than isolating only measured iterations or server CPU.
         Console.WriteLine("CLUSTER_REPLICA_PROCESS_METRICS " + JsonSerializer.Serialize(new
         {
-            operation = _operation, operations = _operations,
+            operation = _operation,
+            operations = _operations,
             cpuMilliseconds = (_process.TotalProcessorTime - _cpuAt).TotalMilliseconds,
             elapsedSeconds = Stopwatch.GetElapsedTime(_startedAt).TotalSeconds,
         }));
-        try { if (_client is not null) await _client.DisposeAsync().ConfigureAwait(false); }
+
+        try
+        {
+            if (_client is not null)
+            {
+                await _client.DisposeAsync().ConfigureAwait(false);
+            }
+        }
         finally { _process.Dispose(); }
     }
 }

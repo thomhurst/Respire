@@ -77,27 +77,43 @@ public class AllocationMeasurementTests
         long workerAllocated = 0;
         var worker = new Thread(() =>
         {
-            if (!start.Wait(TimeSpan.FromSeconds(30))) return;
-            try { workerAllocated = ExhaustRegionBudget(); }
+            if (!start.Wait(TimeSpan.FromSeconds(30)))
+            {
+                return;
+            }
+
+            try
+            {
+                workerAllocated = ExhaustRegionBudget();
+            }
             finally { finished.Set(); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         worker.Start();
         InvalidOperationException failure;
+
         try
         {
             failure = CaptureFailure(() => AllocationMeasurement.WithoutConcurrentGc(() =>
             {
                 start.Set();
+
                 if (!finished.Wait(TimeSpan.FromSeconds(30)))
+                {
                     throw new TimeoutException("Background allocations did not finish.");
+                }
+
                 return 0;
             }));
         }
         finally
         {
             start.Set();
+
             if (!worker.Join(TimeSpan.FromSeconds(30)))
+            {
                 throw new TimeoutException("Background allocator did not exit.");
+            }
         }
 
         await Assert.That(failure.Message).Contains("no-GC region was not retained");
@@ -114,7 +130,12 @@ public class AllocationMeasurementTests
     private static long ExhaustRegionBudget()
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var index = 0; index < 1024; index++) GC.KeepAlive(new byte[64 * 1024]);
+
+        for (var index = 0; index < 1024; index++)
+        {
+            GC.KeepAlive(new byte[64 * 1024]);
+        }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -132,14 +153,23 @@ public class AllocationMeasurementTests
     private static long Measure(bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
-        if (allocate) GC.KeepAlive(new byte[37]);
+
+        if (allocate)
+        {
+            GC.KeepAlive(new byte[37]);
+        }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
     private static InvalidOperationException CaptureFailure(Action action)
     {
-        try { action(); }
+        try
+        {
+            action();
+        }
         catch (InvalidOperationException failure) { return failure; }
+
         throw new InvalidOperationException("Expected the allocation measurement to fail.");
     }
 }

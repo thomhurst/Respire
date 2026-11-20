@@ -39,6 +39,7 @@ static void VerifyCodecs()
         "(@rating:[(30 +inf])=>[KNN 5 @embedding $vector AS vector_score]", "Generated KNN filter mismatch.");
     Check(!JsonSerializer.IsReflectionEnabledByDefault, "Reflection-based JSON serialization must be disabled.");
     var options = new JsonSerializerOptions { TypeInfoResolver = JsonTypeInfoResolver.Combine() };
+
     try
     {
         _ = options.GetTypeInfo(typeof(Unmapped));
@@ -49,8 +50,17 @@ static void VerifyCodecs()
     foreach (var value in new[]
     {
         Scalars.Create("unicode:姓名😀"),
-        Scalars.Create("nulls") with { Name = null, Flag = null, Count = null, Age = null,
-            Score = null, Amount = null, Token = null, Created = null },
+        Scalars.Create("nulls") with
+        {
+            Name = null,
+            Flag = null,
+            Count = null,
+            Age = null,
+            Score = null,
+            Amount = null,
+            Token = null,
+            Created = null
+        },
     })
     {
         Check(ScalarsHashMapper.FromFields(ScalarsHashMapper.ToFields(value)) == value, "Hash scalar codec mismatch.");
@@ -58,6 +68,7 @@ static void VerifyCodecs()
         Check(JsonSerializer.Deserialize(JsonSerializer.SerializeToUtf8Bytes(value, ScalarsJsonMapper.JsonTypeInfo),
             ScalarsJsonMapper.JsonTypeInfo) == value, "Explicit JSON metadata mismatch.");
     }
+
     Check(ScalarsJsonMapper.FromJson("null"u8) is null, "JSON document null mismatch.");
     Check(ScalarsJsonMapper.FromJson(ScalarsJsonMapper.ToJson(null)) is null, "JSON null codec mismatch.");
     var required = new RequiredScalars("required", "", true, int.MinValue, long.MaxValue,
@@ -72,6 +83,7 @@ static async Task VerifyHashAsync(IRespireClient client, string run, Cancellatio
 {
     var value = Scalars.Create(run);
     var key = ScalarsHashMapper.GetKey(value);
+
     try
     {
         foreach (var mode in new[] { RespireHashExpiryMode.HSetEx, RespireHashExpiryMode.HSetThenExpire })
@@ -103,6 +115,7 @@ static async Task VerifyJsonAsync(IRespireClient client, string run, Cancellatio
     var json = new RespireJsonClient(client);
     var value = Scalars.Create(run);
     var key = ScalarsJsonMapper.GetKey(value);
+
     try
     {
         Check(await ScalarsJsonMapper.SetAsync(json, value, cancellationToken: token), "JSON write failed.");
@@ -125,16 +138,21 @@ static async Task VerifySearchAsync(IRespireClient client, string run, bool json
     var index = $"mapper-smoke:{run}:{(json ? "json" : "hash")}";
     var key = index + ":doc:1";
     var definition = (json ? SearchJsonSearchSchema.Definition : SearchHashSearchSchema.Definition)
-        with { Prefixes = [index + ":doc:"] };
+        with
+    { Prefixes = [index + ":doc:"] };
     var vector = new byte[8];
     BitConverter.TryWriteBytes(vector.AsSpan(), 1f);
     BitConverter.TryWriteBytes(vector.AsSpan(4), 2f);
     await client.Search.CreateIndexAsync(index, definition, token);
+
     try
     {
         // Avoid racing the initial scan with the first document write.
         while ((await client.Search.GetIndexInfoAsync(index, token)).Properties["indexing"].Scalar != "0")
+        {
             await Task.Delay(20, token);
+        }
+
         if (json)
         {
             var jsonClient = new RespireJsonClient(client);
@@ -154,8 +172,12 @@ static async Task VerifySearchAsync(IRespireClient client, string run, bool json
             Check(partial.Embedding.Value!.SequenceEqual(vector) && partial.Rating.Value == 42,
                 "Hash vector partial read mismatch.");
         }
+
         while ((await client.Search.VectorSearchAsync(index, new("embedding", vector, 1), cancellationToken: token)).Documents.Count != 1)
+        {
             await Task.Delay(20, token);
+        }
+
         var filter = RespireSearchQueryBuilder.And(RespireSearchQueryBuilder.TextField("title", "redis"),
             RespireSearchQueryBuilder.NumericRange("rating", 42L, 42L));
         var found = await client.Search.SearchAsync(index, new(filter), token);
@@ -172,7 +194,10 @@ static async Task VerifySearchAsync(IRespireClient client, string run, bool json
 
 static void Check(bool condition, string message)
 {
-    if (!condition) throw new InvalidOperationException(message);
+    if (!condition)
+    {
+        throw new InvalidOperationException(message);
+    }
 }
 
 internal sealed class Unmapped;

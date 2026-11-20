@@ -35,10 +35,14 @@ internal sealed class InflightRing
     [StructLayout(LayoutKind.Explicit, Size = 272)]
     private struct Positions
     {
-        [FieldOffset(0)] internal long Tail;
-        [FieldOffset(8)] internal long CachedHead;
-        [FieldOffset(144)] internal long Head;
-        [FieldOffset(152)] internal long CompletedWriteEnd;
+        [FieldOffset(0)]
+        internal long Tail;
+        [FieldOffset(8)]
+        internal long CachedHead;
+        [FieldOffset(144)]
+        internal long Head;
+        [FieldOffset(152)]
+        internal long CompletedWriteEnd;
     }
 
     public InflightRing(int capacity)
@@ -76,6 +80,7 @@ internal sealed class InflightRing
     public bool TryEnqueue(PendingResponse source, long writeEnd = 0)
     {
         var tail = _positions.Tail;
+
         if (!HasCapacity(1))
         {
             return false;
@@ -90,9 +95,17 @@ internal sealed class InflightRing
     internal bool TryEnqueueDiscard(string? operation, long writeEnd, int retryAttempts = 0)
     {
         var tail = _positions.Tail;
-        if (!HasCapacity(1)) return false;
+
+        if (!HasCapacity(1))
+        {
+            return false;
+        }
+
         if (operation is not null || retryAttempts != 0)
+        {
             (_discardedReplies ??= new DiscardedReply[_slots.Length])[tail & _mask] = new(operation, retryAttempts);
+        }
+
         PublishSlot(tail, DiscardSentinel, writeEnd);
         return true;
     }
@@ -113,7 +126,12 @@ internal sealed class InflightRing
     internal bool HasCapacity(int count)
     {
         var tail = _positions.Tail;
-        if (_slots.Length - (tail - _positions.CachedHead) >= count) return true;
+
+        if (_slots.Length - (tail - _positions.CachedHead) >= count)
+        {
+            return true;
+        }
+
         var head = Volatile.Read(ref _positions.Head);
         // Publish a producer-owned cache snapshot for callers inspecting capacity before
         // taking the write gate. Only this gate-protected path can advance the cache.
@@ -130,7 +148,12 @@ internal sealed class InflightRing
         // the consumer's cache line. A stale/full cache must not hide newly released slots.
         var cachedHead = Volatile.Read(ref _positions.CachedHead);
         var tail = Volatile.Read(ref _positions.Tail);
-        if (_slots.Length - (tail - cachedHead) >= count) return true;
+
+        if (_slots.Length - (tail - cachedHead) >= count)
+        {
+            return true;
+        }
+
 #if DEBUG
         Interlocked.Increment(ref CapacitySnapshotHeadReadsForTests);
 #endif
@@ -146,6 +169,7 @@ internal sealed class InflightRing
     public bool TryPeek(out PendingResponse source)
     {
         var head = _positions.Head;
+
         if (Volatile.Read(ref _positions.Tail) == head)
         {
             source = null!;
@@ -160,12 +184,20 @@ internal sealed class InflightRing
     {
         var head = Volatile.Read(ref _positions.Head);
         var tail = Volatile.Read(ref _positions.Tail);
+
         for (var position = head; position < tail; position++)
         {
             var source = Volatile.Read(ref _slots[position & _mask].Source);
+
             if (source is null || ReferenceEquals(source, DiscardSentinel) || source.CommandName == commandName)
+            {
                 continue;
-            if (!PendingResponse.IsCompleted(source.State)) return true;
+            }
+
+            if (!PendingResponse.IsCompleted(source.State))
+            {
+                return true;
+            }
         }
 
         return false;
@@ -189,9 +221,11 @@ internal sealed class InflightRing
         var tail = Volatile.Read(ref _positions.Tail);
         long next = -1;
         RespireTimeoutDiagnostics? diagnostics = null;
+
         for (var position = head; position < tail; position++)
         {
             var source = Volatile.Read(ref _slots[position & _mask].Source);
+
             if (source is null || ReferenceEquals(source, DiscardSentinel))
             {
                 continue;
@@ -202,6 +236,7 @@ internal sealed class InflightRing
             // epoch pairs only with that incarnation's deadline, and one that sees the new
             // epoch can no longer see the previous command's expired deadline.
             var state = source.State;
+
             if (PendingResponse.IsCompleted(state))
             {
                 continue;
@@ -210,6 +245,7 @@ internal sealed class InflightRing
             var commandDeadline = source.Deadline;
             var alreadyRelaxed = commandDeadline.IsRelaxed;
             var deadline = commandDeadline.Ticks;
+
             if (deadline == 0)
             {
                 continue;
@@ -218,6 +254,7 @@ internal sealed class InflightRing
             // A late notification cannot revive a deadline that elapsed before maintenance.
             var extension = !alreadyRelaxed && MaintenanceTimeoutState.Relaxes(deadline, maintenanceStarted) ? deadlineExtension : 0;
             var remaining = deadline + extension - nowMilliseconds;
+
             if (remaining > 0)
             {
                 if (next < 0 || remaining < next)
@@ -229,8 +266,12 @@ internal sealed class InflightRing
             }
 
             var reportedTimeout = timeout + TimeSpan.FromMilliseconds(extension);
+
             if (alreadyRelaxed && alreadyRelaxedTimeout is { } relaxedTimeout && relaxedTimeout > reportedTimeout)
+            {
                 reportedTimeout = relaxedTimeout;
+            }
+
             source.TrySetTimedOut(state, reportedTimeout, ref diagnostics, connection);
         }
 
@@ -242,6 +283,7 @@ internal sealed class InflightRing
     public bool TryDequeue(out PendingResponse source)
     {
         var head = _positions.Head;
+
         if (Volatile.Read(ref _positions.Tail) == head)
         {
             source = null!;
@@ -252,7 +294,11 @@ internal sealed class InflightRing
         source = slot.Source!;
         // Callers that ignore metadata still release its references before slot reuse.
         // Avoid reading the record and constructing unused outputs on this common path.
-        if (_discardedReplies is { } replies) replies[head & _mask] = default;
+        if (_discardedReplies is { } replies)
+        {
+            replies[head & _mask] = default;
+        }
+
         Volatile.Write(ref _positions.CompletedWriteEnd, slot.WriteEnd);
         slot.Source = null;
         Volatile.Write(ref _positions.Head, head + 1);
@@ -265,6 +311,7 @@ internal sealed class InflightRing
         var head = _positions.Head;
         discardedOperation = null;
         retryAttempts = 0;
+
         if (Volatile.Read(ref _positions.Tail) == head)
         {
             source = null!;

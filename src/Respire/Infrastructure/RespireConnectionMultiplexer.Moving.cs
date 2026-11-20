@@ -54,7 +54,9 @@ internal sealed partial class RespireConnectionMultiplexer
             // No lease escapes the owner's factory before registration returns. A stale
             // empty pool must not count handshakes that finish after that publication.
             if (!ReferenceEquals(pool.MovingPublication, MovingPublication))
+            {
                 pool.CaptureMovingHandoffs();
+            }
         }
     }
 
@@ -89,6 +91,7 @@ internal sealed partial class RespireConnectionMultiplexer
     private void QueueMovingHandoff(int slot, RespireConnection connection, MovingAnnouncement announcement)
     {
         bool startWorker;
+
         lock (_moving.Gate)
         {
             startWorker = QueueMovingHandoffUnderLock(slot, connection, announcement);
@@ -96,7 +99,10 @@ internal sealed partial class RespireConnectionMultiplexer
 
         // Fire-and-forget is safe: ProcessMovingHandoffsAsync catches every exception, and
         // retirement and disposal wait for it through the coordinator completion task.
-        if (startWorker) _ = Task.Run(ProcessMovingHandoffsAsync);
+        if (startWorker)
+        {
+            _ = Task.Run(ProcessMovingHandoffsAsync);
+        }
     }
 
     internal void QueueDedicatedMovingHandoff(RespireConnection connection, MovingAnnouncement announcement,
@@ -107,12 +113,17 @@ internal sealed partial class RespireConnectionMultiplexer
         var epoch = _moving.HandoffEpoch;
         var current = isCurrent();
         bool startWorker;
+
         lock (_moving.Gate)
         {
             startWorker = QueueMovingHandoffUnderLock(-1, connection, announcement,
                 current && _moving.HandoffEpoch - epoch <= 1);
         }
-        if (startWorker) _ = Task.Run(ProcessMovingHandoffsAsync);
+
+        if (startWorker)
+        {
+            _ = Task.Run(ProcessMovingHandoffsAsync);
+        }
     }
 
     private bool QueueMovingHandoffUnderLock(int slot, RespireConnection connection, MovingAnnouncement announcement,
@@ -133,14 +144,20 @@ internal sealed partial class RespireConnectionMultiplexer
             connection.LastQueuedMovingSequence, connection.PeerKey, notification.SequenceId,
             notification.Target ?? new RespireEndpoint(Host, Port), deadline, Environment.TickCount64,
             _stopConnecting.Token);
-        if (!result.MarkConnectionSequence) return false;
+
+        if (!result.MarkConnectionSequence)
+        {
+            return false;
+        }
         // Mark every socket that handled this sequence. Publication sweep must not queue it later.
         connection.LastQueuedMovingSequence = notification.SequenceId;
+
         if (result.HasSupersededEndpoint)
         {
             var previous = result.SupersededEndpoint;
             _logger?.MovingSuperseded(notification.Target?.Host ?? Host, notification.Target?.Port ?? Port, previous.Host, previous.Port);
         }
+
         return result.StartWorker;
     }
 
@@ -149,11 +166,17 @@ internal sealed partial class RespireConnectionMultiplexer
         while (true)
         {
             MovingHandoffCoordinator.Request? request;
+
             lock (_moving.Gate)
             {
                 request = _moving.TakeNext(IsOperational);
             }
-            if (request is null) return;
+
+            if (request is null)
+            {
+                return;
+            }
+
             try
             {
                 await HandOffAsync(request).ConfigureAwait(false);
@@ -190,6 +213,7 @@ internal sealed partial class RespireConnectionMultiplexer
     {
         var endpoint = request.Endpoint;
         RespireConnection[] replacements;
+
         for (var attempt = 0; ; attempt++)
         {
             try
@@ -205,9 +229,14 @@ internal sealed partial class RespireConnectionMultiplexer
             {
                 lock (_moving.Gate)
                 {
-                    if (_moving.HasPending) return;
+                    if (_moving.HasPending)
+                    {
+                        return;
+                    }
                 }
+
                 var remaining = request.Deadline - Environment.TickCount64;
+
                 if (remaining <= 0)
                 {
                     // Nothing was published, so keep the current sockets. They stay usable until
@@ -215,6 +244,7 @@ internal sealed partial class RespireConnectionMultiplexer
                     _logger?.MovingGraceAttemptFailed(endpoint.Host, endpoint.Port, error);
                     return;
                 }
+
                 _logger?.MovingRetry(endpoint.Host, endpoint.Port, error);
                 var backoff = Math.Min(remaining, 50L << Math.Min(attempt, 4));
                 await Task.Delay(TimeSpan.FromMilliseconds(backoff), request.Cancellation.Token).ConfigureAwait(false);
@@ -229,6 +259,7 @@ internal sealed partial class RespireConnectionMultiplexer
         List<RespireConnection>? handedOff = null;
         var published = false;
         int? cacheEvictions = null;
+
         try
         {
             lock (_lifecycleGate)
@@ -240,8 +271,11 @@ internal sealed partial class RespireConnectionMultiplexer
                     for (var i = 0; i < _connections.Length; i++)
                     {
                         if (Volatile.Read(ref _connections[i]) is { LastMovingAnnouncement: { } pendingAnnouncement } announcing)
+                        {
                             _ = QueueMovingHandoffUnderLock(i, announcing, pendingAnnouncement);
+                        }
                     }
+
                     if (!IsOperational || _moving.HasPending)
                     {
                         _logger?.MovingPublicationSuperseded(endpoint.Host, endpoint.Port);
@@ -250,16 +284,22 @@ internal sealed partial class RespireConnectionMultiplexer
                     // Not user code: the cache flush only updates state and queues events, and its
                     // metrics are published after the gates are released (see below).
                     cacheEvictions = _options.CredentialCacheInvalidation?.Invoke();
+
                     lock (_movingDedicatedGate)
                     {
                         var dedicated = _movingDedicatedPool;
+
                         if (dedicated is not null && ReferenceEquals(dedicated.MovingPublication, MovingPublication))
+                        {
                             handedOff = dedicated.CaptureMovingHandoffs();
+                        }
+
                         Volatile.Write(ref _activeEndpoint, new ActiveEndpoint(endpoint.Host, endpoint.Port));
                     }
                     // Bump the epoch before any slot changes, so a MOVING parsed by a replacement
                     // after its publication is captured as current.
                     _moving.PublishHandoffEpoch();
+
                     for (var i = 0; i < replacements.Length; i++)
                     {
                         var generation = Interlocked.Increment(ref _movingPublicationGenerations[i]);
@@ -270,14 +310,23 @@ internal sealed partial class RespireConnectionMultiplexer
                         // Snapshot liveness at publication. Retirement may close a live idle
                         // socket before metrics run, but already-dead slots are not handoffs.
                         if (old[i] is { IsConnected: true } live)
+                        {
                             (handedOff ??= []).Add(live);
+                        }
                         // Failure history belongs to the previous endpoint's sockets.
-                        if (_reconnectAttempts is not null) _reconnectAttempts[i] = 0;
+                        if (_reconnectAttempts is not null)
+                        {
+                            _reconnectAttempts[i] = 0;
+                        }
                     }
+
                     published = true;
                 }
+
                 for (var i = 0; i < replacements.Length; i++)
+                {
                     ObservePublishedConnection(i, replacements[i]);
+                }
             }
         }
         finally
@@ -285,11 +334,14 @@ internal sealed partial class RespireConnectionMultiplexer
             if (!published)
             {
                 foreach (var replacement in replacements)
+                {
                     await replacement.DisposeAsync().ConfigureAwait(false);
+                }
             }
         }
 
         var lateBy = Environment.TickCount64 - request.Deadline;
+
         if (lateBy > 0)
         {
             _logger?.MovingPublishedLate(endpoint.Host, endpoint.Port, lateBy);
@@ -299,6 +351,7 @@ internal sealed partial class RespireConnectionMultiplexer
         // each socket's write gate, so it runs after the multiplexer locks are released.
         var retiredConnections = old.OfType<RespireConnection>().ToArray();
         var drains = retiredConnections.Select(connection => connection.RetireAsync()).ToArray();
+
         lock (_moving.Gate)
         {
             _moving.BeginDrain();
@@ -306,17 +359,30 @@ internal sealed partial class RespireConnectionMultiplexer
         }
         // The state-only second cache fence precedes retirement and metric delivery.
         // The handoff has already published, so a fence failure cannot roll it back.
-        try { _options.CredentialCacheRetirementFence?.Invoke(); }
+        try
+        {
+            _options.CredentialCacheRetirementFence?.Invoke();
+        }
         catch (Exception error) { _logger?.MovingCacheFenceObserverFailed(error); }
 
         // Dedicated membership was captured at publication. Owners now stop admission before
         // publishing any handoff measurements. No lifecycle locks are held here.
         MovingHandoffPublished?.Invoke();
+
         if (handedOff is not null)
-            foreach (var connection in handedOff) connection.RecordConnectionHandoff();
+        {
+            foreach (var connection in handedOff)
+            {
+                connection.RecordConnectionHandoff();
+            }
+        }
+
         if (cacheEvictions is { } removed)
         {
-            try { ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed); }
+            try
+            {
+                ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed);
+            }
             catch (Exception error) { _logger?.ContinuityFlushObserverFailed(error); }
         }
     }
@@ -324,6 +390,7 @@ internal sealed partial class RespireConnectionMultiplexer
     private async Task DrainMovedConnectionsInBackgroundAsync(RespireConnection?[] old, Task[] drains, long deadline)
     {
         await Task.Yield(); // Never run drain work under the handoff gate.
+
         try
         {
             await DrainMovedConnectionsAsync(old, drains, deadline).ConfigureAwait(false);
@@ -339,6 +406,7 @@ internal sealed partial class RespireConnectionMultiplexer
         finally
         {
             ForgetMovingSequences(connectedOnly: false);
+
             lock (_moving.Gate)
             {
                 _moving.EndDrain();
@@ -359,8 +427,12 @@ internal sealed partial class RespireConnectionMultiplexer
         RespireEndpoint endpoint, CancellationToken cancellationToken)
     {
         var connects = new Task<RespireConnection>[_connections.Length];
+
         for (var i = 0; i < connects.Length; i++)
+        {
             connects[i] = ConnectMovingReplacementAsync(endpoint, cancellationToken);
+        }
+
         try
         {
             return await Task.WhenAll(connects).ConfigureAwait(false);
@@ -377,6 +449,7 @@ internal sealed partial class RespireConnectionMultiplexer
                     await connection.DisposeAsync().ConfigureAwait(false);
                 }
             }
+
             throw;
         }
     }
@@ -386,10 +459,14 @@ internal sealed partial class RespireConnectionMultiplexer
     {
         var connection = await RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port,
             _options, _logger, cancellationToken).ConfigureAwait(false);
+
         try
         {
             if (Volatile.Read(ref _trackServerClientIds) != 0)
+            {
                 await connection.EnsureServerClientIdAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             return connection;
         }
         catch
@@ -407,13 +484,21 @@ internal sealed partial class RespireConnectionMultiplexer
     {
         lock (_moving.Gate)
         {
-            if (!_moving.HasSequenceFences) return;
+            if (!_moving.HasSequenceFences)
+            {
+                return;
+            }
+
             var live = new HashSet<(string Host, int Port)>();
+
             for (var slot = 0; slot < _connections.Length; slot++)
             {
                 if (Volatile.Read(ref _connections[slot]) is { } published && (!connectedOnly || published.IsConnected))
+                {
                     live.Add(published.PeerKey);
+                }
             }
+
             _moving.ForgetSequences(live);
         }
     }
@@ -438,24 +523,49 @@ internal sealed partial class RespireConnectionMultiplexer
             // Any unclean exit, not only the grace deadline, aborts and later fences the old
             // sockets that did not drain; a faulted drain must not leave them open.
             if (error is TimeoutException)
+            {
                 _logger?.MovingDrainGraceExceeded();
+            }
             else if (error is OperationCanceledException && _abortCancellation.IsCancellationRequested)
+            {
                 _logger?.MovingDrainDisposalStopped();
+            }
             else
+            {
                 _logger?.MovingDrainFailed(error);
+            }
+
             foreach (var connection in old)
             {
-                if (connection is null || connection.DrainedSuccessfully) continue;
+                if (connection is null || connection.DrainedSuccessfully)
+                {
+                    continue;
+                }
+
                 RecordRetiredConnectionIdentity(connection);
-                try { await connection.DisposeAsync().ConfigureAwait(false); }
+
+                try
+                {
+                    await connection.DisposeAsync().ConfigureAwait(false);
+                }
                 catch (Exception disposeError) { _logger?.MovingSocketAbortFailed(disposeError); }
             }
         }
 
-        try { await Task.WhenAll(drains).ConfigureAwait(false); }
+        try
+        {
+            await Task.WhenAll(drains).ConfigureAwait(false);
+        }
         catch (Exception error) { _logger?.MovingSocketDrainCleanupCompleted(error); }
-        foreach (var connection in old) RecordRetiredConnectionIdentity(connection);
+
+        foreach (var connection in old)
+        {
+            RecordRetiredConnectionIdentity(connection);
+        }
+
         if (HasPendingCorrectionFences)
+        {
             await FenceRetiredConnectionsAsync(_stopConnecting.Token).ConfigureAwait(false);
+        }
     }
 }

@@ -22,16 +22,23 @@ public class DedicatedPoolLedgerTests
         ledger.Add(pool);
         var borrowed = await pool.RentAsync(CancellationToken.None);
         RespireConnection? idle = null;
+
         if (idleLease)
         {
             idle = await pool.RentAsync(CancellationToken.None);
             pool.Return(idle);
         }
+
         var retirement = ledger.RetireAsync(pool);
         await Assert.That(retirement.IsCompleted).IsFalse();
         await Assert.That(ledger.Count).IsEqualTo(1);
         await Assert.That(borrowed.IsConnected).IsTrue();
-        if (idle is not null) await Assert.That(idle.IsConnected).IsFalse();
+
+        if (idle is not null)
+        {
+            await Assert.That(idle.IsConnected).IsFalse();
+        }
+
         pool.Return(borrowed);
         await retirement.WaitAsync(Limit);
         await Assert.That(ledger.Count).IsEqualTo(0);
@@ -83,9 +90,12 @@ public class DedicatedPoolLedgerTests
 #pragma warning disable RESP010 // Test-owned client controls maintenance migration and cleanup failure ownership.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
+            Protocol = RespireProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            LoggerFactory = logger,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
         });
+
 #pragma warning restore RESP010
         try
         {
@@ -95,7 +105,12 @@ public class DedicatedPoolLedgerTests
             await server.SendRawAsync(System.Text.Encoding.UTF8.GetBytes(
                 $">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"), server.ReceivedConnectionIds[0]);
             using var timeout = new CancellationTokenSource(Limit);
-            while (!pool.IsStopping) await Task.Delay(5, timeout.Token);
+
+            while (!pool.IsStopping)
+            {
+                await Task.Delay(5, timeout.Token);
+            }
+
             await Assert.That(ReferenceEquals(client.Core.DedicatedPool, pool)).IsFalse();
             await Assert.That(client.Core.Multiplexer.CaptureMovingPublication().Endpoint.Port).IsEqualTo(target.Port);
             await Assert.That(async () => await pool.RetireAsync()).ThrowsExactly<InvalidOperationException>();
@@ -127,6 +142,7 @@ public class DedicatedPoolLedgerTests
         failed.Return(failedLease);
         await Assert.That(async () => await ledger.RetireAsync(failed)).ThrowsExactly<InvalidOperationException>();
         logger.ThrowOnWarning = true;
+
         try
         {
             await Assert.That(async () => await ledger.DisposeAllAsync().WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
@@ -134,6 +150,7 @@ public class DedicatedPoolLedgerTests
             await Assert.That(ledger.Count).IsEqualTo(1);
         }
         finally { logger.ThrowOnWarning = false; }
+
         await ledger.DisposeAllAsync().WaitAsync(Limit);
         await Assert.That(ledger.Count).IsEqualTo(0);
     }
@@ -171,11 +188,18 @@ public class DedicatedPoolLedgerTests
                 ? "*3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n"u8.ToArray() : FakeRespServer.OkReply,
         };
         var logger = new CleanupFailureLogger();
-        if (aggregateFailure) logger.WarningFailure = new AggregateException(logger.WarningFailure);
+
+        if (aggregateFailure)
+        {
+            logger.WarningFailure = new AggregateException(logger.WarningFailure);
+        }
+
 #pragma warning disable RESP010 // Test-owned client is deliberately disposed to verify all owners survive a pool cleanup failure.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            LoggerFactory = logger,
         });
 #pragma warning restore RESP010
         var core = client.Core;
@@ -188,6 +212,7 @@ public class DedicatedPoolLedgerTests
         await Assert.That(async () => await pool.RetireAsync()).ThrowsExactly<InvalidOperationException>();
         logger.ThrowOnDisconnect = laterOwnerAlsoFails;
         logger.ThrowOnWarning = true;
+
         try
         {
             if (laterOwnerAlsoFails)
@@ -211,6 +236,7 @@ public class DedicatedPoolLedgerTests
                     .ThrowsExactly<InvalidOperationException>();
                 await Assert.That(ReferenceEquals(error, logger.WarningFailure)).IsTrue();
             }
+
             await Assert.That(core.Multiplexer.IsRetired).IsTrue();
             await Assert.That(connection.IsConnected).IsFalse();
             await Assert.That(subscription.Completion.IsCompleted).IsTrue();
@@ -222,8 +248,13 @@ public class DedicatedPoolLedgerTests
             logger.ThrowOnDisconnect = false;
             // Also close owners explicitly when the regression is run against the broken implementation.
             await hub.DisposeAsync();
-            try { await core.Multiplexer.DisposeAsync(); }
+
+            try
+            {
+                await core.Multiplexer.DisposeAsync();
+            }
             catch (InvalidOperationException error) when (ReferenceEquals(error, logger.Failure)) { }
+
             await pool.DisposeAsync();
         }
     }
@@ -235,7 +266,8 @@ public class DedicatedPoolLedgerTests
 #pragma warning disable RESP010 // Test-owned client owns the injected failed pools until explicit disposal.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var firstLogger = new CleanupFailureLogger();
@@ -246,14 +278,17 @@ public class DedicatedPoolLedgerTests
         var ledger = client.Core.OwnedPools;
         ledger.Add(first);
         ledger.Add(second);
+
         foreach (var pool in new[] { first, second })
         {
             var lease = await pool.RentAsync(CancellationToken.None);
             pool.Return(lease);
             await Assert.That(async () => await pool.RetireAsync()).ThrowsExactly<InvalidOperationException>();
         }
+
         var connection = client.Core.Multiplexer.GetConnection();
         firstLogger.ThrowOnWarning = secondLogger.ThrowOnWarning = true;
+
         try
         {
             var error = await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit))
@@ -287,12 +322,17 @@ public class DedicatedPoolLedgerTests
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? System.Text.Encoding.ASCII.GetBytes($"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n+127.0.0.1\r\n:{primary.Port}\r\n*3\r\n:8192\r\n:16383\r\n*2\r\n+127.0.0.1\r\n:{second.Port}\r\n")
             : command == "ROLE" ? "*3\r\n+master\r\n:0\r\n*0\r\n"u8.ToArray() : FakeRespServer.OkReply;
+
         foreach (var replica in new[] { second, third })
+        {
             replica.ReplyOverride = (_, command) => command == "ROLE"
                 ? "*5\r\n+slave\r\n+127.0.0.1\r\n:6379\r\n+connected\r\n:0\r\n"u8.ToArray() : FakeRespServer.OkReply;
+        }
+
         var logger = new CleanupFailureLogger
         {
-            ThrowOnDisconnect = false, DistinctDisconnectFailures = true,
+            ThrowOnDisconnect = false,
+            DistinctDisconnectFailures = true,
             // Inject data-owner failures only. Sentinel discovery and monitor sockets have
             // independent best-effort cleanup and are not owned by the data generation.
             IgnoredDisconnectPort = mode == "sentinel" ? sentinel.Port : null,
@@ -300,34 +340,59 @@ public class DedicatedPoolLedgerTests
 #pragma warning disable RESP010 // Test-owned client isolates cleanup failures across the selected routing owners.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 2,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 2,
             Endpoints = [new("127.0.0.1", mode == "sentinel" ? sentinel.Port : primary.Port)],
-            UseCluster = mode == "cluster", ClusterTopologyRefreshInterval = null,
+            UseCluster = mode == "cluster",
+            ClusterTopologyRefreshInterval = null,
             SentinelPrimaryName = mode == "sentinel" ? "primary" : null,
             ReplicaEndpoints = mode == "replicas" ? [new("127.0.0.1", second.Port), new("127.0.0.1", third.Port)] : [],
             LoggerFactory = logger,
         });
+
 #pragma warning restore RESP010
         if (mode == "cluster")
+        {
             await client.Core.Cluster!.GetConnectionAsync(10000, CancellationToken.None, discovery: null, observation: default);
+        }
+
         if (mode == "replicas")
+        {
             foreach (var replica in new[] { second, third })
+            {
                 await client.Core.ReadRouter.GetReplicaFromEndpointsAsync([new("127.0.0.1", replica.Port)], CancellationToken.None, observation: default);
+            }
+        }
+
         if (mode == "sentinel")
         {
             // Ensure the monitor owns a socket before enabling data-disposal fault injection.
             using var timeout = new CancellationTokenSource(Limit);
-            while (client.Core.Sentinel!.SubscribedSentinelCount == 0) await Task.Delay(5, timeout.Token);
-            if (client.Core.Sentinel.NotificationRediscovery is { } discovery) await discovery.WaitAsync(Limit);
+
+            while (client.Core.Sentinel!.SubscribedSentinelCount == 0)
+            {
+                await Task.Delay(5, timeout.Token);
+            }
+
+            if (client.Core.Sentinel.NotificationRediscovery is { } discovery)
+            {
+                await discovery.WaitAsync(Limit);
+            }
         }
+
         logger.ThrowOnDisconnect = true;
+
         try
         {
             var error = await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit))
                 .ThrowsExactly<AggregateException>();
             await Assert.That(logger.DisconnectFailures.Count).IsGreaterThanOrEqualTo(mode == "replicas" ? 6 : mode == "cluster" ? 4 : 2);
+
             foreach (var failure in logger.DisconnectFailures)
+            {
                 await Assert.That(error!.InnerExceptions.Contains(failure)).IsTrue();
+            }
+
             await Assert.That(error!.InnerExceptions.Any(failure => failure is AggregateException)).IsFalse();
         }
         finally { logger.ThrowOnDisconnect = false; }
@@ -346,8 +411,11 @@ public class DedicatedPoolLedgerTests
 #pragma warning disable RESP010 // Test-owned client owns multiple failed cluster retirements until disposal.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
-            Endpoints = [new("127.0.0.1", seed.Port)], LoggerFactory = logger,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            LoggerFactory = logger,
         });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
@@ -355,28 +423,43 @@ public class DedicatedPoolLedgerTests
             new(0, 8191, new("127.0.0.1", first.Port), "first", []),
             new(8192, 16383, new("127.0.0.1", second.Port), "second", []),
         ], 0, 1);
+
         foreach (var server in new[] { first, second })
         {
             var pool = router.GetDedicatedPool(new("127.0.0.1", server.Port));
             var lease = await pool.RentAsync(CancellationToken.None);
             pool.Return(lease);
         }
+
         logger.ThrowOnDisconnect = true;
         router.ApplyTopology([new(0, 16383, new("127.0.0.1", replacement.Port), "replacement", [])], 0, 2);
-        try { await router.WaitForRetirementAsync().WaitAsync(Limit); }
+
+        try
+        {
+            await router.WaitForRetirementAsync().WaitAsync(Limit);
+        }
         catch (InvalidOperationException) { }
+
         logger.ThrowOnDisconnect = false;
         await Assert.That(logger.DisconnectFailures.Count).IsEqualTo(2);
+
         if (abortAlsoFails)
+        {
             await router.GetConnectionAsync(0, CancellationToken.None, discovery: null, observation: default);
+        }
+
         logger.ThrowOnDisconnect = abortAlsoFails;
+
         try
         {
             var error = await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit))
                 .ThrowsExactly<AggregateException>();
             await Assert.That(error!.InnerExceptions.Count).IsEqualTo(abortAlsoFails ? 3 : 2);
+
             foreach (var failure in logger.DisconnectFailures)
+            {
                 await Assert.That(error.InnerExceptions.Contains(failure)).IsTrue();
+            }
         }
         finally { logger.ThrowOnDisconnect = false; }
     }
@@ -395,10 +478,13 @@ public class DedicatedPoolLedgerTests
         var logger = new CleanupFailureLogger { ThrowOnDisconnect = false, DistinctDisconnectFailures = true };
         var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
-            ReplicaEndpoints = [new("127.0.0.1", replica.Port)], LoggerFactory = logger,
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            LoggerFactory = logger,
         });
+
         try
         {
             var selection = await client.Core.ReadRouter.SelectAsync(RespireReadFrom.Replica, CancellationToken.None, observation: default);
@@ -410,8 +496,14 @@ public class DedicatedPoolLedgerTests
             logger.ThrowOnWarning = !retire;
             var error = await Assert.That(async () =>
             {
-                if (retire) await entry.RetireAsync(CancellationToken.None).WaitAsync(Limit);
-                else await entry.DisposeAsync().AsTask().WaitAsync(Limit);
+                if (retire)
+                {
+                    await entry.RetireAsync(CancellationToken.None).WaitAsync(Limit);
+                }
+                else
+                {
+                    await entry.DisposeAsync().AsTask().WaitAsync(Limit);
+                }
             }).ThrowsExactly<AggregateException>();
             await Assert.That(logger.DisconnectFailures.Count).IsEqualTo(2);
             await Assert.That(error!.InnerExceptions.Count).IsEqualTo(2);
@@ -423,7 +515,11 @@ public class DedicatedPoolLedgerTests
         finally
         {
             logger.ThrowOnDisconnect = logger.ThrowOnWarning = false;
-            try { await client.DisposeAsync(); }
+
+            try
+            {
+                await client.DisposeAsync();
+            }
             catch (Exception) { /* The injected cleanup failures were asserted above. */ }
         }
     }
@@ -439,11 +535,21 @@ public class DedicatedPoolLedgerTests
         internal int? IgnoredDisconnectPort;
         internal int Warnings;
         internal int PoolDisposalWarnings;
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
             Exception? exception, Func<TState, Exception?, string> formatter)
         {
@@ -451,17 +557,37 @@ public class DedicatedPoolLedgerTests
             {
                 if (IgnoredDisconnectPort is { } ignored
                     && state is IEnumerable<KeyValuePair<string, object?>> fields
-                    && fields.Any(field => field.Key == "Port" && Equals(field.Value, ignored))) return;
-                if (!DistinctDisconnectFailures) throw Failure;
+                    && fields.Any(field => field.Key == "Port" && Equals(field.Value, ignored)))
+                {
+                    return;
+                }
+
+                if (!DistinctDisconnectFailures)
+                {
+                    throw Failure;
+                }
+
                 var failure = new InvalidOperationException("Injected distinct disconnect failure.");
                 DisconnectFailures.Add(failure);
                 throw failure;
             }
-            if (logLevel != LogLevel.Warning) return;
+
+            if (logLevel != LogLevel.Warning)
+            {
+                return;
+            }
+
             if (formatter(state, exception).StartsWith("Failed to dispose a dedicated pool", StringComparison.Ordinal))
+            {
                 Interlocked.Increment(ref PoolDisposalWarnings);
+            }
+
             Interlocked.Increment(ref Warnings);
-            if (ThrowOnWarning) throw WarningFailure;
+
+            if (ThrowOnWarning)
+            {
+                throw WarningFailure;
+            }
         }
     }
 

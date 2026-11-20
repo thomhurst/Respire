@@ -95,7 +95,10 @@ public static class AgentDotNetWindowsJob
     public static string DescribeSystemResources()
     {
         if (GetPerformanceInfo(out PerformanceInformation info, (uint)Marshal.SizeOf<PerformanceInformation>()) == 0)
+        {
             throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+
         ulong pageSize = info.PageSize.ToUInt64();
         return $"system commitBytes={checked(info.CommitTotal.ToUInt64() * pageSize)} " +
             $"commitLimitBytes={checked(info.CommitLimit.ToUInt64() * pageSize)} " +
@@ -110,9 +113,16 @@ public static class AgentDotNetWindowsJob
         // GetThreadDesktop returns a borrowed handle; do not close it or switch
         // desktops. UOI_HEAPSIZE is capacity, not free space or measured usage.
         IntPtr desktop = GetThreadDesktop(GetCurrentThreadId());
-        if (desktop == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
-        if (GetDesktopHeapSize(desktop, 5, out uint heapSizeKb, sizeof(uint), out _) == 0)
+
+        if (desktop == IntPtr.Zero)
+        {
             throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+
+        if (GetDesktopHeapSize(desktop, 5, out uint heapSizeKb, sizeof(uint), out _) == 0)
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
         // GR_GLOBAL (-2) counts GUI objects in the current session only.
         uint gdi = ReadGuiResources(0);
         uint user = ReadGuiResources(1);
@@ -124,7 +134,12 @@ public static class AgentDotNetWindowsJob
         Marshal.SetLastPInvokeError(0);
         uint count = GetGuiResources(new IntPtr(-2), flags);
         int error = Marshal.GetLastWin32Error();
-        if (count == 0 && error != 0) throw new Win32Exception(error);
+
+        if (count == 0 && error != 0)
+        {
+            throw new Win32Exception(error);
+        }
+
         return count;
     }
 
@@ -151,7 +166,12 @@ public static class AgentDotNetWindowsJob
         uint packageNameLength = 0;
         int packageStatus = GetCurrentPackageFullName(ref packageNameLength, IntPtr.Zero);
         bool packaged = packageStatus == ErrorInsufficientBuffer;
-        if (!packaged && packageStatus != AppModelErrorNoPackage) throw new Win32Exception(packageStatus);
+
+        if (!packaged && packageStatus != AppModelErrorNoPackage)
+        {
+            throw new Win32Exception(packageStatus);
+        }
+
         using var input = DuplicateStandardHandle(-10, GenericRead);
         using var output = DuplicateStandardHandle(-11, GenericWrite);
         using var error = DuplicateStandardHandle(-12, GenericWrite);
@@ -159,38 +179,62 @@ public static class AgentDotNetWindowsJob
         UIntPtr attributeSize = UIntPtr.Zero;
         InitializeProcThreadAttributeList(IntPtr.Zero, attributeCount, 0, ref attributeSize);
         int sizeError = Marshal.GetLastWin32Error();
-        if (attributeSize == UIntPtr.Zero || sizeError != ErrorInsufficientBuffer) throw new Win32Exception(sizeError);
+
+        if (attributeSize == UIntPtr.Zero || sizeError != ErrorInsufficientBuffer)
+        {
+            throw new Win32Exception(sizeError);
+        }
+
         IntPtr attributes = Marshal.AllocHGlobal(checked((int)attributeSize.ToUInt64()));
         IntPtr jobList = IntPtr.Zero;
         IntPtr handleList = IntPtr.Zero;
         IntPtr desktopPolicy = IntPtr.Zero;
         IntPtr environment = IntPtr.Zero;
         bool initialized = false;
+
         try
         {
-            if (InitializeProcThreadAttributeList(attributes, attributeCount, 0, ref attributeSize) == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+            if (InitializeProcThreadAttributeList(attributes, attributeCount, 0, ref attributeSize) == 0)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+
             initialized = true;
             jobList = Marshal.AllocHGlobal(IntPtr.Size);
             Marshal.WriteIntPtr(jobList, job);
+
             if (UpdateProcThreadAttribute(attributes, 0, new UIntPtr(ProcThreadAttributeJobList), jobList,
-                new UIntPtr((uint)IntPtr.Size), IntPtr.Zero, IntPtr.Zero) == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+                new UIntPtr((uint)IntPtr.Size), IntPtr.Zero, IntPtr.Zero) == 0)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
             // Explicitly inherit only owned standard-handle duplicates. Other
             // inheritable handles in this process must never enter the wrapper.
             handleList = Marshal.AllocHGlobal(3 * IntPtr.Size);
             Marshal.WriteIntPtr(handleList, 0, input.DangerousGetHandle());
             Marshal.WriteIntPtr(handleList, IntPtr.Size, output.DangerousGetHandle());
             Marshal.WriteIntPtr(handleList, 2 * IntPtr.Size, error.DangerousGetHandle());
+
             if (UpdateProcThreadAttribute(attributes, 0, new UIntPtr(ProcThreadAttributeHandleList), handleList,
-                new UIntPtr((uint)(3 * IntPtr.Size)), IntPtr.Zero, IntPtr.Zero) == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+                new UIntPtr((uint)(3 * IntPtr.Size)), IntPtr.Zero, IntPtr.Zero) == 0)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+
             if (packaged)
             {
                 // Store-installed PowerShell otherwise breaks native children away
                 // from its job. Keep the entire guarded tree in the same environment.
                 desktopPolicy = Marshal.AllocHGlobal(sizeof(uint));
                 Marshal.WriteInt32(desktopPolicy, DesktopAppBreakawayDisableProcessTree);
+
                 if (UpdateProcThreadAttribute(attributes, 0, new UIntPtr(ProcThreadAttributeDesktopAppPolicy), desktopPolicy,
-                    new UIntPtr(sizeof(uint)), IntPtr.Zero, IntPtr.Zero) == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+                    new UIntPtr(sizeof(uint)), IntPtr.Zero, IntPtr.Zero) == 0)
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
             }
+
             string environmentBlock = string.Concat(info.Environment.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
                 .Select(pair => pair.Key + "=" + pair.Value + '\0')) + '\0';
             environment = Marshal.StringToHGlobalUni(environmentBlock);
@@ -198,26 +242,43 @@ public static class AgentDotNetWindowsJob
             {
                 Startup = new StartupInfo
                 {
-                    Size = (uint)Marshal.SizeOf<StartupInfoEx>(), Flags = StartfUseStdHandles,
-                    StandardInput = input.DangerousGetHandle(), StandardOutput = output.DangerousGetHandle(), StandardError = error.DangerousGetHandle(),
+                    Size = (uint)Marshal.SizeOf<StartupInfoEx>(),
+                    Flags = StartfUseStdHandles,
+                    StandardInput = input.DangerousGetHandle(),
+                    StandardOutput = output.DangerousGetHandle(),
+                    StandardError = error.DangerousGetHandle(),
                 },
                 Attributes = attributes,
             };
             // Only the generated wrapper path, fixed switches, and random gate name
             // enter this command line. Workload argv remains in the JSON payload.
             string commandLine = string.Join(" ", new[] { info.FileName }.Concat(info.ArgumentList).Select(QuoteWrapperArgument)) + '\0';
+
             if (CreateProcess(info.FileName, commandLine.ToCharArray(), IntPtr.Zero, IntPtr.Zero, 1,
                 ExtendedStartupInfoPresent | CreateUnicodeEnvironment | CreateNoWindow, environment, info.WorkingDirectory,
-                ref startup, out ProcessInformation created) == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+                ref startup, out ProcessInformation created) == 0)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+
             using var processHandle = new SafeProcessHandle(created.Process, ownsHandle: true);
             using var threadHandle = new SafeWaitHandle(created.Thread, ownsHandle: true);
             Process result = Process.GetProcessById(checked((int)created.ProcessId));
-            try { _ = result.SafeHandle; return result; }
+
+            try
+            {
+                _ = result.SafeHandle;
+                return result;
+            }
             catch { result.Dispose(); throw; }
         }
         finally
         {
-            if (initialized) DeleteProcThreadAttributeList(attributes);
+            if (initialized)
+            {
+                DeleteProcThreadAttributeList(attributes);
+            }
+
             Marshal.FreeHGlobal(attributes);
             Marshal.FreeHGlobal(jobList);
             Marshal.FreeHGlobal(handleList);
@@ -234,12 +295,19 @@ public static class AgentDotNetWindowsJob
         using var fallback = original == IntPtr.Zero || original == new IntPtr(-1)
             ? CreateFile("NUL", access, FileShareReadWrite, IntPtr.Zero, OpenExisting, FileAttributeNormal, IntPtr.Zero)
             : null;
+
         if (fallback is not null)
         {
-            if (fallback.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+            if (fallback.IsInvalid)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+
             original = fallback.DangerousGetHandle();
         }
+
         IntPtr currentProcess = GetCurrentProcess();
+
         if (DuplicateHandle(currentProcess, original, currentProcess, out SafeFileHandle inherited,
             0, 1, DuplicateSameAccess) == 0)
         {
@@ -249,6 +317,7 @@ public static class AgentDotNetWindowsJob
             // of silently discarding redirected build output or replacing input with EOF.
             throw new Win32Exception(duplicateError);
         }
+
         return inherited;
     }
 
@@ -256,7 +325,11 @@ public static class AgentDotNetWindowsJob
     {
         // Windows filenames cannot contain quotes. These generated arguments do
         // not end in a separator; never use this helper for arbitrary workload argv.
-        if (value.Contains('"') || value.EndsWith('\\')) throw new ArgumentException("Invalid wrapper launch argument.");
+        if (value.Contains('"') || value.EndsWith('\\'))
+        {
+            throw new ArgumentException("Invalid wrapper launch argument.");
+        }
+
         return "\"" + value + "\"";
     }
 
@@ -317,25 +390,44 @@ public static class AgentDotNetWindowsJob
     {
         // Borrow this guard's handle, never query the caller's enclosing job
         // (which QueryInformationJobObject would do for a null handle).
-        if (job == IntPtr.Zero) throw new ArgumentException("A guard job is required.", nameof(job));
+        if (job == IntPtr.Zero)
+        {
+            throw new ArgumentException("A guard job is required.", nameof(job));
+        }
         // JOBOBJECT_BASIC_PROCESS_ID_LIST: two DWORDs followed by ULONG_PTR IDs.
         // One fixed query bounds cost. Failure or overflow is unavailable evidence,
         // never a partial list that could be mistaken for the containment boundary.
         const int memberLimit = 64;
         int size = 8 + memberLimit * IntPtr.Size;
         IntPtr buffer = Marshal.AllocHGlobal(size);
+
         try
         {
             if (QueryInformationJobObject(job, 3, buffer, (uint)size, out uint returnedLength) == 0)
+            {
                 throw new Win32Exception(Marshal.GetLastWin32Error());
-            if (returnedLength < 8) throw new InvalidOperationException("Missing job membership header.");
+            }
+
+            if (returnedLength < 8)
+            {
+                throw new InvalidOperationException("Missing job membership header.");
+            }
+
             uint assigned = unchecked((uint)Marshal.ReadInt32(buffer));
             uint count = unchecked((uint)Marshal.ReadInt32(buffer, 4));
+
             if (count > memberLimit || count != assigned || returnedLength < 8 + count * IntPtr.Size)
+            {
                 throw new InvalidOperationException("Incomplete job membership snapshot.");
+            }
+
             var ids = new int[count];
+
             for (int index = 0; index < ids.Length; index++)
+            {
                 ids[index] = checked((int)Marshal.ReadIntPtr(buffer, 8 + index * IntPtr.Size).ToInt64());
+            }
+
             return ids;
         }
         finally { Marshal.FreeHGlobal(buffer); }
@@ -344,6 +436,7 @@ public static class AgentDotNetWindowsJob
     public static IntPtr CreateKillOnClose()
     {
         IntPtr job = CreateJobObject(IntPtr.Zero, null);
+
         if (job == IntPtr.Zero)
         {
             throw new Win32Exception();
@@ -351,11 +444,13 @@ public static class AgentDotNetWindowsJob
 
         int size = Marshal.SizeOf<ExtendedLimitInformation>();
         IntPtr information = Marshal.AllocHGlobal(size);
+
         try
         {
             var limits = new ExtendedLimitInformation();
             limits.BasicLimitInformation.LimitFlags = JobObjectLimitKillOnJobClose;
             Marshal.StructureToPtr(limits, information, false);
+
             if (!SetInformationJobObject(
                     job,
                     JobObjectExtendedLimitInformation,

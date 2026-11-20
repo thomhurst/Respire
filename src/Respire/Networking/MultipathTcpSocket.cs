@@ -14,6 +14,7 @@ internal static class MultipathTcpSocket
         {
             logger?.MultipathTcpFallback("MPTCP is only supported on Linux");
             var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
             try
             {
                 RespireConnection.ConfigureSocket(socket, options);
@@ -34,14 +35,22 @@ internal static class MultipathTcpSocket
         RespireConnectionOptions options, ILogger? logger, CancellationToken cancellationToken)
     {
         SocketException? lastError = null;
+
         foreach (var address in addresses)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (address.AddressFamily == AddressFamily.InterNetworkV6 && !Socket.OSSupportsIPv6) continue;
+
+            if (address.AddressFamily == AddressFamily.InterNetworkV6 && !Socket.OSSupportsIPv6)
+            {
+                continue;
+            }
+
             var socket = CreateLinux(address.AddressFamily, logger);
+
             try
             {
                 RespireConnection.ConfigureSocket(socket, options);
+
                 try
                 {
                     await socket.ConnectAsync(new IPEndPoint(address, port), cancellationToken).ConfigureAwait(false);
@@ -50,8 +59,10 @@ internal static class MultipathTcpSocket
                 catch (SocketException error) { lastError = error; }
             }
             catch { socket.Dispose(); throw; }
+
             socket.Dispose();
         }
+
         cancellationToken.ThrowIfCancellationRequested();
         throw lastError ?? new SocketException((int)SocketError.HostNotFound);
     }
@@ -71,6 +82,7 @@ internal static class MultipathTcpSocket
         const int protocolMptcp = 262;
         // ProtocolType casts are rejected by System.Native on .NET 8 and .NET 10.
         int descriptor;
+
         try
         {
             descriptor = createSocket is null
@@ -82,6 +94,7 @@ internal static class MultipathTcpSocket
             logger?.MultipathTcpFallback($"Linux socket binding unavailable: {error.GetType().Name}");
             return new Socket(family, SocketType.Stream, ProtocolType.Tcp);
         }
+
         if (descriptor == -1)
         {
             var error = Marshal.GetLastPInvokeError();
@@ -98,7 +111,11 @@ internal static class MultipathTcpSocket
         }
 
         var handle = new SafeSocketHandle((IntPtr)descriptor, ownsHandle: true);
-        try { return new Socket(handle); }
+
+        try
+        {
+            return new Socket(handle);
+        }
         catch { handle.Dispose(); throw; }
     }
 

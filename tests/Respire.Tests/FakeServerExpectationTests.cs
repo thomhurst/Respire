@@ -17,7 +17,11 @@ public class FakeServerExpectationTests
         server.Expect("PING", [], response: RespireFakeResponse.Array(
             RespireFakeResponse.Bulk("pong"), RespireFakeResponse.Bulk("configured")));
         server.ExpectationMode = RespireFakeExpectationMode.Strict;
-        using (var subscribed = await session.CommandAsync("SUBSCRIBE", "events")) { }
+
+        using (var subscribed = await session.CommandAsync("SUBSCRIBE", "events"))
+        {
+        }
+
         using var ping = await session.CommandAsync("PING");
         await Assert.That(ping.AsArray()[0].AsString()).IsEqualTo("pong");
         await Assert.That(ping.AsArray()[1].AsString()).IsEqualTo("configured");
@@ -57,13 +61,26 @@ public class FakeServerExpectationTests
         server.Expect("SET", ["key", "value"]);
         server.Expect("EXEC", []);
         server.ExpectationMode = RespireFakeExpectationMode.Strict;
-        using (var multi = await session.CommandAsync("MULTI")) { }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
         using (var queued = await session.CommandAsync("SET", "key", "value"))
+        {
             await Assert.That(queued.AsString()).IsEqualTo("QUEUED");
+        }
+
         using (var rejected = await session.CommandAsync("GET", "wrong"))
+        {
             await Assert.That(rejected.GetErrorMessage()).Contains("Unexpected command");
+        }
+
         using (var aborted = await session.CommandAsync("EXEC"))
+        {
             await Assert.That(aborted.GetErrorMessage()).StartsWith("EXECABORT");
+        }
+
         var failure = await Assert.That(() => server.VerifyAllExpectations()).ThrowsExactly<InvalidOperationException>();
         await Assert.That(failure!.Message).Contains("GET \"wrong\"");
         await Assert.That(failure.Message).Contains("strict rejection");
@@ -78,8 +95,15 @@ public class FakeServerExpectationTests
         await using var server = new RespireFakeServer();
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions());
         server.Expect("GET", ["key"], response: RespireFakeResponse.Bulk("queued override"));
-        using (var multi = await session.CommandAsync("MULTI")) { }
-        using (var queued = await session.CommandAsync("GET", "key")) { }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
+        using (var queued = await session.CommandAsync("GET", "key"))
+        {
+        }
+
         server.VerifyAllExpectations();
         server.ResetExpectations();
         using var executed = await session.CommandAsync("EXEC");
@@ -144,10 +168,17 @@ public class FakeServerExpectationTests
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions());
         server.Expect("GET", [RespireFakeArgument.Exact(new byte[] { 255 })]);
         server.ExpectationMode = RespireFakeExpectationMode.Strict;
+
         using (var wrong = await session.CommandBytesAsync("GET"u8.ToArray(), [254]))
+        {
             await Assert.That(wrong.IsError).IsTrue();
+        }
+
         using (var correct = await session.CommandBytesAsync("GET"u8.ToArray(), [255]))
+        {
             await Assert.That(correct.IsNull).IsTrue();
+        }
+
         await Assert.That(server.CommandHistory[0].Matched).IsFalse();
         await Assert.That(server.CommandHistory[1].Matched).IsTrue();
     }
@@ -159,14 +190,27 @@ public class FakeServerExpectationTests
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions());
         server.Expect("SET", ["key", RespireFakeArgument.Any]);
         server.ExpectationMode = RespireFakeExpectationMode.Strict;
+
         using (var tooFew = await session.CommandAsync("SET", "key"))
+        {
             await Assert.That(tooFew.IsError).IsTrue();
+        }
+
         using (var tooMany = await session.CommandAsync("SET", "key", "value", "NX"))
+        {
             await Assert.That(tooMany.IsError).IsTrue();
+        }
+
         using (var wrongKey = await session.CommandAsync("SET", "other", "value"))
+        {
             await Assert.That(wrongKey.IsError).IsTrue();
+        }
+
         using (var matched = await session.CommandBytesAsync("SET"u8.ToArray(), "key"u8.ToArray(), [0, 255]))
+        {
             await Assert.That(matched.AsString()).IsEqualTo("OK");
+        }
+
         await Assert.That(server.CommandHistory.Select(command => command.Matched).ToArray())
             .IsEquivalentTo(new[] { false, false, false, true });
         await Assert.That(() => server.VerifyAllExpectations()).ThrowsExactly<InvalidOperationException>();
@@ -203,16 +247,26 @@ public class FakeServerExpectationTests
 #pragma warning restore RESP010
         server.Expect("INCR", ["counter"]);
         server.ExpectationMode = strict ? RespireFakeExpectationMode.Strict : RespireFakeExpectationMode.Loose;
+
         using (var first = await client.ExecuteAsync("INCR", "counter"))
+        {
             await Assert.That(first.AsInteger()).IsEqualTo(1);
+        }
+
         if (strict)
-            await Assert.That(async () => { using var reply = await client.ExecuteAsync("INCR", "counter"); })
+        {
+            await Assert.That(async () =>
+                {
+                    using var reply = await client.ExecuteAsync("INCR", "counter");
+                })
                 .Throws<RespireServerException>();
+        }
         else
         {
             using var second = await client.ExecuteAsync("INCR", "counter");
             await Assert.That(second.AsInteger()).IsEqualTo(2);
         }
+
         await Assert.That(() => server.VerifyAllExpectations()).ThrowsExactly<InvalidOperationException>();
         server.ResetExpectations();
         await Assert.That(await client.GetStringAsync("counter")).IsEqualTo(strict ? "1" : "2");
@@ -368,11 +422,21 @@ public class FakeServerExpectationTests
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         server.Expect("SET", ["key", "value"], response: RespireFakeResponse.Error("ERR deferred failure"));
         server.Expect("GET", ["key"], response: RespireFakeResponse.Bulk("override"));
-        using (var multi = await session.CommandAsync("MULTI")) { }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
         using (var set = await session.CommandAsync("SET", "key", "value"))
+        {
             await Assert.That(set.AsString()).IsEqualTo("QUEUED");
+        }
+
         using (var get = await session.CommandAsync("GET", "key"))
+        {
             await Assert.That(get.AsString()).IsEqualTo("QUEUED");
+        }
+
         server.VerifyAllExpectations();
         using var executed = await session.CommandAsync("EXEC");
         await Assert.That(executed.AsArray()[0].GetErrorMessage()).IsEqualTo("ERR deferred failure");
@@ -396,20 +460,36 @@ public class FakeServerExpectationTests
         await using var writer = await RespireClient.ConnectAsync(server.CreateOptions());
 #pragma warning restore RESP010
         server.Expect("SET", ["queued", "value"], response: RespireFakeResponse.Simple("OK"));
+
         if (watchAbort)
         {
             using var watch = await session.CommandAsync("WATCH", "watched");
             await writer.SetAsync("watched", "changed");
         }
-        using (var multi = await session.CommandAsync("MULTI")) { }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
         using (var queued = await session.CommandAsync("SET", "queued", "value"))
+        {
             await Assert.That(queued.AsString()).IsEqualTo("QUEUED");
+        }
+
         server.VerifyAllExpectations();
+
         using (var done = await session.CommandAsync(watchAbort ? "EXEC" : "DISCARD"))
         {
-            if (watchAbort) await Assert.That(done.IsNull).IsTrue();
-            else await Assert.That(done.AsString()).IsEqualTo("OK");
+            if (watchAbort)
+            {
+                await Assert.That(done.IsNull).IsTrue();
+            }
+            else
+            {
+                await Assert.That(done.AsString()).IsEqualTo("OK");
+            }
         }
+
         server.VerifyAllExpectations();
         await Assert.That(await writer.GetStringAsync("queued")).IsNull();
     }

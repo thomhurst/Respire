@@ -140,13 +140,23 @@ public class ClusterSlotFencesTests
     public async Task OverlongChainClosesConservatively()
     {
         var nodes = new RespireConnectionMultiplexer[ClusterSlotFences.MaxChainLength + 2];
-        for (var i = 0; i < nodes.Length; i++) nodes[i] = Node(7000 + i);
+
+        for (var i = 0; i < nodes.Length; i++)
+        {
+            nodes[i] = Node(7000 + i);
+        }
+
         try
         {
             var fences = new ClusterSlotFences();
             // Tokens received in reverse chain order, so every link after the first is dependent.
             var tokens = new long[nodes.Length - 1];
-            for (var i = tokens.Length - 1; i >= 0; i--) tokens[i] = ClusterSlotMutationClock.Next();
+
+            for (var i = tokens.Length - 1; i >= 0; i--)
+            {
+                tokens[i] = ClusterSlotMutationClock.Next();
+            }
+
             for (var i = 0; i < ClusterSlotFences.MaxChainLength; i++)
             {
                 await Assert.That(fences.IsFenced(0, nodes[i], nodes[i], Endpoint(nodes[i]), tokens[i])).IsFalse();
@@ -163,7 +173,10 @@ public class ClusterSlotFencesTests
         }
         finally
         {
-            foreach (var node in nodes) await node.DisposeAsync();
+            foreach (var node in nodes)
+            {
+                await node.DisposeAsync();
+            }
         }
     }
 

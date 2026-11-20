@@ -18,12 +18,19 @@ public class SubscriptionLifetimeTests
     {
         var results = new ClientResultsManager();
         var calls = 0;
+
         Task Fail(object _, CompletionMessage message)
         {
             Interlocked.Increment(ref calls);
-            if (asynchronousFailure) return Task.FromException(new IOException("forward failed"));
+
+            if (asynchronousFailure)
+            {
+                return Task.FromException(new IOException("forward failed"));
+            }
+
             throw new IOException("forward failed");
         }
+
         results.AddInvocation("first", (typeof(int), "connection", new object(), Fail));
         results.AddInvocation("second", (typeof(int), "connection", new object(), Fail));
         var pending = results.AddInvocation<int>("connection", "typed", CancellationToken.None);
@@ -31,8 +38,11 @@ public class SubscriptionLifetimeTests
         await Assert.That(calls).IsEqualTo(2);
         await Assert.That(pending.IsCompleted).IsTrue();
         await Assert.That(async () => await pending).ThrowsExactly<HubException>();
+
         foreach (var id in new[] { "first", "second", "typed" })
+        {
             await Assert.That(results.TryGetType(id, out _)).IsFalse();
+        }
     }
 
     [Test]
@@ -41,15 +51,18 @@ public class SubscriptionLifetimeTests
         var results = new ClientResultsManager();
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
+
         Task Forward(object _, CompletionMessage message)
         {
             Interlocked.Increment(ref calls);
             return release.Task;
         }
+
         results.AddInvocation("first", (typeof(int), "connection", new object(), Forward));
         results.AddInvocation("second", (typeof(int), "connection", new object(), Forward));
         var pending = results.AddInvocation<int>("connection", "typed", CancellationToken.None);
         var disposing = results.CompleteAllAsync();
+
         try
         {
             await Assert.That(calls).IsEqualTo(2);
@@ -58,6 +71,7 @@ public class SubscriptionLifetimeTests
             await Assert.That(async () => await pending).ThrowsExactly<HubException>();
         }
         finally { release.TrySetResult(); }
+
         await disposing;
     }
 
@@ -68,7 +82,12 @@ public class SubscriptionLifetimeTests
     {
         var results = new ClientResultsManager();
         using var cancellation = new CancellationTokenSource();
-        if (alreadyCancelled) cancellation.Cancel();
+
+        if (alreadyCancelled)
+        {
+            cancellation.Cancel();
+        }
+
         var pending = results.AddInvocation<int>("connection", "id", cancellation.Token);
         cancellation.Cancel();
         var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
@@ -93,7 +112,8 @@ public class SubscriptionLifetimeTests
         {
             ((ClientResultsManager.TaskCompletionSourceWithCancellation<int>)owner).SetResult((int)message.Result!);
             return Task.CompletedTask;
-        }));
+        }
+        ));
         await results.TryCompleteResult("connection", CompletionMessage.WithResult("id", 1));
         await Assert.That(await first.Task).IsEqualTo(1);
         first.RegisterCancellation();
@@ -117,10 +137,12 @@ public class SubscriptionLifetimeTests
             Interlocked.Increment(ref calls);
             entered.SetResult();
             await release.Task;
-        }));
+        }
+        ));
         await Assert.That(() => results.TryCompleteResult("wrong", CompletionMessage.WithResult("id", 1)))
             .ThrowsExactly<InvalidOperationException>();
         var completion = results.TryCompleteResult("connection", CompletionMessage.WithResult("id", 1));
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -128,6 +150,7 @@ public class SubscriptionLifetimeTests
             await results.TryCompleteResult("connection", CompletionMessage.WithResult("id", 2));
         }
         finally { release.TrySetResult(); }
+
         await completion;
         await Assert.That(calls).IsEqualTo(1);
         await Assert.That(results.RemoveInvocation("id").HasValue).IsFalse();
@@ -154,12 +177,21 @@ public class SubscriptionLifetimeTests
         await manager.AddSubscriptionAsync("group", second, (_, connections) =>
         {
             subscribed = true;
-            if (connections.Count != 1) throw new InvalidOperationException("Failed registration retained a connection.");
+
+            if (connections.Count != 1)
+            {
+                throw new InvalidOperationException("Failed registration retained a connection.");
+            }
+
             return Task.CompletedTask;
         });
         await Assert.That(subscribed).IsTrue();
         var removed = false;
-        await manager.RemoveSubscriptionAsync("group", second, manager, (_, _) => { removed = true; return Task.CompletedTask; });
+        await manager.RemoveSubscriptionAsync("group", second, manager, (_, _) =>
+        {
+            removed = true;
+            return Task.CompletedTask;
+        });
         await Assert.That(removed).IsTrue();
     }
 

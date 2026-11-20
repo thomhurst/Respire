@@ -45,7 +45,8 @@ public class ConnectionLifetimeTests
     {
         var error = await Assert.That(() => new RespireOptions
         {
-            Endpoints = [new("localhost")], ConnectionMaxLifetime = TimeSpan.FromMilliseconds(milliseconds),
+            Endpoints = [new("localhost")],
+            ConnectionMaxLifetime = TimeSpan.FromMilliseconds(milliseconds),
         }.ValidateAndSnapshot()).ThrowsExactly<RespireConfigurationException>();
         await Assert.That(error!.Message).Contains(nameof(RespireOptions.ConnectionMaxLifetime));
     }
@@ -63,9 +64,11 @@ public class ConnectionLifetimeTests
                 .ThrowsExactly<RespireConfigurationException>();
             await Assert.That(error!.Message).Contains(nameof(RespireOptions.ConnectionMaxLifetimeJitter));
         }
+
         await Assert.That(() => new RespireOptions
         {
-            Endpoints = [new("localhost")], ConnectionMaxLifetime = TimeSpan.MaxValue,
+            Endpoints = [new("localhost")],
+            ConnectionMaxLifetime = TimeSpan.MaxValue,
             ConnectionMaxLifetimeJitter = TimeSpan.FromTicks(1),
         }.ValidateAndSnapshot()).ThrowsExactly<RespireConfigurationException>();
     }
@@ -76,8 +79,10 @@ public class ConnectionLifetimeTests
         var clock = new LifetimeClock();
         var snapshot = new RespireOptions
         {
-            Endpoints = [new("localhost")], ConnectionMaxLifetime = Lifetime,
-            ConnectionMaxLifetimeJitter = TimeSpan.FromSeconds(3), ConnectionLifetimeTimeProvider = clock,
+            Endpoints = [new("localhost")],
+            ConnectionMaxLifetime = Lifetime,
+            ConnectionMaxLifetimeJitter = TimeSpan.FromSeconds(3),
+            ConnectionLifetimeTimeProvider = clock,
         }.ValidateAndSnapshot();
         var transport = snapshot.ToConnectionOptions();
         await Assert.That(transport.ConnectionMaxLifetime).IsEqualTo(Lifetime);
@@ -97,6 +102,7 @@ public class ConnectionLifetimeTests
         server.GateCommand("SELECT", release.Task, () => entered.TrySetResult());
         var connecting = RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             ConnectionOptions(clock) with { Database = 1 });
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -124,6 +130,7 @@ public class ConnectionLifetimeTests
         await using var pool = CreatePool(server, clock, jitter: jitter);
         var connections = new List<RespireConnection>();
         var expires = new HashSet<long>();
+
         try
         {
             for (var index = 0; index < count; index++)
@@ -135,9 +142,10 @@ public class ConnectionLifetimeTests
                 await Assert.That(expiry).IsLessThanOrEqualTo(clock.GetTimestamp() + Lifetime.Ticks + jitter.Ticks);
                 expires.Add(expiry);
             }
+
             await Assert.That(expires.Count).IsGreaterThan(1);
         }
-        finally { foreach (var connection in connections) pool.Return(connection); }
+        finally { foreach (var connection in connections) { pool.Return(connection); } }
     }
 
     [Test]
@@ -151,6 +159,7 @@ public class ConnectionLifetimeTests
         // A delayed timer must not permit a new borrower to receive an expired socket.
         clock.Advance(Lifetime, fireTimers: false);
         var replacement = await pool.RentAsync(default);
+
         try
         {
             await Assert.That(ReferenceEquals(original, replacement)).IsFalse();
@@ -188,6 +197,7 @@ public class ConnectionLifetimeTests
         await using var pool = CreatePool(server, clock);
         var borrowed = await pool.RentAsync(default);
         var command = borrowed.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -199,6 +209,7 @@ public class ConnectionLifetimeTests
             await Assert.That(response.AsString()).IsEqualTo("PONG");
         }
         finally { release.TrySetResult(); pool.Return(borrowed); }
+
         await UntilAsync(() => !borrowed.IsConnected);
         var replacement = await pool.RentAsync(default);
         await Assert.That(ReferenceEquals(borrowed, replacement)).IsFalse();
@@ -216,6 +227,7 @@ public class ConnectionLifetimeTests
         await using var multiplexer = await CreateMultiplexer(server, clock);
         var original = multiplexer.GetConnection();
         var command = original.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -249,6 +261,7 @@ public class ConnectionLifetimeTests
         await using var multiplexer = await CreateMultiplexer(server, clock);
         var original = multiplexer.GetConnection();
         var command = original.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -259,7 +272,10 @@ public class ConnectionLifetimeTests
             await multiplexer.DisposeAsync().AsTask().WaitAsync(Limit);
             await Assert.That(original.IsConnected).IsFalse();
             await Assert.That(replacement.IsConnected).IsFalse();
-            await Assert.That(async () => { using var response = await command.WaitAsync(Limit); })
+            await Assert.That(async () =>
+                {
+                    using var response = await command.WaitAsync(Limit);
+                })
                 .Throws<RespireConnectionException>();
             await Assert.That(clock.ActiveTimers).IsEqualTo(0);
         }
@@ -289,6 +305,7 @@ public class ConnectionLifetimeTests
             });
         var original = multiplexer.GetConnection();
         var command = original.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -314,19 +331,30 @@ public class ConnectionLifetimeTests
             maintenanceClock.Advance(timeout - TimeSpan.FromTicks(1));
             await Assert.That(retirement.IsCompleted).IsFalse();
             await Assert.That(original.IsConnected).IsTrue();
+
             if (replyBeforeDeadline)
             {
                 release.TrySetResult();
                 using var response = await command.WaitAsync(Limit);
                 await Assert.That(response.AsString()).IsEqualTo("PONG");
             }
-            else maintenanceClock.Advance(TimeSpan.FromTicks(1));
+            else
+            {
+                maintenanceClock.Advance(TimeSpan.FromTicks(1));
+            }
+
             await retirement.WaitAsync(Limit);
             await Assert.That(original.IsConnected).IsFalse();
             await Assert.That(original.DrainedSuccessfully).IsEqualTo(replyBeforeDeadline);
+
             if (!replyBeforeDeadline)
-                await Assert.That(async () => { using var response = await command.WaitAsync(Limit); })
+            {
+                await Assert.That(async () =>
+                    {
+                        using var response = await command.WaitAsync(Limit);
+                    })
                     .Throws<RespireConnectionException>();
+            }
         }
         finally { release.TrySetResult(); }
     }
@@ -362,6 +390,7 @@ public class ConnectionLifetimeTests
                 }
                 catch (Exception error) { completed.TrySetException(error); }
             });
+
             try
             {
                 await entered.Task.WaitAsync(Limit);
@@ -391,8 +420,10 @@ public class ConnectionLifetimeTests
 #pragma warning disable RESP010 // Test-owned client is synchronously stopped by an old reply continuation after lifetime rotation.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-            ConnectionMaxLifetime = Lifetime, ConnectionLifetimeTimeProvider = clock,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            ConnectionMaxLifetime = Lifetime,
+            ConnectionLifetimeTimeProvider = clock,
         });
 #pragma warning restore RESP010
         var multiplexer = client.Core.Multiplexer;
@@ -409,6 +440,7 @@ public class ConnectionLifetimeTests
             }
             catch (Exception error) { completed.TrySetException(error); }
         });
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -460,6 +492,7 @@ public class ConnectionLifetimeTests
         await UntilAsync(() => clock.ActiveTimers != 0);
         clock.Advance(Lifetime);
         int[] caps = [1, 2, 4, 8, 16, 30, 30];
+
         for (var index = 0; index < caps.Length; index++)
         {
             var attempts = index + 2;
@@ -474,6 +507,7 @@ public class ConnectionLifetimeTests
             await Assert.That(Volatile.Read(ref generation.Attempts)).IsEqualTo(attempts);
             clock.Advance(TimeSpan.FromTicks(1));
         }
+
         await UntilAsync(() => !ReferenceEquals(multiplexer.GetConnection(), original));
         await UntilAsync(() => clock.ActiveTimers != 0);
         var replacement = multiplexer.GetConnection();
@@ -500,6 +534,7 @@ public class ConnectionLifetimeTests
                     rejected.TrySetResult();
                     return "-ERR replacement rejected\r\n"u8.ToArray();
                 }
+
                 return command == "PING" ? FakeRespServer.PongReply : null;
             },
         };
@@ -531,6 +566,7 @@ public class ConnectionLifetimeTests
             options: ConnectionOptions(clock) with { Database = 1 });
         var original = multiplexer.GetConnection();
         server.GateCommand("SELECT", release.Task, () => entered.TrySetResult());
+
         try
         {
             await UntilAsync(() => clock.ActiveTimers != 0);
@@ -564,20 +600,33 @@ public class ConnectionLifetimeTests
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name is
                     "redis.client.connection.recycle" or "redis.client.connection.closed")
+                {
                     capture.EnableMeasurementEvents(instrument);
+                }
             },
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
         {
             string? poolName = null;
             string? reason = null;
+
             foreach (var tag in tags)
             {
-                if (tag.Key == "db.client.connection.pool.name") poolName = tag.Value as string;
-                if (tag.Key == "redis.client.connection.close.reason") reason = tag.Value as string;
+                if (tag.Key == "db.client.connection.pool.name")
+                {
+                    poolName = tag.Value as string;
+                }
+
+                if (tag.Key == "redis.client.connection.close.reason")
+                {
+                    reason = tag.Value as string;
+                }
             }
+
             if (poolName == $"127.0.0.1:{server.Port}/0/{(dedicated ? "dedicated" : "shared")}" || poolName == "overflow/shared")
+            {
                 measurements.Enqueue((instrument.Name, value, reason));
+            }
         });
         listener.Start();
         var logged = NewSignal();
@@ -585,6 +634,7 @@ public class ConnectionLifetimeTests
         var host = unixSocket ? "/tmp/respire-recycle.sock" : "127.0.0.1";
         var port = unixSocket ? 0 : server.Port;
         var options = ConnectionOptions(clock);
+
         if (unixSocket)
         {
             // Preserve Unix endpoint identity and its absent metric state on every platform.
@@ -593,6 +643,7 @@ public class ConnectionLifetimeTests
                 ConnectionFactory = async (_, token) =>
                 {
                     var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                     try
                     {
                         await socket.ConnectAsync("127.0.0.1", server.Port, token);
@@ -602,6 +653,7 @@ public class ConnectionLifetimeTests
                 },
             };
         }
+
         await using var pool = new DedicatedConnectionPool(host, port, options, logger);
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync(host, port,
             options: options with { ConnectionMaxLifetime = dedicated ? null : Lifetime }, logger: logger);
@@ -613,20 +665,31 @@ public class ConnectionLifetimeTests
                 // callback remains active. Disposal also joins the lifetime worker's cleanup.
                 Task.Run(async () =>
                 {
-                    if (dedicated) await pool.DisposeAsync();
-                    else await multiplexer.DisposeAsync();
+                    if (dedicated)
+                    {
+                        await pool.DisposeAsync();
+                    }
+                    else
+                    {
+                        await multiplexer.DisposeAsync();
+                    }
                 }).WaitAsync(Limit).GetAwaiter().GetResult();
                 logged.TrySetResult();
             }
             catch (Exception error) { logged.TrySetException(error); }
         };
         RespireConnection original;
+
         if (dedicated)
         {
             original = await pool.RentAsync(default);
             pool.Return(original);
         }
-        else original = multiplexer.GetConnection();
+        else
+        {
+            original = multiplexer.GetConnection();
+        }
+
         await UntilAsync(() => clock.ActiveTimers != 0);
         clock.Advance(Lifetime);
         await logged.Task.WaitAsync(Limit);
@@ -648,6 +711,7 @@ public class ConnectionLifetimeTests
         var shortLifetime = TimeSpan.FromMilliseconds(5);
         await using var server = EchoServer(rounds + 1);
         await using var multiplexer = await CreateMultiplexer(server, clock, shortLifetime);
+
         for (var round = 0; round < rounds; round++)
         {
             await UntilAsync(() => clock.ActiveTimers != 0);
@@ -665,6 +729,7 @@ public class ConnectionLifetimeTests
             await Task.WhenAll(commands).WaitAsync(Limit);
             await UntilAsync(() => !ReferenceEquals(multiplexer.GetConnection(), original));
         }
+
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(rounds * parallelCommands);
         await Assert.That(server.ReceivedCommands.Distinct().Count()).IsEqualTo(rounds * parallelCommands);
     }
@@ -701,8 +766,11 @@ public class ConnectionLifetimeTests
 #pragma warning disable RESP010 // Test-owned client isolates tracked-cache invalidation and late replies across lifetime rotation.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp3,
-            ClientSideCache = new(), ConnectionMaxLifetime = Lifetime, ConnectionLifetimeTimeProvider = clock,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
+            ConnectionMaxLifetime = Lifetime,
+            ConnectionLifetimeTimeProvider = clock,
         });
 #pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("cached")).IsEqualTo("old");
@@ -710,6 +778,7 @@ public class ConnectionLifetimeTests
         var original = client.Core.Multiplexer.GetConnection();
         server.GateCommand("GET pending", release.Task, () => entered.TrySetResult());
         var pending = client.GetStringAsync("pending").AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -746,6 +815,7 @@ public class ConnectionLifetimeTests
                 TestingStreamFactory = async (host, port, token) =>
                 {
                     var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                     try
                     {
                         await socket.ConnectAsync(host, port, token);
@@ -758,6 +828,7 @@ public class ConnectionLifetimeTests
             });
         var original = multiplexer.GetConnection();
         var command = original.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -773,6 +844,7 @@ public class ConnectionLifetimeTests
             await Assert.That(original.IsConnected).IsFalse();
             await Assert.That(current.IsConnected).IsFalse();
             await Assert.That(current.IsAcceptingCommands).IsFalse();
+
             if (currentDisposalFails)
             {
                 await Assert.That(error).IsTypeOf<AggregateException>();
@@ -781,12 +853,19 @@ public class ConnectionLifetimeTests
                 await Assert.That(failures.Contains(oldFailure)).IsTrue();
                 await Assert.That(failures.Contains(currentFailure)).IsTrue();
             }
-            else await Assert.That(error).IsSameReferenceAs(oldFailure);
+            else
+            {
+                await Assert.That(error).IsSameReferenceAs(oldFailure);
+            }
         }
         finally
         {
             release.TrySetResult();
-            try { await multiplexer.DisposeAsync().AsTask().WaitAsync(Limit); }
+
+            try
+            {
+                await multiplexer.DisposeAsync().AsTask().WaitAsync(Limit);
+            }
             catch (IOException error) when (ReferenceEquals(error, currentFailure)) { }
         }
     }
@@ -797,14 +876,19 @@ public class ConnectionLifetimeTests
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
-            if (disposing && failure is not null) throw failure;
+
+            if (disposing && failure is not null)
+            {
+                throw failure;
+            }
         }
     }
 
     private static RespireConnectionOptions ConnectionOptions(LifetimeClock clock, TimeSpan? lifetime = null)
         => new()
         {
-            Protocol = RespireProtocol.Resp2, ConnectionMaxLifetime = lifetime ?? Lifetime,
+            Protocol = RespireProtocol.Resp2,
+            ConnectionMaxLifetime = lifetime ?? Lifetime,
             ConnectionLifetimeTimeProvider = clock,
         };
 
@@ -819,7 +903,8 @@ public class ConnectionLifetimeTests
         TimeSpan jitter = default, RespireDedicatedPoolOptions? sizing = null)
         => new("127.0.0.1", server.Port, ConnectionOptions(clock) with
         {
-            ConnectionMaxLifetimeJitter = jitter, DedicatedPool = sizing ?? new(),
+            ConnectionMaxLifetimeJitter = jitter,
+            DedicatedPool = sizing ?? new(),
         }, null);
 
     private static FakeRespServer EchoServer(int maxConnections)
@@ -834,7 +919,11 @@ public class ConnectionLifetimeTests
     private static async Task UntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(Limit);
-        while (!condition()) await Task.Delay(1, timeout.Token);
+
+        while (!condition())
+        {
+            await Task.Delay(1, timeout.Token);
+        }
     }
 
     private sealed class GatedReplacementGeneration : IConnectionGeneration
@@ -842,58 +931,105 @@ public class ConnectionLifetimeTests
         internal readonly TaskCompletionSource Entered = NewSignal();
         internal readonly TaskCompletionSource Release = NewSignal();
         private int _attempts;
+
         public bool IsRetired => false;
+
         public async ValueTask ValidateAsync(RespireConnection connection, CancellationToken cancellationToken)
         {
-            if (Interlocked.Increment(ref _attempts) != 2) return;
+            if (Interlocked.Increment(ref _attempts) != 2)
+            {
+                return;
+            }
+
             Entered.TrySetResult();
             await Release.Task;
         }
-        public void ObserveResponse(RespireConnection connection, string? operation, in RespValue response) { }
-        public void ConnectionClosed(RespireConnection connection, bool unexpected) { }
+
+        public void ObserveResponse(RespireConnection connection, string? operation, in RespValue response)
+        {
+        }
+
+        public void ConnectionClosed(RespireConnection connection, bool unexpected)
+        {
+        }
     }
 
     private sealed class RepeatedFailureGeneration(bool closeReplacement) : IConnectionGeneration
     {
         internal int Attempts;
+
         public bool IsRetired => false;
+
         public async ValueTask ValidateAsync(RespireConnection connection, CancellationToken cancellationToken)
         {
             var attempt = Interlocked.Increment(ref Attempts);
-            if (attempt is 1 or 9) return;
-            if (!closeReplacement) throw new InvalidOperationException("Replacement setup rejected.");
+
+            if (attempt is 1 or 9)
+            {
+                return;
+            }
+
+            if (!closeReplacement)
+            {
+                throw new InvalidOperationException("Replacement setup rejected.");
+            }
+
             await connection.DisposeAsync();
         }
-        public void ObserveResponse(RespireConnection connection, string? operation, in RespValue response) { }
-        public void ConnectionClosed(RespireConnection connection, bool unexpected) { }
+
+        public void ObserveResponse(RespireConnection connection, string? operation, in RespValue response)
+        {
+        }
+
+        public void ConnectionClosed(RespireConnection connection, bool unexpected)
+        {
+        }
     }
 
     private sealed class CloseReplacementGeneration : IConnectionGeneration
     {
         internal readonly TaskCompletionSource Rejected = NewSignal();
         internal int Attempts;
+
         public bool IsRetired => false;
+
         public async ValueTask ValidateAsync(RespireConnection connection, CancellationToken cancellationToken)
         {
-            if (Interlocked.Increment(ref Attempts) != 2) return;
+            if (Interlocked.Increment(ref Attempts) != 2)
+            {
+                return;
+            }
             // Complete setup with a socket that closed before publication, without throwing.
             await connection.DisposeAsync();
             Rejected.TrySetResult();
         }
-        public void ObserveResponse(RespireConnection connection, string? operation, in RespValue response) { }
-        public void ConnectionClosed(RespireConnection connection, bool unexpected) { }
+
+        public void ObserveResponse(RespireConnection connection, string? operation, in RespValue response)
+        {
+        }
+
+        public void ConnectionClosed(RespireConnection connection, bool unexpected)
+        {
+        }
     }
 
     private sealed class RecycleLogger : ILogger
     {
         internal Action? OnRecycle;
         internal int Count;
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel level) => true;
+
         public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (eventId.Name != "ConnectionRecycled") return;
+            if (eventId.Name != "ConnectionRecycled")
+            {
+                return;
+            }
+
             Interlocked.Increment(ref Count);
             OnRecycle?.Invoke();
         }
@@ -905,15 +1041,55 @@ public class ConnectionLifetimeTests
         private readonly List<ManualTimer> _timers = [];
         private long _ticks = TimeSpan.FromDays(1).Ticks;
         private TimeSpan _utcShift;
-        internal int ActiveTimers { get { lock (_gate) return _timers.Count; } }
+
+        internal int ActiveTimers
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _timers.Count;
+                }
+            }
+        }
+
         internal TimeSpan NextTimerDelay
         {
-            get { lock (_gate) return TimeSpan.FromTicks(_timers.Min(timer => timer.Due) - _ticks); }
+            get
+            {
+                lock (_gate)
+                {
+                    return TimeSpan.FromTicks(_timers.Min(timer => timer.Due) - _ticks);
+                }
+            }
         }
+
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
-        public override long GetTimestamp() { lock (_gate) return _ticks; }
-        public override DateTimeOffset GetUtcNow() { lock (_gate) return DateTimeOffset.UnixEpoch.AddTicks(_ticks) + _utcShift; }
-        internal void ShiftUtc(TimeSpan elapsed) { lock (_gate) _utcShift += elapsed; }
+
+        public override long GetTimestamp()
+        {
+            lock (_gate)
+            {
+                return _ticks;
+            }
+        }
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            lock (_gate)
+            {
+                return DateTimeOffset.UnixEpoch.AddTicks(_ticks) + _utcShift;
+            }
+        }
+
+        internal void ShiftUtc(TimeSpan elapsed)
+        {
+            lock (_gate)
+            {
+                _utcShift += elapsed;
+            }
+        }
+
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = new ManualTimer(this, callback, state);
@@ -924,18 +1100,35 @@ public class ConnectionLifetimeTests
         internal void Advance(TimeSpan elapsed, bool fireTimers = true)
         {
             ManualTimer[] due;
+
             lock (_gate)
             {
                 _ticks += elapsed.Ticks;
-                if (!fireTimers) return;
+
+                if (!fireTimers)
+                {
+                    return;
+                }
+
                 due = _timers.Where(timer => timer.Due <= _ticks).ToArray();
+
                 foreach (var timer in due)
                 {
-                    if (timer.Period > TimeSpan.Zero) timer.Due = _ticks + timer.Period.Ticks;
-                    else _timers.Remove(timer);
+                    if (timer.Period > TimeSpan.Zero)
+                    {
+                        timer.Due = _ticks + timer.Period.Ticks;
+                    }
+                    else
+                    {
+                        _timers.Remove(timer);
+                    }
                 }
             }
-            foreach (var timer in due) timer.Fire();
+
+            foreach (var timer in due)
+            {
+                timer.Fire();
+            }
         }
 
         private sealed class ManualTimer(LifetimeClock clock, TimerCallback callback, object? state) : ITimer
@@ -943,26 +1136,53 @@ public class ConnectionLifetimeTests
             private int _disposed;
             internal long Due;
             internal TimeSpan Period;
-            internal void Fire() { if (Volatile.Read(ref _disposed) == 0) callback(state); }
+
+            internal void Fire()
+            {
+                if (Volatile.Read(ref _disposed) == 0)
+                {
+                    callback(state);
+                }
+            }
+
             public bool Change(TimeSpan dueTime, TimeSpan period)
             {
                 lock (clock._gate)
                 {
-                    if (Volatile.Read(ref _disposed) != 0) return false;
+                    if (Volatile.Read(ref _disposed) != 0)
+                    {
+                        return false;
+                    }
+
                     clock._timers.Remove(this);
                     Period = period;
-                    if (dueTime == Timeout.InfiniteTimeSpan) return true;
+
+                    if (dueTime == Timeout.InfiniteTimeSpan)
+                    {
+                        return true;
+                    }
+
                     Due = clock._ticks + dueTime.Ticks;
                     clock._timers.Add(this);
                     return true;
                 }
             }
+
             public void Dispose()
             {
                 Interlocked.Exchange(ref _disposed, 1);
-                lock (clock._gate) clock._timers.Remove(this);
+
+                lock (clock._gate)
+                {
+                    clock._timers.Remove(this);
+                }
             }
-            public ValueTask DisposeAsync() { Dispose(); return default; }
+
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return default;
+            }
         }
     }
 }

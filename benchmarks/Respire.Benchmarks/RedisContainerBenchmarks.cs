@@ -18,13 +18,13 @@ public class RedisContainerBenchmarks
     private ConnectionMultiplexer? _stackExchangeRedis;
     // GlobalSetup initializes this before warmup or any benchmark invocation.
     private IDatabase _stackExchangeDb = null!;
-    
+
     private readonly string _smallValue = "Hello, World!";
     private readonly string _mediumValue = new string('X', 1024); // 1KB
     private readonly string _largeValue = new string('Y', 10240); // 10KB
-    
+
     private readonly string[] _multiGetKeys = Enumerable.Range(0, 5).Select(i => $"key{i}").ToArray();
-    
+
     private class Config : ManualConfig
     {
         public Config()
@@ -36,25 +36,25 @@ public class RedisContainerBenchmarks
             AddColumn(StatisticColumn.P95);
         }
     }
-    
+
     [GlobalSetup]
     public async Task Setup()
     {
         await _redisContainer.StartAsync();
-        
+
         var port = _redisContainer.GetMappedPublicPort(6379);
-        
+
         // Setup Respire client
         _kevaClient = await RespireClient.ConnectAsync($"localhost:{port}");
-        
+
         // Setup StackExchange.Redis
         _stackExchangeRedis = await ConnectionMultiplexer.ConnectAsync($"localhost:{port}");
         _stackExchangeDb = _stackExchangeRedis.GetDatabase();
-        
+
         // Warm up with some test data
         await WarmupAsync();
     }
-    
+
     private async Task WarmupAsync()
     {
         // Set up test data for multi-get operations
@@ -62,7 +62,7 @@ public class RedisContainerBenchmarks
         {
             await _kevaClient.SetAsync(_multiGetKeys[i], $"value{i}");
         }
-        
+
         // Warm up connections
         for (var i = 0; i < 10; i++)
         {
@@ -70,7 +70,7 @@ public class RedisContainerBenchmarks
             await _stackExchangeDb.PingAsync();
         }
     }
-    
+
     [GlobalCleanup]
     public async Task Cleanup()
     {
@@ -79,86 +79,86 @@ public class RedisContainerBenchmarks
         await _redisContainer.StopAsync();
         await _redisContainer.DisposeAsync();
     }
-    
+
     // PING benchmarks
     [Benchmark(Baseline = true)]
     public async Task<TimeSpan> Respire_Ping()
     {
         return await _kevaClient.PingAsync();
     }
-    
+
     [Benchmark]
     public async Task<TimeSpan> StackExchange_Ping()
     {
         return await _stackExchangeDb.PingAsync();
     }
-    
+
     // SET benchmarks - Small value
     [Benchmark]
     public async Task Respire_Set_Small()
     {
         await _kevaClient.SetAsync("benchmark_key", _smallValue);
     }
-    
+
     [Benchmark]
     public async Task<bool> StackExchange_Set_Small()
     {
         return await _stackExchangeDb.StringSetAsync("benchmark_key", _smallValue);
     }
-    
+
     // SET benchmarks - Medium value (1KB)
     [Benchmark]
     public async Task Respire_Set_Medium()
     {
         await _kevaClient.SetAsync("benchmark_key_medium", _mediumValue);
     }
-    
+
     [Benchmark]
     public async Task<bool> StackExchange_Set_Medium()
     {
         return await _stackExchangeDb.StringSetAsync("benchmark_key_medium", _mediumValue);
     }
-    
+
     // SET benchmarks - Large value (10KB)
     [Benchmark]
     public async Task Respire_Set_Large()
     {
         await _kevaClient.SetAsync("benchmark_key_large", _largeValue);
     }
-    
+
     [Benchmark]
     public async Task<bool> StackExchange_Set_Large()
     {
         return await _stackExchangeDb.StringSetAsync("benchmark_key_large", _largeValue);
     }
-    
+
     // GET benchmarks
     [Benchmark]
     public async Task<string?> Respire_Get()
     {
         return await _kevaClient.GetStringAsync("key0");
     }
-    
+
     [Benchmark]
     public async Task<RedisValue> StackExchange_Get()
     {
         return await _stackExchangeDb.StringGetAsync("key0");
     }
-    
+
     // MGET benchmarks (5 keys)
     // [Benchmark]
     // public string?[] Respire_MGet()
     // {
     //     return _kevaClient.MGet(_multiGetKeys);
     // }
-    
+
     [Benchmark]
     public async Task<RedisValue[]> StackExchange_MGet()
     {
         var keys = _multiGetKeys.Select(k => (RedisKey)k).ToArray();
         return await _stackExchangeDb.StringGetAsync(keys);
     }
-    
+
     // Pipeline benchmarks - 5 operations
     // [Benchmark]
     // public void Respire_Pipeline_5_Sets()
@@ -171,35 +171,37 @@ public class RedisContainerBenchmarks
     //         }
     //     });
     // }
-    
+
     [Benchmark]
     public async Task StackExchange_Pipeline_5_Sets()
     {
         var batch = _stackExchangeDb.CreateBatch();
         var tasks = new Task[5];
+
         for (var i = 0; i < 5; i++)
         {
             var key = $"pipeline_key_{i}";
             var value = $"pipeline_value_{i}";
             tasks[i] = batch.StringSetAsync(key, value);
         }
+
         batch.Execute();
         await Task.WhenAll(tasks);
     }
-    
+
     // EXISTS benchmarks
     [Benchmark]
     public async Task<bool> Respire_Exists()
     {
         return await _kevaClient.ExistsAsync("key0");
     }
-    
+
     [Benchmark]
     public async Task<bool> StackExchange_Exists()
     {
         return await _stackExchangeDb.KeyExistsAsync("key0");
     }
-    
+
     // DEL benchmarks
     [Benchmark]
     public async Task Respire_Del()
@@ -207,21 +209,21 @@ public class RedisContainerBenchmarks
         await _kevaClient.SetAsync("temp_key", "temp_value");
         await _kevaClient.DeleteAsync("temp_key");
     }
-    
+
     [Benchmark]
     public async Task<bool> StackExchange_Del()
     {
         await _stackExchangeDb.StringSetAsync("temp_key", "temp_value");
         return await _stackExchangeDb.KeyDeleteAsync("temp_key");
     }
-    
+
     // INCR benchmarks
     [Benchmark]
     public async Task<long> Respire_Incr()
     {
         return await _kevaClient.IncrementAsync("counter");
     }
-    
+
     [Benchmark]
     public async Task<long> StackExchange_Incr()
     {

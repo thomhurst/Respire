@@ -17,7 +17,10 @@ public class RespireCacheOptions
     /// Prefix prepended to every cache key, so several apps (or caches) can share one Redis
     /// without colliding. Same semantics as the Microsoft Redis cache's InstanceName.
     /// </summary>
-    public string? InstanceName { get; set; }
+    public string? InstanceName
+    {
+        get; set;
+    }
 
     /// <summary>
     /// Optional codec for the cache's data field, including HybridCache L2 payloads.
@@ -30,5 +33,8 @@ public class RespireCacheOptions
     /// Built-in buffer decoders advance the destination only on success but may modify uncommitted memory.
     /// Custom decoders control their own partial-output behavior; the cache cannot roll back writer changes.
     /// </remarks>
-    public IRespireValueCodec? ValueCodec { get; set; }
+    public IRespireValueCodec? ValueCodec
+    {
+        get; set;
+    }
 }

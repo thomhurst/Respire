@@ -1,5 +1,5 @@
-using Respire.Internal;
 using System.Diagnostics;
+using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;

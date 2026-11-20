@@ -4,12 +4,16 @@ namespace Respire.Internal;
 internal interface ISentinelMonitorClient : IAsyncDisposable
 {
     event Action<RespireConnectionStateChange>? ConnectionStateChanged;
+
     ValueTask<ISentinelMonitorSubscription> SubscribeAsync(CancellationToken cancellationToken);
 }
 
 internal interface ISentinelMonitorSubscription : IAsyncDisposable, IAsyncEnumerable<RespireMessage>
 {
-    Task<RespireSubscriptionEndReason> Completion { get; }
+    Task<RespireSubscriptionEndReason> Completion
+    {
+        get;
+    }
 }
 
 internal sealed class SentinelMonitorClient(RespireOptions options) : ISentinelMonitorClient
@@ -31,8 +35,10 @@ internal sealed class SentinelMonitorClient(RespireOptions options) : ISentinelM
     private sealed class Subscription(RespireSubscription subscription) : ISentinelMonitorSubscription
     {
         public Task<RespireSubscriptionEndReason> Completion => subscription.Completion;
+
         public IAsyncEnumerator<RespireMessage> GetAsyncEnumerator(CancellationToken cancellationToken = default)
             => subscription.GetAsyncEnumerator(cancellationToken);
+
         public ValueTask DisposeAsync() => subscription.DisposeAsync();
     }
 }

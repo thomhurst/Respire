@@ -24,6 +24,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 {
     private readonly RespireClient _client;
     private readonly RespireHashImportSession? _importSession;
+
     private QueuedConnectionPolicy ConnectionPolicy => new(_importSession, _watchConnection);
     private readonly RespireConnection? _watchConnection;
     private readonly WriteBuffer _buffer = new(1024);
@@ -37,14 +38,22 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     private RetryCategorySet _retryCategories;
 
     // The transport records the accepting socket after any pre-admission maintenance reroute.
-    internal RespireConnection? ExecutingConnection { get; set; }
+    internal RespireConnection? ExecutingConnection
+    {
+        get; set;
+    }
 
-    internal byte[]? ConditionalExec { get; private set; }
+    internal byte[]? ConditionalExec
+    {
+        get; private set;
+    }
 
     internal bool HasOptOutBypass => _hasOptOutRead;
 
     private protected virtual WatchedTransactionRetryContext? RetryContext => null;
+
     private protected virtual bool WatchRequiresAsking => false;
+
     private protected virtual bool AllowUnwatchedAsk => false;
 
     private IRespireBatchStringCommands? _strings;
@@ -219,6 +228,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         }
 
         ValidateClusterKey(in first, ref slot);
+
         foreach (ref readonly var key in rest)
         {
             ValidateClusterKey(in key, ref slot);
@@ -284,34 +294,53 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     private protected ValueTask<bool> CommitConditionalAsync(ReadOnlySpan<RespireCondition> conditions, CancellationToken cancellationToken)
     {
         ThrowIfCompleted();
+
         if (ConnectionPolicy.IsImportSession)
+        {
             throw new NotSupportedException("Hash import sessions do not support conditional EXEC.");
+        }
+
         ArgumentOutOfRangeException.ThrowIfZero(conditions.Length);
         int? slot = _hasClusterSlot ? _clusterSlot : null;
         var tokens = 1;
+
         foreach (var condition in conditions)
         {
             ArgumentNullException.ThrowIfNull(condition);
-            if (_client.Core.Cluster is not null) ValidateClusterKey(condition.Key, ref slot);
+
+            if (_client.Core.Cluster is not null)
+            {
+                ValidateClusterKey(condition.Key, ref slot);
+            }
+
             tokens = checked(tokens + (condition.HasOperand ? 3 : 2));
         }
+
         var buffer = new WriteBuffer(128);
+
         try
         {
             var writer = new RespWriter(buffer);
             writer.WriteArrayHeader(tokens);
             writer.WriteBulkString("EXEC"u8);
+
             foreach (var condition in conditions)
             {
                 writer.WriteBulkString(condition.Token);
                 _client.Key(condition.Key).WriteTo(ref writer);
-                if (condition.HasOperand) condition.Operand.WriteTo(ref writer);
+
+                if (condition.HasOperand)
+                {
+                    condition.Operand.WriteTo(ref writer);
+                }
             }
+
             writer.Complete();
             ConditionalExec = buffer.WrittenMemory.ToArray();
             ApplyClusterSlot(slot);
         }
         finally { buffer.Release(); }
+
         return CommitCoreAsync(cancellationToken);
     }
 
@@ -347,6 +376,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         var sendAttempted = false;
         var clusterBacklogDispatch = false;
         var mutationFence = default(ClientSideCacheCoordinator.MutationFence);
+
         try
         {
             if (_ops.Count == 0 && ConditionalExec is null && (!validateEmptyWatch || _watchConnection is null))
@@ -354,27 +384,39 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 // Nonempty commits use SendAsync's before-submission classification.
                 // Empty imports must preserve their fieldsets on cancellation too.
                 if (ConnectionPolicy.IsImportSession && cancellationToken.IsCancellationRequested)
+                {
                     throw new RespireCommandNotSubmittedException(new OperationCanceledException(cancellationToken));
+                }
+
                 cancellationToken.ThrowIfCancellationRequested();
+
                 if (core.Sentinel is not null)
                 {
                     telemetry = RespireTelemetry.StartBatchOperation(
                         "MULTI", _ops, static op => op.Operation, core.Options.Database,
                         out telemetryOperation, sentinelStarted);
                 }
+
                 return true;
             }
 
             // MULTI/EXEC bypasses the regular send path and can contain arbitrary mutations.
-            if (_ops.Count != 0 && core.ClientCache is { } cache) mutationFence = cache.BeginUnknownMutation();
+            if (_ops.Count != 0 && core.ClientCache is { } cache)
+            {
+                mutationFence = cache.BeginUnknownMutation();
+            }
 
             RespValue result;
+
             try
             {
                 // The connection sweep owns EXEC's timeout. Acquisition alone needs a timer
                 // when it cannot use a ready connection; both stages share one absolute budget.
                 if (connection is null && !_hasCursorContinuation && _client.UsesPrimaryBacklog)
+                {
                     connection = _client.SelectPrimaryBacklogConnection(cancellationToken);
+                }
+
                 var clusterSlot = _hasClusterSlot ? _clusterSlot : (int?)null;
                 result = connection is null && !_hasCursorContinuation && core.Cluster is { } backlogCluster
                     && backlogCluster.ShouldBacklog(clusterSlot)
@@ -422,6 +464,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 var error = ResponseReader.ServerError(in result, "MULTI/EXEC", connection is null ? null : new(connection.Host, connection.Port));
                 operationError = error;
                 result.Dispose();
+
                 foreach (var op in _ops)
                 {
                     op.Fail(error);
@@ -433,15 +476,22 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             if (result.IsNull)
             {
                 result.Dispose();
+
                 if (ConnectionPolicy.IsImportSession || this is RespireTransaction && ConditionalExec is null)
                 {
                     var error = new RespireProtocolException(ConnectionPolicy.IsImportSession
                         ? "An unwatched hash import EXEC unexpectedly returned a null reply."
                         : "An unwatched EXEC unexpectedly returned a null reply.");
                     operationError = error;
-                    foreach (var op in _ops) op.Fail(error);
+
+                    foreach (var op in _ops)
+                    {
+                        op.Fail(error);
+                    }
+
                     throw error;
                 }
+
                 foreach (var op in _ops)
                 {
                     op.Abort();
@@ -455,38 +505,58 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 var error = new RespireProtocolException("A hash import EXEC must return an array reply.");
                 operationError = error;
                 result.Dispose();
-                foreach (var op in _ops) op.Fail(error);
+
+                foreach (var op in _ops)
+                {
+                    op.Fail(error);
+                }
+
                 throw error;
             }
+
             var elements = result.AsArray();
+
             if (ConnectionPolicy.IsImportSession && elements.Length != _ops.Count)
             {
                 var error = new RespireProtocolException($"EXEC returned {elements.Length} results for {_ops.Count} queued commands.");
                 operationError = error;
                 result.Dispose();
-                foreach (var op in _ops) op.Fail(error);
+
+                foreach (var op in _ops)
+                {
+                    op.Fail(error);
+                }
+
                 throw error;
             }
+
             var elementCount = elements.Length;
             var completeCount = Math.Min(_ops.Count, elementCount);
             Dictionary<string, bool>? missingEngines = null;
+
             for (var i = 0; i < completeCount; i++)
             {
                 var element = result.AsArray()[i];
                 Exception? itemError;
+
                 if (element.IsError && connection is not null
                     && ScriptingEngineInfo.IsScriptingCommand(_ops[i].Operation))
                 {
                     var serverError = ResponseReader.ServerError(in element, _ops[i].Operation, new(connection.Host, connection.Port));
                     var engine = ScriptingEngineInfo.MissingEngine(serverError, _ops[i].ExpectedEngine);
                     itemError = serverError;
+
                     if (engine is not null)
                     {
                         missingEngines ??= new(StringComparer.OrdinalIgnoreCase);
+
                         if (missingEngines.TryGetValue(engine, out var missing))
                         {
-                            if (missing) itemError = new RespireScriptingEngineUnavailableException(engine,
+                            if (missing)
+                            {
+                                itemError = new RespireScriptingEngineUnavailableException(engine,
                                 new RespireEndpoint(connection.Host, connection.Port), serverError);
+                            }
                         }
                         else
                         {
@@ -497,12 +567,20 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             missingEngines.Add(engine, itemError is RespireScriptingEngineUnavailableException);
                         }
                     }
+
                     _ops[i].Fail(itemError);
                 }
-                else itemError = _ops[i].Complete(_client, in element);
+                else
+                {
+                    itemError = _ops[i].Complete(_client, in element);
+                }
+
                 operationError ??= itemError;
+
                 if (itemError is not null && ConnectionPolicy.RequiresExpiration(itemError))
+                {
                     importError ??= itemError;
+                }
             }
 
             if (completeCount < _ops.Count)
@@ -510,6 +588,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 var mismatch = new RespireProtocolException(
                     $"EXEC returned {elementCount} results for {_ops.Count} queued commands.");
                 operationError ??= mismatch;
+
                 for (var i = completeCount; i < _ops.Count; i++)
                 {
                     _ops[i].Fail(mismatch);
@@ -522,8 +601,15 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         catch (Exception error)
         {
             operationError ??= error;
+
             foreach (var op in _ops)
-                if (!op.IsCompleted) op.Fail(error);
+            {
+                if (!op.IsCompleted)
+                {
+                    op.Fail(error);
+                }
+            }
+
             throw;
         }
         finally
@@ -548,8 +634,14 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 {
                     if (askingPool is not null && askingConnection is not null)
                     {
-                        if (returnAskingConnection) askingPool.Return(askingConnection);
-                        else await askingPool.DiscardAsync(askingConnection).ConfigureAwait(false);
+                        if (returnAskingConnection)
+                        {
+                            askingPool.Return(askingConnection);
+                        }
+                        else
+                        {
+                            await askingPool.DiscardAsync(askingConnection).ConfigureAwait(false);
+                        }
                     }
                 }
                 finally { await ReleaseAsync(returnWatchConnection).ConfigureAwait(false); }
@@ -576,11 +668,18 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     : observation.Endpoint;
                 DeferredOperation.ShareEndpoint(_ops, observation);
                 var pendingErrors = DeferredOperation.ReportErrors(_ops, attempts) != 0;
+
                 if (operationError is not null && !pendingErrors)
+                {
                     ErrorObservation.FinishFinal(default, operationError, retryAttempts: attempts, endpoint: finalEndpoint);
+                }
+
                 if (connection is null && operationError is not null)
+                {
                     RespireTelemetry.RecordUnroutedBatchFailure("MULTI", _ops, static op => op.Operation,
                         core.Options.Database, sentinelStarted, operationError);
+                }
+
                 if (core.Sentinel is not null && _ops.Count == 0 && ConditionalExec is null && (!validateEmptyWatch || _watchConnection is null))
                 {
                     telemetry.Complete(telemetryOperation, host: null, port: 6379,
@@ -614,11 +713,13 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             var routingAttempt = 0;
             var retryTelemetry = retryUnit ? new UnitRetryTelemetry(_retryCategories.Label) : null;
             Action? onUnitAccepted = retryTelemetry is null ? null : retryTelemetry.Accepted;
+
             try
             {
                 var cluster = core.Cluster;
                 acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.ImportConnection);
-                for (;;)
+
+                for (; ; )
                 {
                     try
                     {
@@ -628,8 +729,12 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             slot = await flushCluster.GetPrimaryRoutingSlotAsync(acquisition.Token).ConfigureAwait(false);
                             // A queued keyless entry was selected before its primary slot was known.
                             // Retain dedicated WATCH/import leases, but reselect ordinary queued work.
-                            if (_watchConnection is null && !ConnectionPolicy.IsImportSession) connection = null;
+                            if (_watchConnection is null && !ConnectionPolicy.IsImportSession)
+                            {
+                                connection = null;
+                            }
                         }
+
                         connection ??= await _client.AcquireConnectionAsync(slot, ref acquisition, observation).ConfigureAwait(false);
                     }
                     catch (RespireConnectionException error) when (!sendAttempted && !clusterBacklogDispatch
@@ -647,8 +752,10 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                                 return SendAsync();
                             }).ConfigureAwait(false);
                     }
+
                     acquisition.Dispose();
                     acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.ImportConnection);
+
                     if (core.Sentinel is not null)
                     {
                         if (!sentinelTelemetryStarted)
@@ -658,13 +765,18 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                                 connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
                             sentinelTelemetryStarted = true;
                         }
-                        else telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                        else
+                        {
+                            telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                        }
                     }
+
                     RespValue reply = default;
                     CircuitAdmission admission = default;
                     var outcome = CommandWriteOutcome.DefinitelyUnwritten;
                     TimeSpan? retryDelay = null;
                     var unitAttemptCounted = false;
+
                     try
                     {
                         // The entire MULTI/EXEC sequence owns one endpoint permit. Pin transport
@@ -674,13 +786,20 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             connection.ThrowIfRetired();
                             admission = circuits.Acquire(new(connection.Host, connection.Port), cancellationToken);
                         }
+
                         if (ConditionalExec is not null)
+                        {
                             await connection.EnsureConditionalExecSupportedAsync(cancellationToken, deadline).ConfigureAwait(false);
+                        }
+
                         if (ConnectionPolicy.IsImportSession || WatchRequiresAsking || askingPool is not null)
                         {
                             if (!connection.TryAcquireCredentialSequence(cancellationToken, out credentialSequence))
+                            {
                                 credentialSequence = await connection.AcquireCredentialSequenceAsync(
                                     acquisition.Token).ConfigureAwait(false);
+                            }
+
                             acquisition.Dispose();
                             acquisition.CheckDeadline("MULTI/EXEC", core, connection);
                             // This lease is exclusive: confirm MULTI before sending writes.
@@ -700,9 +819,14 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         }
                         // Only reaching transport submission lets an empty commit name this node. Local
                         // capacity validation submits nothing, so run it before marking the send.
-                        try { connection.ValidateTransactionCapacity(_ops.Count, includeMulti: !ConnectionPolicy.IsImportSession && !WatchRequiresAsking && askingPool is null); }
+                        try
+                        {
+                            connection.ValidateTransactionCapacity(_ops.Count, includeMulti: !ConnectionPolicy.IsImportSession && !WatchRequiresAsking && askingPool is null);
+                        }
                         catch { observation.UseEndpoint(null); throw; }
+
                         sendAttempted = true;
+
                         if (retryUnit)
                         {
                             unitAttempts++;
@@ -714,7 +838,12 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                                 onAccepted: unitResendPending ? onUnitAccepted : null).ConfigureAwait(false);
                             // Acceptance runs under the transport write gate; publish only after leaving it.
                             retryTelemetry.PublishAccepted();
-                            if (retryTelemetry.AcceptedResends != acceptedResendsBefore) unitResendPending = false;
+
+                            if (retryTelemetry.AcceptedResends != acceptedResendsBefore)
+                            {
+                                unitResendPending = false;
+                            }
+
                             outcome = attempted.WriteOutcome;
                             reply = attempted.GetResult();
                         }
@@ -726,11 +855,15 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                                     pinToConnection: core.Circuits is not null || askingPool is not null || ConditionalExec is not null, writeObservation: RetryContext?.WriteObservation)
                                 .ConfigureAwait(false);
                         }
+
                         admission.Success();
                         connection = ExecutingConnection ?? connection;
+
                         if (ConnectionPolicy.IsImportSession && (reply.Type == RespireDataType.Array || reply.IsNull
                             || reply.TransactionStateCleared))
+                        {
                             importTransactionStarted = false;
+                        }
                     }
                     catch (RespireConnectionRetiredException retirement) when (core.Circuits is not null
                         && askingPool is null && ConnectionPolicy.CanReplayRejectedCommands && !_hasCursorContinuation
@@ -739,7 +872,11 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         // Retirement rejected every frame before dispatch. Release this permit
                         // as ignored; the replacement endpoint owns its own health outcome.
                         // Nothing was accepted, so the rejected frame spends no unit attempt.
-                        if (unitAttemptCounted) unitAttempts--;
+                        if (unitAttemptCounted)
+                        {
+                            unitAttempts--;
+                        }
+
                         observation.Handled(retirement);
                         connection = target;
                         deadline = rerouted;
@@ -748,7 +885,10 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     catch (RespireConnectionRetiredException retirement) when (cluster is not null
                         && askingPool is null && ConnectionPolicy.CanRetryRetirement(cluster, routingAttempt, cancellationToken))
                     {
-                        if (unitAttemptCounted) unitAttempts--;
+                        if (unitAttemptCounted)
+                        {
+                            unitAttempts--;
+                        }
                         // The transport rejects the complete MULTI/EXEC frame before accepting any part.
                         cluster.RecordRejection(ref discovery, connection, retirement);
                         observation.Handled(retirement);
@@ -762,12 +902,19 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     catch (Exception error)
                     {
                         admission.Failed(error, cancellationToken);
-                        if (!retryUnit || unitAttempts == 0 || !TryGetUnitRetryDelay(error, outcome, out var delay)) throw;
+
+                        if (!retryUnit || unitAttempts == 0 || !TryGetUnitRetryDelay(error, outcome, out var delay))
+                        {
+                            throw;
+                        }
+
                         observation.Handled(error);
                         retryDelay = delay;
                     }
                     finally { admission.Dispose(); }
+
                     Exception? unitResponseError = null;
+
                     if (retryUnit && retryDelay is null && !(reply.IsError && cluster is not null
                         && ClusterRouter.CanRecover(ResponseReader.ServerError(in reply, "MULTI/EXEC", new(connection.Host, connection.Port)), slot)))
                     {
@@ -780,13 +927,15 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             retryDelay = delay;
                         }
                     }
+
                     if (retryDelay is { } wait)
                     {
-                        for (;;)
+                        for (; ; )
                         {
                             await core.DelayUnitRetryAsync(wait, cancellationToken).ConfigureAwait(false);
                             acquisition = new CommandAcquisitionScope(cancellationToken, deadline, timeout);
                             acquisition.CheckDeadline("MULTI/EXEC", core);
+
                             try
                             {
                                 if (cluster is not null)
@@ -795,7 +944,10 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                                     connection = await _client.AcquireConnectionAsync(slot, ref acquisition, observation).ConfigureAwait(false);
                                 }
                                 else
+                                {
                                     connection = await _client.GetUnitRetryConnectionAsync(acquisition.Token, observation).ConfigureAwait(false);
+                                }
+
                                 unitResendPending = true;
                                 routingAttempt = 0;
                                 break;
@@ -804,13 +956,20 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             {
                                 // A failed replacement sent nothing, but spends an attempt as in the immediate owner.
                                 unitAttempts++;
-                                if (!TryGetUnitRetryDelay(error, CommandWriteOutcome.DefinitelyUnwritten, out wait)) throw;
+
+                                if (!TryGetUnitRetryDelay(error, CommandWriteOutcome.DefinitelyUnwritten, out wait))
+                                {
+                                    throw;
+                                }
+
                                 observation.Handled(error);
                                 acquisition.Dispose();
                             }
                         }
+
                         continue;
                     }
+
                     var redirect = reply.IsError && cluster is not null
                         ? ResponseReader.ServerError(in reply, "MULTI/EXEC", new(connection.Host, connection.Port)) : null;
                     // EXEC result arrays can contain partial success. Only top-level routing
@@ -818,19 +977,27 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     if (cluster is null || redirect is null || !ClusterRouter.CanRecover(redirect, slot))
                     {
                         if (retryTelemetry is { AcceptedResends: > 0 })
+                        {
                             RespireTelemetry.RecordCommandRetry(_retryCategories.Label, unitResponseError is not null ? "exhausted" : "succeeded");
+                        }
+
                         return reply;
                     }
 
                     reply.Dispose();
                     // Once an importing attempt has begun, keep its socket and never replay it.
-                    if (askingPool is not null) throw redirect;
+                    if (askingPool is not null)
+                    {
+                        throw redirect;
+                    }
+
                     if (routingAttempt >= ClusterRouter.RedirectLimit)
                     {
                         // Throw within the owning round so its outcome and queued operations
                         // retain the same terminal routing rejection.
                         throw redirect;
                     }
+
                     switch (ConnectionPolicy.RedirectBehavior)
                     {
                         case QueuedRedirectBehavior.RequireFreshWatch:
@@ -842,6 +1009,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         case QueuedRedirectBehavior.Recover:
                             break;
                     }
+
                     if (ClusterRouter.IsRedirect(redirect)
                         && !ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
                     {
@@ -868,6 +1036,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             routingAttempt++;
                             continue;
                         }
+
                         discovery?.RecordCommandFailure(redirect, discoveryPending: false, slot);
                         throw new RespireConnectionException(
                             "Redis Cluster transactions cannot follow ASK redirects during slot migration.",
@@ -875,7 +1044,12 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     }
 
                     cluster.RecordRejection(ref discovery, connection, redirect);
-                    if (unitAttemptCounted) unitAttempts--;
+
+                    if (unitAttemptCounted)
+                    {
+                        unitAttempts--;
+                    }
+
                     observation.Handled(redirect);
                     discoveryPending = true;
                     connection = await cluster.GetRedirectConnectionAsync(redirect, connection, acquisition.Token, slot, discovery, observation)
@@ -886,8 +1060,13 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             }
             catch (Exception error)
             {
-                if (retryTelemetry is { AcceptedResends: > 0 }) RespireTelemetry.RecordCommandRetry(_retryCategories.Label, "exhausted");
+                if (retryTelemetry is { AcceptedResends: > 0 })
+                {
+                    RespireTelemetry.RecordCommandRetry(_retryCategories.Label, "exhausted");
+                }
+
                 Exception failure = error;
+
                 if (error is RespireTimeoutException discoveryTimeout && core.Sentinel is not null && connection is null)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -897,8 +1076,10 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 else if (error is OperationCanceledException canceled && acquisition.HasCancellation)
                 {
                     if (acquisition.IsDeadlineCancellation(canceled))
+                    {
                         failure = acquisition.CreateTimeout("MULTI/EXEC", core,
                             ConnectionPolicy.ImportConnection, canceled);
+                    }
                     else if (acquisition.IsCallerCancellation(canceled))
                     {
                         OperationCanceledException callerFailure = new(error.Message, error, cancellationToken);
@@ -906,20 +1087,34 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             ? new RespireCommandNotSubmittedException(callerFailure) : callerFailure;
                     }
                 }
+
                 if (ConnectionPolicy.IsImportSession)
                 {
-                    if (error is RespireCommandNotSubmittedException) importError = error;
+                    if (error is RespireCommandNotSubmittedException)
+                    {
+                        importError = error;
+                    }
                     else if (!importSubmissionAttempted)
                     {
                         if (failure is OperationCanceledException callerFailure)
+                        {
                             failure = importError = new RespireCommandNotSubmittedException(callerFailure);
+                        }
                         else if (failure is RespireTimeoutException)
+                        {
                             importError = new RespireCommandNotSubmittedException(
                                 new OperationCanceledException(failure.Message, failure, cancellationToken));
+                        }
                     }
                 }
+
                 discovery?.RecordCommandFailure(failure, discoveryPending, slot, callerToken: cancellationToken);
-                if (ReferenceEquals(failure, error)) throw;
+
+                if (ReferenceEquals(failure, error))
+                {
+                    throw;
+                }
+
                 throw failure;
             }
             finally
@@ -938,23 +1133,41 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             {
                 delay = default;
                 responseError = null;
+
                 if (reply.IsError)
                 {
                     responseError = ResponseReader.ServerError(in reply, "MULTI/EXEC", connection is null ? null : new(connection.Host, connection.Port));
                     return TryGetUnitRetryDelay(responseError, outcome, out delay);
                 }
-                if (reply.Type != RespireDataType.Array) return false;
+
+                if (reply.Type != RespireDataType.Array)
+                {
+                    return false;
+                }
+
                 var elements = reply.AsArray();
+
                 for (var i = 0; i < Math.Min(elements.Length, _ops.Count); i++)
                 {
                     ref readonly var element = ref elements[i];
-                    if (!element.IsError) continue;
+
+                    if (!element.IsError)
+                    {
+                        continue;
+                    }
+
                     var error = ResponseReader.ServerError(in element, _ops[i].Operation, connection is null ? null : new(connection.Host, connection.Port));
                     responseError ??= error;
-                    if (!TryGetUnitRetryDelay(error, outcome, out delay)) continue;
+
+                    if (!TryGetUnitRetryDelay(error, outcome, out delay))
+                    {
+                        continue;
+                    }
+
                     responseError = error;
                     return true;
                 }
+
                 return false;
             }
         }
@@ -965,7 +1178,10 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     {
         private int _unpublished;
 
-        internal int AcceptedResends { get; private set; }
+        internal int AcceptedResends
+        {
+            get; private set;
+        }
 
         // Runs under the connection write gate: mutate state only. Meter listeners run in PublishAccepted.
         internal void Accepted()
@@ -978,7 +1194,9 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         internal void PublishAccepted()
         {
             for (var count = Interlocked.Exchange(ref _unpublished, 0); count > 0; count--)
+            {
                 RespireTelemetry.RecordCommandRetry(category, "attempted");
+            }
         }
     }
 
@@ -1003,13 +1221,17 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 
         _completed = true;
         var error = new RespireTransactionDiscardedException();
+
         foreach (var operation in _ops)
         {
             operation.Fail(error);
         }
 
-        try { await ReleaseAsync(returnWatchConnection: false).ConfigureAwait(false); }
-        finally { foreach (var operation in _ops) operation.AllowErrorInspection(); }
+        try
+        {
+            await ReleaseAsync(returnWatchConnection: false).ConfigureAwait(false);
+        }
+        finally { foreach (var operation in _ops) { operation.AllowErrorInspection(); } }
     }
 
     // Only watched transactions carry pool ownership; ordinary transactions retain their existing size.
@@ -1018,12 +1240,14 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     private ValueTask ReleaseAsync(bool returnWatchConnection)
     {
         _buffer.Release();
+
         if (_watchConnection is null)
         {
             return ValueTask.CompletedTask;
         }
 
         System.Diagnostics.Debug.Assert(WatchPool is not null, "A watched connection must retain its owning pool.");
+
         if (returnWatchConnection)
         {
             WatchPool!.Return(_watchConnection);
@@ -1044,6 +1268,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         var bufferMark = _buffer.Count;
         var clusterSlot = _clusterSlot;
         var hasClusterSlot = _hasClusterSlot;
+
         try
         {
             if (_client.Core.Cluster is not null && command.TryGetClusterSlot(out var slot))
@@ -1063,7 +1288,11 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             throw;
         }
 
-        if (CursorCommandMetadata.IsServerCursorContinuation(in command)) _hasCursorContinuation = true;
+        if (CursorCommandMetadata.IsServerCursorContinuation(in command))
+        {
+            _hasCursorContinuation = true;
+        }
+
         RetryContext?.RecordCategory(command.RetryCategory);
         _retryCategories.Add(command.RetryCategory);
         var pending = new RespirePending<T>();
@@ -1125,12 +1354,17 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     private RespireHashImportSession.Usage? PrepareCommit()
     {
         RespireHashImportSession.Usage? usage = null;
+
         try
         {
             ThrowIfCompleted();
             usage = ConnectionPolicy.EnterOperation();
+
             if (ConnectionPolicy.IsImportSession)
+            {
                 ConnectionPolicy.PinnedConnection!.ValidateTransactionCapacity(_ops.Count, includeMulti: false);
+            }
+
             _completed = true;
             return usage;
         }
@@ -1155,6 +1389,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         public virtual string? ExpectedEngine => null;
 
         public abstract Exception? Complete(RespireClient client, in RespValue element);
+
         public abstract void Abort();
     }
 
@@ -1163,8 +1398,11 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         string operation, RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : TxOp(operation)
     {
         public override bool IsCompleted => pending.IsCompleted;
+
         public override Exception? Error => pending.Error;
+
         public override bool IsAborted => pending.Status == RespirePendingStatus.Aborted;
+
         public override Exception? Complete(RespireClient client, in RespValue element)
         {
             if (element.IsError)
@@ -1188,8 +1426,11 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         }
 
         public override void Fail(Exception error) => pending.Fail(error);
+
         public override bool ReportError() => pending.ReportError();
+
         public override void AllowErrorInspection() => pending.AllowErrorInspection();
+
         public override RespireTelemetry.ErrorObservation Observation => pending.Observation;
 
         public override void Abort() => pending.Abort();
@@ -1255,7 +1496,11 @@ public sealed class RespireTransaction : RespireTransactionBase
 /// </summary>
 public sealed class RespireWatchedTransaction : RespireTransactionBase
 {
-    internal WatchedTransactionRetryContext? HelperRetryContext { get; set; }
+    internal WatchedTransactionRetryContext? HelperRetryContext
+    {
+        get; set;
+    }
+
     private protected override WatchedTransactionRetryContext? RetryContext => HelperRetryContext;
 
     internal RespireWatchedTransaction(RespireClient client, bool allowUnwatchedAsk = false)
@@ -1272,9 +1517,20 @@ public sealed class RespireWatchedTransaction : RespireTransactionBase
         WatchRequiresAsking = requiresAsking;
     }
 
-    private protected override DedicatedConnectionPool? WatchPool { get; }
-    private protected override bool WatchRequiresAsking { get; }
-    private protected override bool AllowUnwatchedAsk { get; }
+    private protected override DedicatedConnectionPool? WatchPool
+    {
+        get;
+    }
+
+    private protected override bool WatchRequiresAsking
+    {
+        get;
+    }
+
+    private protected override bool AllowUnwatchedAsk
+    {
+        get;
+    }
 
     private static RespireConnection ValidateLease(RespireConnection connection, DedicatedConnectionPool pool)
     {

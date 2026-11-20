@@ -103,7 +103,8 @@ public class ConnectionStringCompatibilityTests
     {
         using var logger = new CaptureLoggerFactory();
         var options = RespireOptions.Parse($"localhost,{key}=private-value,{key.ToUpperInvariant()}=private-value")
-            with { LoggerFactory = logger };
+            with
+        { LoggerFactory = logger };
         options.ValidateAndSnapshot();
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(options);
@@ -190,15 +191,31 @@ public class ConnectionStringCompatibilityTests
 
     private sealed class CaptureLoggerFactory : ILoggerFactory, ILogger
     {
-        public List<string> Messages { get; } = [];
+        public List<string> Messages
+        {
+            get;
+        } = [];
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public bool IsEnabled(LogLevel logLevel) => logLevel == LogLevel.Warning;
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            if (IsEnabled(logLevel)) Messages.Add(formatter(state, exception));
+            if (IsEnabled(logLevel))
+            {
+                Messages.Add(formatter(state, exception));
+            }
         }
     }
 }

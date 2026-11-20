@@ -120,33 +120,47 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     [StructLayout(LayoutKind.Explicit, Size = 128)]
     private sealed class ProducerProgress
     {
-        [FieldOffset(64)] internal long EnqueuedBytes;
+        [FieldOffset(64)]
+        internal long EnqueuedBytes;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 128)]
     private sealed class FlushProgress
     {
-        [FieldOffset(0)] internal readonly AsyncFlushSignal Signal = new();
-        [FieldOffset(64)] internal long SentBytes;
-        [FieldOffset(72)] internal long LastWriteTimestamp = -1;
+        [FieldOffset(0)]
+        internal readonly AsyncFlushSignal Signal = new();
+        [FieldOffset(64)]
+        internal long SentBytes;
+        [FieldOffset(72)]
+        internal long LastWriteTimestamp = -1;
         // Protected by _writeGate. Includes every byte in a selected send buffer, even before
         // an ambiguous socket/TLS write has reported any successful progress.
-        [FieldOffset(80)] internal long ClaimedWriteEnd;
-        [FieldOffset(88)] internal long GatheredWriteDeadlineTimestamp;
-        [FieldOffset(96)] internal int GatheredWriteBufferCount;
+        [FieldOffset(80)]
+        internal long ClaimedWriteEnd;
+        [FieldOffset(88)]
+        internal long GatheredWriteDeadlineTimestamp;
+        [FieldOffset(96)]
+        internal int GatheredWriteBufferCount;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 128)]
     private sealed partial class ReceiveProgress
     {
-        [FieldOffset(0)] internal readonly Lock DeadlineGate = new();
-        [FieldOffset(8)] internal readonly AsyncCapacitySignal CapacitySignal = new();
-        [FieldOffset(16)] internal readonly CompletionScheduler Completions = new();
-        [FieldOffset(24)] internal long SentReplyCount;
+        [FieldOffset(0)]
+        internal readonly Lock DeadlineGate = new();
+        [FieldOffset(8)]
+        internal readonly AsyncCapacitySignal CapacitySignal = new();
+        [FieldOffset(16)]
+        internal readonly CompletionScheduler Completions = new();
+        [FieldOffset(24)]
+        internal long SentReplyCount;
         // Received count, or TimeoutClaimed (-1) after the watchdog's terminal CAS.
-        [FieldOffset(32)] internal long ReceivedReplyCount;
-        [FieldOffset(40)] internal long DeadlineTimestamp;
-        [FieldOffset(64)] internal long LastReadTimestamp = -1;
+        [FieldOffset(32)]
+        internal long ReceivedReplyCount;
+        [FieldOffset(40)]
+        internal long DeadlineTimestamp;
+        [FieldOffset(64)]
+        internal long LastReadTimestamp = -1;
     }
 
     // Delivery before the next receive on an idle connection (see DeliverThenReceive).
@@ -181,22 +195,45 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     // Set by the multiplexer before publication; endpoint aliases may later change owners.
     private Respire.Infrastructure.RespireConnectionMultiplexer? _multiplexer;
+
     internal Respire.Infrastructure.RespireConnectionMultiplexer? Multiplexer
     {
         get => Volatile.Read(ref _multiplexer);
         set => Volatile.Write(ref _multiplexer, value);
     }
-    internal int MultiplexerSlot { get; set; }
+
+    internal int MultiplexerSlot
+    {
+        get; set;
+    }
     internal long MovingPublicationGeneration;
     internal long LastQueuedMovingSequence = long.MinValue;
 
-    public string Host { get; }
-    public int Port { get; }
+    public string Host
+    {
+        get;
+    }
+
+    public int Port
+    {
+        get;
+    }
+
     // Captures this handshake's effective identity. Reconnects use the original options.
-    internal string TlsHost { get; }
-    internal string? AvailabilityZone { get; private set; }
+    internal string TlsHost
+    {
+        get;
+    }
+
+    internal string? AvailabilityZone
+    {
+        get; private set;
+    }
+
     public bool IsConnected => !Volatile.Read(ref _dead);
+
     internal bool IsFlushLoopWaiting => _flushSignal.IsWaiting;
+
     internal int PendingResponseCount
     {
         get
@@ -206,18 +243,29 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 var position = Volatile.Read(ref _activeBulkStreamPosition);
                 var count = _inflight.CountIncludingActiveReply(position);
                 // A transition to another stream or completed drainage invalidates this sample.
-                if (position == Volatile.Read(ref _activeBulkStreamPosition)) return count;
+                if (position == Volatile.Read(ref _activeBulkStreamPosition))
+                {
+                    return count;
+                }
             }
         }
     }
+
     internal void SetLeaseRented(bool rented) => _connectionMetrics?.SetRented(rented);
+
     internal void RequestMetricCloseReason(string reason) => _connectionMetrics?.RequestClose(reason);
+
     internal void RecordConnectionWait(long started) => _connectionMetrics?.Waited(started);
+
     internal void RecordConnectionHandoff() => _connectionMetrics?.HandedOff();
+
     internal bool IsRetired => Volatile.Read(ref _retired);
+
     /// <summary>False as soon as <see cref="RetireAsync"/> starts; <see cref="IsConnected"/> stays true while accepted work drains.</summary>
     internal bool IsAcceptingCommands => IsConnected && !IsRetired && _generation?.IsRetired != true;
+
     internal int WriteBufferCapacity => Math.Max(_activeBuffer.Capacity, _spareBuffer.Capacity);
+
     internal bool DrainedSuccessfully => Volatile.Read(ref _drainedSuccessfully);
 
     /// <summary>
@@ -227,7 +275,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal bool ExpireOldestCommandForTesting()
     {
         if (_commandTimeout is not { } timeout || !_inflight.TryPeek(out var source) || !source.Deadline.IsSet)
+        {
             return false;
+        }
 
         _inflight.SweepExpired(source.Deadline.Ticks + 1, timeout, this);
         return true;
@@ -257,10 +307,19 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         target = null!;
         reroutedDeadline = default;
+
         if (pinToConnection || _generation?.IsRetired == true || Multiplexer is not { IsRetired: false } multiplexer)
+        {
             return false;
+        }
+
         var selected = preferredZone is null ? multiplexer.GetConnection() : multiplexer.GetConnectionForZone(preferredZone);
-        if (ReferenceEquals(selected, this) || Volatile.Read(ref selected._retired)) return false;
+
+        if (ReferenceEquals(selected, this) || Volatile.Read(ref selected._retired))
+        {
+            return false;
+        }
+
         target = selected;
         reroutedDeadline = GetReroutedCommandDeadline(deadline);
         return true;
@@ -269,17 +328,32 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// <summary>The physical peer, or the captured destination when a factory hides its socket.</summary>
     internal (string Host, int Port) PeerKey => (NetworkPeerAddress ?? _factoryEndpoint?.Host ?? Host,
         NetworkPeerPort ?? _factoryEndpoint?.Port ?? Port);
+
     internal string? NetworkPeerAddress => _networkPeerAddress;
+
     internal int? NetworkPeerPort => _networkPeerPort;
-    internal int OperationMetricDatabase { get; }
-    internal string OperationMetricNamespace { get; }
-    internal TagList OperationMetricTags { get; }
+
+    internal int OperationMetricDatabase
+    {
+        get;
+    }
+
+    internal string OperationMetricNamespace
+    {
+        get;
+    }
+
+    internal TagList OperationMetricTags
+    {
+        get;
+    }
 
     /// <summary>
     /// Completes when the connection dies for any reason (fault, remote close, disposal). Never
     /// faults itself — used to observe connection lifetime (e.g. pub/sub auto-resubscribe).
     /// </summary>
     internal Task Closed => _receiveTask;
+
     internal Exception? CloseError => Volatile.Read(ref _abortReason);
 
     /// <summary>
@@ -294,7 +368,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </summary>
     internal long ServerClientId => Volatile.Read(ref _serverClientId);
 
-    internal bool ClientTrackingEnabled { get; }
+    internal bool ClientTrackingEnabled
+    {
+        get;
+    }
 
     private RespireConnection(
         Socket? socket, Stream? stream, string host, int port, RespireConnectionOptions options, ILogger? logger,
@@ -307,6 +384,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _socket = socket;
         _stream = stream;
         _factoryEndpoint = factoryEndpoint;
+
         if (socket?.RemoteEndPoint is IPEndPoint remoteEndpoint)
         {
             var address = remoteEndpoint.Address;
@@ -332,8 +410,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _maintenanceOptions = options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Disabled ? null : options;
         _receiveBufferSize = options.ReceiveBufferSize;
         _inflight = new InflightRing(options.MaxInflightCommands);
+
         if (port != 0)
+        {
             _connectionMetrics = ConnectionTelemetry.Attach(this, options);
+        }
+
         _runContinuationsAsynchronously = options.ContinuationDispatch == RespireContinuationDispatch.ThreadPool;
         _completions.AdaptiveDispatchEnabled = options.ContinuationDispatch == RespireContinuationDispatch.Adaptive;
         _sourcePool = new PendingResponsePool(options.CompletionSourcePoolSize, _runContinuationsAsynchronously);
@@ -342,11 +424,17 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _spareBuffer = new WriteBuffer(options.WriteBufferSize);
         _responseTimeout = options.ResponseTimeout;
         _gatheredWriteTimeout = options.EffectiveGatheredWriteStallTimeout;
-        if (_gatheredWriteTimeout is not null) _watchdogWake = new SemaphoreSlim(0, 1);
+
+        if (_gatheredWriteTimeout is not null)
+        {
+            _watchdogWake = new SemaphoreSlim(0, 1);
+        }
+
         _commandTimeout = options.CommandTimeout;
         _stalledDeliveryMilliseconds = Math.Max(1L, (long)options.StalledDeliveryThreshold.TotalMilliseconds);
         _teardownRescueBudgetMilliseconds = Math.Max(1L, (long)options.RetirementDrainFallbackTimeout.TotalMilliseconds);
         _starvedRunnerMilliseconds = Math.Max(1L, (long)options.StarvedDeliveryRunnerWindow.TotalMilliseconds);
+
         if (_commandTimeout is { } commandTimeoutValue)
         {
             _commandTimeoutMilliseconds = Math.Max(1L, (long)commandTimeoutValue.TotalMilliseconds);
@@ -360,6 +448,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // retiring this connection, the proxy would never complete and disposal would hang.
         _receiveTask = ReceiveLoopAsync();
         _flushTask = Task.Run(FlushLoopAsync);
+
         if (_responseTimeout is not null || _gatheredWriteTimeout is not null)
         {
             _watchdogTask = WatchLivenessAsync(_watchdogCancellation.Token);
@@ -384,6 +473,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireEndpoint? resolvedSocketEndpoint = null)
     {
         options ??= RespireConnectionOptions.Default;
+
         if (options.ResponseTimeout is { } invalidTimeout && invalidTimeout < MinWatchdogDelay)
         {
             throw new ArgumentOutOfRangeException(
@@ -412,6 +502,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         var isUnixSocket = port == 0;
+
         if (isUnixSocket)
         {
             UnixSocketConfiguration.Validate(host, options.UseTls, options.MaintenanceNotifications, nameof(host));
@@ -431,7 +522,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var socketEndpoint = resolvedSocketEndpoint ?? ResolveSocketEndpoint(host, port, options);
 
         if (options.ConnectionFactory is not null)
+        {
             return await ConnectFactoryStreamAsync(host, port, socketEndpoint, options, logger, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
+        }
 
         var started = Stopwatch.GetTimestamp();
         var physicalConnected = false;
@@ -441,19 +534,31 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         SslStream? tlsStream = null;
         RespireConnection connection;
+
         try
         {
-            if (socket is not null) ConfigureSocket(socket, options, isUnixSocket);
+            if (socket is not null)
+            {
+                ConfigureSocket(socket, options, isUnixSocket);
+            }
 
             using var timeoutCts = CreateConnectTimeout(options, cancellationToken);
+
             try
             {
                 if (socket is null)
+                {
                     socket = await MultipathTcpSocket.ConnectAsync(socketEndpoint, options, logger, timeoutCts.Token).ConfigureAwait(false);
+                }
                 else if (isUnixSocket)
+                {
                     await socket.ConnectAsync(new UnixDomainSocketEndPoint(host), timeoutCts.Token).ConfigureAwait(false);
+                }
                 else
+                {
                     await socket.ConnectAsync(socketEndpoint.Host, socketEndpoint.Port, timeoutCts.Token).ConfigureAwait(false);
+                }
+
                 physicalConnected = true;
                 timeoutCts.Token.ThrowIfCancellationRequested();
 
@@ -469,13 +574,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         // NetworkStream takes it, especially on .NET 8. Keep our cancellation identity.
                         throw new OperationCanceledException(error.Message, error, timeoutCts.Token);
                     }
+
                     var tlsOptions = CreateTlsOptions(options.TlsOptions, options.UseMappedHostForTls ? socketEndpoint.Host : host);
                     options = options with { TlsOptions = tlsOptions };
                     await tlsStream.AuthenticateAsClientAsync(tlsOptions, timeoutCts.Token).ConfigureAwait(false);
                 }
             }
-            catch (OperationCanceledException error) when (
-                error.CancellationToken == timeoutCts.Token && timeoutCts.IsCancellationRequested)
+            catch (OperationCanceledException error) when (error.CancellationToken == timeoutCts.Token && timeoutCts.IsCancellationRequested)
             {
                 throw TranslateConnectCancellation(error, cancellationToken, options, host, port);
             }
@@ -489,23 +594,44 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             RespireException.PopulateEndpoint(error, new(host, port));
             var peerClosed = physicalConnected && !isUnixSocket && socket is not null
                 && ConnectionTelemetry.IsHandshakePeerClose(socket, error);
-            try { if (tlsStream is not null) await tlsStream.DisposeAsync().ConfigureAwait(false); }
+
+            try
+            {
+                if (tlsStream is not null)
+                {
+                    await tlsStream.DisposeAsync().ConfigureAwait(false);
+                }
+            }
             catch { /* Preserve the original connection failure. */ }
             finally { socket?.Dispose(); }
+
             if (physicalConnected && !isUnixSocket)
+            {
                 ConnectionTelemetry.ClosedBeforeHandshake(host, port, options, error, cancellationToken, peerClosed);
+            }
+
             if (options.ObserveEstablishmentErrors && !ConnectionTelemetry.IsCallerCancellation(error, cancellationToken))
+            {
                 RespireTelemetry.RecordError(error, internallyHandled: true, endpoint: new(host, port));
+            }
+
             throw;
         }
 
         try
         {
             await connection.HandshakeAsync(options, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
+
             if (options.DiscoverAvailabilityZone)
+            {
                 connection._zoneReads = AvailabilityZoneTelemetry.ForZone(connection.AvailabilityZone);
+            }
+
             if (options.Generation is { } generation)
+            {
                 await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
+            }
+
             connection.StartCredentialRefresh(options);
             connection.InitializeConnectionLifetime(options);
             connection._connectionMetrics?.Ready(started);
@@ -513,13 +639,20 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (Exception error)
         {
             if (ConnectionTelemetry.IsCallerCancellation(error, cancellationToken))
+            {
                 connection.RequestMetricCloseReason(ConnectionTelemetry.CloseReason.Application);
+            }
             // Read routing owns discarded candidates. Abort records only if it wins the close,
             // so a receive-loop failure already observed on this socket is not counted twice.
             connection.Abort(error, observeErrors: options.ObserveEstablishmentErrors
                 && !ConnectionTelemetry.IsCallerCancellation(error, cancellationToken));
-            try { await connection.DisposeAsync().ConfigureAwait(false); }
+
+            try
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
             catch { /* Preserve the original handshake or validation failure. */ }
+
             throw;
         }
 
@@ -529,13 +662,26 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private static RespireEndpoint ResolveSocketEndpoint(string host, int port, RespireConnectionOptions options)
     {
         var endpoint = new RespireEndpoint(host, port);
-        if (port == 0) return endpoint;
+
+        if (port == 0)
+        {
+            return endpoint;
+        }
+
         if (options.NodeAddressResolver is { } resolver)
+        {
             endpoint = resolver(endpoint);
+        }
         else if (options.NodeAddressMap is { } map && map.TryGetValue(endpoint, out var mapped))
+        {
             endpoint = mapped;
+        }
+
         if (options.NodeAddressResolver is not null || options.NodeAddressMap is not null)
+        {
             NodeAddressMapping.Validate(endpoint);
+        }
+
         return endpoint;
     }
 
@@ -548,6 +694,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         Stream? stream = null;
         RespireConnection connection;
         var physicalConnected = false;
+
         try
         {
             try
@@ -556,9 +703,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 stream = await options.ConnectionFactory!(socketEndpoint, timeout.Token).ConfigureAwait(false);
                 // A factory can return after cancellation instead of observing its token.
                 timeout.Token.ThrowIfCancellationRequested();
+
                 if (stream is null || !stream.CanRead || !stream.CanWrite)
+                {
                     throw new InvalidOperationException("ConnectionFactory must return a connected readable and writable stream.");
+                }
+
                 physicalConnected = true;
+
                 if (options.UseTls)
                 {
                     var tlsStream = new SslStream(stream);
@@ -569,34 +721,56 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     timeout.Token.ThrowIfCancellationRequested();
                 }
             }
-            catch (OperationCanceledException error) when (
-                error.CancellationToken == timeout.Token && timeout.IsCancellationRequested)
+            catch (OperationCanceledException error) when (error.CancellationToken == timeout.Token && timeout.IsCancellationRequested)
             {
                 throw TranslateConnectCancellation(error, cancellationToken, options, host, port);
             }
+
             logger?.ConnectionConnected(host, port);
             connection = new RespireConnection(null, stream, host, port, options, logger, socketEndpoint);
         }
         catch (Exception error)
         {
             RespireException.PopulateEndpoint(error, new(host, port));
-            try { if (stream is not null) await stream.DisposeAsync().ConfigureAwait(false); }
+
+            try
+            {
+                if (stream is not null)
+                {
+                    await stream.DisposeAsync().ConfigureAwait(false);
+                }
+            }
             catch { /* Preserve the factory cancellation or connection failure. */ }
+
             if (physicalConnected && port != 0)
+            {
                 ConnectionTelemetry.ClosedBeforeHandshake(host, port, options, error, cancellationToken,
                     ConnectionTelemetry.IsPeerReset(error));
+            }
+
             if (options.ObserveEstablishmentErrors && !ConnectionTelemetry.IsCallerCancellation(error, cancellationToken))
+            {
                 RespireTelemetry.RecordError(error, internallyHandled: true, endpoint: new(host, port));
+            }
+
             throw;
         }
+
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
             await connection.HandshakeAsync(options, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
+
             if (options.DiscoverAvailabilityZone)
+            {
                 connection._zoneReads = AvailabilityZoneTelemetry.ForZone(connection.AvailabilityZone);
+            }
+
             if (options.Generation is { } generation)
+            {
                 await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
+            }
+
             connection.StartCredentialRefresh(options);
             connection._connectionMetrics?.Ready(started);
             connection.InitializeConnectionLifetime(options);
@@ -605,11 +779,19 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (Exception error)
         {
             if (ConnectionTelemetry.IsCallerCancellation(error, cancellationToken))
+            {
                 connection.RequestMetricCloseReason(ConnectionTelemetry.CloseReason.Application);
+            }
+
             connection.Abort(error, observeErrors: options.ObserveEstablishmentErrors
                 && !ConnectionTelemetry.IsCallerCancellation(error, cancellationToken));
-            try { await connection.DisposeAsync().ConfigureAwait(false); }
+
+            try
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
             catch { /* Preserve the original handshake or validation failure. */ }
+
             throw;
         }
     }
@@ -631,7 +813,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // connect timeout, even when TCP completed just before that deadline fired.
         // If both sources have fired by classification, the initiating token takes precedence.
         if (cancellationToken.IsCancellationRequested)
+        {
             return new OperationCanceledException(error.Message, error, cancellationToken);
+        }
+
         return new RespireTimeoutException("CONNECT", options.ConnectTimeout, error,
             RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting, new(host, port)));
     }
@@ -669,11 +854,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             RemoteCertificateValidationCallback = configured.RemoteCertificateValidationCallback,
             TargetHost = host,
         };
+
         if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows())
         {
             copy.AllowRsaPkcs1Padding = configured.AllowRsaPkcs1Padding;
             copy.AllowRsaPssPadding = configured.AllowRsaPssPadding;
         }
+
         return copy;
     }
 
@@ -709,8 +896,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     internal static void ConfigureSocket(Socket socket, RespireConnectionOptions options, bool isUnixSocket = false)
     {
-        if (options.SocketReceiveBufferSize > 0) socket.ReceiveBufferSize = options.SocketReceiveBufferSize;
-        if (options.SocketSendBufferSize > 0) socket.SendBufferSize = options.SocketSendBufferSize;
+        if (options.SocketReceiveBufferSize > 0)
+        {
+            socket.ReceiveBufferSize = options.SocketReceiveBufferSize;
+        }
+
+        if (options.SocketSendBufferSize > 0)
+        {
+            socket.SendBufferSize = options.SocketSendBufferSize;
+        }
+
         if (!isUnixSocket)
         {
             socket.NoDelay = true;
@@ -727,6 +922,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
         socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, (int)time.TotalSeconds);
+
         if (options.TcpKeepAliveInterval is { } interval)
         {
             socket.SetSocketOption(
@@ -744,23 +940,30 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         using var hello = await SendAsync(new Commands.HelloCommand(options.Username, options.Password),
             cancellationToken, armCommandDeadline: armCommandDeadline).ConfigureAwait(false);
+
         if (hello.IsError)
         {
             var message = hello.GetErrorMessage();
             var kind = ClassifyHelloError(message.AsSpan());
+
             if (kind != HelloErrorKind.Unsupported)
             {
                 // Provider-backed HELLO includes a secret; server text may echo it.
                 if (options.CredentialProvider is not null)
+                {
                     throw new RespireAuthenticationException($"HELLO authentication failed for {Host}:{Port}.");
+                }
+
                 var hint = kind == HelloErrorKind.Other && message.StartsWith("ERR ", StringComparison.OrdinalIgnoreCase)
                     ? " If this endpoint does not support HELLO, explicitly set protocol=2."
                     : null;
                 throw CreateHandshakeException(in hello, "HELLO", hint);
             }
+
             _logger?.HelloResp2Fallback(Host, Port);
             return RespireProtocol.Resp2;
         }
+
         ValidateHelloProtocol(in hello);
         CaptureHelloMetadata(in hello, options);
         _logger?.HelloResp3Negotiated(Host, Port);
@@ -788,9 +991,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         async ValueTask QueueStepAsync<TCommand>(string step, TCommand command)
             where TCommand : struct, IRespCommand
         {
-            if (admissionFailed) return;
+            if (admissionFailed)
+            {
+                return;
+            }
 
             ValueTask<RespValue> reply;
+
             try
             {
                 // Await admission, not the reply. Only one capacity waiter may submit setup
@@ -805,6 +1012,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 reply = ValueTask.FromException<RespValue>(error);
                 admissionFailed = true;
             }
+
             (pending ??= new(8)).Add((step, reply));
         }
 
@@ -837,6 +1045,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             // actual implementation/version, independently for every new physical socket.
             await QueueStepAsync("INFO SERVER", new Commands.Cmd1(Commands.Verbs.Info, "SERVER")).ConfigureAwait(false);
         }
+
         if (!options.RequireClusterDatabaseSupport && options.Database != 0)
         {
             await QueueStepAsync("SELECT", new Commands.SelectCommand(options.Database)).ConfigureAwait(false);
@@ -845,10 +1054,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Session steps (SELECT, READONLY, CLIENT TRACKING) pipeline here, unless Cluster
         // database support must be validated first; then they run in the same order below.
         var deferSessionSteps = options.RequireClusterDatabaseSupport;
+
         if (options.AdvertiseReplicaRedirects)
         {
             await QueueStepAsync("CLIENT CAPA REDIRECT", new Commands.ClientCapaRedirectCommand()).ConfigureAwait(false);
         }
+
         if (options.ReadOnly && !deferSessionSteps)
         {
             await QueueStepAsync("READONLY", new ProtocolCommand<Cmd>(new Cmd(Verbs.ReadOnly))).ConfigureAwait(false);
@@ -867,23 +1078,34 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         Exception? failure = null;
         var replicaRedirects = false;
+
         foreach (var (step, pendingReply) in pending)
         {
             try
             {
                 var reply = await pendingReply.ConfigureAwait(false);
+
                 try
                 {
                     if (failure is null && reply.IsError)
                     {
                         // Capability negotiation is optional on Redis, older Valkey, and restricted ACLs.
-                        if (step == "CLIENT CAPA REDIRECT") continue;
+                        if (step == "CLIENT CAPA REDIRECT")
+                        {
+                            continue;
+                        }
                         // Zone discovery is optional. Redis and ACL-restricted servers can
                         // omit it without making an otherwise usable connection fail.
-                        if (step == "INFO SERVER" && !options.RequireClusterDatabaseSupport) continue;
+                        if (step == "INFO SERVER" && !options.RequireClusterDatabaseSupport)
+                        {
+                            continue;
+                        }
                         // Metadata is best effort: older servers, proxies, and ACLs may reject it.
                         // Still consume both replies so the next command retains its FIFO position.
-                        if (step is "CLIENT SETINFO LIB-NAME" or "CLIENT SETINFO LIB-VER") continue;
+                        if (step is "CLIENT SETINFO LIB-NAME" or "CLIENT SETINFO LIB-VER")
+                        {
+                            continue;
+                        }
                         // Provider credentials may be echoed by arbitrary proxy/server error codes.
                         failure = options.CredentialProvider is not null && step is ("AUTH" or "HELLO")
                             ? new RespireAuthenticationException($"Credential authentication failed for {Host}:{Port}.")
@@ -896,7 +1118,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     }
                     else if (failure is null && step == "INFO SERVER")
                     {
-                        if (options.RequireClusterDatabaseSupport) ValidateClusterDatabaseSupport(in reply);
+                        if (options.RequireClusterDatabaseSupport)
+                        {
+                            ValidateClusterDatabaseSupport(in reply);
+                        }
+
                         CaptureInfoAvailabilityZone(in reply);
                     }
                     else if (failure is null && step == "CLIENT CAPA REDIRECT")
@@ -924,9 +1150,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         ReplicaRedirectsEnabled = replicaRedirects;
+
         if (replicaRedirects && options.ReplicaRedirectReadOnly)
+        {
             await CompleteHandshakeStepAsync("READONLY", new ProtocolCommand<Cmd>(new Cmd(Verbs.ReadOnly)),
                 cancellationToken, armCommandDeadline).ConfigureAwait(false);
+        }
 
         if (deferSessionSteps)
         {
@@ -935,48 +1164,74 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             // Tracking must follow SELECT so its initial registration uses the selected database.
             await CompleteHandshakeStepAsync("SELECT", new Commands.SelectCommand(options.Database),
                 cancellationToken, armCommandDeadline).ConfigureAwait(false);
+
             if (options.ReadOnly)
             {
                 await CompleteHandshakeStepAsync("READONLY", new ProtocolCommand<Cmd>(new Cmd(Verbs.ReadOnly)),
                     cancellationToken, armCommandDeadline).ConfigureAwait(false);
             }
+
             if (options.EnableClientTracking)
             {
                 await CompleteHandshakeStepAsync("CLIENT TRACKING", new Commands.ClientTrackingCommand(options.ClientTrackingOptions),
                     cancellationToken, armCommandDeadline).ConfigureAwait(false);
             }
         }
+
         await NegotiateMaintenanceAsync(options, negotiatedProtocol, cancellationToken, armCommandDeadline).ConfigureAwait(false);
     }
 
-    internal bool ReplicaRedirectsEnabled { get; private set; }
+    internal bool ReplicaRedirectsEnabled
+    {
+        get; private set;
+    }
 
     private async ValueTask CompleteHandshakeStepAsync<TCommand>(string step, TCommand command,
         CancellationToken cancellationToken, bool armCommandDeadline) where TCommand : struct, IRespCommand
     {
         using var reply = await SendAsync(command, cancellationToken, armCommandDeadline: armCommandDeadline)
             .ConfigureAwait(false);
-        if (reply.IsError) throw CreateHandshakeException(in reply, step);
+
+        if (reply.IsError)
+        {
+            throw CreateHandshakeException(in reply, step);
+        }
     }
 
     private void ValidateClusterDatabaseSupport(in RespValue reply)
     {
         string? server = null, version = null, mode = null;
         var remaining = reply.AsString().AsSpan();
+
         while (!remaining.IsEmpty)
         {
             var end = remaining.IndexOf('\n');
             var line = (end < 0 ? remaining : remaining[..end]).Trim();
             remaining = end < 0 ? default : remaining[(end + 1)..];
-            if (line.StartsWith("server_name:", StringComparison.Ordinal)) server = line[12..].ToString();
-            else if (line.StartsWith("valkey_version:", StringComparison.Ordinal)) version = line[15..].ToString();
-            else if (line.StartsWith("server_mode:", StringComparison.Ordinal)) mode = line[12..].ToString();
+
+            if (line.StartsWith("server_name:", StringComparison.Ordinal))
+            {
+                server = line[12..].ToString();
+            }
+            else if (line.StartsWith("valkey_version:", StringComparison.Ordinal))
+            {
+                version = line[15..].ToString();
+            }
+            else if (line.StartsWith("server_mode:", StringComparison.Ordinal))
+            {
+                mode = line[12..].ToString();
+            }
         }
 
         // Valkey uses an unsigned major followed by a dotted version or prerelease suffix.
         var majorText = version.AsSpan();
         var separator = majorText.IndexOfAny('.', '-');
-        if (separator >= 0) majorText = majorText[..separator];
+
+        if (separator >= 0)
+        {
+            majorText = majorText[..separator];
+        }
+
         if (string.Equals(server, "valkey", StringComparison.OrdinalIgnoreCase)
             && string.Equals(mode, "cluster", StringComparison.OrdinalIgnoreCase)
             && int.TryParse(majorText, NumberStyles.None, CultureInfo.InvariantCulture, out var major) && major >= 9)
@@ -993,7 +1248,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private RespireConnectionException CreateHandshakeException(in RespValue reply, string step, string? hint = null)
         => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}{hint}", ResponseReader.ServerError(in reply, step, new(Host, Port))) { Endpoint = new(Host, Port) };
 
-    private enum HelloErrorKind { Unsupported, Authentication, Other }
+    private enum HelloErrorKind
+    {
+        Unsupported,
+        Authentication,
+        Other
+    }
     private static readonly string[] HelloCredentialWording = ["auth", "password", "credential", "permission", "ACL"];
 
     private static HelloErrorKind ClassifyHelloError(ReadOnlySpan<char> message)
@@ -1003,15 +1263,26 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             || message.StartsWith("ERR unknown command \"HELLO\"", StringComparison.OrdinalIgnoreCase)
             || message.StartsWith("ERR unknown command 'HELLO'", StringComparison.OrdinalIgnoreCase)
             || message.StartsWith("ERR unknown command `HELLO`", StringComparison.OrdinalIgnoreCase))
+        {
             return HelloErrorKind.Unsupported;
+        }
 
         // ERR has no structured subcode. Suppress compatibility advice conservatively
         // for credential/ACL wording; these failures must never suggest a downgrade.
         if (message.StartsWith("WRONGPASS", StringComparison.OrdinalIgnoreCase)
             || message.StartsWith("NOPERM", StringComparison.OrdinalIgnoreCase))
+        {
             return HelloErrorKind.Authentication;
+        }
+
         foreach (var wording in HelloCredentialWording)
-            if (message.Contains(wording, StringComparison.OrdinalIgnoreCase)) return HelloErrorKind.Authentication;
+        {
+            if (message.Contains(wording, StringComparison.OrdinalIgnoreCase))
+            {
+                return HelloErrorKind.Authentication;
+            }
+        }
+
         return HelloErrorKind.Other;
     }
 
@@ -1020,6 +1291,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (reply.Type == RespireDataType.Map)
         {
             var fields = reply.AsArray();
+
             for (var i = 0; i + 1 < fields.Length; i += 2)
             {
                 if (fields[i].AsSpan().SequenceEqual("proto"u8)
@@ -1039,17 +1311,27 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private void CaptureHelloMetadata(in RespValue reply, RespireConnectionOptions options)
     {
-        if (reply.Type != RespireDataType.Map) return;
+        if (reply.Type != RespireDataType.Map)
+        {
+            return;
+        }
+
         var fields = reply.AsArray();
+
         for (var index = 0; index + 1 < fields.Length; index += 2)
         {
-            if (fields[index].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)) continue;
+            if (fields[index].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
+            {
+                continue;
+            }
             // Multiplexers treat a captured ID as a correction-fencing obligation. Learning
             // HELLO metadata must not opt ordinary sockets into CLIENT KILL permissions.
             if (options.IsDedicatedConnection && options.DedicatedPool.UnblockOnCancel
                 && fields[index].AsSpan().SequenceEqual("id"u8)
                 && fields[index + 1].Type == RespireDataType.Integer && fields[index + 1].AsInteger() > 0)
+            {
                 Interlocked.CompareExchange(ref _serverClientId, fields[index + 1].AsInteger(), 0);
+            }
             else if (fields[index].AsSpan().SequenceEqual("availability_zone"u8)
                 && fields[index + 1].Type is RespireDataType.BulkString or RespireDataType.SimpleString)
             {
@@ -1061,14 +1343,20 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private void CaptureInfoAvailabilityZone(in RespValue reply)
     {
-        if (reply.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)) return;
+        if (reply.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
+        {
+            return;
+        }
+
         foreach (var line in reply.AsString()!.Split('\n'))
+        {
             if (line.StartsWith("availability_zone:", StringComparison.Ordinal))
             {
                 var zone = line["availability_zone:".Length..].TrimEnd('\r');
                 AvailabilityZone = string.IsNullOrWhiteSpace(zone) ? null : zone;
                 return;
             }
+        }
     }
 
     /// <summary>
@@ -1078,6 +1366,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal async ValueTask<long> EnsureServerClientIdAsync(CancellationToken cancellationToken = default)
     {
         var existing = ServerClientId;
+
         if (existing != 0)
         {
             return existing;
@@ -1090,6 +1379,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 cancellationToken, commandName: "CLIENT ID", armCommandDeadline: false,
                 pinToConnection: true) // The ID belongs to this socket.
             .ConfigureAwait(false);
+
         if (reply.IsError)
         {
             var message = reply.GetErrorMessage();
@@ -1138,7 +1428,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         internal WriteGateScope(Lock gate)
         {
-            if (gate.IsHeldByCurrentThread) _ownedGate = null;
+            if (gate.IsHeldByCurrentThread)
+            {
+                _ownedGate = null;
+            }
             else
             {
                 gate.Enter();
@@ -1158,12 +1451,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken, CommandDeadline deadline) where TCommand : IBatchCommand
     {
         var startedBatch = false;
+
         lock (_writeGate)
         {
             // Capacity and maintenance fences need ordered asynchronous admission instead.
             if (_dead || _retired || _streamingActive || _credentialRenewalPending
-                || !_inflight.HasCapacity(commands.Count)) return false;
+                || !_inflight.HasCapacity(commands.Count))
+            {
+                return false;
+            }
+
             startedBatch = _activeBuffer.Count == 0 && _inflight.Count == 0;
+
             for (var index = 0; index < commands.Count; index++)
             {
                 try
@@ -1181,6 +1480,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 }
             }
         }
+
         ScheduleFlush(startedBatch);
         return true;
     }
@@ -1198,19 +1498,37 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         if (skipTracking && ClientTrackingEnabled)
+        {
             return await EnqueueOptOutAsync(command, cancellationToken, commandName, observation,
                 pinToConnection, deadline, armCommandDeadline).ConfigureAwait(false);
+        }
+
         observation.UseEndpoint(new(Host, Port), cancellationToken);
+
         if (cancellationToken.IsCancellationRequested)
+        {
             throw new RespireCommandNotSubmittedException(new OperationCanceledException(cancellationToken));
+        }
+
         if (command is IStreamingRespCommand)
+        {
             throw new NotSupportedException("Ordered admission does not support streaming command payloads.");
-        if (!deadline.IsSet && armCommandDeadline) deadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        }
+
+        if (!deadline.IsSet && armCommandDeadline)
+        {
+            deadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        }
+
         var source = _sourcePool.Rent(throwOnError: false, commandName);
         source.ErrorAttempts = observation.Attempts;
         bool enqueued;
         bool startedBatch;
-        try { enqueued = TryEnqueue(in command, source, deadline, out startedBatch); }
+
+        try
+        {
+            enqueued = TryEnqueue(in command, source, deadline, out startedBatch);
+        }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, deadline, out var target, out var rerouted, preferredZone: null))
         {
             ReclaimUnpublished(source);
@@ -1219,6 +1537,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 pinToConnection, rerouted, skipTracking, armCommandDeadline).ConfigureAwait(false);
         }
         catch { ReclaimUnpublished(source); throw; }
+
         if (!enqueued)
         {
             try
@@ -1234,6 +1553,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     pinToConnection, rerouted, skipTracking, armCommandDeadline).ConfigureAwait(false);
             }
         }
+
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         ScheduleFlush(startedBatch);
         return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, deadline);
@@ -1248,6 +1568,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         observation.UseEndpoint(new(Host, Port), cancellationToken);
         Interlocked.Increment(ref _responseTimeoutSuppressions);
+
         try
         {
             return await SendCoreAsync(
@@ -1273,6 +1594,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         Interlocked.Increment(ref _responseTimeoutSuppressions);
+
         try
         {
             return await SendPrefixedAsync(
@@ -1302,8 +1624,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw new InvalidOperationException(
                 $"A validated prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
         }
+
         observation.UseEndpoint(new(Host, Port), cancellationToken);
         Interlocked.Increment(ref _responseTimeoutSuppressions);
+
         try
         {
             return await SendMultiReplyCoreAsync(
@@ -1355,7 +1679,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         observation.UseEndpoint(new(Host, Port), cancellationToken);
+
         if (observation.IsEmpty)
+        {
             return DispatchResponseSource<TResult>.Run(
                 (Connection: this, Command: command, State: state, Converter: converter, Transfer: transferOwnership,
                     Token: cancellationToken, Name: commandName, Deadline: commandDeadline,
@@ -1366,6 +1692,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     return state.Connection.SendConvertedAsync(state.Command, state.State, state.Converter, state.Transfer,
                         state.Token, state.Name, state.Deadline, state.Attempts, owner, state.Duration, state.Pinned);
                 });
+        }
+
         if (ScriptingEngineInfo.IsScriptingCommand(commandName))
         {
             // Script capability checks use the raw reply path. Retain one owner around
@@ -1374,13 +1702,19 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 SendCheckedAsync(in command, cancellationToken, commandName, commandDeadline,
                     observation: observation, pinToConnection: pinToConnection), state, converter, transferOwnership);
         }
-        if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+
+        if (!commandDeadline.IsSet)
+        {
+            commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        }
+
         var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
         var source = ConvertedPendingResponseSource<TState, TResult>.Rent(
             state, converter, transferOwnership, commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
             observeErrors: observation.IsEmpty, duration: duration, runContinuationsAsynchronously: _runContinuationsAsynchronously);
         bool enqueued;
         bool startedBatch;
+
         try
         {
             enqueued = TryEnqueue(in command, source, commandDeadline, out startedBatch);
@@ -1388,8 +1722,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
             ReclaimUnpublished(source);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return target.SendConvertedAsync(in command, state, converter,
                 transferOwnership, cancellationToken, commandName, rerouted, errorAttempts + 1, observation, durationStarted, pinToConnection);
         }
@@ -1397,7 +1739,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             duration.Complete(commandName, error);
             ReclaimUnpublished(source);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
+
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
+            }
+
             throw;
         }
 
@@ -1422,6 +1769,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         var response = await responseTask.ConfigureAwait(false);
         var converted = false;
+
         try
         {
             var result = converter(state, in response);
@@ -1430,7 +1778,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         finally
         {
-            if (!transferOwnership || !converted) response.Dispose();
+            if (!transferOwnership || !converted)
+            {
+                response.Dispose();
+            }
         }
     }
 
@@ -1449,7 +1800,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         observation.UseEndpoint(new(Host, Port), cancellationToken);
+
         if (observation.IsEmpty)
+        {
             return DispatchResponseSource<string?>.Run(
                 (Connection: this, Command: command, Token: cancellationToken, Name: commandName,
                     Deadline: commandDeadline, Attempts: errorAttempts, Duration: durationStarted, Pinned: pinToConnection),
@@ -1459,12 +1812,19 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     return state.Connection.SendStringAsync(state.Command, state.Token, state.Name, state.Deadline,
                         state.Attempts, owner, state.Duration, state.Pinned);
                 });
-        if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        }
+
+        if (!commandDeadline.IsSet)
+        {
+            commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        }
+
         var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
         var source = StringPendingResponseSource.Rent(commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
             observeErrors: observation.IsEmpty, duration: duration, runContinuationsAsynchronously: _runContinuationsAsynchronously);
         bool enqueued;
         bool startedBatch;
+
         try
         {
             enqueued = TryEnqueue(in command, source, commandDeadline, out startedBatch);
@@ -1472,8 +1832,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
             ReclaimUnpublished(source);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return target.SendStringAsync(in command, cancellationToken, commandName,
                 rerouted, errorAttempts + 1, observation, durationStarted, pinToConnection);
         }
@@ -1481,7 +1849,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             duration.Complete(commandName, error);
             ReclaimUnpublished(source);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
+
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
+            }
+
             throw;
         }
 
@@ -1563,11 +1936,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw new InvalidOperationException(
                 $"A prefixed stream needs {discardRepliesBefore + 1} in-flight slots, but this connection allows {_inflight.Capacity}.");
         }
+
         observation.UseEndpoint(new(Host, Port), cancellationToken);
-        if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+
+        if (!commandDeadline.IsSet)
+        {
+            commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        }
+
         source.ErrorAttempts = (observation.IsEmpty ? errorAttempts : observation.Attempts);
         bool enqueued;
         bool startedBatch;
+
         try
         {
             enqueued = TryEnqueue(in command, source, commandDeadline, out startedBatch,
@@ -1576,8 +1956,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source, discardRepliesBefore + 2);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return target.SendBulkStreamCoreAsync(command,
                 new BulkStreamPendingResponseSource(source.CommandName, source.PrefixReplyCount, source.OnFrameCompleted,
                     source.StreamCancellationToken, target.OnBulkStreamLifetimeCancelled),
@@ -1604,7 +1992,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private void OnBulkStreamLifetimeCancelled()
     {
         if (Volatile.Read(ref _retired) && ShouldAbortAbandonedBulkStream())
+        {
             Abort(new RespireConnectionRetiredException(Host, Port));
+        }
     }
 
     private bool ShouldAbortAbandonedBulkStream()
@@ -1633,6 +2023,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
+
         try
         {
             startedBatch = await WaitForInflightCapacityAsync(
@@ -1642,8 +2033,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             // The capacity wait reclaimed the unadmitted source; the target needs a fresh one.
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return await target.SendBulkStreamCoreAsync(command,
                 new BulkStreamPendingResponseSource(source.CommandName, source.PrefixReplyCount, source.OnFrameCompleted,
                     source.StreamCancellationToken, target.OnBulkStreamLifetimeCancelled),
@@ -1667,6 +2065,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
+
         try
         {
             startedBatch = await WaitForInflightCapacityAsync(
@@ -1674,8 +2073,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return await target.SendStringAsync(in command, cancellationToken, commandName, rerouted, errorAttempts + 1, observation, durationStarted, pinToConnection).ConfigureAwait(false);
         }
         catch (Exception error)
@@ -1683,7 +2089,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             // Capacity admission already reclaimed its unpublished source. Do not touch it.
             var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
             duration.Complete(commandName, error);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
+
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
+            }
+
             throw;
         }
 
@@ -1710,8 +2121,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         // Capacity preflight submits nothing, so a rejection clears any endpoint retained from routing.
         var skipTracking = includeMulti && ClientTrackingEnabled && transaction?.HasOptOutBypass == true;
-        try { ValidateTransactionCapacity(commandCount + (skipTracking ? 1 : 0), includeMulti); }
+
+        try
+        {
+            ValidateTransactionCapacity(commandCount + (skipTracking ? 1 : 0), includeMulti);
+        }
         catch { observation.UseEndpoint(null); throw; }
+
         observation.UseEndpoint(new(Host, Port), cancellationToken);
         var prefixReplies = (includeMulti ? 1 : 0) + (skipTracking ? 1 : 0);
         return SendMultiReplyCoreAsync(
@@ -1727,6 +2143,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // An exclusive caller may have already confirmed MULTI separately. Validate before
         // entering that state so an oversized body cannot strand the connection in MULTI.
         var slotsNeeded = (long)commandCount + (includeMulti ? 2 : 1);
+
         if (slotsNeeded > _inflight.Capacity)
         {
             throw new ArgumentOutOfRangeException(
@@ -1775,6 +2192,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw new InvalidOperationException(
                 $"A prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
         }
+
         observation.UseEndpoint(new(Host, Port), cancellationToken);
 
         return SendCoreAsync(
@@ -1812,6 +2230,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw new InvalidOperationException(
                 $"A validated prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
         }
+
         observation.UseEndpoint(new(Host, Port), cancellationToken);
 
         return SendMultiReplyCoreAsync(
@@ -1843,6 +2262,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw new InvalidOperationException(
                 $"A doubly prefixed command needs 3 in-flight slots, but this connection allows {_inflight.Capacity}.");
         }
+
         observation.UseEndpoint(new(Host, Port), cancellationToken);
 
         return SendMultiReplyCoreAsync(
@@ -1870,7 +2290,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         observation.UseEndpoint(new(Host, Port), cancellationToken);
-        if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+
+        if (!commandDeadline.IsSet && armCommandDeadline)
+        {
+            commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        }
+
         var replyCount = repliesBeforeFinal + 1;
         var source = MultiReplyPendingResponseSource.Rent(replyCount, firstQueueReply, commandName, _runContinuationsAsynchronously);
         source.ErrorAttempts = (observation.IsEmpty ? errorAttempts : observation.Attempts);
@@ -1878,6 +2303,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         bool enqueued;
         bool startedBatch;
+
         try
         {
             enqueued = TryEnqueue(
@@ -1887,8 +2313,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source, replyCount + 1);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return target.SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
                 rerouted, preferredZone, pinToConnection, observation, errorAttempts + 1, writeObservation, armCommandDeadline);
@@ -1908,7 +2342,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
-        if (command is TransactionCommand transactionCommand) transactionCommand.RecordConnection(this);
+
+        if (command is TransactionCommand transactionCommand)
+        {
+            transactionCommand.RecordConnection(this);
+        }
+
         ScheduleFlush(startedBatch);
         return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline);
     }
@@ -1934,7 +2373,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         observation.UseEndpoint(new(Host, Port), cancellationToken);
-        if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+
+        if (!commandDeadline.IsSet && armCommandDeadline)
+        {
+            commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        }
         // TCommand is always a struct, so the JIT specializes this method per command type and
         // folds both type tests to constants; they cost nothing on the ordinary command hot path.
         if (command is IStreamingRespCommand)
@@ -1947,6 +2390,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         source.ErrorAttempts = (observation.IsEmpty ? errorAttempts : observation.Attempts);
         bool enqueued;
         bool startedBatch;
+
         try
         {
             enqueued = TryEnqueue(
@@ -1957,8 +2401,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             && TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return target.SendCoreAsync(in command, discardRepliesBefore, throwOnError,
                 cancellationToken, commandName, armCommandDeadline, rerouted, preferredZone: preferredZone,
                 observation: observation, errorAttempts: errorAttempts + 1, writeObservation: writeObservation);
@@ -1972,7 +2424,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (enqueued)
         {
             source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
-            if (!deferFlush) ScheduleFlush(startedBatch);
+
+            if (!deferFlush)
+            {
+                ScheduleFlush(startedBatch);
+            }
+
             return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline);
         }
 
@@ -1992,10 +2449,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         observation.UseEndpoint(new(Host, Port), cancellationToken);
+
         if (!allowConnectionReroute)
+        {
             return await SendStreamingAsync(in command, cancellationToken, commandDeadline, streamingRoute,
                 throwOnError, (observation.IsEmpty ? errorAttempts : observation.Attempts), writeObservation)
                 .ConfigureAwait(false);
+        }
 
         try
         {
@@ -2006,8 +2466,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(
             pinToConnection, commandDeadline, out var target, out var reroutedDeadline, preferredZone: null))
         {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return await target.SendStreamingCoreAsync(command, cancellationToken, reroutedDeadline, pinToConnection,
                     allowConnectionReroute, streamingRoute, throwOnError, observation, errorAttempts + 1, writeObservation)
                 .ConfigureAwait(false);
@@ -2025,7 +2492,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         observation.UseEndpoint(new(Host, Port), cancellationToken);
+
         if (observation.IsEmpty)
+        {
             return DispatchResponseSource.Run(
                 (Connection: this, Command: command, Token: cancellationToken, Name: commandName,
                     Deadline: capacityDeadline, Zone: preferredZone, Attempts: errorAttempts, Pinned: pinToConnection, SkipTracking: skipTracking),
@@ -2035,10 +2504,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     return state.Connection.SendFireAndForgetAsync(state.Command, state.Token, state.Name,
                         state.Deadline, state.Zone, owner, state.Attempts, state.Pinned, state.SkipTracking);
                 });
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
         bool enqueued;
         bool startedBatch;
         Task writeTask;
+
         try
         {
             enqueued = TryEnqueueForWrite(in command, commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
@@ -2046,8 +2518,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, capacityDeadline, out var target, out var rerouted, preferredZone))
         {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return target.SendFireAndForgetAsync(in command, cancellationToken, commandName, rerouted, preferredZone,
                 observation, errorAttempts + 1, pinToConnection, skipTracking);
         }
@@ -2115,7 +2594,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (skipTracking && ClientTrackingEnabled)
         {
             if (_inflight.Capacity < 2)
+            {
                 throw new InvalidOperationException("An OPTOUT bypass read needs 2 in-flight slots.");
+            }
+
             var prefixed = new PrefixedCommand<ClientCachingCommand, TCommand>(new(optOut: true), command, _cacheMutationAdmission);
             var accepted = TryEnqueue(in prefixed, InflightRing.DiscardSentinel, CommandDeadline.None,
                 out startedBatch, out var prefixedWrite, trackWrite: true, discardRepliesBefore: 1,
@@ -2123,8 +2605,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             writeTask = prefixedWrite ?? Task.CompletedTask;
             return accepted;
         }
+
         if (command.GetMutationFence().IsRequired)
+        {
             return TryEnqueueMutationForWrite(in command, commandName, out startedBatch, out writeTask);
+        }
+
         var enqueued = TryEnqueue(
             in command,
             InflightRing.DiscardSentinel,
@@ -2144,6 +2630,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var source = MutationDiscardPendingResponse.Rent(commandName);
         bool enqueued;
         Task? trackedWrite;
+
         try
         {
             enqueued = TryEnqueue(in command, source, CommandDeadline.None, out startedBatch,
@@ -2154,8 +2641,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ReclaimUnpublished(source);
             throw;
         }
-        if (enqueued) source.ReleaseRef(); // Drop the publisher; the FIFO owns the other reference.
-        else ReclaimUnpublished(source);
+
+        if (enqueued)
+        {
+            source.ReleaseRef(); // Drop the publisher; the FIFO owns the other reference.
+        }
+        else
+        {
+            ReclaimUnpublished(source);
+        }
+
         writeTask = trackedWrite ?? Task.CompletedTask;
         return enqueued;
     }
@@ -2175,7 +2670,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         startedBatch = false;
         writeTask = null;
-        if (!ReferenceEquals(source, InflightRing.DiscardSentinel)) source.ErrorEndpoint = new(Host, Port);
+
+        if (!ReferenceEquals(source, InflightRing.DiscardSentinel))
+        {
+            source.ErrorEndpoint = new(Host, Port);
+        }
 
         _cacheMutationAdmission?.ValidateDispatchAdmission(in command);
 
@@ -2191,6 +2690,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         var writeSizeHint = command.GetWriteSizeHint();
+
         if (_stream is null && writeSizeHint > 0 && typeof(TCommand) == typeof(GatheredSetCommand))
         {
             var gathered = Unsafe.As<TCommand, GatheredSetCommand>(ref Unsafe.AsRef(in command));
@@ -2198,6 +2698,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 out writeTask, trackWrite, discardRepliesBefore, retainRepliesBefore, discardedOperation,
                 discardedErrorAttempts, writeObservation);
         }
+
         if (writeSizeHint > ScratchRetainLimit)
         {
             return TryEnqueueDirect(
@@ -2214,6 +2715,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         var scratch = _serializeScratch ??= new WriteBuffer(ScratchInitialSize);
+
         try
         {
             scratch.Reset();
@@ -2225,6 +2727,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             using (new WriteGateScope(_writeGate))
             {
                 ThrowIfRetired(IsMaintenanceDrainBarrier<TCommand>());
+
                 if (_dead)
                 {
                     throw ClosedBeforeEnqueue();
@@ -2242,10 +2745,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 // flush loop is already cycling, and stealing the producer thread for the
                 // send costs more than the dispatch it saves.
                 command.ValidateAdmission();
+
                 if (!ReferenceEquals(source, InflightRing.DiscardSentinel))
+                {
                     source.BindMutationFence(command.GetMutationFence());
+                }
+
                 startedBatch = _activeBuffer.Count == 0 && _inflight.Count == 0;
                 _activeBuffer.Append(frame);
+
                 if (_responseTimeout is not null)
                 {
                     _activeReplyCount += discardRepliesBefore + 1;
@@ -2254,18 +2762,35 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 var writeStart = StampWritePosition(source, frame.Length);
                 writeObservation?.RecordQueued(this, writeStart, _producerProgress.EnqueuedBytes);
                 StampDeadline(source, commandDeadline);
+
                 for (var i = 0; i < discardRepliesBefore; i++)
                 {
                     if (!retainRepliesBefore && source.ErrorAttempts != 0)
+                    {
                         _inflight.TryEnqueueDiscard(null, writeStart, source.ErrorAttempts);
-                    else _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
+                    }
+                    else
+                    {
+                        _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
+                    }
                 }
 
                 if (discardedOperation is not null || discardedErrorAttempts != 0)
+                {
                     _inflight.TryEnqueueDiscard(discardedOperation, _producerProgress.EnqueuedBytes, discardedErrorAttempts);
-                else _inflight.TryEnqueue(source, _producerProgress.EnqueuedBytes);
+                }
+                else
+                {
+                    _inflight.TryEnqueue(source, _producerProgress.EnqueuedBytes);
+                }
+
                 command.OnAccepted();
-                if (_zoneReads is not null && command.ReadKind != ReadCommandKind.None) _zoneReads.Increment();
+
+                if (_zoneReads is not null && command.ReadKind != ReadCommandKind.None)
+                {
+                    _zoneReads.Increment();
+                }
+
                 if (trackWrite)
                 {
                     writeTask = _activeBuffer.WriteCompletion;
@@ -2307,9 +2832,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         startedBatch = false;
         writeTask = null;
+
         using (new WriteGateScope(_writeGate))
         {
             ThrowIfRetired(IsMaintenanceDrainBarrier<TCommand>());
+
             if (_dead)
             {
                 throw ClosedBeforeEnqueue();
@@ -2324,13 +2851,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             var mark = _activeBuffer.Count;
             startedBatch = mark == 0 && _inflight.Count == 0;
+
             try
             {
                 var writer = new RespWriter(_activeBuffer, writeSizeHint);
                 command.Write(ref writer);
                 command.ValidateAdmission();
+
                 if (!ReferenceEquals(source, InflightRing.DiscardSentinel))
+                {
                     source.BindMutationFence(command.GetMutationFence());
+                }
+
                 writer.Complete();
             }
             catch
@@ -2347,18 +2879,35 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             var writeStart = StampWritePosition(source, _activeBuffer.Count - mark);
             writeObservation?.RecordQueued(this, writeStart, _producerProgress.EnqueuedBytes);
             StampDeadline(source, commandDeadline);
+
             for (var i = 0; i < discardRepliesBefore; i++)
             {
                 if (!retainRepliesBefore && source.ErrorAttempts != 0)
+                {
                     _inflight.TryEnqueueDiscard(null, writeStart, source.ErrorAttempts);
-                else _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
+                }
+                else
+                {
+                    _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
+                }
             }
 
             if (discardedOperation is not null || discardedErrorAttempts != 0)
+            {
                 _inflight.TryEnqueueDiscard(discardedOperation, _producerProgress.EnqueuedBytes, discardedErrorAttempts);
-            else _inflight.TryEnqueue(source, _producerProgress.EnqueuedBytes);
+            }
+            else
+            {
+                _inflight.TryEnqueue(source, _producerProgress.EnqueuedBytes);
+            }
+
             command.OnAccepted();
-            if (_zoneReads is not null && command.ReadKind != ReadCommandKind.None) _zoneReads.Increment();
+
+            if (_zoneReads is not null && command.ReadKind != ReadCommandKind.None)
+            {
+                _zoneReads.Increment();
+            }
+
             if (trackWrite)
             {
                 writeTask = _activeBuffer.WriteCompletion;
@@ -2373,11 +2922,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         var start = _producerProgress.EnqueuedBytes;
         Volatile.Write(ref _producerProgress.EnqueuedBytes, start + length);
+
         if (!ReferenceEquals(source, InflightRing.DiscardSentinel))
         {
             source.WriteStart = start;
             source.WriteEnd = start + length;
         }
+
         return start;
     }
 
@@ -2386,6 +2937,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Only the persistent FlushLoopAsync sender calls this method, including TLS writes.
         Volatile.Write(ref _flushProgress.SentBytes, _flushProgress.SentBytes + bytes);
         Volatile.Write(ref _flushProgress.LastWriteTimestamp, Environment.TickCount64);
+
         if (Volatile.Read(ref _flushProgress.GatheredWriteDeadlineTimestamp) != 0)
         {
             // Copied sends ahead of queued borrowed memory also advance the ownership watchdog.
@@ -2393,7 +2945,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             lock (_writeGate)
             {
                 if (_flushProgress.GatheredWriteBufferCount != 0)
+                {
                     Volatile.Write(ref _flushProgress.GatheredWriteDeadlineTimestamp, Stopwatch.GetTimestamp());
+                }
             }
         }
     }
@@ -2416,10 +2970,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         var sent = Volatile.Read(ref _flushProgress.SentBytes);
         var enqueued = Volatile.Read(ref _producerProgress.EnqueuedBytes);
+
         if (writeEnd > 0)
         {
             stage = RespireTimeoutDiagnostics.ComputeStage(sent, writeStart, writeEnd);
         }
+
         var read = Volatile.Read(ref _receiveProgress.LastReadTimestamp);
         var write = Volatile.Read(ref _flushProgress.LastWriteTimestamp);
         var now = Environment.TickCount64;
@@ -2475,6 +3031,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
+
         try
         {
             startedBatch = await WaitForInflightCapacityAsync(
@@ -2485,8 +3042,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (!IsMaintenanceDrainBarrier<TCommand>()
             && TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return await target.SendCoreAsync(in command, discardRepliesBefore, throwOnError,
                 cancellationToken, commandName, armCommandDeadline, rerouted, preferredZone: preferredZone,
                 observation: observation, errorAttempts: errorAttempts + 1, writeObservation: writeObservation).ConfigureAwait(false);
@@ -2516,13 +3080,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
+
         try
         {
             var deadline = commandDeadline;
+
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var capacityAvailable = _capacitySignal.WaitAsync(cancellationToken);
+
                 if (TryEnqueue(
                     in command, source, deadline, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true,
                     writeObservation: writeObservation))
@@ -2545,8 +3112,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source, replyCount + 1);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return await target.SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
                 rerouted, preferredZone, pinToConnection, observation, errorAttempts + 1, writeObservation, armCommandDeadline).ConfigureAwait(false);
@@ -2558,7 +3133,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
-        if (command is TransactionCommand transactionCommand) transactionCommand.RecordConnection(this);
+
+        if (command is TransactionCommand transactionCommand)
+        {
+            transactionCommand.RecordConnection(this);
+        }
+
         ScheduleFlush(startedBatch);
         return await ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline).ConfigureAwait(false);
     }
@@ -2580,6 +3160,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
+
         try
         {
             startedBatch = await WaitForInflightCapacityAsync(
@@ -2587,8 +3168,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return await target.SendConvertedAsync(in command, state, converter,
                 transferOwnership, cancellationToken, commandName, rerouted, errorAttempts + 1, observation, durationStarted, pinToConnection).ConfigureAwait(false);
         }
@@ -2596,7 +3184,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
             duration.Complete(commandName, error);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
+
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
+            }
+
             throw;
         }
 
@@ -2618,12 +3211,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var deadline = capacityDeadline.IsSet ? capacityDeadline : CommandDeadline.After(_commandTimeoutMilliseconds);
         bool startedBatch;
         Task writeTask;
+
         try
         {
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var capacityAvailable = _capacitySignal.WaitAsync(cancellationToken);
+
                 if (TryEnqueueForWrite(in command, commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
                     out startedBatch, out writeTask, skipTracking))
                 {
@@ -2637,8 +3232,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, deadline, out var target, out var rerouted, preferredZone))
         {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             await target.SendFireAndForgetAsync(in command, cancellationToken, commandName, rerouted, preferredZone,
                 observation, errorAttempts + 1, pinToConnection, skipTracking).ConfigureAwait(false);
             return;
@@ -2726,7 +3328,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             await WaitForMaintenanceCapacityAsync(capacityAvailable, deadline, commandName, cancellationToken).ConfigureAwait(false);
             return;
         }
+
         var remaining = deadline.Ticks - Environment.TickCount64;
+
         if (remaining <= 0)
         {
             throw CreateCapacityTimeout(commandName, _commandTimeout!.Value);
@@ -2811,9 +3415,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private async Task FlushLoopAsync()
     {
         WriteBuffer? sending = null;
+
         try
         {
             var synchronousBatches = 0;
+
             while (true)
             {
                 await _flushSignal.WaitAsync().ConfigureAwait(false);
@@ -2822,6 +3428,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 {
                     int sendingReplyCount;
                     bool receiveDeferred;
+
                     lock (_writeGate)
                     {
                         if (_dead)
@@ -2858,10 +3465,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
                     // Never cancelled: a partial RESP frame on the wire is unrecoverable.
                     var memory = sending.HasBorrowedPayloads ? ReadOnlyMemory<byte>.Empty : sending.WrittenMemory;
+
                     if (sending.HasBorrowedPayloads)
                     {
                         var pending = SendGatheredBufferAsync(sending);
-                        if (!pending.IsCompletedSuccessfully) synchronousBatches = -1;
+
+                        if (!pending.IsCompletedSuccessfully)
+                        {
+                            synchronousBatches = -1;
+                        }
+
                         await pending.ConfigureAwait(false);
                     }
                     else if (_stream is null)
@@ -2870,6 +3483,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         {
                             var pending = _socket!.SendAsync(memory, SocketFlags.None);
                             int sent;
+
                             if (pending.IsCompletedSuccessfully)
                             {
                                 sent = pending.Result;
@@ -2887,6 +3501,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     else
                     {
                         var pending = _stream.WriteAsync(memory);
+
                         if (!pending.IsCompletedSuccessfully)
                         {
                             synchronousBatches = -1;
@@ -2905,12 +3520,20 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     // because the bytes are already on the socket and this thread still completes
                     // the buffer's waiters.
                     Volatile.Write(ref _sending, false);
+
                     if (_gatheredWriteTimeout is not null && sending.HasBorrowedPayloads)
+                    {
                         CompleteGatheredWriteWatch();
+                    }
+
                     sending.CompleteWrite();
                     sending.Reset();
                     sending = null;
-                    if (Volatile.Read(ref _retired)) _capacitySignal.Signal();
+
+                    if (Volatile.Read(ref _retired))
+                    {
+                        _capacitySignal.Signal();
+                    }
 
                     if (++synchronousBatches >= MaxSynchronousBatchesBeforeYield)
                     {
@@ -2964,6 +3587,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             {
                 // Drain every complete value currently in the buffer.
                 var progressing = true;
+
                 while (progressing && start < end)
                 {
                     var bufferedData = buffer.AsSpan(0, end);
@@ -2971,10 +3595,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     RespParseStatus status;
                     RespValue value;
                     RespDirectFillRequest directFill = default;
+
                     if (parser.IsIdle && !RespParser.IsAttributeStart(bufferedData[start]))
                     {
                         var hasBulkHeader = RespParser.TryPeekBulkHeader(
                             bufferedData, start, out var bulkType, out var bulkLength, out var headerEnd);
+
                         if (hasBulkHeader)
                         {
                             ValidateBulkResponseSize(responseBytes + headerEnd - start, bulkLength);
@@ -2990,6 +3616,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             // never observes an empty ring while the payload is still being read.
                             Volatile.Write(ref _activeBulkStreamPosition, _inflight.ConsumerPosition);
                             Volatile.Write(ref _activeBulkStreamSource, streamSource);
+
                             try
                             {
                                 if (!_inflight.TryDequeue(out var dequeued)
@@ -3051,6 +3678,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                                 ? RespParser.TryParseBulkValue(
                                     bufferedData, ref pos, bulkType, bulkLength, headerEnd, out value)
                                 : RespParser.TryParseValue(bufferedData, ref pos, out value, parser);
+
                             if (status == RespParseStatus.Done)
                             {
                                 start = pos;
@@ -3065,7 +3693,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                                 // Adoption commits completed children and their private cursor.
                                 // Without adoption, resumable parsing still starts at the header.
                                 if (!parser.IsIdle)
+                                {
                                     start = pos;
+                                }
+
                                 status = parser.TryParseResumable(
                                     bufferedData, ref start, out value, out directFill);
                             }
@@ -3081,6 +3712,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     _resumedScalarCountForTests = parser.ResumedScalarCountForTests;
 #endif
                     responseBytes += start - previousStart;
+
                     if (responseBytes > MaxResponseSize)
                     {
                         throw new RespireProtocolException($"Response exceeds the {MaxResponseSize} byte limit.");
@@ -3164,6 +3796,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 }
 
                 int received;
+
                 if (_inflight.Count != 0
                     || !Thread.CurrentThread.IsThreadPoolThread
                     || !_completions.FlushDeferred())
@@ -3186,6 +3819,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     // A subscriber connection: pushes can arrive at any time, so keep the receive
                     // outstanding while the drained replies are delivered.
                     ValueTask<int> receive;
+
                     try
                     {
                         receive = ReceiveAsync(receiveBuffer.Memory[end..]);
@@ -3222,7 +3856,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            if (ConnectionTelemetry.IsPeerReset(ex)) Volatile.Write(ref _peerClosed, true);
+            if (ConnectionTelemetry.IsPeerReset(ex))
+            {
+                Volatile.Write(ref _peerClosed, true);
+            }
+
             fault = TranslateReceiveFault(ex);
         }
         finally
@@ -3235,16 +3873,25 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 ?? fault
                 ?? new RespireConnectionException($"Connection to {Host}:{Port} closed.");
             var unexpectedClose = Volatile.Read(ref _disposeCompletion) is null && !Volatile.Read(ref _retired);
+
             if (unexpectedClose)
             {
-                try { _unexpectedConnectionClosed?.Invoke(this); }
+                try
+                {
+                    _unexpectedConnectionClosed?.Invoke(this);
+                }
                 catch (Exception ex)
                 {
-                    try { _logger?.ConnectionCloseObserverFailed(Host, Port, ex); }
+                    try
+                    {
+                        _logger?.ConnectionCloseObserverFailed(Host, Port, ex);
+                    }
                     catch { /* Diagnostics must not prevent connection cleanup. */ }
                 }
             }
+
             Abort(closeError);
+
             try
             {
                 _generation?.ConnectionClosed(this, unexpectedClose);
@@ -3273,19 +3920,23 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         var buffer = receiveBuffer.Array;
         var payload = source.BeginPayload();
+
         if (source.IsPayloadAborted)
         {
             payload = null;
         }
+
         Exception? failure = null;
         var remaining = payloadLength;
 
         try
         {
             var buffered = Math.Min(remaining, end - start);
+
             if (payload is not null)
             {
                 var copied = 0;
+
                 while (copied < buffered && payload is not null)
                 {
                     var destination = payload.GetMemory(Math.Min(4096, buffered - copied));
@@ -3293,6 +3944,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     buffer.AsMemory(start + copied, count).CopyTo(destination);
                     payload.Advance(count);
                     copied += count;
+
                     if (!await FlushBulkStreamAsync(payload).ConfigureAwait(false))
                     {
                         payload = null;
@@ -3302,6 +3954,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             start += buffered;
             remaining -= buffered;
+
             if (remaining > 0)
             {
                 // There cannot be frame bytes after an incomplete payload in this buffer.
@@ -3312,6 +3965,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             while (remaining > 0)
             {
                 int received;
+
                 if (payload is null)
                 {
                     var target = receiveBuffer.Memory[..Math.Min(buffer.Length, remaining)];
@@ -3322,6 +3976,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     var destination = payload.GetMemory(Math.Min(4096, remaining));
                     var target = destination[..Math.Min(destination.Length, remaining)];
                     received = await ReceiveAsync(target).ConfigureAwait(false);
+
                     if (source.IsPayloadAborted)
                     {
                         payload = null;
@@ -3340,6 +3995,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
                 ResetReceiveDeadline();
                 remaining -= received;
+
                 if (payload is not null
                     && !await FlushBulkStreamAsync(payload).ConfigureAwait(false))
                 {
@@ -3363,6 +4019,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
                 var received = await ReceiveAsync(receiveBuffer.Memory.Slice(end, 2 - (end - start)))
                     .ConfigureAwait(false);
+
                 if (received == 0)
                 {
                     Volatile.Write(ref _peerClosed, true);
@@ -3404,6 +4061,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private ValueTask<bool> FlushBulkStreamAsync(RespBulkPayloadPipe payload)
     {
         var flush = payload.FlushAsync();
+
         if (flush.IsCompletedSuccessfully)
         {
             var result = flush.Result;
@@ -3420,6 +4078,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private async ValueTask<bool> AwaitBulkStreamBackpressureAsync(ValueTask<FlushResult> flush)
     {
         Interlocked.Increment(ref _responseTimeoutSuppressions);
+
         try
         {
             var result = await flush.ConfigureAwait(false);
@@ -3452,16 +4111,23 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // The FIFO slot retains its receive reference until the entire frame is drained.
         // A completed or discarded head needs no payload, but still occupies its reply slot.
         byte[]? payload = null;
+
         if (!IsBulkPayloadAbandoned(responseSource))
         {
             payload = bytesSource is null
                 ? RespirePools.ResponsePayloads.Rent(payloadLength)
                 : GC.AllocateUninitializedArray<byte>(payloadLength);
         }
+
         try
         {
             var buffered = Math.Min(payloadLength, end - start);
-            if (payload is not null) buffer.AsSpan(start, buffered).CopyTo(payload);
+
+            if (payload is not null)
+            {
+                buffer.AsSpan(start, buffered).CopyTo(payload);
+            }
+
             start += buffered;
             var filled = buffered;
 
@@ -3474,6 +4140,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     ? payload.AsMemory(filled, payloadLength - filled)
                     : receiveBuffer.Memory[..Math.Min(buffer.Length, payloadLength - filled)];
                 var read = await ReceiveAsync(destination).ConfigureAwait(false);
+
                 if (read == 0)
                 {
                     Volatile.Write(ref _peerClosed, true);
@@ -3501,6 +4168,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 }
 
                 var read = await ReceiveAsync(receiveBuffer.Memory[end..]).ConfigureAwait(false);
+
                 if (read == 0)
                 {
                     Volatile.Write(ref _peerClosed, true);
@@ -3518,12 +4186,17 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             start += 2;
 
-            if (payload is null) return (start, end, default);
+            if (payload is null)
+            {
+                return (start, end, default);
+            }
+
             if (bytesSource is not null)
             {
                 bytesSource.SetDirectResult(payload);
                 return (start, end, default);
             }
+
             var value = RespValue.PooledString(type, payload, payloadLength);
             payload = null;
             return (start, end, value);
@@ -3544,8 +4217,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private static void ReleaseAbandonedBulkPayload(ref byte[]? payload, PendingResponse? source, bool pooled)
     {
-        if (payload is null || !IsBulkPayloadAbandoned(source)) return;
-        if (pooled) RespirePools.ResponsePayloads.Return(payload);
+        if (payload is null || !IsBulkPayloadAbandoned(source))
+        {
+            return;
+        }
+
+        if (pooled)
+        {
+            RespirePools.ResponsePayloads.Return(payload);
+        }
+
         payload = null;
     }
 
@@ -3558,6 +4239,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         // Always consume retained metadata, even if collection was disabled after enqueue.
         var dequeued = _inflight.TryDequeue(out var source, out var discardedOperation, out var discardedErrorAttempts);
+
         if (!dequeued)
         {
             value.Dispose();
@@ -3565,7 +4247,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         if (source is BulkStreamPendingResponseSource streamSource)
+        {
             streamSource.ObservePrefix(in value);
+        }
 
         // Retire a demoted generation before MarkReplyReceived pulses freed capacity: a parked
         // full-ring waiter must observe retirement at admission, not enqueue onto the old primary.
@@ -3579,7 +4263,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         if (RespireTelemetry.ShouldRecordPublication(in value))
+        {
             RespireTelemetry.RecordPublication(discardedOperation ?? source.CommandName, in value);
+        }
 
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {
@@ -3606,6 +4292,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         ReadOnlySpan<byte> buffer, RespireDataType type, long payloadLength, int headerEnd, out int frameEnd)
     {
         frameEnd = 0;
+
         if (type != RespireDataType.BulkString || !_inflight.TryPeek(out var head))
         {
             return false;
@@ -3613,6 +4300,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         var stringSource = head as StringPendingResponseSource;
         var bytesSource = stringSource is null ? head as BytesPendingResponseSource : null;
+
         if (stringSource is null && bytesSource is null)
         {
             return false;
@@ -3621,8 +4309,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (payloadLength == -1)
         {
             frameEnd = headerEnd;
-            if (stringSource is not null) stringSource.SetDirectResult(null);
-            else bytesSource!.SetDirectResult(null);
+
+            if (stringSource is not null)
+            {
+                stringSource.SetDirectResult(null);
+            }
+            else
+            {
+                bytesSource!.SetDirectResult(null);
+            }
         }
         else
         {
@@ -3633,6 +4328,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             // ValidateBulkResponseSize bounds payloadLength before this path is entered.
             var length = (int)payloadLength;
+
             if (buffer.Length - headerEnd < length + 2)
             {
                 return false;
@@ -3650,8 +4346,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             if (!IsBulkPayloadAbandoned(head))
             {
                 var payload = buffer.Slice(headerEnd, length);
-                if (stringSource is not null) stringSource.SetDirectResult(Utf8String.GetString(payload));
-                else bytesSource!.SetDirectResult(payload.ToArray());
+
+                if (stringSource is not null)
+                {
+                    stringSource.SetDirectResult(Utf8String.GetString(payload));
+                }
+                else
+                {
+                    bytesSource!.SetDirectResult(payload.ToArray());
+                }
             }
 
             frameEnd = headerEnd + length + 2;
@@ -3712,6 +4415,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Publishes the fields above to whichever thread claims the start.
         Volatile.Write(ref _deferredReceiveClaim, 0);
         bool deferred;
+
         lock (_writeGate)
         {
             // A command enqueued since the drain may already be on the wire, and a dead
@@ -3754,6 +4458,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _deferredReceiveContinuation = null;
         _deferredReceiveBuffer = default;
         ValueTask<int> receive;
+
         try
         {
             receive = ReceiveAsync(buffer);
@@ -3795,12 +4500,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private bool TryRoutePush(in RespValue value)
     {
         var isPushFrame = value.Type == RespireDataType.Push;
+
         if (!isPushFrame && (value.Type != RespireDataType.Array || _pushHandler is null))
         {
             return false;
         }
 
         var elements = value.AsArray();
+
         if (elements.Length > 0)
         {
             if (isPushFrame && TryHandleMaintenancePush(in value))
@@ -3808,7 +4515,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 value.Dispose();
                 return true;
             }
+
             var kind = elements[0].AsSpan();
+
             if (kind.SequenceEqual("message"u8)
                 || kind.SequenceEqual("pmessage"u8)
                 || kind.SequenceEqual("smessage"u8))
@@ -3871,12 +4580,17 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         Action? onAccepted = null, bool skipTracking = false) : IMutationAdmissionCommand
     {
         public void OnAccepted() => onAccepted?.Invoke();
+
         public int GetWriteSizeHint() => checked(serializedCommands.Length + (transaction?.ConditionalExec?.Length ?? RespCommands.Exec.Length)
             + (includeMulti ? RespCommands.Multi.Length : 0)
             + (skipTracking ? new ClientCachingCommand(optOut: true).GetWriteSizeHint() : 0));
+
         internal void RecordConnection(RespireConnection connection)
         {
-            if (transaction is not null) transaction.ExecutingConnection = connection;
+            if (transaction is not null)
+            {
+                transaction.ExecutingConnection = connection;
+            }
         }
 
         public ReadCommandKind ReadKind => ReadCommandKind.None;
@@ -3892,8 +4606,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             // Redis keeps the one-shot caching flag for the entire MULTI/EXEC block.
             // Prefixing MULTI avoids adding synthetic operations to the EXEC result array.
-            if (skipTracking) new ClientCachingCommand(optOut: true).Write(ref writer);
-            if (includeMulti) writer.WriteRaw(RespCommands.Multi);
+            if (skipTracking)
+            {
+                new ClientCachingCommand(optOut: true).Write(ref writer);
+            }
+
+            if (includeMulti)
+            {
+                writer.WriteRaw(RespCommands.Multi);
+            }
+
             writer.WriteRaw(serializedCommands.Span);
             writer.WriteRaw(transaction?.ConditionalExec ?? RespCommands.Exec);
         }
@@ -3914,7 +4636,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 // Prelude replies are drained with the final response, but cannot retain
                 // an independent mutation owner or borrow the final command's key scope.
                 if (CommandDispatchAdmission<TPrefix>.GetMutationFence(in prefix).IsRequired)
+                {
                     throw new InvalidOperationException("A command prelude cannot own an independent cache mutation.");
+                }
+
                 cacheMutationAdmission.ValidateDispatchAdmission(in prefix);
             }
             // The constructor checks the prelude independently. TryEnqueue checks the final
@@ -3933,28 +4658,36 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         public void OnAccepted() => _command.OnAccepted();
+
         public bool IsConnectionProtocol => CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in _command);
+
         public ClientSideCacheCoordinator.MutationFence GetMutationFence() => CommandDispatchAdmission<TCommand>.GetMutationFence(in _command);
+
         public RespireCacheMutation GetCacheMutation(string operation) => _command.GetCacheMutation(operation);
+
         public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => _command.GetClientCacheMetadata(operation);
+
         public void ValidateAdmission() => _command.ValidateAdmission();
+
         public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken)
             => _command.GetResponseCancellationToken(admissionToken);
 
         public ReadCommandKind ReadKind => _command.ReadKind;
+
         public bool TryGetArgument(int index, out RespireValue value) => _command.TryGetArgument(index, out value);
+
         public int CursorArgumentIndex => _command.CursorArgumentIndex;
+
         public bool HasOpaqueCursor => _command.HasOpaqueCursor;
     }
 
-    private static Exception TranslateReceiveFault(Exception ex)
-        => ex switch
-        {
-            ObjectDisposedException or SocketException { SocketErrorCode: SocketError.OperationAborted } =>
-                new RespireConnectionException("Connection closed."),
-            RespireException => ex,
-            _ => new RespireConnectionException($"Connection failed: {ex.Message}", ex),
-        };
+    private static Exception TranslateReceiveFault(Exception ex) => ex switch
+    {
+        ObjectDisposedException or SocketException { SocketErrorCode: SocketError.OperationAborted } =>
+            new RespireConnectionException("Connection closed."),
+        RespireException => ex,
+        _ => new RespireConnectionException($"Connection failed: {ex.Message}", ex),
+    };
 
     /// <summary>
     /// Checks receive and gathered-write progress independently. Closing a stalled connection
@@ -3967,7 +4700,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             while (true)
             {
                 // Consumer backpressure and blocking replies suppress only receive liveness checks.
-                if (_gatheredWriteTimeout is { } writeTimeout && TryAbortStalledGatheredWrite(writeTimeout)) return;
+                if (_gatheredWriteTimeout is { } writeTimeout && TryAbortStalledGatheredWrite(writeTimeout))
+                {
+                    return;
+                }
 
                 if (_responseTimeout is not { } timeout || Volatile.Read(ref _responseTimeoutSuppressions) != 0)
                 {
@@ -3976,6 +4712,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 }
 
                 var deadlineStart = Volatile.Read(ref _receiveProgress.DeadlineTimestamp);
+
                 if (deadlineStart == 0)
                 {
                     await DelayWatchdogAsync(timeout, cancellationToken).ConfigureAwait(false);
@@ -3985,12 +4722,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 var effectiveTimeout = MaintenanceTimeout(timeout, Environment.TickCount64, out var window, out _);
                 var elapsed = Stopwatch.GetElapsedTime(deadlineStart);
                 var delay = GetWatchdogDelay(effectiveTimeout, elapsed);
+
                 if (window > 0)
                 {
                     // Completion can restore the normal timeout while this timer is sleeping.
                     var checkMilliseconds = Math.Clamp(timeout.TotalMilliseconds / 4, 10, 1000);
                     delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds, Math.Min(window, checkMilliseconds)));
                 }
+
                 if (delay > TimeSpan.Zero)
                 {
                     await DelayWatchdogAsync(delay, cancellationToken).ConfigureAwait(false);
@@ -3998,9 +4737,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 }
 
                 bool closed;
+
                 lock (_receiveDeadlineGate)
                 {
                     var receivedReplies = Volatile.Read(ref _receiveProgress.ReceivedReplyCount);
+
                     if (deadlineStart != _receiveProgress.DeadlineTimestamp
                         || _receiveProgress.SentReplyCount <= receivedReplies
                         || Volatile.Read(ref _responseTimeoutSuppressions) != 0
@@ -4014,7 +4755,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         $"Connection to {Host}:{Port} received no data for {effectiveTimeout} while responses were pending."),
                         publishConnectionMetrics: false);
                 }
-                if (closed) _connectionMetrics?.Closed(_abortReason, _abortPeerClosed);
+
+                if (closed)
+                {
+                    _connectionMetrics?.Closed(_abortReason, _abortPeerClosed);
+                }
+
                 return;
             }
         }
@@ -4036,6 +4782,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         var granularityMilliseconds = (long)Math.Clamp(timeout.TotalMilliseconds / 4, 10, 1000);
         var granularity = TimeSpan.FromMilliseconds(granularityMilliseconds);
+
         try
         {
             while (true)
@@ -4088,6 +4835,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             {
                 await _completions.WaitForPossibleStallAsync().ConfigureAwait(false);
                 RescueStalledDelivery(Environment.TickCount64, _stalledDeliveryMilliseconds, out var next);
+
                 while (next >= 0)
                 {
                     await Task.Delay(TimeSpan.FromMilliseconds(next), cancellationToken).ConfigureAwait(false);
@@ -4125,9 +4873,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var teardownStarted = Environment.TickCount64;
         long starvedSince = -1;
         long starvedProgress = 0;
+
         while (!_receiveTask.IsCompleted || _completions.HasWaitingReplies)
         {
             var now = Environment.TickCount64;
+
             if (now - teardownStarted < _teardownRescueBudgetMilliseconds)
             {
                 RescueStalledDelivery(now, _stalledDeliveryMilliseconds, out _);
@@ -4140,6 +4890,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 var progress = _completions.DeliveryProgress;
                 var waitingOnQueuedRunner = _receiveTask.IsCompleted
                     && !_completions.IsDeliveryExecuting && _completions.HasWaitingReplies;
+
                 if (!waitingOnQueuedRunner || rescued || (starvedSince >= 0 && progress != starvedProgress))
                 {
                     starvedSince = waitingOnQueuedRunner ? now : -1;
@@ -4187,6 +4938,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private bool RescueStalledDelivery(long now, long stallMilliseconds, out long nextCheck)
     {
         var rescued = _completions.RescueStalledRunner(now, stallMilliseconds, out nextCheck);
+
         if (rescued)
         {
             _logger?.ConnectionContinuationDeliveryBlocked(Host, Port, stallMilliseconds);
@@ -4198,7 +4950,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private Task DelayWatchdogAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
         delay = GetGatheredWriteWatchdogDelay(delay);
-        if (delay > MaxWatchdogSleep) delay = MaxWatchdogSleep;
+
+        if (delay > MaxWatchdogSleep)
+        {
+            delay = MaxWatchdogSleep;
+        }
         // A pending wake survives the race between reading the deadline and registering the wait.
         // Receive-only connections retain their existing timer without a signal allocation.
         return _watchdogWake is { } wake
@@ -4208,11 +4964,21 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     internal TimeSpan GetGatheredWriteWatchdogDelay(TimeSpan delay)
     {
-        if (_gatheredWriteTimeout is not { } writeTimeout) return delay;
+        if (_gatheredWriteTimeout is not { } writeTimeout)
+        {
+            return delay;
+        }
+
         var timestamp = Volatile.Read(ref _flushProgress.GatheredWriteDeadlineTimestamp);
-        if (timestamp == 0) return delay;
+
+        if (timestamp == 0)
+        {
+            return delay;
+        }
+
         var effectiveTimeout = MaintenanceTimeout(writeTimeout, Environment.TickCount64, out var window, out _);
         var writeDelay = GetWatchdogDelay(effectiveTimeout, Stopwatch.GetElapsedTime(timestamp));
+
         if (window > 0)
         {
             // A completion push or window expiry can restore the shorter normal bound.
@@ -4257,14 +5023,23 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private bool Abort(Exception? reason = null, bool publishConnectionMetrics = true, bool observeErrors = true)
     {
-        if (reason is not null) RespireException.PopulateEndpoint(reason, new(Host, Port));
+        if (reason is not null)
+        {
+            RespireException.PopulateEndpoint(reason, new(Host, Port));
+        }
+
         _credentialSession?.RequestStop();
         // A late Abort can race disposal of the source; the wake below must still happen.
-        try { _watchdogCancellation.Cancel(); }
+        try
+        {
+            _watchdogCancellation.Cancel();
+        }
         catch (ObjectDisposedException) { }
+
         _completions.WakeStallWatcher();
         var writeFailure = reason
             ?? new RespireConnectionException($"Connection to {Host}:{Port} closed before writing completed.") { Endpoint = new(Host, Port) };
+
         lock (_writeGate)
         {
             if (_dead)
@@ -4275,7 +5050,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             // Publish physical observation ownership before failed writers or handshake
             // waiters can reach a candidate fallback on another thread.
             if (observeErrors && reason is not null and not RespireConnectionRetiredException)
+            {
                 RespireTelemetry.MarkConnectionError(reason);
+            }
+
             _dead = true;
             _abortReason = reason;
             _abortPeerClosed = Volatile.Read(ref _peerClosed);
@@ -4285,7 +5063,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         if (observeErrors && reason is not null and not RespireConnectionRetiredException)
+        {
             RespireTelemetry.RecordError(reason, internallyHandled: true, endpoint: new(Host, Port));
+        }
 
         Volatile.Read(ref _activeBulkStreamSource)?.AbortPayload(writeFailure);
 
@@ -4311,9 +5091,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         TryStartDeferredReceive();
         // Wake the parked flush loop so it can observe the dead flag and exit.
         _flushSignal.Signal();
-        try { ObserveCancellationCallbacks(_closedCancellation.CancelAsync()); }
+
+        try
+        {
+            ObserveCancellationCallbacks(_closedCancellation.CancelAsync());
+        }
         catch (ObjectDisposedException) { }
-        if (publishConnectionMetrics) _connectionMetrics?.Closed(reason, _abortPeerClosed);
+
+        if (publishConnectionMetrics)
+        {
+            _connectionMetrics?.Closed(reason, _abortPeerClosed);
+        }
+
         return true;
     }
 
@@ -4326,6 +5115,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         RespireException.PopulateEndpoint(exception, new(Host, Port));
         var failed = 0;
+
         while (_inflight.TryDequeue(out var source))
         {
             if (ReferenceEquals(source, InflightRing.DiscardSentinel))
@@ -4356,6 +5146,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private Exception ClosedBeforeEnqueue()
     {
         var reason = Volatile.Read(ref _abortReason);
+
         if (reason is null)
         {
             return new RespireConnectionClosedBeforeSendException($"Connection to {Host}:{Port} is closed.", null) { Endpoint = new(Host, Port) };
@@ -4376,7 +5167,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Keep physical observation ownership on the per-command copy. A handshake
         // can enqueue its next step after the receive loop has already closed the socket.
         if (RespireTelemetry.IsObservedConnectionError(reason))
+        {
             RespireTelemetry.MarkConnectionError(failure);
+        }
+
         return failure;
     }
 
@@ -4415,18 +5209,27 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal void ThrowIfRetired(bool allowRetired = false)
     {
         if (!allowRetired && (Volatile.Read(ref _retired) || _generation?.IsRetired == true))
+        {
             throw new RespireConnectionRetiredException(Host, Port);
+        }
     }
 
     /// <summary>Closes ordinary admission before the retirement barrier is queued.</summary>
     internal void StopAcceptingCommands()
     {
-        lock (_writeGate) Volatile.Write(ref _retired, true);
+        lock (_writeGate)
+        {
+            Volatile.Write(ref _retired, true);
+        }
+
         _retiredSignal.TrySetResult();
         _credentialSession?.RequestStop();
         _capacitySignal.Signal();
+
         if (ShouldAbortAbandonedBulkStream())
+        {
             Abort(new RespireConnectionRetiredException(Host, Port));
+        }
     }
 
     /// <summary>
@@ -4466,12 +5269,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         ReleaseCompletionRunner();
         TaskCompletionSource completion;
+
         lock (_writeGate)
         {
-            if (_retirementCompletion is not null) return _retirementCompletion.Task;
+            if (_retirementCompletion is not null)
+            {
+                return _retirementCompletion.Task;
+            }
+
             completion = _retirementCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Volatile.Write(ref _retired, true);
         }
+
         StopAcceptingCommands();
         // The drain catches every failure and transfers it to the shared completion task.
         _ = DrainAndDisposeAsync(completion);
@@ -4487,11 +5296,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 // All current waiters share this pulse; a producer cannot consume the drain wakeup.
                 // Subscribe before checking state so the last send/reply cannot race past the wait.
                 var progress = _capacitySignal.WaitAsync(CancellationToken.None);
+
                 lock (_writeGate)
                 {
                     // An exited producer cannot supply another reply; abort cleanup also covers
                     // an unexpected exit before _dead is published, without spinning on its task.
-                    if (_dead || _receiveTask.IsCompleted) break;
+                    if (_dead || _receiveTask.IsCompleted)
+                    {
+                        break;
+                    }
+
                     if (_inflight.Count == 0 && _activeBuffer.Count == 0 && !Volatile.Read(ref _sending)
                         && !_streamingActive
                         && Volatile.Read(ref _activeBulkStreamSource) is null)
@@ -4500,9 +5314,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         break;
                     }
                 }
+
                 ScheduleFlush(startedBatch: false);
                 await Task.WhenAny(progress, _receiveTask).ConfigureAwait(false);
             }
+
             await DisposeAsync().ConfigureAwait(false);
             // The receive loop has published its final batch. Preserve successful replies
             // already dequeued from the ring before announcing retirement completion.
@@ -4518,11 +5334,17 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     public ValueTask DisposeAsync()
     {
         TaskCompletionSource completion;
+
         lock (_writeGate)
         {
-            if (_disposeCompletion is not null) return new ValueTask(_disposeCompletion.Task);
+            if (_disposeCompletion is not null)
+            {
+                return new ValueTask(_disposeCompletion.Task);
+            }
+
             completion = _disposeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
+
         Abort();
         _ = DisposeCoreAsync(completion);
         return new ValueTask(completion.Task);
@@ -4534,33 +5356,51 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             await _receiveTask.ConfigureAwait(false);
             await _flushTask.ConfigureAwait(false);
+
             if (_watchdogTask is not null)
+            {
                 await _watchdogTask.ConfigureAwait(false);
+            }
+
             if (_deadlineSweepTask is not null)
+            {
                 await _deadlineSweepTask.ConfigureAwait(false);
+            }
+
             await _stallWatchReleased.Task.ConfigureAwait(false);
+
             if (_credentialSession is not null)
+            {
                 await _credentialSession.DisposeAsync().ConfigureAwait(false);
+            }
 
             lock (_writeGate)
             {
                 _activeBuffer.Release();
                 _spareBuffer.Release();
             }
+
             try
             {
-                if (_stream is not null) await _stream.DisposeAsync().ConfigureAwait(false);
+                if (_stream is not null)
+                {
+                    await _stream.DisposeAsync().ConfigureAwait(false);
+                }
             }
             finally
             {
                 // A failing custom stream must not retain the transport or its timeout source.
-                try { _socket?.Dispose(); }
+                try
+                {
+                    _socket?.Dispose();
+                }
                 finally
                 {
                     _watchdogWake?.Dispose();
                     _watchdogCancellation.Dispose();
                 }
             }
+
             _logger?.ConnectionDisconnected(Host, Port);
             completion.TrySetResult();
         }
@@ -4583,80 +5423,186 @@ internal delegate bool RespirePushFilter(in RespValue value, bool hasPendingResp
 /// <summary>Tuning options for a single RESP connection.</summary>
 internal sealed record RespireConnectionOptions
 {
-    internal TimeSpan? ConnectionMaxLifetime { get; init; }
-    internal TimeSpan ConnectionMaxLifetimeJitter { get; init; }
-    internal TimeProvider ConnectionLifetimeTimeProvider { get; init; } = TimeProvider.System;
-    internal bool AdvertiseReplicaRedirects { get; init; }
-    internal bool ReplicaRedirectReadOnly { get; init; }
-    internal RespireDedicatedPoolOptions DedicatedPool { get; init; } = new();
+    internal TimeSpan? ConnectionMaxLifetime
+    {
+        get; init;
+    }
+
+    internal TimeSpan ConnectionMaxLifetimeJitter
+    {
+        get; init;
+    }
+
+    internal TimeProvider ConnectionLifetimeTimeProvider
+    {
+        get; init;
+    } = TimeProvider.System;
+
+    internal bool AdvertiseReplicaRedirects
+    {
+        get; init;
+    }
+
+    internal bool ReplicaRedirectReadOnly
+    {
+        get; init;
+    }
+
+    internal RespireDedicatedPoolOptions DedicatedPool
+    {
+        get; init;
+    } = new();
+
     public override string ToString() => "RespireConnectionOptions { <redacted> }";
 
     public static readonly RespireConnectionOptions Default = new();
 
-    internal IConnectionGeneration? Generation { get; init; }
-    internal bool IsDedicatedConnection { get; init; }
-    internal bool ObserveEstablishmentErrors { get; init; }
+    internal IConnectionGeneration? Generation
+    {
+        get; init;
+    }
 
-    internal RespireConnectionHook? ConnectionHook { get; init; }
+    internal bool IsDedicatedConnection
+    {
+        get; init;
+    }
 
-    internal Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>? ConnectionFactory { get; init; }
-    internal bool EnableMultipathTcp { get; init; }
+    internal bool ObserveEstablishmentErrors
+    {
+        get; init;
+    }
+
+    internal RespireConnectionHook? ConnectionHook
+    {
+        get; init;
+    }
+
+    internal Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>? ConnectionFactory
+    {
+        get; init;
+    }
+
+    internal bool EnableMultipathTcp
+    {
+        get; init;
+    }
 
     internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory
     {
         get => ConnectionFactory is { } factory ? (host, port, token) => factory(new(host, port), token) : null;
         init => ConnectionFactory = value is { } factory ? (endpoint, token) => factory(endpoint.Host, endpoint.Port, token) : null;
     }
+
     /// <summary>
     /// Lets friend tests expire the owned source at a controlled transport boundary. The factory
     /// must link the initiating token, with caller-cancellation controls in the fixture proving
     /// that contract; CancellationTokenSource does not expose its links for inspection.
     /// ConnectAsync owns disposal, just as for the ordinary source.
     /// </summary>
-    internal Func<CancellationToken, TimeSpan, CancellationTokenSource>? TestingConnectTimeoutFactory { get; init; }
-    internal ArrayPool<byte>? StreamPayloadPool { get; init; }
+    internal Func<CancellationToken, TimeSpan, CancellationTokenSource>? TestingConnectTimeoutFactory
+    {
+        get; init;
+    }
 
-    internal RespireReconnectPolicy? ReconnectPolicy { get; init; }
-    internal Action<RespireConnection>? UnexpectedConnectionClosed { get; init; }
-    internal RespireMaintenanceNotificationMode MaintenanceNotifications { get; init; }
-    internal TimeSpan MaintenanceRelaxedTimeout { get; init; } = TimeSpan.FromSeconds(30);
-    internal TimeSpan MaintenanceWindowTimeout { get; init; } = TimeSpan.FromSeconds(60);
-    internal FailoverMaintenanceWindows? FailoverMaintenance { get; init; }
+    internal ArrayPool<byte>? StreamPayloadPool
+    {
+        get; init;
+    }
+
+    internal RespireReconnectPolicy? ReconnectPolicy
+    {
+        get; init;
+    }
+
+    internal Action<RespireConnection>? UnexpectedConnectionClosed
+    {
+        get; init;
+    }
+
+    internal RespireMaintenanceNotificationMode MaintenanceNotifications
+    {
+        get; init;
+    }
+
+    internal TimeSpan MaintenanceRelaxedTimeout
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(30);
+
+    internal TimeSpan MaintenanceWindowTimeout
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(60);
+
+    internal FailoverMaintenanceWindows? FailoverMaintenance
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Receives out-of-band frames on connections built from these options (see
     /// <see cref="RespirePushHandler"/>). Set by the client's pub/sub hub.
     /// </summary>
-    public RespirePushHandler? PushHandler { get; init; }
+    public RespirePushHandler? PushHandler
+    {
+        get; init;
+    }
 
     /// <summary>Observes subscription acknowledgements before FIFO completion; must not dispose the frame.</summary>
-    public RespirePushHandler? SubscriptionConfirmationHandler { get; init; }
+    public RespirePushHandler? SubscriptionConfirmationHandler
+    {
+        get; init;
+    }
 
     /// <summary>Returns true for unsolicited subscription frames; must not dispose the frame.</summary>
-    internal RespirePushFilter? SubscriptionPushFilter { get; init; }
+    internal RespirePushFilter? SubscriptionPushFilter
+    {
+        get; init;
+    }
 
     /// <summary>Enables CLIENT TRACKING before this connection is published.</summary>
-    public bool EnableClientTracking { get; init; }
+    public bool EnableClientTracking
+    {
+        get; init;
+    }
 
     /// <summary>Validated wire tracking configuration; the default value selects OPTIN.</summary>
-    public Commands.ClientTrackingConfiguration ClientTrackingOptions { get; init; }
+    public Commands.ClientTrackingConfiguration ClientTrackingOptions
+    {
+        get; init;
+    }
 
     /// <summary>Timeout for the initial TCP connect.</summary>
-    public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
+    public TimeSpan ConnectTimeout
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(10);
 
     /// <summary>Maximum grace for blocked retirement drains when no command timeout is configured.</summary>
-    public TimeSpan RetirementDrainFallbackTimeout { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan RetirementDrainFallbackTimeout
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(30);
 
-    internal TimeProvider MaintenanceDrainTimeProvider { get; init; } = TimeProvider.System;
+    internal TimeProvider MaintenanceDrainTimeProvider
+    {
+        get; init;
+    } = TimeProvider.System;
 
     /// <summary>
     /// Aborts the connection when responses are pending and no bytes arrive within this period.
     /// Null disables the watchdog.
     /// </summary>
-    public TimeSpan? ResponseTimeout { get; init; }
+    public TimeSpan? ResponseTimeout
+    {
+        get; init;
+    }
 
     /// <inheritdoc cref="RespireOptions.GatheredWriteStallTimeout"/>
-    public TimeSpan? GatheredWriteStallTimeout { get; init; }
+    public TimeSpan? GatheredWriteStallTimeout
+    {
+        get; init;
+    }
 
     internal TimeSpan? EffectiveGatheredWriteStallTimeout => GatheredWriteStallTimeout == Timeout.InfiniteTimeSpan
         ? null : GatheredWriteStallTimeout ?? ResponseTimeout;
@@ -4666,35 +5612,64 @@ internal sealed record RespireConnectionOptions
     /// with a deadline at enqueue and expired by a per-connection sweep — no per-command
     /// timer. Null disables the cap.
     /// </summary>
-    public TimeSpan? CommandTimeout { get; init; }
+    public TimeSpan? CommandTimeout
+    {
+        get; init;
+    }
 
     /// <summary>
     /// How long parsed replies may wait behind a slow or blocked continuation
     /// before they are delivered on another thread.
     /// </summary>
-    internal TimeSpan StalledDeliveryThreshold { get; init; } = TimeSpan.FromMilliseconds(20);
+    internal TimeSpan StalledDeliveryThreshold
+    {
+        get; init;
+    } = TimeSpan.FromMilliseconds(20);
 
-    internal RespireContinuationDispatch ContinuationDispatch { get; init; }
+    internal RespireContinuationDispatch ContinuationDispatch
+    {
+        get; init;
+    }
 
     /// <summary>
     /// During teardown, how long replies may sit behind a delivery runner that never starts,
     /// with no delivery progress, before disposal stops waiting for them. Internal: tests.
     /// </summary>
-    internal TimeSpan StarvedDeliveryRunnerWindow { get; init; } = TimeSpan.FromSeconds(1);
+    internal TimeSpan StarvedDeliveryRunnerWindow
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(1);
 
     /// <summary>Wrap the connected socket in TLS before the RESP handshake.</summary>
-    public bool UseTls { get; init; }
+    public bool UseTls
+    {
+        get; init;
+    }
 
     /// <summary>
     /// TLS client settings. When null, the host name is used with platform certificate
     /// validation defaults. Set <see cref="SslClientAuthenticationOptions.TargetHost"/> when
     /// supplying custom settings.
     /// </summary>
-    public SslClientAuthenticationOptions? TlsOptions { get; init; }
+    public SslClientAuthenticationOptions? TlsOptions
+    {
+        get; init;
+    }
 
-    internal IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>? NodeAddressMap { get; init; }
-    internal Func<RespireEndpoint, RespireEndpoint>? NodeAddressResolver { get; init; }
-    internal bool UseMappedHostForTls { get; init; }
+    internal IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>? NodeAddressMap
+    {
+        get; init;
+    }
+
+    internal Func<RespireEndpoint, RespireEndpoint>? NodeAddressResolver
+    {
+        get; init;
+    }
+
+    internal bool UseMappedHostForTls
+    {
+        get; init;
+    }
 
     // Correction and retirement connections already name a captured physical peer.
     // Reapplying a dynamic/non-idempotent map could send a server-local client ID elsewhere.
@@ -4707,43 +5682,109 @@ internal sealed record RespireConnectionOptions
     };
 
     /// <summary>ACL username for AUTH/HELLO. Defaults to Redis's "default" user when only a password is set.</summary>
-    public string? Username { get; init; }
+    public string? Username
+    {
+        get; init;
+    }
 
     /// <summary>Password for AUTH (RESP2) or HELLO AUTH (RESP3). Null skips authentication.</summary>
-    public string? Password { get; init; }
+    public string? Password
+    {
+        get; init;
+    }
 
-    internal IRespireCredentialProvider? CredentialProvider { get; init; }
-    internal RespireCredentials? InitialCredentials { get; init; }
-    internal TimeSpan CredentialRefreshBeforeExpiry { get; init; } = TimeSpan.FromMinutes(5);
-    internal TimeSpan CredentialRefreshRetryDelay { get; init; } = TimeSpan.FromSeconds(5);
-    internal TimeProvider CredentialTimeProvider { get; init; } = TimeProvider.System;
-    internal Func<int>? CredentialCacheInvalidation { get; init; }
-    internal Action? CredentialCacheRetirementFence { get; init; }
-    internal ClientSideCacheCoordinator? CacheMutationAdmission { get; init; }
+    internal IRespireCredentialProvider? CredentialProvider
+    {
+        get; init;
+    }
+
+    internal RespireCredentials? InitialCredentials
+    {
+        get; init;
+    }
+
+    internal TimeSpan CredentialRefreshBeforeExpiry
+    {
+        get; init;
+    } = TimeSpan.FromMinutes(5);
+
+    internal TimeSpan CredentialRefreshRetryDelay
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(5);
+
+    internal TimeProvider CredentialTimeProvider
+    {
+        get; init;
+    } = TimeProvider.System;
+
+    internal Func<int>? CredentialCacheInvalidation
+    {
+        get; init;
+    }
+
+    internal Action? CredentialCacheRetirementFence
+    {
+        get; init;
+    }
+
+    internal ClientSideCacheCoordinator? CacheMutationAdmission
+    {
+        get; init;
+    }
 
     /// <summary>When set, CLIENT SETNAME runs during the handshake.</summary>
-    public string? ClientName { get; init; }
+    public string? ClientName
+    {
+        get; init;
+    }
 
     // Only ordinary client connections advertise metadata. Control connections stay AUTH-only.
-    internal string? LibraryName { get; init; }
+    internal string? LibraryName
+    {
+        get; init;
+    }
 
     /// <summary>Logical database SELECTed during the handshake; 0 skips the SELECT.</summary>
-    public int Database { get; init; }
+    public int Database
+    {
+        get; init;
+    }
 
     /// <summary>Verify Valkey 9+ Cluster support before selecting a non-zero database.</summary>
-    internal bool RequireClusterDatabaseSupport { get; init; }
-    internal bool DiscoverAvailabilityZone { get; init; }
-    internal bool ReadOnly { get; init; }
+    internal bool RequireClusterDatabaseSupport
+    {
+        get; init;
+    }
+
+    internal bool DiscoverAvailabilityZone
+    {
+        get; init;
+    }
+
+    internal bool ReadOnly
+    {
+        get; init;
+    }
 
     /// <summary>Requested wire protocol. Auto permits only explicit unsupported-HELLO fallback.</summary>
     /// <remarks>Low-level connections retain their RESP2 default; RespireOptions supplies the client preference.</remarks>
-    public RespireProtocol Protocol { get; init; } = RespireProtocol.Resp2;
+    public RespireProtocol Protocol
+    {
+        get; init;
+    } = RespireProtocol.Resp2;
 
     /// <summary>Initial size of the pooled parse buffer the receive loop reads into.</summary>
-    public int ReceiveBufferSize { get; init; } = 64 * 1024;
+    public int ReceiveBufferSize
+    {
+        get; init;
+    } = 64 * 1024;
 
     /// <summary>Initial size of each of the two coalescing write buffers.</summary>
-    public int WriteBufferSize { get; init; } = 64 * 1024;
+    public int WriteBufferSize
+    {
+        get; init;
+    } = 64 * 1024;
 
     /// <summary>
     /// Enables TCP keepalive and sets how long the connection may sit idle before the kernel
@@ -4753,7 +5794,10 @@ internal sealed record RespireConnectionOptions
     /// The upper bound is OS-dependent: Linux permits at most 32,767 seconds. Values outside
     /// the OS range can fail connection creation with a SocketException.
     /// </summary>
-    public TimeSpan? TcpKeepAliveTime { get; init; }
+    public TimeSpan? TcpKeepAliveTime
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Interval between keepalive probes once <see cref="TcpKeepAliveTime"/> has elapsed
@@ -4762,7 +5806,10 @@ internal sealed record RespireConnectionOptions
     /// The upper bound is OS-dependent: Linux permits at most 32,767 seconds. Values outside
     /// the OS range can fail connection creation with a SocketException.
     /// </summary>
-    public TimeSpan? TcpKeepAliveInterval { get; init; }
+    public TimeSpan? TcpKeepAliveInterval
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Unanswered keepalive probes before the kernel declares the connection dead. Null keeps
@@ -4770,21 +5817,36 @@ internal sealed record RespireConnectionOptions
     /// The upper bound is OS-dependent: Linux permits at most 127 probes. Values outside
     /// the OS range can fail connection creation with a SocketException.
     /// </summary>
-    public int? TcpKeepAliveRetryCount { get; init; }
+    public int? TcpKeepAliveRetryCount
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Kernel socket receive buffer size; 0 (the default) keeps the OS default. Setting an
     /// explicit size disables Linux receive-window autotuning, capping single-connection
     /// throughput on high-latency links, so only pin a size when profiling demands it.
     /// </summary>
-    public int SocketReceiveBufferSize { get; init; }
+    public int SocketReceiveBufferSize
+    {
+        get; init;
+    }
 
     /// <summary>Kernel socket send buffer size; 0 (the default) keeps the OS default.</summary>
-    public int SocketSendBufferSize { get; init; }
+    public int SocketSendBufferSize
+    {
+        get; init;
+    }
 
     /// <summary>Maximum commands awaiting responses on one connection (rounded up to a power of two).</summary>
-    public int MaxInflightCommands { get; init; } = 16 * 1024;
+    public int MaxInflightCommands
+    {
+        get; init;
+    } = 16 * 1024;
 
     /// <summary>Maximum pooled completion sources kept per connection.</summary>
-    public int CompletionSourcePoolSize { get; init; } = 4096;
+    public int CompletionSourcePoolSize
+    {
+        get; init;
+    } = 4096;
 }

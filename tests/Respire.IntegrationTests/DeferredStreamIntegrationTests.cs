@@ -21,11 +21,13 @@ public class DeferredStreamIntegrationTests(RedisTestContainer fixture)
         await view.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("value", "first"));
         await view.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         await foreach (var entry in view.Streams.ReadGroupAsync("events", "workers", "alice", cancellationToken: timeout.Token))
         {
             entry.Id.Should().Be((RespireStreamId)"1-0");
             break;
         }
+
         using var batch = transactional ? null : view.CreateBatch();
         await using var transaction = transactional ? view.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
@@ -42,8 +44,16 @@ public class DeferredStreamIntegrationTests(RedisTestContainer fixture)
         var trimmed = queue.Streams.TrimByMaxLength("events", 1);
         var remaining = queue.Streams.Range("events");
         Array.Fill(payload, (byte)'x');
-        if (transaction is not null) await transaction.CommitAsync(timeout.Token);
-        else await batch!.ExecuteAsync(timeout.Token);
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(timeout.Token);
+        }
+        else
+        {
+            await batch!.ExecuteAsync(timeout.Token);
+        }
+
         state.Result.Should().BeTrue();
         explicitId.Result.Should().Be((RespireStreamId)"2-0");
         absent.Result.Should().BeNull();
@@ -79,12 +89,17 @@ public class DeferredStreamIntegrationTests(RedisTestContainer fixture)
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var failed = queue.Streams.Count(key);
         var value = queue.GetString(key);
-        if (transaction is not null) await transaction.CommitAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
         else
         {
             Func<Task> execute = async () => await batch!.ExecuteAsync();
             await execute.Should().ThrowAsync<RespireServerException>();
         }
+
         failed.Error.Should().BeOfType<RespireServerException>();
         Action readFailed = () => _ = failed.Result;
         readFailed.Should().Throw<RespireServerException>();

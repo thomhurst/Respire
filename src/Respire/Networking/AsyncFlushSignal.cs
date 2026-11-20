@@ -40,6 +40,7 @@ internal sealed class AsyncFlushSignal : IValueTaskSource, IThreadPoolWorkItem
 
         _core.Reset();
         var previous = Interlocked.CompareExchange(ref _state, Waiting, Idle);
+
         if (previous == Signaled)
         {
             // A signal landed between the fast path and arming; consume it.

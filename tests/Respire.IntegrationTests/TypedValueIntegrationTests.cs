@@ -58,6 +58,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var key = Guid.NewGuid().ToString("N");
         await client.SetAsync(key, "original");
+
         foreach (var (command, arguments) in new (string, RespireValue[])[]
         {
             ("GET", [key, "extra"]),
@@ -67,10 +68,14 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
             ("DEL", []),
         })
         {
-            Func<Task> invalid = async () => { using var ignored = await client.ExecuteAsync(command, arguments); };
+            Func<Task> invalid = async () =>
+            {
+                using var ignored = await client.ExecuteAsync(command, arguments);
+            };
             await invalid.Should().ThrowAsync<RespireServerException>().WithMessage("*wrong number of arguments*");
             (await client.GetStringAsync(key)).Should().Be("original");
         }
+
         using var lowerCase = await client.ExecuteAsync("gEt", key);
         lowerCase.AsString().Should().Be("original");
     }
@@ -88,7 +93,10 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
         byte[] bytes = [0, 255, 13, 10];
         using var echoed = await client.ExecuteAsync("ECHO", bytes);
         echoed.AsBytes().Should().Equal(bytes);
-        Func<Task> missing = async () => { using var ignored = await client.ExecuteAsync("ECHO"); };
+        Func<Task> missing = async () =>
+        {
+            using var ignored = await client.ExecuteAsync("ECHO");
+        };
         await missing.Should().ThrowAsync<RespireServerException>().WithMessage("*wrong number of arguments*echo*");
     }
 
@@ -291,7 +299,10 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
         left.Result.Should().Be(41);
         right.Result.Should().Equal(43, 42);
         await client.Lists.RightPushAsync("typed:list", "not-an-integer");
-        Func<Task> invalid = async () => { await client.Lists.LeftPopAsync<int>("typed:list"); };
+        Func<Task> invalid = async () =>
+        {
+            await client.Lists.LeftPopAsync<int>("typed:list");
+        };
         await invalid.Should().ThrowAsync<FormatException>();
     }
 

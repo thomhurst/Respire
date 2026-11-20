@@ -2,8 +2,8 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
-using Respire.Serialization;
 using Respire.Protocol;
+using Respire.Serialization;
 
 namespace Respire;
 
@@ -226,7 +226,6 @@ internal sealed partial class SetCommands(RespireClient client) : IRespireSetCom
     [OverloadResolutionPriority(1)]
     public ValueTask<long> DifferenceStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken)
         => DifferenceStoreAsync(destination, [key], cancellationToken);
-
 
     public ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
         => AddAsync(key, members, CancellationToken.None);

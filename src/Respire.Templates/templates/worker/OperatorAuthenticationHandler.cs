@@ -27,22 +27,33 @@ public sealed class OperatorAuthenticationHandler(
     {
         // Plain HTTP is permitted only for a loopback request in Development.
         if (!AllowsCredentials)
+        {
             return Task.FromResult(AuthenticateResult.Fail("HTTPS is required."));
+        }
 
         if (!AuthenticationHeaderValue.TryParse(Request.Headers.Authorization, out var header)
             || !header.Scheme.Equals("Basic", StringComparison.OrdinalIgnoreCase)
             || string.IsNullOrWhiteSpace(header.Parameter))
+        {
             return Task.FromResult(AuthenticateResult.NoResult());
+        }
 
         byte[] supplied;
-        try { supplied = Convert.FromBase64String(header.Parameter); }
+
+        try
+        {
+            supplied = Convert.FromBase64String(header.Parameter);
+        }
         catch (FormatException) { return Task.FromResult(AuthenticateResult.Fail("Invalid credentials.")); }
 
         var password = configuration["Dashboard:Password"];
+
         if (string.IsNullOrWhiteSpace(password)
             || !CryptographicOperations.FixedTimeEquals(SHA256.HashData(supplied),
                 SHA256.HashData(Encoding.UTF8.GetBytes($"operator:{password}"))))
+        {
             return Task.FromResult(AuthenticateResult.Fail("Invalid credentials."));
+        }
 
         var identity = new ClaimsIdentity([
             new Claim(ClaimTypes.NameIdentifier, "operator"), new Claim(ClaimTypes.Name, "operator"),
@@ -60,6 +71,7 @@ public sealed class OperatorAuthenticationHandler(
             Response.StatusCode = StatusCodes.Status403Forbidden;
             return Task.CompletedTask;
         }
+
         Response.StatusCode = StatusCodes.Status401Unauthorized;
         Response.Headers.WWWAuthenticate = "Basic realm=\"RespireWorker\", charset=\"UTF-8\"";
         return Task.CompletedTask;

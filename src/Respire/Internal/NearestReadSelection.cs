@@ -23,13 +23,22 @@ internal static class NearestReadSelection
     internal static RespireConnection? AvoidPendingProbe(RespireConnectionMultiplexer multiplexer, RespireConnection selected,
         ReadLatencySampler<RespireConnection>? sampler, string? preferredZone = null)
     {
-        if (sampler is null || !sampler.IsOccupied(selected)) return selected;
+        if (sampler is null || !sampler.IsOccupied(selected))
+        {
+            return selected;
+        }
+
         for (var index = 0; index < multiplexer.ConnectionCount; index++)
         {
             var sibling = preferredZone is null ? multiplexer.GetConnection(index)
                 : multiplexer.GetConnectionForZone(preferredZone, index);
-            if (!ReferenceEquals(sibling, selected) && !sampler.IsOccupied(sibling)) return sibling;
+
+            if (!ReferenceEquals(sibling, selected) && !sampler.IsOccupied(sibling))
+            {
+                return sibling;
+            }
         }
+
         return null;
     }
 
@@ -37,7 +46,12 @@ internal static class NearestReadSelection
     {
         cancellationToken.ThrowIfCancellationRequested();
         var remaining = deadline - Environment.TickCount64;
-        if (remaining <= 0) return null;
+
+        if (remaining <= 0)
+        {
+            return null;
+        }
+
         var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         source.CancelAfter(TimeSpan.FromMilliseconds(remaining));
         return source;
@@ -47,8 +61,16 @@ internal static class NearestReadSelection
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (latency.IsCompletedSuccessfully) return latency;
-        if (wait is not null) return WaitAsync(latency, wait.Token, cancellationToken);
+
+        if (latency.IsCompletedSuccessfully)
+        {
+            return latency;
+        }
+
+        if (wait is not null)
+        {
+            return WaitAsync(latency, wait.Token, cancellationToken);
+        }
         // The shared budget has expired. An unanswered probe still occupies its connection's FIFO,
         // so a read sent there would queue behind it. Candidates without a probe remain eligible
         // because selection starts no new probe after the budget expires.
@@ -58,7 +80,10 @@ internal static class NearestReadSelection
     private static async ValueTask<ReadLatencyResult> WaitAsync(ValueTask<ReadLatencyResult> latency, CancellationToken waitToken,
         CancellationToken cancellationToken)
     {
-        try { return await latency.AsTask().WaitAsync(waitToken).ConfigureAwait(false); }
+        try
+        {
+            return await latency.AsTask().WaitAsync(waitToken).ConfigureAwait(false);
+        }
         catch (OperationCanceledException) when (waitToken.IsCancellationRequested)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -138,24 +163,40 @@ internal struct NearestReadSelection<T>
     }
 
     internal readonly record struct PendingSample(T Candidate, ValueTask<ReadLatencyResult> Latency, bool Linked, int Order, int Priority);
+
     private readonly record struct BandSample(T Candidate, long Latency, bool Linked, int Order, int Priority);
+
     internal readonly bool HasPendingSamples => _pending is { Count: > 0 };
+
     internal readonly bool HasPreferredCandidate => _hasValue && _priority == 0;
+
     internal readonly int SelectedPriority => _priority;
 
     internal void QueueSample(T candidate, ValueTask<ReadLatencyResult> latency, bool linked = true, int priority = 0)
     {
         var order = _tolerance is not null && _enumerating ? _currentIndex : _sampleOrder;
         _sampleOrder++;
-        if (latency.IsCompletedSuccessfully) Consider(candidate, latency.Result, linked, order, priority);
+
+        if (latency.IsCompletedSuccessfully)
+        {
+            Consider(candidate, latency.Result, linked, order, priority);
+        }
         // Without a band, only cold/expired samples allocate; warm minimum selection stays allocation-free.
-        else (_pending ??= new(4)).Add(new(candidate, latency, linked, order, priority));
+        else
+        {
+            (_pending ??= new(4)).Add(new(candidate, latency, linked, order, priority));
+        }
     }
 
     internal bool TryNextSample(out PendingSample sample)
     {
         sample = default;
-        if (_pending is null || _nextSample == _pending.Count) return false;
+
+        if (_pending is null || _nextSample == _pending.Count)
+        {
+            return false;
+        }
+
         sample = _pending[_nextSample++];
         return true;
     }
@@ -172,7 +213,12 @@ internal struct NearestReadSelection<T>
     internal bool TryNext(out int index)
     {
         index = 0;
-        if (_remaining == 0) return false;
+
+        if (_remaining == 0)
+        {
+            return false;
+        }
+
         _remaining--;
         index = (int)(_next++ % (uint)_candidateCount);
         _currentIndex = index;
@@ -182,18 +228,36 @@ internal struct NearestReadSelection<T>
 
     internal void Consider(T candidate, ReadLatencyResult sample, bool linked = true, int order = int.MaxValue, int priority = 0)
     {
-        if (sample.Kind == ReadLatencyKind.Pending) return;
+        if (sample.Kind == ReadLatencyKind.Pending)
+        {
+            return;
+        }
+
         var latency = sample.Kind == ReadLatencyKind.Measured ? sample.Ticks : long.MaxValue;
+
         if (_tolerance is not null)
         {
             var value = new BandSample(candidate, latency, linked, order, priority);
-            if (_bandCount < InlineBandCapacity) _inlineBand[_bandCount] = value;
-            else (_overflowBand ??= []).Add(value);
+
+            if (_bandCount < InlineBandCapacity)
+            {
+                _inlineBand[_bandCount] = value;
+            }
+            else
+            {
+                (_overflowBand ??= []).Add(value);
+            }
+
             _bandCount++;
         }
+
         if (_hasValue && (priority > _priority || priority == _priority
             && (_linked && !linked || _linked == linked
-                && (latency > _latency || latency == _latency && order >= _selectedOrder)))) return;
+                && (latency > _latency || latency == _latency && order >= _selectedOrder))))
+        {
+            return;
+        }
+
         _selected = candidate;
         _latency = latency;
         _linked = linked;
@@ -205,12 +269,14 @@ internal struct NearestReadSelection<T>
     internal bool TryGet(out T selected)
     {
         selected = _selected;
+
         if (_bandCount > 0)
         {
             // Candidate indices are stable even though probes start in rotated order.
             // Rotate within the eligible set, so gaps left by slow nodes do not bias traffic.
             // Small replica groups stay inline. Larger groups combine their overflow only here.
             Span<BandSample> band = _inlineBand[..Math.Min(_bandCount, InlineBandCapacity)];
+
             if (_overflowBand is not null)
             {
                 var combined = new BandSample[_bandCount];
@@ -218,23 +284,45 @@ internal struct NearestReadSelection<T>
                 _overflowBand.CopyTo(combined, InlineBandCapacity);
                 band = combined;
             }
+
             band.Sort(static (left, right) => left.Order.CompareTo(right.Order));
+
             for (var index = 0; index < band.Length; index++)
             {
-                if (index < InlineBandCapacity) _inlineBand[index] = band[index];
-                else _overflowBand![index - InlineBandCapacity] = band[index];
+                if (index < InlineBandCapacity)
+                {
+                    _inlineBand[index] = band[index];
+                }
+                else
+                {
+                    _overflowBand![index - InlineBandCapacity] = band[index];
+                }
             }
+
             var count = 0;
-            foreach (var sample in band)
-                if (IsInBand(sample)) count++;
-            var offset = count == 0 ? 0 : (int)(_start % (uint)count);
+
             foreach (var sample in band)
             {
-                if (!IsInBand(sample) || offset-- != 0) continue;
+                if (IsInBand(sample))
+                {
+                    count++;
+                }
+            }
+
+            var offset = count == 0 ? 0 : (int)(_start % (uint)count);
+
+            foreach (var sample in band)
+            {
+                if (!IsInBand(sample) || offset-- != 0)
+                {
+                    continue;
+                }
+
                 selected = sample.Candidate;
                 break;
             }
         }
+
         return _hasValue;
     }
 
@@ -251,8 +339,13 @@ internal struct NearestReadSelection<T>
         for (var index = 0; index < _bandCount; index++)
         {
             var sample = BandAt(index);
-            if (IsInBand(sample) && !isCurrent(sample.Candidate, state)) return false;
+
+            if (IsInBand(sample) && !isCurrent(sample.Candidate, state))
+            {
+                return false;
+            }
         }
+
         return true;
     }
 
@@ -262,22 +355,39 @@ internal struct NearestReadSelection<T>
     {
         var count = 0;
         var unchanged = previous is not null && previous.ReadFrom == policy && previous.ClusterSlot == slot;
+
         for (var index = 0; index < _bandCount; index++)
         {
             var sample = BandAt(index);
-            if (!IsInBand(sample)) continue;
+
+            if (!IsInBand(sample))
+            {
+                continue;
+            }
+
             unchanged &= previous is not null && count < previous.EligibleEndpoints.Count
                 && previous.EligibleEndpoints[count] == endpoint(sample.Candidate);
             count++;
         }
-        if (unchanged && count == previous!.EligibleEndpoints.Count) return previous;
+
+        if (unchanged && count == previous!.EligibleEndpoints.Count)
+        {
+            return previous;
+        }
+
         var eligible = new RespireEndpoint[count];
         count = 0;
+
         for (var index = 0; index < _bandCount; index++)
         {
             var sample = BandAt(index);
-            if (IsInBand(sample)) eligible[count++] = endpoint(sample.Candidate);
+
+            if (IsInBand(sample))
+            {
+                eligible[count++] = endpoint(sample.Candidate);
+            }
         }
+
         return new(policy, slot, Array.AsReadOnly(eligible));
     }
 

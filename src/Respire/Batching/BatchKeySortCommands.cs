@@ -9,14 +9,18 @@ public partial interface IRespireBatchKeyCommands
 {
     /// <summary>Queues SORT/SORT_RO, preserving null external GET values.</summary>
     RespirePending<string?[]> Sort(RespireKey key, RespireSortOptions? options = null);
+
     /// <summary>Queues SORT/SORT_RO and deserializes members. Use byte[] for owned binary results.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T?[]> Sort<T>(RespireKey key, RespireSortOptions? options = null);
+
     /// <summary>Queues SORT STORE; source and destination must share a Cluster slot.</summary>
     RespirePending<long> SortStore(RespireKey key, RespireKey destination, RespireSortOptions? options = null);
+
     /// <summary>Queues RANDOMKEY; requires an unprefixed, non-Cluster client.</summary>
     RespirePending<RespireKey?> Random();
+
     /// <summary>Queues MOVE to another database; Cluster clients are rejected.</summary>
     RespirePending<bool> Move(RespireKey key, int database);
 }

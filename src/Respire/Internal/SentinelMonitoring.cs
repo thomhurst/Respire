@@ -79,12 +79,43 @@ internal sealed class SentinelMonitoring(
         internal Task Task = Task.CompletedTask;
     }
 
-    internal TimeProvider Clock { get; set; } = TimeProvider.System;
-    internal Func<RespireOptions, ISentinelMonitorClient> ClientFactory { get; set; }
-        = static options => new SentinelMonitorClient(options);
-    internal Func<string, CancellationToken, Task<IPAddress[]>> HostResolver { get; set; } = Dns.GetHostAddressesAsync;
-    internal int SubscribedCount { get { lock (_gate) return _readySentinels.Count; } }
-    internal long SubscriptionVersion { get { lock (_gate) return _subscriptionVersion; } }
+    internal TimeProvider Clock
+    {
+        get; set;
+    } = TimeProvider.System;
+
+    internal Func<RespireOptions, ISentinelMonitorClient> ClientFactory
+    {
+        get; set;
+    } = static options => new SentinelMonitorClient(options);
+
+    internal Func<string, CancellationToken, Task<IPAddress[]>> HostResolver
+    {
+        get; set;
+    } = Dns.GetHostAddressesAsync;
+
+    internal int SubscribedCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _readySentinels.Count;
+            }
+        }
+    }
+
+    internal long SubscriptionVersion
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _subscriptionVersion;
+            }
+        }
+    }
+
     /// <summary>
     /// Waits for <paramref name="count"/> ready endpoints through the membership/readiness signal, not polling.
     /// Honors caller cancellation and wakes on shutdown.
@@ -96,21 +127,33 @@ internal sealed class SentinelMonitoring(
     internal async Task WaitForSubscriptionsAsync(int count, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
+
         while (true)
         {
             Task changed;
+
             lock (_gate)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
-                if (_readySentinels.Count >= count) return;
+
+                if (_readySentinels.Count >= count)
+                {
+                    return;
+                }
+
                 changed = _readinessChanged.Task;
             }
+
             await changed.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
+
     internal bool NeedsStartupValidation(RespireEndpoint reporter, long version)
     {
-        lock (_gate) return !_validatedSubscriptions.TryGetValue(reporter, out var validated) || version > validated;
+        lock (_gate)
+        {
+            return !_validatedSubscriptions.TryGetValue(reporter, out var validated) || version > validated;
+        }
     }
 
     // Capture the version before discovery starts. A lookup already in flight when a
@@ -127,12 +170,19 @@ internal sealed class SentinelMonitoring(
     internal void SubscriptionEstablished(RespireEndpoint endpoint, bool first, CancellationToken cancellationToken = default)
     {
         long startupVersion = 0;
+
         lock (_gate)
         {
-            if (_disposed || cancellationToken.IsCancellationRequested) return;
+            if (_disposed || cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
             // A replacement monitor task has fresh local state, but this endpoint's
             // earlier subscription means the restart is a real delivery gap.
-            if (first && _subscribedSentinels.Add(endpoint)) startupVersion = ++_subscriptionVersion;
+            if (first && _subscribedSentinels.Add(endpoint))
+            {
+                startupVersion = ++_subscriptionVersion;
+            }
         }
         // If the callback throws, deliberately leave a new endpoint unready. The monitor
         // recovery loop retries the subscription; a finally block must not publish readiness.
@@ -141,8 +191,15 @@ internal sealed class SentinelMonitoring(
         // validation. Moving the callback outside gate must preserve that startup fence.
         lock (_gate)
         {
-            if (_disposed || cancellationToken.IsCancellationRequested) return;
-            if (_readySentinels.Add(endpoint)) SignalReadinessChanged();
+            if (_disposed || cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (_readySentinels.Add(endpoint))
+            {
+                SignalReadinessChanged();
+            }
         }
     }
 
@@ -158,7 +215,11 @@ internal sealed class SentinelMonitoring(
     {
         lock (_gate)
         {
-            if (_disposed) return;
+            if (_disposed)
+            {
+                return;
+            }
+
             Start();
             var rearm = Volatile.Read(ref _monitorRearm);
             Volatile.Write(ref _monitorRearm, new(TaskCreationOptions.RunContinuationsAsynchronously));
@@ -172,9 +233,13 @@ internal sealed class SentinelMonitoring(
         {
             _disposed = true;
             SignalReadinessChanged();
+
             foreach (var monitor in _notificationMonitors.Values)
+            {
                 _ = monitor.Task.ContinueWith(static (_, state) => ((EndpointMonitor)state!).Lifetime.Dispose(),
                     monitor, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            }
+
             return _background.Stop();
         }
     }
@@ -183,19 +248,38 @@ internal sealed class SentinelMonitoring(
     {
         if (message.Kind == RespireMessageKind.Gap)
         {
-            lock (_gate) if (_disposed || token.IsCancellationRequested) return ValueTask.CompletedTask;
+            lock (_gate)
+            {
+                if (_disposed || token.IsCancellationRequested)
+                {
+                    return ValueTask.CompletedTask;
+                }
+            }
+
             deliveryGap(sentinel, 0, token);
             return ValueTask.CompletedTask;
         }
+
         if (message.Kind != RespireMessageKind.Message || _serviceNameUtf8.Length == 0)
+        {
             return ValueTask.CompletedTask;
+        }
+
         var parsed = SentinelEvent.Parse(message.Channel.Span, message.Payload.Span, _serviceNameUtf8);
-        if (parsed.Kind == SentinelEventKind.None) return ValueTask.CompletedTask;
+
+        if (parsed.Kind == SentinelEventKind.None)
+        {
+            return ValueTask.CompletedTask;
+        }
+
         LogSentinelEvent(parsed.Kind == SentinelEventKind.ReplicaDown ? LogLevel.Debug : LogLevel.Information, message, sentinel);
         var malformed = parsed.Kind == SentinelEventKind.SwitchMaster
             && (parsed.OldPrimary is null || parsed.NewPrimary is null) ? message.Text : null;
+
         lock (_gate)
+        {
             return _disposed || token.IsCancellationRequested ? ValueTask.CompletedTask : received(sentinel, parsed, malformed, token);
+        }
     }
 
     private static readonly TimeSpan SentinelMonitorSupervisorFallbackInterval = TimeSpan.FromSeconds(30);
@@ -205,7 +289,11 @@ internal sealed class SentinelMonitoring(
     // discovery itself, and a client whose initial discovery keeps failing has no primary to move.
     private void Start()
     {
-        if (_notificationMonitorSupervisor != Task.CompletedTask) return;
+        if (_notificationMonitorSupervisor != Task.CompletedTask)
+        {
+            return;
+        }
+
         _notificationMonitorSupervisor = _background.TryStart(SentinelWorkKind.Supervisor, MonitorSentinelsAsync)
             ?? Task.CompletedTask;
     }
@@ -218,11 +306,17 @@ internal sealed class SentinelMonitoring(
             {
                 var memberships = _discovery.MembershipSnapshot(out var changed);
                 List<(RespireEndpoint Endpoint, Exception? Error)>? restarted = null;
+
                 lock (_gate)
                 {
-                    if (_disposed) return;
+                    if (_disposed)
+                    {
+                        return;
+                    }
+
                     var current = memberships.ToDictionary(item => item.Endpoint, item => item.Version,
                         SentinelEndpointIdentity.EndpointComparer.Instance);
+
                     foreach (var removed in _notificationMonitors.Where(pair =>
                         !current.TryGetValue(pair.Key, out var version) || version != pair.Value.MembershipVersion)
                         .Select(pair => pair.Key).ToArray())
@@ -235,20 +329,30 @@ internal sealed class SentinelMonitoring(
                         var cancellation = monitor.Lifetime.CancelAsync();
                         _background.TryStart(SentinelWorkKind.MonitorRemoval, async () =>
                         {
-                            try { await CleanupTasks.WhenAllAsync([cancellation, monitor.Task]).ConfigureAwait(false); }
+                            try
+                            {
+                                await CleanupTasks.WhenAllAsync([cancellation, monitor.Task]).ConfigureAwait(false);
+                            }
                             finally { monitor.Lifetime.Dispose(); }
                         });
                         SignalReadinessChanged();
                     }
+
                     foreach (var membership in memberships)
                     {
                         var endpoint = membership.Endpoint;
-                        if (_notificationMonitors.TryGetValue(endpoint, out var monitor) && !monitor.Task.IsCompleted) continue;
+
+                        if (_notificationMonitors.TryGetValue(endpoint, out var monitor) && !monitor.Task.IsCompleted)
+                        {
+                            continue;
+                        }
+
                         if (monitor is not null)
                         {
                             (restarted ??= []).Add((endpoint, monitor.Task.Exception));
                             monitor.Lifetime.Dispose();
                         }
+
                         monitor = new(_lifetime.Token, membership.Version);
                         var started = monitor;
                         monitor.Task = _background.TryStart(SentinelWorkKind.Monitor,
@@ -256,9 +360,14 @@ internal sealed class SentinelMonitoring(
                         _notificationMonitors[endpoint] = monitor;
                     }
                 }
+
                 if (restarted is not null)
+                {
                     foreach (var restart in restarted)
+                    {
                         SafeLog(restart, static (logger, state) => logger.SentinelMonitorRestarting(state.Endpoint, state.Error));
+                    }
+                }
                 // Wake on additions and removals, without periodically polling membership.
                 try
                 {
@@ -275,27 +384,39 @@ internal sealed class SentinelMonitoring(
     {
         var endpoint = membership.Endpoint;
         long connectionStateVersion = 0;
+
         void ObserveConnectionState(RespireConnectionStateChange change)
         {
-            if (change.ReconnectSource != RespireReconnectSource.SentinelMonitor) return;
+            if (change.ReconnectSource != RespireReconnectSource.SentinelMonitor)
+            {
+                return;
+            }
+
             lock (_gate)
             {
-                if (_disposed || cancellationToken.IsCancellationRequested) return;
+                if (_disposed || cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 connectionStateVersion++;
                 _discovery.RecordConnection(membership,
                     succeeded: (change.SourceState ?? change.State) == RespireConnectionState.Connected);
             }
         }
+
         var budget = new SentinelRetryBudget(options.ReconnectPolicy);
         var subscribedBefore = false;
         // Captured when a reconnect episode starts, not when the monitor parks: a publication
         // that lands while the last attempts are failing must still grant the fresh budget.
         Task rearm = CurrentMonitorRearm();
+
         while (!cancellationToken.IsCancellationRequested)
         {
             var subscriptionReconnectExhausted = false;
             ISentinelMonitorClient? client = null;
             ISentinelMonitorSubscription? subscription = null;
+
             try
             {
                 client = ClientFactory(CreateOptions(options, endpoint,
@@ -304,19 +425,30 @@ internal sealed class SentinelMonitoring(
                         // Temporary clients that close before SUBSCRIBE succeeds belong to
                         // the same outer retry episode. Preserve any publication it captured.
                         if (budget.Attempts == 0)
+                        {
                             Volatile.Write(ref rearm, CurrentMonitorRearm());
+                        }
                     }));
                 long subscribingStateVersion;
-                lock (_gate) subscribingStateVersion = connectionStateVersion;
+
+                lock (_gate)
+                {
+                    subscribingStateVersion = connectionStateVersion;
+                }
+
                 client.ConnectionStateChanged += ObserveConnectionState;
                 subscription = await client.SubscribeAsync(cancellationToken).ConfigureAwait(false);
+
                 lock (_gate)
                 {
                     // A reconnect transition after the acknowledgement is newer evidence
                     // than this continuation. Never clear that failure with startup success.
                     if (connectionStateVersion == subscribingStateVersion)
+                    {
                         _discovery.RecordConnection(membership, succeeded: true);
+                    }
                 }
+
                 budget.Reset();
                 // The close callback captures the current epoch for each reconnect episode.
                 // Do not overwrite it here: the socket may already have closed and a publication
@@ -325,31 +457,44 @@ internal sealed class SentinelMonitoring(
                 // while disconnected. Revalidate after either subscription is established.
                 SubscriptionEstablished(endpoint, !subscribedBefore, cancellationToken);
                 subscribedBefore = true;
+
                 await foreach (var message in subscription.WithCancellation(cancellationToken).ConfigureAwait(false))
+                {
                     await ObserveMessageAsync(endpoint, message, cancellationToken).ConfigureAwait(false);
+                }
+
                 if (!cancellationToken.IsCancellationRequested)
                 {
                     subscriptionReconnectExhausted = await subscription.Completion.ConfigureAwait(false)
                         == RespireSubscriptionEndReason.ReconnectExhausted;
                     // An established subscription reports exhaustion here; startup failures
                     // have no subscription and are recorded only by the catch below.
-                    if (subscriptionReconnectExhausted) _discovery.RecordConnection(membership, succeeded: false);
+                    if (subscriptionReconnectExhausted)
+                    {
+                        _discovery.RecordConnection(membership, succeeded: false);
+                    }
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
             catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
                 if (subscription is null && !cancellationToken.IsCancellationRequested)
+                {
                     _discovery.RecordConnection(membership, succeeded: false);
-                SafeLog((error, endpoint), static (logger, state)
-                    => logger.SentinelMonitorFailed(state.endpoint, state.error));
+                }
+
+                SafeLog((error, endpoint), static (logger, state) => logger.SentinelMonitorFailed(state.endpoint, state.error));
             }
             finally
             {
-                if (client is not null) client.ConnectionStateChanged -= ObserveConnectionState;
+                if (client is not null)
+                {
+                    client.ConnectionStateChanged -= ObserveConnectionState;
+                }
                 // The single disposal path. On shutdown, close the client first so the subscription's
                 // UNSUBSCRIBE cannot wait on a live socket; otherwise unsubscribe before closing.
                 var shutdown = cancellationToken.IsCancellationRequested;
+
                 try
                 {
                     await DisposeMonitorResourcesAsync(shutdown ? client : subscription,
@@ -359,21 +504,31 @@ internal sealed class SentinelMonitoring(
                     && (error is not AggregateException aggregate
                         || aggregate.Flatten().InnerExceptions.All(SentinelExceptionPolicy.IsRecoverable)))
                 {
-                    SafeLog((error, endpoint), static (logger, state)
-                        => logger.SentinelMonitorCleanupFailed(state.endpoint, state.error));
+                    SafeLog((error, endpoint), static (logger, state) => logger.SentinelMonitorCleanupFailed(state.endpoint, state.error));
                 }
             }
-            if (cancellationToken.IsCancellationRequested) return;
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
 
             // MaxAttempts counts replacement attempts, as on the other reconnect paths, so the
             // initial subscription failure still receives a retry.
-            if (subscriptionReconnectExhausted) budget.MarkSubscriptionExhausted();
+            if (subscriptionReconnectExhausted)
+            {
+                budget.MarkSubscriptionExhausted();
+            }
+
             if (!budget.TryStartRetry())
             {
                 // Surface the lost fast path: respire.connection.reconnect.exhausted with
                 // respire.reconnect.scope=sentinel-monitor, plus a warning.
                 if (!subscriptionReconnectExhausted)
+                {
                     RespireTelemetry.RecordDiscoveryReconnect(endpoint, SentinelMonitorReconnectScope, budget.Attempts, null, logger);
+                }
+
                 SafeLog(endpoint, static (logger, endpoint) => logger.SentinelMonitorExhausted(endpoint));
                 // Stay parked rather than completing: the supervisor restarts completed monitors,
                 // which would bypass the configured budget. Discovery still runs on demand, and the
@@ -381,16 +536,25 @@ internal sealed class SentinelMonitoring(
                 // remove this Sentinel's fast path for the life of the client.
                 // The episode's rearm task is already complete when a publication happened while
                 // the final attempts were failing, so the monitor resumes without a second one.
-                try { await Volatile.Read(ref rearm).WaitAsync(cancellationToken).ConfigureAwait(false); }
+                try
+                {
+                    await Volatile.Read(ref rearm).WaitAsync(cancellationToken).ConfigureAwait(false);
+                }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+
                 SafeLog(endpoint, static (logger, endpoint) => logger.SentinelMonitorResumed(endpoint));
                 budget.Reset();
                 rearm = CurrentMonitorRearm();
                 continue;
             }
+
             var delay = budget.GetDelay();
             RespireTelemetry.RecordDiscoveryReconnect(endpoint, SentinelMonitorReconnectScope, budget.Attempts, delay, logger);
-            try { await Task.Delay(delay, Clock, cancellationToken).ConfigureAwait(false); }
+
+            try
+            {
+                await Task.Delay(delay, Clock, cancellationToken).ConfigureAwait(false);
+            }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
         }
     }
@@ -402,18 +566,26 @@ internal sealed class SentinelMonitoring(
         CancellationToken cancellationToken)
     {
         var firstCleanup = Dispose(first);
+
         if (!cancellationToken.IsCancellationRequested)
         {
             // Normally unsubscribe before closing the client. If shutdown interrupts a
             // stalled unsubscribe, start client cleanup too, without losing the first task.
-            try { await firstCleanup.WaitAsync(cancellationToken).ConfigureAwait(false); }
+            try
+            {
+                await firstCleanup.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
             catch (Exception) { /* The join below retains every cleanup failure. */ }
         }
+
         await CleanupTasks.WhenAllAsync([firstCleanup, Dispose(second)]).ConfigureAwait(false);
 
         static Task Dispose(IAsyncDisposable? resource)
         {
-            try { return resource?.DisposeAsync().AsTask() ?? Task.CompletedTask; }
+            try
+            {
+                return resource?.DisposeAsync().AsTask() ?? Task.CompletedTask;
+            }
             catch (Exception error) { return Task.FromException(error); }
         }
     }
@@ -471,32 +643,56 @@ internal sealed class SentinelMonitoring(
     internal async ValueTask<string[]?> ResolveAddressesAsync(string host, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_gate) if (_disposed) return null;
-        if (IPAddress.TryParse(host, out var literal)) return [SentinelEndpointIdentity.NormalizeAddress(literal)];
+
+        lock (_gate)
+        {
+            if (_disposed)
+            {
+                return null;
+            }
+        }
+
+        if (IPAddress.TryParse(host, out var literal))
+        {
+            return [SentinelEndpointIdentity.NormalizeAddress(literal)];
+        }
+
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(options.ConnectTimeout);
             Task<IPAddress[]> resolution;
+
             lock (_gate)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (_disposed) return null;
+
+                if (_disposed)
+                {
+                    return null;
+                }
                 // Starting DNS shares Stop's gate; its asynchronous completion must not.
                 // The internal resolver seam must return its task without blocking.
                 resolution = HostResolver(host, timeout.Token);
             }
+
             var addresses = await resolution.ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             // Stop closes ownership before asynchronous linked-token callbacks finish.
             // Late DNS must not supply evidence or trigger a follow-up target lookup.
-            lock (_gate) if (_disposed) return null;
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    return null;
+                }
+            }
+
             return Array.ConvertAll(addresses, SentinelEndpointIdentity.NormalizeAddress);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested && SentinelExceptionPolicy.IsRecoverable(error))
         {
-            SafeLog((error, host), static (logger, state)
-                => logger.SentinelSwitchSourceResolutionFailed(state.host, state.error));
+            SafeLog((error, host), static (logger, state) => logger.SentinelSwitchSourceResolutionFailed(state.host, state.error));
             return null;
         }
     }
@@ -504,8 +700,15 @@ internal sealed class SentinelMonitoring(
     // Ordinary logger failures must not stop monitoring, rediscovery or disposal. Fatal failures propagate.
     private void SafeLog<TState>(TState state, Action<ILogger, TState> log)
     {
-        if (logger is null) return;
-        try { log(logger, state); }
+        if (logger is null)
+        {
+            return;
+        }
+
+        try
+        {
+            log(logger, state);
+        }
         catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
         {
             RespireTelemetry.RecordSentinelGuardedLoggingFailure();
@@ -517,7 +720,9 @@ internal sealed class SentinelMonitoring(
         try
         {
             if (logger?.IsEnabled(level) == true)
+            {
                 logger.SentinelEvent(level, message.Channel.ToString(), options.SentinelPrimaryName, sentinel, message.Text);
+            }
         }
         catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
         {

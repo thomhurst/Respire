@@ -43,7 +43,11 @@ public sealed class RespireHashImportSession : IAsyncDisposable
         _routeVersion = routeVersion;
     }
 
-    internal int? ClusterSlot { get; }
+    internal int? ClusterSlot
+    {
+        get;
+    }
+
     internal RespireConnection Connection => _connection;
 
     internal static ValueTask<RespireHashImportSession> OpenAsync(RespireClient client,
@@ -51,14 +55,22 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
         int? slot = null;
+
         if (client.Core.Cluster is not null)
         {
             if (routingKey is not { } key)
+            {
                 throw new InvalidOperationException("Redis Cluster hash import sessions require a routing key.");
+            }
+
             if (!client.Key(in key).TryGetClusterSlot(out var value))
+            {
                 throw new ArgumentException("The routing key must identify a Cluster slot.", nameof(routingKey));
+            }
+
             slot = value;
         }
+
         return client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "HIMPORT OPEN", cancellationToken,
                 (Client: client, Slot: slot, Token: cancellationToken),
@@ -75,11 +87,17 @@ public sealed class RespireHashImportSession : IAsyncDisposable
             ? await core.GetDedicatedPoolAsync(cancellationToken, observation: default).ConfigureAwait(false)
             : await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null, observation: default).ConfigureAwait(false);
         RespireConnection connection;
+
         if (cluster is null)
+        {
             (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken, observation: default, reuseIdle: false).ConfigureAwait(false);
+        }
         else
+        {
             (pool, connection) = await cluster.RentDedicatedConnectionAsync(pool, slot, cancellationToken,
                 discovery: null, reuseIdle: false, observation: default).ConfigureAwait(false);
+        }
+
         return new(client, pool, connection, slot, cluster?.CaptureSlotVersion(slot) ?? default);
     }
 
@@ -91,6 +109,7 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     public ValueTask<bool> PrepareAsync(RespireValue name, ReadOnlySpan<RespireValue> fields, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<bool>.Start();
+
         try
         {
             return owner.Attach(SendAsync(PrepareOperation, PrepareCommand(name, fields), static value => ResponseReader.Ok(in value), cancellationToken, owner.Observation));
@@ -110,6 +129,7 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     public ValueTask<bool> SetAsync(RespireKey key, RespireValue name, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<bool>.Start();
+
         try
         {
             return owner.Attach(SendAsync(SetOperation, SetCommand(key, name, values), static value => ResponseReader.Ok(in value), cancellationToken, owner.Observation));
@@ -125,6 +145,7 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     public ValueTask<bool> DiscardAsync(RespireValue name, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
+
         try
         {
             return owner.Attach(SendAsync(DiscardOperation, DiscardCommand(name), static value => ReadDiscard(in value), cancellationToken, owner.Observation));
@@ -140,6 +161,7 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     public ValueTask<long> DiscardAllAsync(CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
+
         try
         {
             return owner.Attach(SendAsync(DiscardAllOperation, DiscardAllCommand(), static value => ReadDiscardAll(in value), cancellationToken, owner.Observation));
@@ -154,14 +176,22 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     internal static bool ReadDiscard(in RespValue value)
     {
         var count = ReadDiscardAll(in value);
-        if (count > 1) throw new RespireProtocolException("HIMPORT DISCARD must return zero or one.");
+
+        if (count > 1)
+        {
+            throw new RespireProtocolException("HIMPORT DISCARD must return zero or one.");
+        }
+
         return count == 1;
     }
 
     internal static long ReadDiscardAll(in RespValue value)
     {
         if (value.Type != RespireDataType.Integer || value.AsInteger() < 0)
+        {
             throw new RespireProtocolException("HIMPORT discard replies must be nonnegative integers.");
+        }
+
         return value.AsInteger();
     }
 
@@ -187,13 +217,18 @@ public sealed class RespireHashImportSession : IAsyncDisposable
         var args = new RespireValue[fields.Length + 1];
         args[0] = name.Snapshot();
         var distinct = new HashSet<RespireValue>();
+
         for (var index = 0; index < fields.Length; index++)
         {
             ValidateName(fields[index]);
             args[index + 1] = fields[index].Snapshot();
+
             if (!distinct.Add(args[index + 1]))
+            {
                 throw new ArgumentException("A field name must not appear twice in a fieldset.", nameof(fields));
+            }
         }
+
         return new(PrepareVerb, args);
     }
 
@@ -203,16 +238,26 @@ public sealed class RespireHashImportSession : IAsyncDisposable
         ValidateName(name);
         ArgumentOutOfRangeException.ThrowIfZero(values.Length);
         var mapped = _client.Key(in key).Snapshot();
+
         if (ClusterSlot is { } slot && (!mapped.TryGetClusterSlot(out var candidate) || candidate != slot))
+        {
             throw new InvalidOperationException("Every hash import key must use the session's effective Cluster slot.");
+        }
+
         var args = new RespireValue[values.Length + 2];
         args[0] = mapped;
         args[1] = name.Snapshot();
+
         for (var index = 0; index < values.Length; index++)
         {
-            if (values[index].IsNull) throw new ArgumentException("Import values cannot be null.", nameof(values));
+            if (values[index].IsNull)
+            {
+                throw new ArgumentException("Import values cannot be null.", nameof(values));
+            }
+
             args[index + 2] = values[index].Snapshot();
         }
+
         return new(RespireCommands.Hash.HIMPORT_SET.Verb, args);
     }
 
@@ -231,14 +276,20 @@ public sealed class RespireHashImportSession : IAsyncDisposable
 
     private static void ValidateName(RespireValue name)
     {
-        if (name.IsNull) throw new ArgumentException("Fieldset and field names cannot be null.", nameof(name));
+        if (name.IsNull)
+        {
+            throw new ArgumentException("Fieldset and field names cannot be null.", nameof(name));
+        }
     }
 
     internal void ValidateQueuedCommand(string operation)
     {
         CheckUsable();
+
         if (operation is not (PrepareOperation or SetOperation or DiscardOperation or DiscardAllOperation))
+        {
             throw new NotSupportedException("Hash import session queues accept only HIMPORT commands.");
+        }
     }
 
     // Admission stays outside the expiration boundary: a rejected operation has not
@@ -261,6 +312,7 @@ public sealed class RespireHashImportSession : IAsyncDisposable
         using var usage = EnterOperation();
         var cache = operation == SetOperation ? _client.Core.ClientCache : null;
         var fence = cache is null ? default : cache.BeforeCommand(operation, in command);
+
         try
         {
             using var response = operation == SetOperation
@@ -281,9 +333,16 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     internal Usage EnterOperation()
     {
         if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)
+        {
             throw new InvalidOperationException("Await the current hash import operation before starting another.");
-        try { CheckUsable(); }
+        }
+
+        try
+        {
+            CheckUsable();
+        }
         catch { Volatile.Write(ref _busy, 0); throw; }
+
         return new(this);
     }
 
@@ -293,8 +352,11 @@ public sealed class RespireHashImportSession : IAsyncDisposable
         var current = _client.Core.Cluster is { } cluster
             ? cluster.IsDedicatedStreamRouteCurrent(ClusterSlot, _routeVersion, _connection)
             : _client.Core.IsDedicatedStreamRouteCurrent(_pool, _connection);
+
         if (!_connection.IsConnected || _pool.IsStopping || !current)
+        {
             throw new InvalidOperationException("The hash import session lost its connection or route. Dispose it and open a new session.");
+        }
     }
 
     internal ValueTask ExpireIfUncertainAsync(Exception error)
@@ -306,7 +368,11 @@ public sealed class RespireHashImportSession : IAsyncDisposable
         {
             _client.Core.Cluster?.LearnWatchedRoute(server, _connection, ClusterSlot);
         }
-        try { await DisposeAsync().ConfigureAwait(false); }
+
+        try
+        {
+            await DisposeAsync().ConfigureAwait(false);
+        }
         catch (Exception) { /* Preserve the operation failure; the pool retains cleanup failures. */ }
     }
 
@@ -316,13 +382,22 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     {
         Volatile.Write(ref _disposed, 1);
         var completion = Volatile.Read(ref _disposal);
+
         if (completion is null)
         {
             completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var existing = Interlocked.CompareExchange(ref _disposal, completion, null);
-            if (existing is not null) completion = existing;
-            else _ = DisposeCoreAsync(completion);
+
+            if (existing is not null)
+            {
+                completion = existing;
+            }
+            else
+            {
+                _ = DisposeCoreAsync(completion);
+            }
         }
+
         return new(completion.Task);
     }
 

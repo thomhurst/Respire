@@ -18,18 +18,34 @@ internal sealed partial class RespireConnection
             observation.UseEndpoint(null);
             throw new InvalidOperationException("An OPTOUT bypass read needs 2 in-flight slots.");
         }
+
         observation.UseEndpoint(new(Host, Port), cancellationToken);
+
         if (cancellationToken.IsCancellationRequested)
+        {
             throw new RespireCommandNotSubmittedException(new OperationCanceledException(cancellationToken));
+        }
+
         if (command is IStreamingRespCommand)
+        {
             throw new NotSupportedException("Ordered admission does not support streaming command payloads.");
-        if (!deadline.IsSet && armCommandDeadline) deadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        }
+
+        if (!deadline.IsSet && armCommandDeadline)
+        {
+            deadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        }
+
         var prefixed = new PrefixedCommand<ClientCachingCommand, TCommand>(new(optOut: true), command, _cacheMutationAdmission);
         var source = MultiReplyPendingResponseSource.Rent(2, 0, commandName, _runContinuationsAsynchronously);
         source.ErrorAttempts = observation.Attempts;
         bool enqueued;
         bool startedBatch;
-        try { enqueued = TryEnqueue(in prefixed, source, deadline, out startedBatch, 1, retainRepliesBefore: true); }
+
+        try
+        {
+            enqueued = TryEnqueue(in prefixed, source, deadline, out startedBatch, 1, retainRepliesBefore: true);
+        }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, deadline, out var target, out var rerouted, preferredZone: null))
         {
             ReclaimUnpublished(source, 3);
@@ -38,6 +54,7 @@ internal sealed partial class RespireConnection
                 pinToConnection, rerouted, skipTracking: true, armCommandDeadline: armCommandDeadline).ConfigureAwait(false);
         }
         catch { ReclaimUnpublished(source, 3); throw; }
+
         if (!enqueued)
         {
             try
@@ -53,6 +70,7 @@ internal sealed partial class RespireConnection
                     pinToConnection, rerouted, skipTracking: true, armCommandDeadline: armCommandDeadline).ConfigureAwait(false);
             }
         }
+
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         ScheduleFlush(startedBatch);
         return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, deadline);

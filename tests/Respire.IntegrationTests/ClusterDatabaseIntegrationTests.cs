@@ -22,7 +22,10 @@ public class ClusterDatabaseIntegrationTests(VersionedServerFixture servers)
         var tag = $"{{{Guid.NewGuid():N}}}";
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Database = database, Connections = 2, ClientName = name,
+            UseCluster = true,
+            Database = database,
+            Connections = 2,
+            ClientName = name,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             ClientSideCache = protocol == 3 ? new() : null,
             Endpoints = { endpoint },
@@ -41,12 +44,14 @@ public class ClusterDatabaseIntegrationTests(VersionedServerFixture servers)
             first.Result.Should().BeTrue();
             second.Result.Should().Be("selected-db");
         }
+
         await using (var transaction = client.CreateTransaction())
         {
             var set = transaction.Set(tag + ":transaction", "selected-db");
             await transaction.CommitAsync();
             set.Result.Should().BeTrue();
         }
+
         (await observer.GetStringAsync(tag + "batch")).Should().BeNull();
         (await observer.GetStringAsync(tag + ":transaction")).Should().BeNull();
 
@@ -72,7 +77,9 @@ public class ClusterDatabaseIntegrationTests(VersionedServerFixture servers)
         {
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                UseCluster = true, Database = 1, Connections = 1,
+                UseCluster = true,
+                Database = 1,
+                Connections = 1,
                 Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
                 Endpoints = { new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(6379)) },
             });
@@ -90,7 +97,9 @@ public class ClusterDatabaseIntegrationTests(VersionedServerFixture servers)
         {
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                UseCluster = true, Database = 1, Connections = 1,
+                UseCluster = true,
+                Database = 1,
+                Connections = 1,
                 Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
                 Endpoints = { new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(6379)) },
             });

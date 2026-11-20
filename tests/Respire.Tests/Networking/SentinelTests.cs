@@ -32,11 +32,16 @@ public class SentinelTests
                 release.Task.GetAwaiter().GetResult();
             },
         });
+
         try
         {
             // RESP2 has no handshake commands. Wait until the fake server has accepted the socket.
             var ping = new Respire.Commands.RawCommand("*1\r\n$4\r\nPING\r\n"u8.ToArray());
-            using (await connection.SendAsync(in ping)) { }
+
+            using (await connection.SendAsync(in ping))
+            {
+            }
+
             server.CloseConnections();
             await captured.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(connection.Closed.IsCompleted).IsFalse();
@@ -92,20 +97,30 @@ public class SentinelTests
     {
         var source = new RespireOptions
         {
-            ConnectTimeout = TimeSpan.FromSeconds(11), CommandTimeout = TimeSpan.FromSeconds(12),
+            ConnectTimeout = TimeSpan.FromSeconds(11),
+            CommandTimeout = TimeSpan.FromSeconds(12),
             ConnectionIdleReadTimeout = TimeSpan.FromSeconds(13),
             ReconnectPolicy = new() { MaxAttempts = 7 },
             CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(14),
             CredentialRefreshRetryDelay = TimeSpan.FromSeconds(15),
-            TcpKeepAliveTime = TimeSpan.FromSeconds(16), TcpKeepAliveInterval = TimeSpan.FromSeconds(17),
-            TcpKeepAliveRetryCount = 18, SubscriptionBufferSize = 19,
+            TcpKeepAliveTime = TimeSpan.FromSeconds(16),
+            TcpKeepAliveInterval = TimeSpan.FromSeconds(17),
+            TcpKeepAliveRetryCount = 18,
+            SubscriptionBufferSize = 19,
             SubscriptionOverflow = RespireSubscriptionOverflow.DropNewest,
-            ReceiveBufferSize = 20_000, WriteBufferSize = 21_000, MaxInflightCommands = 22,
+            ReceiveBufferSize = 20_000,
+            WriteBufferSize = 21_000,
+            MaxInflightCommands = 22,
             LoggerFactory = Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance,
             // These are data-client settings, never subscription-monitor settings.
-            Database = 3, ClientName = "data-client", Connections = 4, UseCluster = true,
-            ReadFrom = RespireReadFrom.Replica, ReplicaEndpoints = [new("replica", 6380)],
-            SentinelPrimaryName = "service", ThreadPoolMonitoring = true,
+            Database = 3,
+            ClientName = "data-client",
+            Connections = 4,
+            UseCluster = true,
+            ReadFrom = RespireReadFrom.Replica,
+            ReplicaEndpoints = [new("replica", 6380)],
+            SentinelPrimaryName = "service",
+            ThreadPoolMonitoring = true,
         };
         var monitor = SentinelMonitoring.CreateOptions(source, new("sentinel", 26379));
         string[] transport =
@@ -119,11 +134,13 @@ public class SentinelTests
             nameof(RespireOptions.WriteBufferSize), nameof(RespireOptions.MaxInflightCommands),
             nameof(RespireOptions.LoggerFactory),
         ];
+
         foreach (var name in transport)
         {
             var property = typeof(RespireOptions).GetProperty(name)!;
             await Assert.That(property.GetValue(monitor)).IsEqualTo(property.GetValue(source));
         }
+
         await Assert.That(monitor.Database).IsEqualTo(0);
         await Assert.That(monitor.ClientName).IsNull();
         await Assert.That(monitor.Connections).IsEqualTo(1);
@@ -153,6 +170,7 @@ public class SentinelTests
         var dataProvider = new FixedCredentials("data-user", "data-password");
         var sentinelProvider = new FixedCredentials("sentinel-user", "sentinel-password");
         var options = new RespireOptions { Endpoints = [new("redis.example", 6379)], SentinelPrimaryName = "mymaster" };
+
         foreach (var part in scenario.Split('+'))
         {
             options = part switch
@@ -173,11 +191,13 @@ public class SentinelTests
         await Assert.That(monitor.Username).IsEqualTo(username);
         await Assert.That(monitor.Password).IsEqualTo(password);
         await Assert.That(monitor.CredentialProvider is not null).IsEqualTo(hasProvider);
+
         if (hasProvider)
         {
             await Assert.That(monitor.CredentialProvider).IsSameReferenceAs(
                 options.SentinelCredentialProvider is not null ? sentinelProvider : dataProvider);
         }
+
         await Assert.That(monitor.Protocol).IsEqualTo(protocol);
         await Assert.That(monitor.SentinelUsername).IsNull();
         await Assert.That(monitor.SentinelPassword).IsNull();
@@ -228,6 +248,7 @@ public class SentinelTests
             {
                 opened.Enqueue(endpoint.Port);
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(endpoint.Host, endpoint.Port, token);
@@ -258,7 +279,8 @@ public class SentinelTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", seed.Port)], SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            SentinelPrimaryName = "mymaster",
         });
 #pragma warning restore RESP010
         await client.PingAsync();
@@ -285,8 +307,10 @@ public class SentinelTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            CommandTimeout = null,
+            ConnectTimeout = TimeSpan.FromSeconds(2),
             LoggerFactory = throwingLogger ? logger : null,
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 #pragma warning restore RESP010
@@ -312,8 +336,11 @@ public class SentinelTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2), LoggerFactory = logger,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            CommandTimeout = null,
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+            LoggerFactory = logger,
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 #pragma warning restore RESP010
         await client.PingAsync();
@@ -324,16 +351,31 @@ public class SentinelTests
     internal sealed class OptionalDiscoveryLogger : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger
     {
         private int _failures;
+
         internal int Failures => Volatile.Read(ref _failures);
+
         public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel level) => true;
+
         public void Log<TState>(Microsoft.Extensions.Logging.LogLevel level, Microsoft.Extensions.Logging.EventId eventId,
             TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            if (!formatter(state, exception).StartsWith("Optional Sentinel ", StringComparison.Ordinal)) return;
+            if (!formatter(state, exception).StartsWith("Optional Sentinel ", StringComparison.Ordinal))
+            {
+                return;
+            }
+
             Interlocked.Increment(ref _failures);
             throw new InvalidOperationException("Optional discovery logger failed");
         }
@@ -348,7 +390,11 @@ public class SentinelTests
         {
             SuppressReply = command =>
             {
-                if (command != "SENTINEL SENTINELS mymaster") return false;
+                if (command != "SENTINEL SENTINELS mymaster")
+                {
+                    return false;
+                }
+
                 peersRequested.TrySetResult();
                 return true;
             },
@@ -357,8 +403,10 @@ public class SentinelTests
         var pending = RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(10),
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            CommandTimeout = null,
+            ConnectTimeout = TimeSpan.FromSeconds(10),
         }, cancellation.Token).AsTask();
         await peersRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cancellation.Cancel();
@@ -378,7 +426,8 @@ public class SentinelTests
         var options = new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
         };
         var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, (_, _, _) =>
         {
@@ -399,8 +448,10 @@ public class SentinelTests
         var options = new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            CommandTimeout = TimeSpan.FromSeconds(5), ConnectTimeout = TimeSpan.FromMilliseconds(200),
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            CommandTimeout = TimeSpan.FromSeconds(5),
+            ConnectTimeout = TimeSpan.FromMilliseconds(200),
         };
         var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, async (_, _, token) =>
         {
@@ -427,8 +478,10 @@ public class SentinelTests
         var options = new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            CommandTimeout = TimeSpan.FromMilliseconds(200), ConnectTimeout = TimeSpan.FromMilliseconds(300),
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            ConnectTimeout = TimeSpan.FromMilliseconds(300),
         };
         var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, async (_, _, token) =>
         {
@@ -451,8 +504,12 @@ public class SentinelTests
     {
         var state = new SentinelDiscoveryState([new("seed.example", 26379), new("SEED.example", 26379)]);
         await Assert.That(state.TryAdd(new("Seed.Example", 26379))).IsFalse();
+
         for (var index = 0; index < SentinelDiscoveryState.MaximumDiscoveredEndpoints; index++)
+        {
             await Assert.That(state.TryAdd(new("peer.example", 10000 + index))).IsTrue();
+        }
+
         await Assert.That(state.TryAdd(new("overflow.example", 26379))).IsFalse();
         var snapshot = state.Snapshot();
         await Assert.That(snapshot.Length).IsEqualTo(1 + SentinelDiscoveryState.MaximumDiscoveredEndpoints);
@@ -484,14 +541,23 @@ public class SentinelTests
         var roleRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var primary = new FakeRespServer(PrimaryRole)
         {
-            SuppressReply = command => { if (command == "ROLE") roleRequested.TrySetResult(); return true; },
+            SuppressReply = command =>
+            {
+                if (command == "ROLE")
+                {
+                    roleRequested.TrySetResult();
+                }
+
+                return true;
+            },
         };
         await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port), "*0\r\n"u8.ToArray());
         using var cancellation = new CancellationTokenSource();
         var pending = RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(10),
         }, cancellation.Token).AsTask();
         await roleRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -513,7 +579,9 @@ public class SentinelTests
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
-            SentinelPrimaryName = "mymaster", CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
+            SentinelPrimaryName = "mymaster",
+            CommandTimeout = null,
+            ConnectTimeout = TimeSpan.FromSeconds(2),
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 #pragma warning restore RESP010
         await client.PingAsync();
@@ -761,11 +829,13 @@ public class SentinelTests
             SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(1),
         };
+
         if (useConnectionString)
         {
             options = RespireOptions.Parse(
                 $"127.0.0.1:{invalidSentinel.Port},127.0.0.1:{validSentinel.Port},serviceName=mymaster,connectTimeout=1000,protocol=2");
         }
+
 #pragma warning disable RESP010 // Each scenario owns its Sentinel discovery state and disposes the client with its fake topology.
         await using var client = await RespireClient.ConnectAsync(options);
 #pragma warning restore RESP010

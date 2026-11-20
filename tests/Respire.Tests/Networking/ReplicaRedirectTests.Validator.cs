@@ -24,16 +24,27 @@ public partial class ReplicaRedirectTests
         var destinations = new List<RespireEndpoint>();
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
         {
-            Username = "user", Password = "secret",
+            Username = "user",
+            Password = "secret",
             RetryPolicy = retry ? new() { RetryableErrors = RespireRetryableErrors.ConnectionLoss } : null,
-            ReplicaRedirectValidator = endpoint => { destinations.Add(endpoint); return false; },
+            ReplicaRedirectValidator = endpoint =>
+            {
+                destinations.Add(endpoint);
+                return false;
+            },
         });
         var pools = client.Core.OwnedPools.Count;
         var procedure = RespireScript.Create("return 7").WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         var error = await Assert.That(async () =>
         {
-            if (script) await client.Scripts.ExecuteIntegerAsync(procedure, "key");
-            else await client.GetStringAsync("key");
+            if (script)
+            {
+                await client.Scripts.ExecuteIntegerAsync(procedure, "key");
+            }
+            else
+            {
+                await client.GetStringAsync("key");
+            }
         }).ThrowsExactly<RespireException>();
         await Assert.That(error!.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", target.Port));
         await Assert.That(destinations).IsEquivalentTo([new RespireEndpoint("127.0.0.1", target.Port)]);
@@ -78,8 +89,16 @@ public partial class ReplicaRedirectTests
                 return endpoint.Port == source.Port ? endpoint : new("127.0.0.1", target.Port);
             },
         });
-        if (allowed) await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
-        else await Assert.That(async () => await client.GetStringAsync("key")).ThrowsExactly<RespireException>();
+
+        if (allowed)
+        {
+            await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        }
+        else
+        {
+            await Assert.That(async () => await client.GetStringAsync("key")).ThrowsExactly<RespireException>();
+        }
+
         await Assert.That(validated).IsEquivalentTo([new RespireEndpoint(expectedHost, port)]);
         await Assert.That(mapped.Contains(new(expectedHost, port))).IsEqualTo(allowed);
         await Assert.That(target.ConnectionAccepted.IsCompleted).IsEqualTo(allowed);
@@ -114,7 +133,8 @@ public partial class ReplicaRedirectTests
         var destinations = new List<RespireEndpoint>();
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
         {
-            Password = "secret", RetryPolicy = retry ? new() : null,
+            Password = "secret",
+            RetryPolicy = retry ? new() : null,
             ReplicaRedirectValidator = endpoint =>
             {
                 destinations.Add(endpoint);
@@ -122,15 +142,29 @@ public partial class ReplicaRedirectTests
             },
         });
         var pools = client.Core.OwnedPools.Count;
+
         async Task Send()
         {
             if (script)
+            {
                 await Assert.That(await client.Scripts.ExecuteIntegerAsync(
                     RespireScript.Create("return 7").WithRetryCategory(RespireCommandRetryCategory.ReadOnly), "key")).IsEqualTo(7);
-            else await Assert.That(await client.GetStringAsync("key")).IsEqualTo("7");
+            }
+            else
+            {
+                await Assert.That(await client.GetStringAsync("key")).IsEqualTo("7");
+            }
         }
-        if (allowFinal) await Send();
-        else await Assert.That(Send).ThrowsExactly<RespireException>();
+
+        if (allowFinal)
+        {
+            await Send();
+        }
+        else
+        {
+            await Assert.That(Send).ThrowsExactly<RespireException>();
+        }
+
         await Assert.That(destinations).IsEquivalentTo([
             new RespireEndpoint("127.0.0.1", intermediate.Port), new RespireEndpoint("127.0.0.1", final.Port)]);
         await Assert.That(intermediate.ReceivedCommands.Contains("AUTH secret")).IsTrue();
@@ -176,7 +210,11 @@ public partial class ReplicaRedirectTests
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
         {
             EnableReplicaRedirects = false,
-            ReplicaRedirectValidator = _ => { calls++; return true; },
+            ReplicaRedirectValidator = _ =>
+            {
+                calls++;
+                return true;
+            },
         });
         var error = await Assert.That(async () => await client.GetStringAsync("key")).Throws<RespireServerException>();
         await Assert.That(error!.Code).IsEqualTo("REDIRECT");
@@ -206,7 +244,10 @@ public partial class ReplicaRedirectTests
         var pools = client.Core.OwnedPools.Count;
         var execution = await client.StartTrackedScriptExecutionAsync(RespireScript.Create("return 1"), ["key"], [], default,
             requireReliableCorrectionOrdering: true);
-        var error = await Assert.That(async () => { using var reply = await execution.ConsumeResponseAsync(); })
+        var error = await Assert.That(async () =>
+            {
+                using var reply = await execution.ConsumeResponseAsync();
+            })
             .ThrowsExactly<RespireException>();
         await Assert.That(error!.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", final.Port));
         await Assert.That(destinations).IsEquivalentTo([

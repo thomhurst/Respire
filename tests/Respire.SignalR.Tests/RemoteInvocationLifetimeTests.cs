@@ -63,9 +63,18 @@ public class RemoteInvocationLifetimeTests
             return Task.CompletedTask;
         });
         Register(results, lifetime);
-        if (!completeBeforeStart) lifetime.Start();
+
+        if (!completeBeforeStart)
+        {
+            lifetime.Start();
+        }
+
         await results.TryCompleteResult("connection", CompletionMessage.WithResult("id", 1));
-        if (completeBeforeStart) lifetime.Start();
+
+        if (completeBeforeStart)
+        {
+            lifetime.Start();
+        }
         // Reusing the ID makes a leaked callback observable: it must not remove this new owner.
         results.AddInvocation("id", (typeof(int), "connection", new object(), static (_, _) => Task.CompletedTask));
         disconnected.Cancel();
@@ -89,13 +98,23 @@ public class RemoteInvocationLifetimeTests
         var lifetime = new RemoteInvocationLifetime(results, "id", disconnected.Token, TimeSpan.FromMinutes(1), _ =>
         {
             Interlocked.Increment(ref calls);
-            if (!asynchronous) throw failure;
+
+            if (!asynchronous)
+            {
+                throw failure;
+            }
+
             return forwarding.Task;
         }, logger);
         Register(results, lifetime);
         lifetime.Start();
         await Assert.That(results.TryGetType("id", out _)).IsFalse();
-        if (asynchronous) forwarding.SetException(failure);
+
+        if (asynchronous)
+        {
+            forwarding.SetException(failure);
+        }
+
         var observed = await logger.Failure.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(ReferenceEquals(observed, failure)).IsTrue();
         await lifetime.CompleteAsync(CompletionMessage.WithResult("id", 1));
@@ -105,13 +124,23 @@ public class RemoteInvocationLifetimeTests
 
     private sealed class CompletionLogger : ILogger
     {
-        internal TaskCompletionSource<Exception> Failure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource<Exception> Failure
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal int Calls;
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel level) => true;
+
         public void Log<TState>(LogLevel level, EventId id, TState state, Exception? error, Func<TState, Exception?, string> format)
         {
-            if (id.Id != 13 || error is null) return;
+            if (id.Id != 13 || error is null)
+            {
+                return;
+            }
+
             Interlocked.Increment(ref Calls);
             Failure.TrySetResult(error);
         }

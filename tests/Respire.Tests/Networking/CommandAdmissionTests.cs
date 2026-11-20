@@ -22,6 +22,7 @@ public class CommandAdmissionTests
         var protocol = new ProtocolCommand<Cmd>(new Cmd(Verbs.ReadOnly));
         var fence = cache.BeforeCommand("SET", new Cmd2(Verbs.Set, "allocation-key", "value"));
         var write = new MutationCommand<Cmd2>(new Cmd2(Verbs.Set, "allocation-key", "value"), fence);
+
         try
         {
             _ = MeasureDispatchAdmission(null, in read);
@@ -49,7 +50,12 @@ public class CommandAdmissionTests
         where TCommand : struct, IRespCommand
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var iteration = 0; iteration < 1024; iteration++) cache?.ValidateDispatchAdmission(in command);
+
+        for (var iteration = 0; iteration < 1024; iteration++)
+        {
+            cache?.ValidateDispatchAdmission(in command);
+        }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -57,7 +63,12 @@ public class CommandAdmissionTests
     private static long MeasureAllocatingControl()
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var iteration = 0; iteration < 1024; iteration++) GC.KeepAlive(new byte[32]);
+
+        for (var iteration = 0; iteration < 1024; iteration++)
+        {
+            GC.KeepAlive(new byte[32]);
+        }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -72,15 +83,25 @@ public class CommandAdmissionTests
     private readonly struct AdmissionCommand(AdmissionState state, int sizeHint = 0) : IRespCommand
     {
         public int GetWriteSizeHint() => sizeHint;
+
         public AdmissionCommand WithSizeHint(int bound) => new(state, bound);
+
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer) => writer.WriteRaw(FakeRespServer.PingFrame);
+
         public void OnAccepted() => state.Accepted++;
+
         public void ValidateAdmission()
         {
             state.Validated++;
-            if (state.Failure is { } failure) throw failure;
+
+            if (state.Failure is { } failure)
+            {
+                throw failure;
+            }
         }
+
         public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => state.ResponseToken;
     }
 
@@ -89,15 +110,20 @@ public class CommandAdmissionTests
     {
         var commands = typeof(RespireClient).Assembly.GetTypes().Where(type =>
             type.IsValueType && typeof(IRespCommand).IsAssignableFrom(type)).ToArray();
+
         foreach (var command in commands.Where(type => type.GetMethod(nameof(IRespCommand.GetMutationFence),
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly) is not null))
+        {
             await Assert.That(typeof(IMutationAdmissionCommand).IsAssignableFrom(command)).IsTrue();
+        }
+
         var wrappers = commands.Where(type =>
             type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 .Any(field => typeof(IRespCommand).IsAssignableFrom(field.FieldType) ||
                     field.FieldType.IsGenericParameter && field.FieldType.GetGenericParameterConstraints()
                         .Any(constraint => typeof(IRespCommand).IsAssignableFrom(constraint)))).ToArray();
         await Assert.That(wrappers.Length).IsGreaterThanOrEqualTo(3);
+
         foreach (var wrapper in wrappers)
         {
             await Assert.That(typeof(IRespCommandWrapper).IsAssignableFrom(wrapper)).IsTrue();
@@ -141,7 +167,9 @@ public class CommandAdmissionTests
         var state = new AdmissionState { Failure = failure };
         var execution = new RespireClient.TrackedScriptExecution(connection, default);
         var error = await Assert.That(async () =>
-            { using var reply = await StartSend(connection, new AdmissionCommand(state), execution, direct, wrapper); })
+            {
+                using var reply = await StartSend(connection, new AdmissionCommand(state), execution, direct, wrapper);
+            })
             .ThrowsExactly<InvalidOperationException>();
         await Assert.That(ReferenceEquals(error, failure)).IsTrue();
         await Assert.That(state.Validated).IsEqualTo(1);
@@ -176,10 +204,23 @@ public class CommandAdmissionTests
         {
             SuppressReply = command =>
             {
-                if (command != "PING") return false;
+                if (command != "PING")
+                {
+                    return false;
+                }
+
                 var count = Interlocked.Increment(ref received);
-                if (waitForCapacity && count == 2) capacityFilled.TrySetResult();
-                if (count == (waitForCapacity ? 3 : 1)) arrived.TrySetResult();
+
+                if (waitForCapacity && count == 2)
+                {
+                    capacityFilled.TrySetResult();
+                }
+
+                if (count == (waitForCapacity ? 3 : 1))
+                {
+                    arrived.TrySetResult();
+                }
+
                 return true;
             },
         };
@@ -190,8 +231,14 @@ public class CommandAdmissionTests
         var execution = new RespireClient.TrackedScriptExecution(connection, default);
         var first = waitForCapacity ? connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask() : null;
         var second = waitForCapacity ? connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask() : null;
-        if (waitForCapacity) await capacityFilled.Task.WaitAsync(Limit);
+
+        if (waitForCapacity)
+        {
+            await capacityFilled.Task.WaitAsync(Limit);
+        }
+
         var pending = StartSend(connection, new AdmissionCommand(state), execution, false, wrapper, admission.Token).AsTask();
+
         if (waitForCapacity)
         {
             await Assert.That(pending.IsCompleted).IsFalse();
@@ -199,13 +246,18 @@ public class CommandAdmissionTests
             using var firstReply = await first!.WaitAsync(Limit);
             using var secondReply = await second!.WaitAsync(Limit);
         }
+
         await arrived.Task.WaitAsync(Limit);
         admission.Cancel();
         await Assert.That(pending.IsCompleted).IsFalse();
+
         if (cancelCaller)
         {
             caller.Cancel();
-            var error = await Assert.That(async () => { using var reply = await pending.WaitAsync(Limit); })
+            var error = await Assert.That(async () =>
+                {
+                    using var reply = await pending.WaitAsync(Limit);
+                })
                 .Throws<OperationCanceledException>();
             await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
             await server.SendRawAsync(FakeRespServer.PongReply);
@@ -216,8 +268,13 @@ public class CommandAdmissionTests
             using var reply = await pending.WaitAsync(Limit);
             await Assert.That(reply.AsString()).IsEqualTo("PONG");
         }
+
         await Assert.That(state.Accepted).IsEqualTo(1);
-        if (wrapper == "timestamp") await Assert.That(execution.StartedTimestamp).IsGreaterThan(0L);
+
+        if (wrapper == "timestamp")
+        {
+            await Assert.That(execution.StartedTimestamp).IsGreaterThan(0L);
+        }
     }
 
     [Test, NotInParallel]
@@ -226,7 +283,13 @@ public class CommandAdmissionTests
         // No socket is used: the execution record only stores timestamps in this measurement.
         var execution = new RespireClient.TrackedScriptExecution(null!, default);
         var command = new RespireClient.SendTimestampCommand<AdmissionCommand>(new(new AdmissionState()), execution);
-        for (var i = 0; i < 20; i++) { Measure(command, false); Measure(command, true); }
+
+        for (var i = 0; i < 20; i++)
+        {
+            Measure(command, false);
+            Measure(command, true);
+        }
+
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
             (Bytes: Measure(command, false), Control: Measure(command, true)));
         await Assert.That(measured.Bytes).IsEqualTo(0L);
@@ -237,13 +300,19 @@ public class CommandAdmissionTests
     private static long Measure<TCommand>(TCommand command, bool control) where TCommand : struct, IRespCommand
     {
         var start = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1_000; i++)
         {
             command.ValidateAdmission();
             command.GetResponseCancellationToken(default);
             command.OnAccepted();
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - start;
     }
 

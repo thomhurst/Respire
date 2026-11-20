@@ -9,12 +9,15 @@ public partial interface IRespireBatchSortedSetCommands
 {
     /// <summary>Queues ZRANGE XX; null means a missing key. Requires Valkey 9.2+.</summary>
     RespirePending<string[]?> RangeIfExists(RespireKey key, long start = 0, long stop = -1, bool descending = false);
+
     /// <summary>Queues ZRANGE XX and deserializes members; null means a missing key. Requires Valkey 9.2+.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T[]?> RangeIfExists<T>(RespireKey key, long start = 0, long stop = -1, bool descending = false);
+
     /// <summary>Queues ZRANGE XX WITHSCORES; null means a missing key. Requires Valkey 9.2+.</summary>
     RespirePending<RespireSortedSetEntry[]?> RangeIfExistsWithScores(RespireKey key, long start = 0, long stop = -1, bool descending = false);
+
     /// <summary>Queues ZRANGE XX WITHSCORES and deserializes members; null means a missing key. Requires Valkey 9.2+.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]

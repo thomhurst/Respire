@@ -16,30 +16,57 @@ public sealed class RespireTimeSeriesMultiAddProgress
         UncertainSampleCount = uncertainSampleCount;
         var confirmedTimestamps = new long?[completedSampleCount];
         var confirmedErrors = new string?[completedSampleCount];
+
         for (var index = 0; index < completedSampleCount; index++)
         {
             confirmedErrors[index] = errors?[index];
-            if (confirmedErrors[index] is null) confirmedTimestamps[index] = timestamps[index];
+
+            if (confirmedErrors[index] is null)
+            {
+                confirmedTimestamps[index] = timestamps[index];
+            }
         }
+
         Timestamps = Array.AsReadOnly(confirmedTimestamps);
         Errors = Array.AsReadOnly(confirmedErrors);
     }
 
     /// <summary>The number of samples in the original request.</summary>
-    public int TotalSampleCount { get; }
+    public int TotalSampleCount
+    {
+        get;
+    }
+
     /// <summary>The number of chunks with fully decoded replies.</summary>
-    public int CompletedChunkCount { get; }
+    public int CompletedChunkCount
+    {
+        get;
+    }
+
     /// <summary>The number of samples with confirmed outcomes, including server rejections.</summary>
     public int CompletedSampleCount => Timestamps.Count;
+
     /// <summary>The size of the attempted chunk without a fully decoded reply, or zero if cancellation preceded it.</summary>
     /// <remarks>Conservative: the transport may have rejected the chunk before sending any bytes.</remarks>
-    public int UncertainSampleCount { get; }
+    public int UncertainSampleCount
+    {
+        get;
+    }
+
     /// <summary>The number of trailing samples for which no command was attempted.</summary>
     public int UnattemptedSampleCount => TotalSampleCount - CompletedSampleCount - UncertainSampleCount;
+
     /// <summary>Timestamps for the completed request prefix, or null for rejected samples.</summary>
-    public IReadOnlyList<long?> Timestamps { get; }
+    public IReadOnlyList<long?> Timestamps
+    {
+        get;
+    }
+
     /// <summary>Server errors for the completed request prefix, or null for accepted samples.</summary>
-    public IReadOnlyList<string?> Errors { get; }
+    public IReadOnlyList<string?> Errors
+    {
+        get;
+    }
 
     /// <summary>Returns progress from an interrupted chunked write, or null for an unrelated exception.</summary>
     public static RespireTimeSeriesMultiAddProgress? FromException(Exception exception)
@@ -63,7 +90,10 @@ public sealed class RespireTimeSeriesMultiAddInterruptedException : RespireExcep
         => Progress = progress;
 
     /// <summary>Confirmed outcomes, the uncertain chunk, and unattempted samples.</summary>
-    public RespireTimeSeriesMultiAddProgress Progress { get; }
+    public RespireTimeSeriesMultiAddProgress Progress
+    {
+        get;
+    }
 }
 
 /// <summary>A chunked TS.MADD operation was canceled after at least one chunk's reply was confirmed.</summary>
@@ -74,5 +104,8 @@ public sealed class RespireTimeSeriesMultiAddCanceledException : OperationCancel
         => Progress = progress;
 
     /// <summary>Confirmed outcomes, the uncertain chunk, and unattempted samples.</summary>
-    public RespireTimeSeriesMultiAddProgress Progress { get; }
+    public RespireTimeSeriesMultiAddProgress Progress
+    {
+        get;
+    }
 }

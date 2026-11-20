@@ -1,7 +1,6 @@
 using TUnit.Core;
 using Verify = Respire.Analyzers.Tests.AnalyzerVerifier<Respire.Analyzers.UndisposedPooledResultAnalyzer>;
-using VerifyFix = Respire.Analyzers.Tests.CodeFixVerifier<
-    Respire.Analyzers.UndisposedPooledResultAnalyzer, Respire.Analyzers.UndisposedPooledResultCodeFixProvider>;
+using VerifyFix = Respire.Analyzers.Tests.CodeFixVerifier<Respire.Analyzers.UndisposedPooledResultAnalyzer, Respire.Analyzers.UndisposedPooledResultCodeFixProvider>;
 
 namespace Respire.Analyzers.Tests;
 

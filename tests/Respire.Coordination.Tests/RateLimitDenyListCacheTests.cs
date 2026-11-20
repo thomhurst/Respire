@@ -12,8 +12,16 @@ public class RateLimitDenyListCacheTests
         var time = new ManualTime();
         var denied = false;
         var reads = 0;
-        var list = new RespireRateLimitDenyList((_, _) => { reads++; return ValueTask.FromResult(denied); },
-            (_, value, _) => { denied = value; return ValueTask.CompletedTask; }, time, TimeSpan.FromSeconds(1), 2);
+        var list = new RespireRateLimitDenyList((_, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult(denied);
+        },
+            (_, value, _) =>
+            {
+                denied = value;
+                return ValueTask.CompletedTask;
+            }, time, TimeSpan.FromSeconds(1), 2);
         await Assert.That(await list.IsDeniedAsync("alice")).IsFalse();
         denied = true; // Another process changes Redis; cache hits must not extend the lifetime.
         time.Advance(TimeSpan.FromMilliseconds(999));
@@ -34,11 +42,24 @@ public class RateLimitDenyListCacheTests
     public async Task CacheCapacityAndDisabledCacheBoundRetainedEntries()
     {
         var reads = 0;
-        var list = new RespireRateLimitDenyList((_, _) => { reads++; return ValueTask.FromResult(false); },
+        var list = new RespireRateLimitDenyList((_, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult(false);
+        },
             (_, _, _) => ValueTask.CompletedTask, new ManualTime(), TimeSpan.FromSeconds(1), 2);
-        foreach (var identity in new[] { "a", "b", "c", "a" }) await list.IsDeniedAsync(identity);
+
+        foreach (var identity in new[] { "a", "b", "c", "a" })
+        {
+            await list.IsDeniedAsync(identity);
+        }
+
         await Assert.That(reads).IsEqualTo(4);
-        var uncached = new RespireRateLimitDenyList((_, _) => { reads++; return ValueTask.FromResult(false); },
+        var uncached = new RespireRateLimitDenyList((_, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult(false);
+        },
             (_, _, _) => ValueTask.CompletedTask, new ManualTime(), TimeSpan.Zero, 2);
         await uncached.IsDeniedAsync("a");
         await uncached.IsDeniedAsync("a");
@@ -57,8 +78,16 @@ public class RateLimitDenyListCacheTests
                 ? new ValueTask<bool>(pending.Task) : ValueTask.FromResult(true),
             (_, _, _) => ValueTask.CompletedTask, time, TimeSpan.FromSeconds(1), 2);
         var oldRead = list.IsDeniedAsync("a").AsTask();
-        if (invalidate) list.Invalidate();
-        else time.Advance(TimeSpan.FromSeconds(1));
+
+        if (invalidate)
+        {
+            list.Invalidate();
+        }
+        else
+        {
+            time.Advance(TimeSpan.FromSeconds(1));
+        }
+
         pending.SetResult(false);
         await Assert.That(await oldRead).IsFalse();
         await Assert.That(await list.IsDeniedAsync("a")).IsTrue();
@@ -90,7 +119,11 @@ public class RateLimitDenyListCacheTests
         var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var denied = false;
         var list = new RespireRateLimitDenyList((_, _) => ValueTask.FromResult(denied),
-            async (_, value, _) => { await pending.Task; denied = value; },
+            async (_, value, _) =>
+            {
+                await pending.Task;
+                denied = value;
+            },
             new ManualTime(), TimeSpan.FromSeconds(1), 2);
         var update = list.SetDeniedAsync("a", true).AsTask();
         await Assert.That(await list.IsDeniedAsync("a")).IsFalse();
@@ -126,7 +159,11 @@ public class RateLimitDenyListCacheTests
             (_, _, _) => ValueTask.CompletedTask, TimeProvider.System, TimeSpan.FromSeconds(1), 4);
         var outcomes = await Task.WhenAll(Enumerable.Range(0, 100).Select(index => Task.Run(async () =>
         {
-            if (index % 3 == 0) list.Invalidate();
+            if (index % 3 == 0)
+            {
+                list.Invalidate();
+            }
+
             return await list.IsDeniedAsync(index.ToString());
         })));
         await Assert.That(outcomes.All(value => value)).IsTrue();
@@ -140,7 +177,11 @@ public class RateLimitDenyListCacheTests
         var reads = 0;
         var readToken = new CancellationToken(true);
         var list = new RespireRateLimitDenyList((_, token) =>
-            { reads++; readToken = token; return new ValueTask<bool>(pending.Task); },
+            {
+                reads++;
+                readToken = token;
+                return new ValueTask<bool>(pending.Task);
+            },
             (_, _, _) => ValueTask.CompletedTask, new ManualTime(), TimeSpan.FromSeconds(1), 2);
         using var cancelled = new CancellationTokenSource();
         var first = list.IsDeniedAsync("a", cancelled.Token).AsTask();
@@ -184,7 +225,10 @@ public class RateLimitDenyListCacheTests
         var reads = 0;
         var fail = true;
         var list = new RespireRateLimitDenyList((_, _) =>
-            { reads++; return fail ? new ValueTask<bool>(pending.Task) : ValueTask.FromResult(true); },
+            {
+                reads++;
+                return fail ? new ValueTask<bool>(pending.Task) : ValueTask.FromResult(true);
+            },
             (_, _, _) => ValueTask.CompletedTask, new ManualTime(), TimeSpan.FromSeconds(1), 1);
         var first = list.IsDeniedAsync("a").AsTask();
         var shared = list.IsDeniedAsync("a").AsTask();
@@ -192,8 +236,12 @@ public class RateLimitDenyListCacheTests
         var excessAgain = list.IsDeniedAsync("b").AsTask();
         await Assert.That(reads).IsEqualTo(3);
         pending.SetException(new IOException("offline"));
+
         foreach (var task in new[] { first, shared, excess, excessAgain })
+        {
             await Assert.That(async () => await task).Throws<IOException>();
+        }
+
         fail = false;
         await Assert.That(await list.IsDeniedAsync("a")).IsTrue();
         await Assert.That(reads).IsEqualTo(4);
@@ -204,7 +252,11 @@ public class RateLimitDenyListCacheTests
     {
         var time = new ManualTime();
         var reads = 0;
-        var list = new RespireRateLimitDenyList((_, _) => { reads++; return ValueTask.FromResult(true); },
+        var list = new RespireRateLimitDenyList((_, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult(true);
+        },
             (_, _, _) => ValueTask.CompletedTask, time, TimeSpan.FromSeconds(1), 2);
         await list.IsDeniedAsync("a");
         time.Advance(TimeSpan.FromMilliseconds(500));
@@ -238,14 +290,17 @@ public class RateLimitDenyListCacheTests
         await Assert.That(reads).IsEqualTo(1);
         time.Advance(TimeSpan.FromMilliseconds(1));
         var second = list.IsDeniedAsync("a").AsTask();
+
         try
         {
             await Assert.That(reads).IsEqualTo(2);
+
             if (oldCompletesFirst)
             {
                 old.SetResult(false);
                 await Assert.That(await first).IsFalse();
             }
+
             var third = list.IsDeniedAsync("a").AsTask();
             await Assert.That(reads).IsEqualTo(2);
             current.SetResult(true);
@@ -269,12 +324,25 @@ public class RateLimitDenyListCacheTests
     {
         var time = new ManualTime();
         var reads = 0;
-        var list = new RespireRateLimitDenyList((_, _) => { reads++; return ValueTask.FromResult(true); },
+        var list = new RespireRateLimitDenyList((_, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult(true);
+        },
             (_, _, _) => ValueTask.CompletedTask, time, TimeSpan.FromSeconds(1), 1024);
-        for (var index = 0; index < 1024; index++) await list.IsDeniedAsync(index.ToString());
+
+        for (var index = 0; index < 1024; index++)
+        {
+            await list.IsDeniedAsync(index.ToString());
+        }
+
         await list.IsDeniedAsync("0"); // Keep this identity hot through distinct-identity churn.
         var timestamps = time.TimestampReads;
-        for (var index = 1024; index < 1040; index++) await list.IsDeniedAsync(index.ToString());
+
+        for (var index = 1024; index < 1040; index++)
+        {
+            await list.IsDeniedAsync(index.ToString());
+        }
         // Bound expiry work rather than wall-clock duration, so this also runs on busy CI hosts.
         await Assert.That(time.TimestampReads - timestamps).IsLessThanOrEqualTo(16 * 8);
         await list.IsDeniedAsync("0");
@@ -288,7 +356,10 @@ public class RateLimitDenyListCacheTests
         var older = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var reads = 0;
         var list = new RespireRateLimitDenyList((identity, _) =>
-            { reads++; return identity == "older" ? new ValueTask<bool>(older.Task) : ValueTask.FromResult(true); },
+            {
+                reads++;
+                return identity == "older" ? new ValueTask<bool>(older.Task) : ValueTask.FromResult(true);
+            },
             (_, _, _) => ValueTask.CompletedTask, time, TimeSpan.FromSeconds(1), 3);
         var first = list.IsDeniedAsync("older").AsTask();
         time.Advance(TimeSpan.FromMilliseconds(500));
@@ -313,9 +384,20 @@ public class RateLimitDenyListCacheTests
     private sealed class ManualTime : TimeProvider
     {
         private long _timestamp;
-        public int TimestampReads { get; private set; }
+
+        public int TimestampReads
+        {
+            get; private set;
+        }
+
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
-        public override long GetTimestamp() { TimestampReads++; return _timestamp; }
+
+        public override long GetTimestamp()
+        {
+            TimestampReads++;
+            return _timestamp;
+        }
+
         public void Advance(TimeSpan duration) => _timestamp += duration.Ticks;
     }
 }

@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Net.Security;
-using Microsoft.Extensions.Configuration;
 using global::Respire;
+using Microsoft.Extensions.Configuration;
 
 namespace Respire.DependencyInjection;
 
@@ -81,14 +81,22 @@ internal static class RespireConfiguration
     /// <summary>Replaces endpoint arrays only when the section is present.</summary>
     private static IList<RespireEndpoint> Endpoints(IConfigurationSection section, IList<RespireEndpoint> fallback)
     {
-        if (!section.Exists()) return fallback;
+        if (!section.Exists())
+        {
+            return fallback;
+        }
+
         return section.GetChildren().Select(ParseEndpoint).ToList();
     }
 
     /// <summary>Accepts a string endpoint or a host/port object, retaining the failing configuration path.</summary>
     private static RespireEndpoint ParseEndpoint(IConfigurationSection endpoint)
     {
-        if (endpoint.Value is not null) return Parse(endpoint, RespireEndpoint.Parse);
+        if (endpoint.Value is not null)
+        {
+            return Parse(endpoint, RespireEndpoint.Parse);
+        }
+
         var host = endpoint["Host"] ?? throw new InvalidOperationException($"{endpoint.Path}:Host is required.");
         var port = endpoint.GetSection("Port");
         return new RespireEndpoint(host, port.Value is null ? 6379 : Parse(port, value => int.Parse(value, CultureInfo.InvariantCulture)));
@@ -97,7 +105,11 @@ internal static class RespireConfiguration
     /// <summary>Overlays configured hedged-read fields while preserving unspecified defaults.</summary>
     private static RespireHedgedReadOptions? HedgedReads(IConfigurationSection section, RespireHedgedReadOptions? options)
     {
-        if (!section.Exists()) return options;
+        if (!section.Exists())
+        {
+            return options;
+        }
+
         options ??= new();
         return options with
         {
@@ -108,7 +120,11 @@ internal static class RespireConfiguration
 
     private static RespireDedicatedPoolOptions DedicatedPool(IConfigurationSection section, RespireDedicatedPoolOptions options)
     {
-        if (!section.Exists()) return options;
+        if (!section.Exists())
+        {
+            return options;
+        }
+
         return options with
         {
             MinimumSize = section.GetValue("MinimumSize", options.MinimumSize),
@@ -121,7 +137,11 @@ internal static class RespireConfiguration
     /// <summary>Overlays reconnect settings, including an explicitly cleared attempt limit.</summary>
     private static RespireReconnectPolicy? ReconnectPolicy(IConfigurationSection section, RespireReconnectPolicy? options)
     {
-        if (!section.Exists()) return options;
+        if (!section.Exists())
+        {
+            return options;
+        }
+
         options ??= new();
         return options with
         {
@@ -135,7 +155,11 @@ internal static class RespireConfiguration
 
     private static RespireRetryPolicy? RetryPolicy(IConfigurationSection section, RespireRetryPolicy? options)
     {
-        if (!section.Exists()) return options;
+        if (!section.Exists())
+        {
+            return options;
+        }
+
         options ??= new();
         return options with
         {
@@ -150,7 +174,11 @@ internal static class RespireConfiguration
 
     private static RespireCircuitBreakerOptions? CircuitBreaker(IConfigurationSection section, RespireCircuitBreakerOptions? options)
     {
-        if (!section.Exists()) return options;
+        if (!section.Exists())
+        {
+            return options;
+        }
+
         options ??= new();
         return options with
         {
@@ -166,7 +194,11 @@ internal static class RespireConfiguration
     /// <summary>Overlays cache settings and replaces configured key-prefix arrays.</summary>
     private static RespireClientSideCacheOptions? ClientSideCache(IConfigurationSection section, RespireClientSideCacheOptions? options)
     {
-        if (!section.Exists()) return options;
+        if (!section.Exists())
+        {
+            return options;
+        }
+
         options ??= new();
         var prefixes = section.GetSection("KeyPrefixes");
         return options with
@@ -185,7 +217,11 @@ internal static class RespireConfiguration
     /// <summary>Copies scalar TLS overrides while retaining caller-owned certificate objects and callbacks.</summary>
     private static SslClientAuthenticationOptions? Tls(IConfigurationSection section, SslClientAuthenticationOptions? options)
     {
-        if (!section.Exists()) return options;
+        if (!section.Exists())
+        {
+            return options;
+        }
+
         options ??= new();
         // Connection-string parsing can supply a TLS target host. Preserve it when only another
         // TLS field is overridden; callers configure certificate objects through configureOptions.
@@ -212,8 +248,17 @@ internal static class RespireConfiguration
     private static TimeSpan? OptionalTimeSpan(IConfigurationSection section, string key, TimeSpan? fallback)
     {
         var value = section[key];
-        if (value is null) return fallback;
-        if (value.Length == 0) return null;
+
+        if (value is null)
+        {
+            return fallback;
+        }
+
+        if (value.Length == 0)
+        {
+            return null;
+        }
+
         return Parse(section.GetSection(key), value => TimeSpan.Parse(value, CultureInfo.InvariantCulture));
     }
 
@@ -221,7 +266,12 @@ internal static class RespireConfiguration
     private static string? OptionalString(IConfigurationSection section, string key, string? fallback)
     {
         var configured = section.GetChildren().FirstOrDefault(child => string.Equals(child.Key, key, StringComparison.OrdinalIgnoreCase));
-        if (configured is null) return fallback;
+
+        if (configured is null)
+        {
+            return fallback;
+        }
+
         return string.IsNullOrEmpty(configured.Value) ? null : configured.Value;
     }
 
@@ -229,15 +279,27 @@ internal static class RespireConfiguration
     private static int? OptionalInt32(IConfigurationSection section, string key, int? fallback)
     {
         var value = section[key];
-        if (value is null) return fallback;
-        if (value.Length == 0) return null;
+
+        if (value is null)
+        {
+            return fallback;
+        }
+
+        if (value.Length == 0)
+        {
+            return null;
+        }
+
         return Parse(section.GetSection(key), value => int.Parse(value, CultureInfo.InvariantCulture));
     }
 
     /// <summary>Annotates invalid endpoint, format, and overflow errors with the full configuration path.</summary>
     private static T Parse<T>(IConfigurationSection section, Func<string, T> parser)
     {
-        try { return parser(section.Value!); }
+        try
+        {
+            return parser(section.Value!);
+        }
         catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException or RespireConfigurationException)
         {
             throw new InvalidOperationException($"Invalid configuration at '{section.Path}'.", exception);

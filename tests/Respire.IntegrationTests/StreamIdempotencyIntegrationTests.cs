@@ -15,12 +15,14 @@ public class StreamIdempotencyIntegrationTests(ModernRedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"production:{Guid.NewGuid():N}:");
+
         try
         {
             byte[] producer = [0, 255, 32], message = [254, 0];
             var manual = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual(producer, message) };
             var automatic = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Automatic(producer) };
-            Array.Fill(producer, (byte)'x'); Array.Fill(message, (byte)'x');
+            Array.Fill(producer, (byte)'x');
+            Array.Fill(message, (byte)'x');
             RespireStreamAddOptions[] options = [manual, manual, manual with { Idempotency = RespireStreamIdempotency.Manual(new byte[] { 0, 255, 32 }, "distinct") },
                 manual with { Idempotency = RespireStreamIdempotency.Manual("other-producer", new byte[] { 254, 0 }) }, automatic, automatic, automatic];
             string[] values = ["first", "ignored", "first", "first", "auto", "auto", "changed"];
@@ -29,13 +31,28 @@ public class StreamIdempotencyIntegrationTests(ModernRedisTestContainer fixture)
             await using var transaction = surface == 2 ? view.CreateTransaction() : null;
             IRespireCommandQueue? queue = transaction ?? (IRespireCommandQueue?)batch;
             List<RespirePending<RespireStreamId?>> pending = [];
+
             for (var index = 0; index < options.Length; index++)
             {
-                if (queue is null) ids.Add(await view.Streams.AddAsync("events", options[index], ("f", values[index])));
-                else pending.Add(queue.Streams.Add("events", options[index], ("f", values[index])));
+                if (queue is null)
+                {
+                    ids.Add(await view.Streams.AddAsync("events", options[index], ("f", values[index])));
+                }
+                else
+                {
+                    pending.Add(queue.Streams.Add("events", options[index], ("f", values[index])));
+                }
             }
-            if (transaction is not null) await transaction.CommitAsync();
-            else if (batch is not null) await batch.ExecuteAsync();
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+            else if (batch is not null)
+            {
+                await batch.ExecuteAsync();
+            }
+
             ids.AddRange(pending.Select(x => x.Result));
             ids.Should().NotContainNulls();
             ids[1].Should().Be(ids[0]);
@@ -53,7 +70,7 @@ public class StreamIdempotencyIntegrationTests(ModernRedisTestContainer fixture)
             ids[0]!.Value.Value.Should().NotBeEmpty();
             entries[0].GetString("f").Should().Be("first");
         }
-        finally { if (!client.Core.Disposed) await view.Keys.DeleteAsync("events", "missing"); }
+        finally { if (!client.Core.Disposed) { await view.Keys.DeleteAsync("events", "missing"); } }
     }
 }
 
@@ -68,6 +85,7 @@ public class LegacyStreamIdempotencyIntegrationTests(Redis7ReferenceContainer fi
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var key = $"production-legacy:{Guid.NewGuid():N}";
+
         try
         {
             foreach (var mode in new[] { RespireStreamIdempotency.Automatic("p"), RespireStreamIdempotency.Manual("p", "i") })
@@ -75,6 +93,7 @@ public class LegacyStreamIdempotencyIntegrationTests(Redis7ReferenceContainer fi
                 Func<Task> write = async () => await client.Streams.AddAsync(key, new RespireStreamAddOptions { Idempotency = mode }, ("f", "v"));
                 await write.Should().ThrowAsync<RespireServerException>();
             }
+
             Func<Task> nack = async () => await client.Streams.NegativeAcknowledgeAsync(key, "g", RespireStreamNackMode.Fail, "1-0");
             await nack.Should().ThrowAsync<RespireServerException>();
             (await client.Keys.ExistsAsync(key)).Should().BeFalse();

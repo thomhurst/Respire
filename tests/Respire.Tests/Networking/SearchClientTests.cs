@@ -131,7 +131,8 @@ public class SearchClientTests
                 [
                     new("@my field", RespireSearchSortDirection.Descending),
                     new("@name"),
-                ]) { Max = 5 },
+                ])
+                { Max = 5 },
             ],
         });
 
@@ -287,6 +288,7 @@ public class SearchClientTests
         var search = new RespireSearchClient(client);
 
         var values = new List<string?>();
+
         await foreach (var page in search.AggregatePagesAsync("idx", RespireSearchExpression.FromRaw("*"), cursor: new() { Count = 1 }))
         {
             values.AddRange(page.Rows.Select(row => row["n"]));
@@ -573,6 +575,7 @@ public class SearchClientTests
     public async Task SearchQueryCommandsDeclareReadOnlyCacheMutation()
     {
         var commands = typeof(RespireSearchClient).Assembly.GetType("Respire.Search.RespireSearchCommands", throwOnError: true)!;
+
         foreach (var name in new[] { "Info", "Search", "Aggregate", "Hybrid", "Explain", "ExplainCli" })
         {
             var command = (RespireCommand)commands.GetField(name, BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
@@ -1213,7 +1216,11 @@ public class SearchClientTests
             },
             SuppressReply = command =>
             {
-                if (!command.StartsWith("FT.", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("FT.", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 accepted.TrySetResult();
                 return true;
             },

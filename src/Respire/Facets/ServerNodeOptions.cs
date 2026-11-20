@@ -17,22 +17,44 @@ public enum RespireShutdownSaveMode
 public sealed record RespireShutdownOptions
 {
     /// <summary>Snapshot behavior.</summary>
-    public RespireShutdownSaveMode SaveMode { get; init; }
+    public RespireShutdownSaveMode SaveMode
+    {
+        get; init;
+    }
+
     /// <summary>Does not wait for replicas to catch up.</summary>
-    public bool Now { get; init; }
+    public bool Now
+    {
+        get; init;
+    }
+
     /// <summary>Shuts down even if persistence fails. This can lose data.</summary>
-    public bool Force { get; init; }
+    public bool Force
+    {
+        get; init;
+    }
 }
 
 /// <summary>Options for coordinated FAILOVER (Redis 6.2 or later).</summary>
 public sealed record RespireFailoverOptions
 {
     /// <summary>Optional specific replica to promote. Must be a TCP endpoint.</summary>
-    public RespireEndpoint? Target { get; init; }
+    public RespireEndpoint? Target
+    {
+        get; init;
+    }
+
     /// <summary>Optional positive time allowed for replication catch-up.</summary>
-    public TimeSpan? Timeout { get; init; }
+    public TimeSpan? Timeout
+    {
+        get; init;
+    }
+
     /// <summary>Promotes Target after Timeout even if it has not caught up. Requires both options.</summary>
-    public bool Force { get; init; }
+    public bool Force
+    {
+        get; init;
+    }
 }
 
 /// <summary>Options for MIGRATE. Credentials authenticate to the destination server.</summary>
@@ -44,15 +66,34 @@ public sealed record RespireMigrateOptions
     /// <summary>Optional client response budget for this migration and its dedicated connection setup.
     /// Must be at least one millisecond. Null inherits RespireOptions.CommandTimeout.
     /// Does not change the server idle timeout, connection idle-read timeout, or caller cancellation.</summary>
-    public TimeSpan? CommandTimeout { get; init; }
+    public TimeSpan? CommandTimeout
+    {
+        get; init;
+    }
+
     /// <summary>Leaves source keys in place after transfer.</summary>
-    public bool Copy { get; init; }
+    public bool Copy
+    {
+        get; init;
+    }
+
     /// <summary>Replaces existing destination keys.</summary>
-    public bool Replace { get; init; }
+    public bool Replace
+    {
+        get; init;
+    }
+
     /// <summary>Optional ACL username. Requires Password; emits AUTH2.</summary>
-    public string? Username { get; init; }
+    public string? Username
+    {
+        get; init;
+    }
+
     /// <summary>Optional destination password. Without Username, emits AUTH.</summary>
-    public string? Password { get; init; }
+    public string? Password
+    {
+        get; init;
+    }
 }
 
 /// <summary>The acknowledged MIGRATE result.</summary>

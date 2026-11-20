@@ -13,6 +13,7 @@ using TUnit.Core.Interfaces;
 namespace Respire.VectorData.Tests;
 
 public sealed class HybridRedis84() : StandaloneRedisTestContainer("redis:8.4-alpine");
+
 public sealed class HybridRedis82() : StandaloneRedisTestContainer("redis:8.2-alpine");
 
 public sealed class HybridRedisVersions : IAsyncInitializer, IAsyncDisposable
@@ -20,9 +21,22 @@ public sealed class HybridRedisVersions : IAsyncInitializer, IAsyncDisposable
     private readonly HybridRedis84 _floor = new();
     private readonly ModernRedisTestContainer _current = new();
     private readonly HybridRedis82 _missing = new();
-    public string Connection(int version) => version switch { 84 => _floor.ConnectionString, 82 => _missing.ConnectionString, _ => _current.ConnectionString };
+
+    public string Connection(int version) => version switch
+    {
+        84 => _floor.ConnectionString,
+        82 => _missing.ConnectionString,
+        _ => _current.ConnectionString
+    };
+
     public Task InitializeAsync() => Task.WhenAll(_floor.InitializeAsync(), _current.InitializeAsync(), _missing.InitializeAsync());
-    public async ValueTask DisposeAsync() { await _floor.DisposeAsync(); await _current.DisposeAsync(); await _missing.DisposeAsync(); }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _floor.DisposeAsync();
+        await _current.DisposeAsync();
+        await _missing.DisposeAsync();
+    }
 }
 
 // Redis 8.4 and 8.10 can briefly leave a live document out of FT.HYBRID while FT.DROPINDEX DD drops
@@ -40,6 +54,7 @@ public class HybridSearchTests(HybridRedisVersions fixture)
         using var store = new RespireVectorStore(client, Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new MovieMapper());
         using var collection = store.GetHashCollection<Movie>("hybrid");
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
@@ -52,8 +67,10 @@ public class HybridSearchTests(HybridRedisVersions fixture)
             var hybrid = (IKeywordHybridSearchable<Movie>)collection;
             collection.GetService(typeof(IKeywordHybridSearchable<Movie>)).Should().BeSameAs(collection);
             var query = new RespireHybridSearchQuery(RespireSearchQueryBuilder.TextField("title", "Grapes"), "embedding",
-                RespireVectorDataFloat32.Encode(new float[] { 1, 0 }), 20, 3) { RrfWindow = 20, LoadFields = ["__key", "__score"] };
+                RespireVectorDataFloat32.Encode(new float[] { 1, 0 }), 20, 3)
+            { RrfWindow = 20, LoadFields = ["__key", "__score"] };
             var all = await Collect(hybrid.HybridSearchAsync(new float[] { 1, 0 }, ["Grapes"], 3));
+
             if (all.Count != records.Length)
             {
                 // Preserve the failed assertion while capturing a subsequent server probe for diagnosis.
@@ -69,6 +86,7 @@ public class HybridSearchTests(HybridRedisVersions fixture)
                     Console.WriteLine($"Hybrid failure diagnostics failed: {error}");
                 }
             }
+
             all.Should().HaveCount(3);
             all[0].Record.Id.Should().Be("3");
             all.Select(hit => hit.Score!.Value).Should().BeInDescendingOrder();
@@ -95,6 +113,7 @@ public class HybridSearchTests(HybridRedisVersions fixture)
         using var store = new RespireVectorStore(client, Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new MovieMapper());
         using var collection = store.GetHashCollection<Movie>("hybrid");
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
@@ -121,13 +140,18 @@ public class HybridSearchTests(HybridRedisVersions fixture)
         using var store = new RespireVectorStore(client, Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new JsonMovieMapper());
         using var collection = store.GetJsonCollection<JsonMovie>("hybrid");
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
             await collection.UpsertAsync(new JsonMovie[] { new("1", new("apples"), [1, 0], [0, 1]), new("2", new("oranges"), [0, 1], [1, 0]) });
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
             while ((await Collect(collection.SearchAsync(new float[] { 1, 0 }, 2, new() { VectorProperty = movie => movie.Vector }, deadline.Token))).Count < 2)
+            {
                 await Task.Delay(20, deadline.Token);
+            }
+
             var hits = await Collect(collection.HybridSearchAsync(new float[] { 1, 0 }, ["oranges"], 2,
                 new() { AdditionalProperty = movie => movie.Details.Title, VectorProperty = movie => movie.AlternateVector, IncludeVectors = true }));
             hits[0].Record.Id.Should().Be("2");
@@ -158,6 +182,7 @@ public class HybridSearchTests(HybridRedisVersions fixture)
         using var store = new RespireVectorStore(client, Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new MovieMapper());
         using var collection = store.GetHashCollection<Movie>("pages");
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
@@ -169,11 +194,13 @@ public class HybridSearchTests(HybridRedisVersions fixture)
             all.Should().OnlyContain(hit => hit.Record.Vector.Length == 2);
             var page = await Collect(collection.HybridSearchAsync(new float[] { 1, 0 }, ["unmatched"], 5, new() { Skip = 25 }));
             page.Select(hit => hit.Record.Id).Should().Equal("25", "26", "27", "28", "29");
+
             await using (var iterator = collection.HybridSearchAsync(new float[] { 1, 0 }, ["unmatched"], 40).GetAsyncEnumerator())
             {
                 (await iterator.MoveNextAsync()).Should().BeTrue();
                 iterator.Current.Record.Id.Should().Be("0");
             }
+
             await client.PingAsync();
         }
         finally { await collection.EnsureCollectionDeletedAsync(); }
@@ -188,6 +215,7 @@ public class HybridSearchTests(HybridRedisVersions fixture)
         using var collection = store.GetHashCollection<Movie>("multiple");
         Func<Task> ambiguous = () => Collect(collection.HybridSearchAsync(new float[] { 1, 0 }, ["Apples"], 3));
         await ambiguous.Should().ThrowAsync<InvalidOperationException>().WithMessage("*AdditionalProperty*");
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
@@ -204,11 +232,17 @@ public class HybridSearchTests(HybridRedisVersions fixture)
     private sealed class MultiTextMapper : RespireVectorDataHashMapper<Movie>
     {
         private readonly MovieMapper _inner = new();
+
         public override IReadOnlyList<RespireVectorDataVectorField> VectorFields => _inner.VectorFields;
+
         public override IReadOnlyList<RespireSearchField> DataFields => [new("title", RespireSearchFieldType.Text), new("tag", RespireSearchFieldType.Text)];
+
         public override IReadOnlyList<RespireVectorDataTextField> TextFields => [new(nameof(Movie.Title), "title"), new(nameof(Movie.Tag), "tag")];
+
         public override string GetKey(Movie record) => _inner.GetKey(record);
+
         public override IReadOnlyDictionary<string, ReadOnlyMemory<byte>> Write(Movie record) => _inner.Write(record);
+
         public override Movie Read(string key, IReadOnlyDictionary<string, ReadOnlyMemory<byte>> fields) => _inner.Read(key, fields);
     }
 
@@ -220,14 +254,22 @@ public class HybridSearchTests(HybridRedisVersions fixture)
     private static async Task WaitForIndex(RespireVectorStoreCollection<Movie> collection, int count)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
         while ((await Collect(collection.SearchAsync(new float[] { 1, 0 }, count, cancellationToken: deadline.Token))).Count < count)
+        {
             await Task.Delay(20, deadline.Token);
+        }
     }
 
     private static async Task<List<T>> Collect<T>(IAsyncEnumerable<T> values)
     {
         var result = new List<T>();
-        await foreach (var value in values) result.Add(value);
+
+        await foreach (var value in values)
+        {
+            result.Add(value);
+        }
+
         return result;
     }
 }

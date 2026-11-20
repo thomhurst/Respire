@@ -15,7 +15,12 @@ public sealed partial class RespireJobQueue<T>
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(root);
-        if (!Enum.IsDefined(failurePolicy)) throw new ArgumentOutOfRangeException(nameof(failurePolicy));
+
+        if (!Enum.IsDefined(failurePolicy))
+        {
+            throw new ArgumentOutOfRangeException(nameof(failurePolicy));
+        }
+
         var key = GetFlowKey(flowId);
         JobQueueScheduling.ValidateKeys(_client, [StreamKey, key]);
         cancellationToken.ThrowIfCancellationRequested();
@@ -27,28 +32,44 @@ public sealed partial class RespireJobQueue<T>
         arguments.Add(trace.State);
         arguments.Add(key);
         long inputBytes = 0;
+
         for (var i = 0; i < nodes.Count; i++)
         {
             var (node, parent) = nodes[i];
             ArgumentException.ThrowIfNullOrWhiteSpace(node.Id);
             inputBytes += StrictUtf8.GetByteCount(node.Id);
-            if (!ids.Add(node.Id)) throw new ArgumentException("Flow job IDs must be unique; cycles and shared children are not supported.", nameof(root));
+
+            if (!ids.Add(node.Id))
+            {
+                throw new ArgumentException("Flow job IDs must be unique; cycles and shared children are not supported.", nameof(root));
+            }
+
             ArgumentNullException.ThrowIfNull(node.Children);
+
             if (node.Children.Count > 256 - nodes.Count)
+            {
                 throw new ArgumentException("A flow can contain at most 256 jobs.", nameof(root));
+            }
+
             foreach (var child in node.Children)
             {
                 ArgumentNullException.ThrowIfNull(child);
                 nodes.Add((child, i + 1));
             }
+
             arguments.Add(node.Id);
             var payload = _serialize(node.Payload) ?? throw new InvalidOperationException("The job serializer returned null.");
             inputBytes += payload.Length;
+
             if (inputBytes > JobQueueFlows.MaximumInputBytes)
+            {
                 throw new ArgumentException("Flow job IDs and serialized payloads must not exceed 256 KiB in total.", nameof(root));
+            }
+
             arguments.Add(payload);
             arguments.Add(parent);
         }
+
         var enqueued = await _client.Scripts.ExecuteIntegerAsync(JobQueueFlows.Enqueue, [StreamKey, key],
             [.. arguments], cancellationToken).ConfigureAwait(false);
         trace.Succeeded = true;

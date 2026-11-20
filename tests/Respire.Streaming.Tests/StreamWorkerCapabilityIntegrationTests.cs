@@ -18,9 +18,15 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
         var info = await admin.Server.InfoAsync("server");
         var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
         var version = Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]);
-        if (version < new Version(8, 4)) return;
+
+        if (version < new Version(8, 4))
+        {
+            return;
+        }
+
         var user = "worker_" + Guid.NewGuid().ToString("N");
         var key = "restricted-claim:" + user;
+
         try
         {
             await admin.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("f", "pending"));
@@ -28,11 +34,16 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
             await admin.Streams.ReadGroupOnceAsync(key, "g", "old");
             await admin.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "2-0" }, ("f", "deleted"));
             await admin.Streams.ReadGroupOnceAsync(key, "g", "old");
-            using (await admin.ExecuteAsync("XDEL", [key, "2-0"])) { }
+
+            using (await admin.ExecuteAsync("XDEL", [key, "2-0"]))
+            {
+            }
+
             await admin.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "3-0" }, ("f", "unread"));
             await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-" + deniedCommand]);
             await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = user, Password = "password" });
+                with
+            { Username = user, Password = "password" });
             using var reply = await client.Scripts.ExecuteAsync(StreamWorkerScripts.CapabilityClaim, [key],
                 ["g", "new", 0, "0-0", 3]);
             await Assert.That(reply[1].Count).IsEqualTo(1);
@@ -57,7 +68,12 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
         var info = await admin.Server.InfoAsync("server");
         var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
         var version = Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]);
-        if (version < new Version(8, minimumMinor)) return;
+
+        if (version < new Version(8, minimumMinor))
+        {
+            return;
+        }
+
         var nack = completion == "nack";
         var image = Environment.GetEnvironmentVariable("RESPIRE_TEST_REDIS_IMAGE") ?? "redis:7.0.15";
         await using var disabled = await ContainerStartRetry.StartAsync(() => new Testcontainers.Redis.RedisBuilder(image)
@@ -71,6 +87,7 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
             ["disabled"], nack ? ["g", "owner", "1-0", 1, 0] : ["g", "owner", "1-0", 1]);
         await Assert.That((await client.Streams.PendingSummaryAsync("disabled", "g")).Count).IsEqualTo(nack ? 1 : 0);
         await Assert.That(await client.Streams.CountAsync("disabled")).IsEqualTo(1);
+
         if (nack)
         {
             var pending = (await client.Streams.PendingAsync("disabled", "g")).Single();
@@ -86,13 +103,20 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
         var info = await admin.Server.InfoAsync("server");
         var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
         var version = Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]);
-        if (version < new Version(8, 2)) return;
+
+        if (version < new Version(8, 2))
+        {
+            return;
+        }
+
         var user = "worker_" + Guid.NewGuid().ToString("N");
+
         try
         {
             await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all"]);
             await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = user, Password = "password", Connections = 1 });
+                with
+            { Username = user, Password = "password", Connections = 1 });
             var view = client.WithKeyPrefix("tenant:");
             await view.Streams.CreateGroupAsync("reconnect", "g", RespireStreamId.Beginning);
             await view.Streams.AddAsync("reconnect", new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
@@ -126,7 +150,8 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
     public async Task ServingVersionUsesNativeCommandsOrCompatibleFallback(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-            with { Protocol = (RespireProtocol)protocol });
+            with
+        { Protocol = (RespireProtocol)protocol });
         var info = await client.Server.InfoAsync("server");
         var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
         var version = Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]);
@@ -134,8 +159,16 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
         await StreamWorkerCapabilityScriptTests.CapabilityScenarioAsync(client, null, minor);
         await StreamWorkerCapabilityScriptTests.ClaimMixScenarioAsync(client, minor);
         await StreamWorkerCapabilityScriptTests.DeletedPendingScenarioAsync(client);
-        if (minor >= 4) await StreamWorkerCapabilityScriptTests.CleanupCursorScenarioAsync(client);
-        if (minor >= 8) await StreamWorkerCapabilityScriptTests.ReleasedPendingScenarioAsync(client);
+
+        if (minor >= 4)
+        {
+            await StreamWorkerCapabilityScriptTests.CleanupCursorScenarioAsync(client);
+        }
+
+        if (minor >= 8)
+        {
+            await StreamWorkerCapabilityScriptTests.ReleasedPendingScenarioAsync(client);
+        }
     }
 
     [Test]
@@ -147,14 +180,21 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
         var info = await admin.Server.InfoAsync("server");
         var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
         var version = Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]);
-        if (version < new Version(8, minimumMinor)) return; // This version has no native command to deny.
+
+        if (version < new Version(8, minimumMinor))
+        {
+            return; // This version has no native command to deny.
+        }
+
         var nack = completion == "nack";
         var user = "worker_" + Guid.NewGuid().ToString("N");
+
         try
         {
             await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", nack ? "-xnack" : "-xackdel"]);
             await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = user, Password = "password" });
+                with
+            { Username = user, Password = "password" });
             await client.Streams.AddAsync("denied", new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
             await client.Streams.CreateGroupAsync("denied", "g", RespireStreamId.Beginning);
             await client.Streams.ReadGroupOnceAsync("denied", "g", "owner");
@@ -173,17 +213,23 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
     {
         await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
         var user = "worker_" + Guid.NewGuid().ToString("N");
+
         try
         {
             await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-info"]);
             await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = user, Password = "password" });
+                with
+            { Username = user, Password = "password" });
             await client.Streams.AddAsync("fallback", new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
             await client.Streams.CreateGroupAsync("fallback", "g", RespireStreamId.Beginning);
             await client.Streams.ReadGroupOnceAsync("fallback", "g", "old");
+
             using (var reply = await client.Scripts.ExecuteAsync(StreamWorkerScripts.CapabilityClaim, ["fallback"],
                 ["g", "new", 0, "0-0", 1]))
+            {
                 await Assert.That(reply[1][0][2].AsString()).IsEqualTo("2");
+            }
+
             await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.AckAndDelete, ["fallback"], ["g", "new", "1-0", 2]);
             await Assert.That((await client.Streams.RangeAsync("fallback")).Length).IsEqualTo(1);
         }

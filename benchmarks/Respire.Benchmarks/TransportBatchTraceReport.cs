@@ -21,39 +21,85 @@ internal static class TransportBatchTraceReport
         var samples = 0;
         var stacks = 0;
         var types = 0;
+
         foreach (var entry in trace.Events)
         {
             if (entry.ProviderName == providerName && entry.ID == (Microsoft.Diagnostics.Tracing.TraceEventID)1)
             {
                 var name = entry.PayloadByName("control").ToString()!;
                 var boundary = entry.PayloadByName("boundary").ToString()!;
+
                 if (entry.ProcessID != processId || !(boundary == "start" ? starts : stops).Add(name))
+                {
                     throw new InvalidOperationException("Trace contains mismatched process identity or duplicate control boundaries.");
+                }
+
                 control = boundary == "start" ? name : "outside-controls";
-                output.WriteLine(JsonSerializer.Serialize(new { kind = "boundary", name, boundary,
-                    timestampMilliseconds = entry.TimeStampRelativeMSec, processId = entry.ProcessID }));
+                output.WriteLine(JsonSerializer.Serialize(new
+                {
+                    kind = "boundary",
+                    name,
+                    boundary,
+                    timestampMilliseconds = entry.TimeStampRelativeMSec,
+                    processId = entry.ProcessID
+                }));
             }
-            if (entry is not GCAllocationTickTraceData allocation) continue;
+
+            if (entry is not GCAllocationTickTraceData allocation)
+            {
+                continue;
+            }
+
             var stack = new List<string>();
+
             for (var frame = entry.CallStack(); frame is not null; frame = frame.Caller)
+            {
                 stack.Add(string.IsNullOrEmpty(frame.CodeAddress.FullMethodName)
                     ? frame.CodeAddress.ToString() : frame.CodeAddress.FullMethodName);
+            }
+
             samples++;
-            if (stack.Count != 0) stacks++;
-            if (!string.IsNullOrEmpty(allocation.TypeName)) types++;
+
+            if (stack.Count != 0)
+            {
+                stacks++;
+            }
+
+            if (!string.IsNullOrEmpty(allocation.TypeName))
+            {
+                types++;
+            }
+
             output.WriteLine(JsonSerializer.Serialize(new
             {
-                kind = "allocation-sample", control, timestampMilliseconds = entry.TimeStampRelativeMSec,
-                processId = entry.ProcessID, threadId = entry.ThreadID, type = allocation.TypeName,
-                sampledObjectBytes = allocation.ObjectSize, allocationIntervalBytes = allocation.AllocationAmount64, stack,
+                kind = "allocation-sample",
+                control,
+                timestampMilliseconds = entry.TimeStampRelativeMSec,
+                processId = entry.ProcessID,
+                threadId = entry.ThreadID,
+                type = allocation.TypeName,
+                sampledObjectBytes = allocation.ObjectSize,
+                allocationIntervalBytes = allocation.AllocationAmount64,
+                stack,
             }));
         }
-        output.WriteLine(JsonSerializer.Serialize(new { kind = "summary", samples, samplesWithStacks = stacks, samplesWithTypes = types,
-            eventsLost = trace.EventsLost, controls = starts,
-            warning = "AllocationIntervalBytes is all allocation since a tick, not bytes attributable to its sampled type. Missing stacks and dropped events prevent complete attribution." }));
+
+        output.WriteLine(JsonSerializer.Serialize(new
+        {
+            kind = "summary",
+            samples,
+            samplesWithStacks = stacks,
+            samplesWithTypes = types,
+            eventsLost = trace.EventsLost,
+            controls = starts,
+            warning = "AllocationIntervalBytes is all allocation since a tick, not bytes attributable to its sampled type. Missing stacks and dropped events prevent complete attribution."
+        }));
         var expected = metadata.RootElement.GetProperty("observations").EnumerateArray()
             .Select(observation => observation.GetProperty("control").GetString()!).Append("ready").ToHashSet();
+
         if (samples == 0 || stacks == 0 || types == 0 || trace.EventsLost != 0 || !starts.SetEquals(expected) || !stops.SetEquals(expected))
+        {
             throw new InvalidOperationException("Allocation trace lacks samples, types, stacks or control boundaries, or lost events; retain raw evidence and do not claim complete attribution.");
+        }
     }
 }

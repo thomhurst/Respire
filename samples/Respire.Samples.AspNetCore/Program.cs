@@ -49,7 +49,11 @@ app.MapHealthChecks("/health");
 
 app.MapPost("/redis", async (WriteValue body, IRespireClient redis, CancellationToken cancellationToken) =>
 {
-    if (string.IsNullOrEmpty(body.Value) || body.Value.Length > 1024) return Results.BadRequest("Use 1–1024 characters.");
+    if (string.IsNullOrEmpty(body.Value) || body.Value.Length > 1024)
+    {
+        return Results.BadRequest("Use 1–1024 characters.");
+    }
+
     await redis.SetAsync(prefix + "direct:value", (RespireValue)body.Value,
         expiry: TimeSpan.FromMinutes(1), cancellationToken: cancellationToken);
     return Results.NoContent();
@@ -59,7 +63,11 @@ app.MapGet("/redis", async (IRespireClient redis, CancellationToken cancellation
 
 app.MapPost("/distributed", async (WriteValue body, IDistributedCache cache, CancellationToken cancellationToken) =>
 {
-    if (string.IsNullOrEmpty(body.Value) || body.Value.Length > 1024) return Results.BadRequest("Use 1–1024 characters.");
+    if (string.IsNullOrEmpty(body.Value) || body.Value.Length > 1024)
+    {
+        return Results.BadRequest("Use 1–1024 characters.");
+    }
+
     await cache.SetStringAsync("distributed", body.Value,
         new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, cancellationToken);
     return Results.NoContent();
@@ -77,8 +85,11 @@ app.MapGet("/output", () => new CachedTime(Guid.NewGuid(), DateTimeOffset.UtcNow
 // Health probes deliberately reuse existing connections instead of opening them.
 // Establish one before serving readiness checks; fail startup if Redis is unavailable.
 using (var startupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+{
     await app.Services.GetRequiredService<IRespireClient>().PingAsync(startupTimeout.Token);
+}
 await app.RunAsync();
 
 public sealed record WriteValue(string Value);
+
 public sealed record CachedTime(Guid Version, DateTimeOffset GeneratedAt);

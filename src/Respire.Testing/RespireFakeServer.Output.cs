@@ -6,26 +6,49 @@ public sealed partial class RespireFakeServer
 
     private sealed class Outbound(byte[] bytes, bool push)
     {
-        internal byte[] Bytes { get; } = bytes;
-        internal bool Push { get; } = push;
-        internal TaskCompletionSource Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource Flushed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal byte[] Bytes
+        {
+            get;
+        } = bytes;
+
+        internal bool Push
+        {
+            get;
+        } = push;
+
+        internal TaskCompletionSource Ready
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Flushed
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     // All enqueue operations hold _gate, giving commands and publications one wire order.
     // Each command awaits its flush; only pushes can accumulate behind a slow reader.
     private Outbound? QueueOutputLocked(Connection connection, byte[] bytes, bool push)
     {
-        if (_disposed || connection.Closed || connection.Lifetime.IsCancellationRequested) return null;
+        if (_disposed || connection.Closed || connection.Lifetime.IsCancellationRequested)
+        {
+            return null;
+        }
+
         if (push && bytes.Length > MaximumPendingPushBytes - Volatile.Read(ref connection.PendingPushBytes))
         {
             StopConnectionLocked(connection);
             return null;
         }
+
         var output = new Outbound(bytes, push);
         // Reserve before publication: the writer can release this frame without _gate.
         // Producers still serialize the capacity check and reservation under _gate.
-        if (push) Interlocked.Add(ref connection.PendingPushBytes, bytes.Length);
+        if (push)
+        {
+            Interlocked.Add(ref connection.PendingPushBytes, bytes.Length);
+        }
         // Redis 7.2+ defers pushes caused by the current command until its complete
         // reply, including EXEC's array. Reserve capacity now, even while deferred.
         if (push && connection.ExecutingReply)
@@ -33,29 +56,43 @@ public sealed partial class RespireFakeServer
             (connection.DeferredPushes ??= []).Add(output);
             return output;
         }
+
         if (!connection.Output.Writer.TryWrite(output))
         {
-            if (push) Interlocked.Add(ref connection.PendingPushBytes, -bytes.Length);
+            if (push)
+            {
+                Interlocked.Add(ref connection.PendingPushBytes, -bytes.Length);
+            }
+
             return null;
         }
+
         return output;
     }
 
     private static void FlushDeferredPushesLocked(Connection connection)
     {
-        if (connection.DeferredPushes is not { } pending) return;
+        if (connection.DeferredPushes is not { } pending)
+        {
+            return;
+        }
+
         foreach (var output in pending)
         {
             if (connection.Failed || connection.Closed || connection.Lifetime.IsCancellationRequested
                 || !connection.Output.Writer.TryWrite(output))
+            {
                 ReleaseOutput(connection, output);
+            }
         }
+
         connection.DeferredPushes = null;
     }
 
     private async Task SendRepliesAsync(Connection connection)
     {
         var token = connection.Lifetime.Token;
+
         try
         {
             await foreach (var output in connection.Output.Reader.ReadAllAsync(token).ConfigureAwait(false))
@@ -72,12 +109,22 @@ public sealed partial class RespireFakeServer
         catch (Exception error) when (error is IOException or OperationCanceledException or ObjectDisposedException) { }
         catch (Exception error)
         {
-            lock (_gate) _failures.Add(error);
+            lock (_gate)
+            {
+                _failures.Add(error);
+            }
         }
         finally
         {
-            lock (_gate) StopConnectionLocked(connection);
-            while (connection.Output.Reader.TryRead(out var abandoned)) ReleaseOutput(connection, abandoned);
+            lock (_gate)
+            {
+                StopConnectionLocked(connection);
+            }
+
+            while (connection.Output.Reader.TryRead(out var abandoned))
+            {
+                ReleaseOutput(connection, abandoned);
+            }
         }
     }
 
@@ -86,13 +133,20 @@ public sealed partial class RespireFakeServer
     {
         // Successful writes already completed Flushed; cancellation only wins for abandoned frames.
         output.Flushed.TrySetCanceled(connection.Lifetime.Token);
+
         if (output.Push)
+        {
             Interlocked.Add(ref connection.PendingPushBytes, -output.Bytes.Length);
+        }
     }
 
     private void StopConnectionLocked(Connection connection)
     {
-        if (connection.Closed) return;
+        if (connection.Closed)
+        {
+            return;
+        }
+
         connection.Closed = true;
         RemoveSubscriptionsLocked(connection);
         connection.Output.Writer.TryComplete();

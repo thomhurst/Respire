@@ -19,18 +19,24 @@ public class RateLimiterMetricsTests
         // A separate load context guarantees cold statics regardless of test order.
         var context = new AssemblyLoadContext("cold-rate-limiter-metrics", isCollectible: true);
         Meter? meter = null;
+
         try
         {
             var assembly = context.LoadFromAssemblyPath(typeof(RespireRateLimitDenyList).Assembly.Location);
             var record = assembly.GetType("Respire.Coordination.RateLimiterMetrics", throwOnError: true)!
                 .GetMethod("Record", BindingFlags.Static | BindingFlags.NonPublic)!;
             var publications = 0;
+
             using (var broken = new MeterListener())
             {
                 broken.Start();
                 broken.InstrumentPublished = (instrument, _) =>
                 {
-                    if (instrument.Meter.Name != "Respire.Coordination.RateLimiting") return;
+                    if (instrument.Meter.Name != "Respire.Coordination.RateLimiting")
+                    {
+                        return;
+                    }
+
                     meter = instrument.Meter;
                     publications++;
                     throw new InvalidOperationException("Instrument publication failed");
@@ -45,7 +51,10 @@ public class RateLimiterMetricsTests
             using var healthy = new MeterListener();
             healthy.InstrumentPublished = (instrument, target) =>
             {
-                if (ReferenceEquals(instrument.Meter, meter)) target.EnableMeasurementEvents(instrument);
+                if (ReferenceEquals(instrument.Meter, meter))
+                {
+                    target.EnableMeasurementEvents(instrument);
+                }
             };
             healthy.SetMeasurementEventCallback<long>((instrument, _, tags, _) =>
                 measurements.Add((instrument.Name, tags.Length == 0 ? null : (string?)tags[0].Value)));
@@ -73,7 +82,10 @@ public class RateLimiterMetricsTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, target) =>
         {
-            if (instrument.Meter.Name == "Respire.Coordination.RateLimiting") target.EnableMeasurementEvents(instrument);
+            if (instrument.Meter.Name == "Respire.Coordination.RateLimiting")
+            {
+                target.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
         {
@@ -114,7 +126,10 @@ public class RateLimiterMetricsTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, target) =>
         {
-            if (instrument.Meter.Name == "Respire.Coordination.RateLimiting") target.EnableMeasurementEvents(instrument);
+            if (instrument.Meter.Name == "Respire.Coordination.RateLimiting")
+            {
+                target.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
             measurements.Enqueue((instrument.Name, value, tags.ToArray())));

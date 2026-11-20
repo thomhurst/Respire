@@ -91,13 +91,12 @@ public readonly struct RespireExpiry : IEquatable<RespireExpiry>
     public static bool operator !=(RespireExpiry left, RespireExpiry right) => !left.Equals(right);
 
     /// <summary>The number of command tokens this expiry contributes: 0 for none, 1 for KEEPTTL/PERSIST, 2 otherwise.</summary>
-    internal int TokenCount
-        => _kind switch
-        {
-            RespireExpiryKind.None => 0,
-            RespireExpiryKind.Keep or RespireExpiryKind.Persist => 1,
-            _ => 2,
-        };
+    internal int TokenCount => _kind switch
+    {
+        RespireExpiryKind.None => 0,
+        RespireExpiryKind.Keep or RespireExpiryKind.Persist => 1,
+        _ => 2,
+    };
 
     internal bool TryGetRelativeMilliseconds(out long milliseconds)
     {
@@ -121,13 +120,12 @@ public readonly struct RespireExpiry : IEquatable<RespireExpiry>
     public override int GetHashCode() => HashCode.Combine((byte)_kind, _value);
 
     /// <inheritdoc/>
-    public override string ToString()
-        => _kind switch
-        {
-            RespireExpiryKind.Relative => TimeSpan.FromMilliseconds(_value).ToString(),
-            RespireExpiryKind.Absolute => DateTimeOffset.FromUnixTimeMilliseconds(_value).ToString("O"),
-            RespireExpiryKind.Keep => "(keep)",
-            RespireExpiryKind.Persist => "(persist)",
-            _ => "(none)",
-        };
+    public override string ToString() => _kind switch
+    {
+        RespireExpiryKind.Relative => TimeSpan.FromMilliseconds(_value).ToString(),
+        RespireExpiryKind.Absolute => DateTimeOffset.FromUnixTimeMilliseconds(_value).ToString("O"),
+        RespireExpiryKind.Keep => "(keep)",
+        RespireExpiryKind.Persist => "(persist)",
+        _ => "(none)",
+    };
 }

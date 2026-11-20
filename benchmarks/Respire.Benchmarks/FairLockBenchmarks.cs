@@ -73,6 +73,7 @@ public class FairLockBenchmarks
         await using var holder = await _holder.AcquireAsync(_duration, _waitTimeout, timeout.Token);
         Task<RespireFencedLock>? first = null;
         Task<RespireFencedLock>? second = null;
+
         try
         {
             first = _first.AcquireAsync(_duration, _waitTimeout, timeout.Token).AsTask();
@@ -82,12 +83,20 @@ public class FairLockBenchmarks
             await holder.DisposeAsync();
 
             await using var firstLease = await first;
+
             if (second.IsCompleted || firstLease.FencingToken <= holder.FencingToken)
+            {
                 throw new InvalidOperationException("FIFO handoff did not grant the first waiter exclusive ownership.");
+            }
+
             await firstLease.DisposeAsync();
             await using var secondLease = await second;
+
             if (secondLease.FencingToken <= firstLease.FencingToken)
+            {
                 throw new InvalidOperationException("FIFO handoff did not advance the fencing token.");
+            }
+
             return secondLease.FencingToken;
         }
         finally
@@ -103,13 +112,22 @@ public class FairLockBenchmarks
         // Queue layout: head + tail + one deadline per waiter + two links per adjacent pair = 3n.
         // This synchronization is part of the scenario measurement, not the fair-lock wait algorithm.
         while (await _observer.Hashes.CountAsync(_queueKey, cancellationToken) < 3 * waiters)
+        {
             cancellationToken.ThrowIfCancellationRequested();
+        }
     }
 
     private static async Task DrainAsync(Task<RespireFencedLock>? pending)
     {
-        if (pending is null) return;
-        try { await (await pending).DisposeAsync(); }
+        if (pending is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await (await pending).DisposeAsync();
+        }
         catch (Exception) { /* Preserve the scenario failure after best-effort owned lease cleanup. */ }
     }
 

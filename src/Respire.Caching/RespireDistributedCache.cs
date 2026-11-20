@@ -184,7 +184,10 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     internal RespireClient CreateCoherenceTrackingClient(RespireClientSideCacheOptions trackingOptions)
     {
         if (_wireClient is null)
+        {
             throw new InvalidOperationException("HybridCache coherence requires a RespireClient-backed distributed cache.");
+        }
+
         return RespireClient.Create(_wireClient.Core.Options with
         {
             KeyPrefix = default,
@@ -235,7 +238,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             static (state, owner) => state.Cache._wireClient?.Core.Options.CommandHook is { } hook
                 ? CommandHookScope.RunAsync(hook, "GET", state.Token, (state.Cache, state.Key, state.Token, Owner: owner),
                     static s => s.Cache.GetCoreAsync(s.Key, s.Token, s.Owner),
-                    static s => { ArgumentNullException.ThrowIfNull(s.Key, "key"); return "GET"; })
+                    static s =>
+                    {
+                        ArgumentNullException.ThrowIfNull(s.Key, "key");
+                        return "GET";
+                    })
                 : state.Cache.GetCoreAsync(state.Key, state.Token, owner)).ConfigureAwait(false);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -246,13 +253,19 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         ArgumentNullException.ThrowIfNull(key);
         token.ThrowIfCancellationRequested();
         using var result = await RunGetScriptAsync(key, returnData: true, token, observation).ConfigureAwait(false);
+
         if (result.IsNull)
         {
             return null;
         }
 
         var payload = result[1];
-        if (payload.IsNull) return null;
+
+        if (payload.IsNull)
+        {
+            return null;
+        }
+
         token.ThrowIfCancellationRequested();
         return _valueCodec is null ? payload.AsBytes() : _valueCodec.Decode(payload.AsSpan());
     }
@@ -285,20 +298,30 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         ArgumentNullException.ThrowIfNull(destination);
         token.ThrowIfCancellationRequested();
         using var result = await RunGetScriptAsync(key, returnData: true, token, observation).ConfigureAwait(false);
+
         if (result.IsNull)
         {
             return false;
         }
 
         var payload = result[1];
+
         if (payload.IsNull)
         {
             return false;
         }
 
         token.ThrowIfCancellationRequested();
-        if (_valueCodec is null) destination.Write(payload.AsSpan());
-        else _valueCodec.Decode(payload.AsSpan(), destination);
+
+        if (_valueCodec is null)
+        {
+            destination.Write(payload.AsSpan());
+        }
+        else
+        {
+            _valueCodec.Decode(payload.AsSpan(), destination);
+        }
+
         return true;
     }
 
@@ -310,6 +333,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, CancellationToken token = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
+
         try
         {
             ArgumentNullException.ThrowIfNull(value);
@@ -337,6 +361,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     public ValueTask SetAsync(string key, ReadOnlySequence<byte> value, DistributedCacheEntryOptions options, CancellationToken token = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(
@@ -368,6 +393,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(options);
         token.ThrowIfCancellationRequested();
+
         if (_valueCodec is not null)
         {
             // Own the encoded bytes through the asynchronous send, including abandoned waits.
@@ -381,6 +407,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         var now = DateTimeOffset.UtcNow;
         var absoluteExpiration = GetAbsoluteExpiration(now, options);
         RespireClient.TrackedScriptExecution? trackedExecution = null;
+
         try
         {
             try
@@ -393,6 +420,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                     GetExpirationMilliseconds(now, absoluteExpiration, options),
                     value,
                 };
+
                 if ((trackedWire ?? _wireClient) is { } wire)
                 {
                     var execution = trackedExecution = await wire.StartTrackedScriptExecutionAsync(
@@ -416,13 +444,12 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                                     await state.Cache.CapDelayedTtlAsync(state.Key, state.Deadline, state.Options, identity, state.Observation, state.Execution)
                                         .ConfigureAwait(false);
                                 }
-                                catch (RespireException correctionFailure) when (
-                                    identity.ServerClientId == 0 && correctionFailure is not RespireServerException)
+                                catch (RespireException correctionFailure) when (identity.ServerClientId == 0 && correctionFailure is not RespireServerException)
                                 {
                                     state.Observation.Handled(correctionFailure);
                                 }
                             }
-                            : null).ConfigureAwait(false);
+                    : null).ConfigureAwait(false);
                 }
                 else
                 {
@@ -431,8 +458,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
                 result.Dispose();
             }
-            catch (Exception ex) when (
-                trackedWire is null &&
+            catch (Exception ex) when (trackedWire is null &&
                 ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException
                 && (trackedExecution is null || ((RespireClient.ITrackedCorrectionExecution<RespireResult>)trackedExecution).CommandMayBeOutstanding))
             {
@@ -450,8 +476,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                             key, cancelledDeadline, options, trackedExecution?.ConnectionIdentity ?? default,
                             observation, trackedExecution).ConfigureAwait(false);
                     }
-                    catch (RespireException correctionFailure) when (
-                        correctionFailure is not RespireServerException)
+                    catch (RespireException correctionFailure) when (correctionFailure is not RespireServerException)
                     {
                         observation.Handled(correctionFailure);
                     }
@@ -463,14 +488,21 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             if (absoluteExpiration is { } absolute && DateTimeOffset.UtcNow - now >= SendDelayTolerance)
             {
                 var correctionTarget = trackedExecution?.ConnectionIdentity ?? default;
-                if (correctionTarget.Connection is not { Multiplexer: null }) correctionTarget = default;
+
+                if (correctionTarget.Connection is not { Multiplexer: null })
+                {
+                    correctionTarget = default;
+                }
+
                 await CapDelayedTtlAsync(key, absolute, options, correctionTarget, observation, trackedExecution).ConfigureAwait(false);
             }
         }
         finally
         {
             if (trackedExecution is not null)
+            {
                 await trackedExecution.ReleaseRedirectTargetAfterCleanupAsync().ConfigureAwait(false);
+            }
         }
     }
 
@@ -542,6 +574,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         // wait. Such passes must never retain the caller's pooled observation.
         var errors = observation.IsEmpty ? null : new CorrectionErrors(observation.Attempts);
         Exception? failure = null;
+
         try
         {
             await CorrectionCoordinator.ConvergeAsync(originalConnection,
@@ -575,6 +608,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     {
         errors?.StartPass();
         Exception? failure = null;
+
         try
         {
             if (requiresOrdering && _wireClient is { } wire)
@@ -604,6 +638,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     {
         private readonly Lock _gate = new();
         private readonly DispatchResponseSource<bool> _owner = DispatchResponseSource<bool>.Start();
+
         internal RespireTelemetry.ErrorObservation Observation => _owner.Observation;
         private int _owners = 1;
         private bool _foregroundEnded;
@@ -611,13 +646,23 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
         internal CorrectionErrors(int attempts) => Observation.SetAttempts(attempts);
 
-        internal void StartPass() { lock (_gate) _owners++; }
+        internal void StartPass()
+        {
+            lock (_gate)
+            {
+                _owners++;
+            }
+        }
 
         internal void CompletePass(Exception? failure)
         {
             try
             {
-                if (failure is null) return;
+                if (failure is null)
+                {
+                    return;
+                }
+
                 lock (_gate)
                 {
                     if (!_foregroundEnded)
@@ -626,6 +671,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                         return;
                     }
                 }
+
                 Observation.Handled(failure);
             }
             finally { Release(); }
@@ -636,15 +682,25 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             try
             {
                 List<Exception>? failures;
+
                 lock (_gate)
                 {
                     _foregroundEnded = true;
                     failures = _failures;
                     _failures = null;
                 }
+
                 if (failures is not null)
+                {
                     foreach (var error in failures)
-                        if (!ReferenceEquals(error, propagated)) Observation.Handled(error);
+                    {
+                        if (!ReferenceEquals(error, propagated))
+                        {
+                            Observation.Handled(error);
+                        }
+                    }
+                }
+
                 caller.SetAttempts(Observation.Attempts);
             }
             finally { Release(); }
@@ -653,8 +709,16 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         private void Release()
         {
             bool completed;
-            lock (_gate) completed = --_owners == 0;
-            if (completed) _owner.CompleteInternal();
+
+            lock (_gate)
+            {
+                completed = --_owners == 0;
+            }
+
+            if (completed)
+            {
+                _owner.CompleteInternal();
+            }
         }
     }
 
@@ -668,7 +732,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             static (state, owner) => state.Cache._wireClient?.Core.Options.CommandHook is { } hook
                 ? CommandHookScope.RunAsync(hook, "REFRESH", state.Token, (state.Cache, state.Key, state.Token, Owner: owner),
                     static s => s.Cache.RefreshCoreAsync(s.Key, s.Token, s.Owner),
-                    static s => { ArgumentNullException.ThrowIfNull(s.Key, "key"); return "REFRESH"; })
+                    static s =>
+                    {
+                        ArgumentNullException.ThrowIfNull(s.Key, "key");
+                        return "REFRESH";
+                    })
                 : state.Cache.RefreshCoreAsync(state.Key, state.Token, owner))).ConfigureAwait(false);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -692,7 +760,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             static (state, owner) => state.Cache._wireClient?.Core.Options.CommandHook is { } hook
                 ? CommandHookScope.RunAsync(hook, "UNLINK", state.Token, (state.Cache, state.Key, state.Token, Owner: owner),
                     static s => s.Cache.RemoveCoreAsync(s.Key, s.Token, s.Owner),
-                    static s => { ArgumentNullException.ThrowIfNull(s.Key, "key"); return "UNLINK"; })
+                    static s =>
+                    {
+                        ArgumentNullException.ThrowIfNull(s.Key, "key");
+                        return "UNLINK";
+                    })
                 : state.Cache.RemoveCoreAsync(state.Key, state.Token, owner)).ConfigureAwait(false);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
@@ -732,6 +804,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             WrappedRemovalTimeout);
         var errors = new CorrectionErrors(observation.Attempts);
         Exception? failure = null;
+
         try
         {
             await UnlinkWrappedLeasedAsync(key, timeoutSource.Token, errors).ConfigureAwait(false);
@@ -755,6 +828,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         CorrectionErrors errors)
     {
         var leaseTtl = WrappedRemovalMinimumLeaseTtl;
+
         while (true)
         {
             var effectiveKey = _client.ResolveKey(key);
@@ -772,12 +846,14 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 .ConfigureAwait(false);
             var leaseStart = Stopwatch.GetTimestamp();
             var placementElapsed = Stopwatch.GetElapsedTime(placementStart);
+
             if (placementElapsed >= leaseTtl / 2)
             {
                 // The reply consumed a material part of this lease. No delete has been sent,
                 // so retry with more authority when possible. At the safety cap, attempt the
                 // leased delete instead of repeating an identical placement until timeout.
                 var grownLeaseTtl = GrowWrappedRemovalLease(leaseTtl, placementElapsed);
+
                 if (grownLeaseTtl > leaseTtl)
                 {
                     leaseTtl = grownLeaseTtl;
@@ -786,6 +862,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             }
 
             Task<RespireResult>? removal = null;
+
             try
             {
                 removal = ExecuteWrappedCommandAsync(
@@ -795,6 +872,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                             cancellationToken: state.Token))
                     .AsTask();
                 using var result = await removal.WaitAsync(cancellationToken).ConfigureAwait(false);
+
                 if (result.AsInteger() == 1)
                 {
                     return;
@@ -838,9 +916,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         CorrectionErrors errors)
     {
         var remaining = leaseTtl - Stopwatch.GetElapsedTime(leaseStart);
+
         if (remaining > TimeSpan.Zero)
         {
             Task<long>? revoke = null;
+
             try
             {
                 revoke = ExecuteWrappedCommandAsync((Client: _client, Lease: lease), errors,
@@ -863,6 +943,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
         var wait = leaseTtl + WrappedRemovalLeaseExpiryMargin -
             Stopwatch.GetElapsedTime(leaseStart);
+
         if (wait > TimeSpan.Zero)
         {
             await Task.Delay(wait).ConfigureAwait(false);
@@ -910,7 +991,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     {
         errors.StartPass();
         Exception? failure = null;
-        try { return await DispatchResponseSource.InvokeDecorated(state, errors.Observation, send).ConfigureAwait(false); }
+
+        try
+        {
+            return await DispatchResponseSource.InvokeDecorated(state, errors.Observation, send).ConfigureAwait(false);
+        }
         catch (Exception error) { failure = error; throw; }
         finally { errors.CompletePass(failure); }
     }
@@ -931,11 +1016,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         RespireResult result;
         RespireClient.TrackedConnectionIdentity originalConnection = default;
         RespireClient.TrackedScriptExecution? trackedExecution = null;
+
         try
         {
             try
             {
                 var args = new RespireValue[] { returnData ? "1" : "0", now.UtcTicks };
+
                 if ((trackedWire ?? _wireClient) is { } wire)
                 {
                     // Real-client fallback still borrows this owner. Timestamp-only tracking
@@ -953,8 +1040,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                         GetAndRefreshScript, [key], args, token, observation).ConfigureAwait(false);
                 }
             }
-            catch (Exception ex) when (
-                ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException
+            catch (Exception ex) when (ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException
                 && (trackedExecution is null || ((RespireClient.ITrackedCorrectionExecution<RespireResult>)trackedExecution).CommandMayBeOutstanding))
             {
                 originalConnection = trackedExecution?.ConnectionIdentity ?? default;
@@ -967,8 +1053,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 {
                     await CapRefreshedTtlAsync(key, originalConnection, observation, trackedExecution).ConfigureAwait(false);
                 }
-                catch (RespireException correctionFailure) when (
-                    originalConnection.ServerClientId == 0 && correctionFailure is not RespireServerException)
+                catch (RespireException correctionFailure) when (originalConnection.ServerClientId == 0 && correctionFailure is not RespireServerException)
                 {
                     observation.Handled(correctionFailure);
                 }
@@ -989,9 +1074,15 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                     // An observed reply needs no FIFO barrier on the normal route. A temporary
                     // redirect target still needs its physical identity so correction stays there.
                     var correctionTarget = trackedExecution?.ConnectionIdentity ?? default;
-                    if (correctionTarget.Connection is not { Multiplexer: null }) correctionTarget = default;
+
+                    if (correctionTarget.Connection is not { Multiplexer: null })
+                    {
+                        correctionTarget = default;
+                    }
+
                     await CapRefreshedTtlAsync(key, correctionTarget, observation, trackedExecution).ConfigureAwait(false);
                 }
+
                 return result;
             }
             catch
@@ -1003,7 +1094,9 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         finally
         {
             if (trackedExecution is not null)
+            {
                 await trackedExecution.ReleaseRedirectTargetAfterCleanupAsync().ConfigureAwait(false);
+            }
         }
     }
 

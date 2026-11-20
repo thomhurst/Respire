@@ -30,8 +30,11 @@ public class DedicatedStreamRouteTests
 #pragma warning disable RESP010 // Test-owned client supplies stable standalone and cluster owners for the route allocation probe.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = mode != "standalone",
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = mode != "standalone",
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var slot = ClusterHash.GetSlot("key");
@@ -39,15 +42,18 @@ public class DedicatedStreamRouteTests
         var pool = cluster is null ? client.Core.DedicatedPool
             : await cluster.GetDedicatedPoolAsync(slot, default, discovery: null, observation: default);
         var connection = await pool.RentAsync(default, kind: DedicatedLeaseKind.Streaming);
+
         try
         {
             var version = cluster?.CaptureSlotVersion(slot) ?? default;
             var asking = mode == "ask";
+
             for (var i = 0; i < 20; i++)
             {
                 Measure(client.Core, cluster, pool, connection, slot, version, asking, false);
                 Measure(client.Core, cluster, pool, connection, slot, version, asking, true);
             }
+
             var measured = AllocationMeasurement.WithoutConcurrentGc(() => (
                 Bytes: Measure(client.Core, cluster, pool, connection, slot, version, asking, false),
                 Closures: Measure(client.Core, cluster, pool, connection, slot, version, asking, true)));
@@ -62,18 +68,30 @@ public class DedicatedStreamRouteTests
         RespireConnection connection, int slot, ClusterRouter.StreamRouteVersion version, bool asking, bool control)
     {
         var start = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1_000; i++)
         {
             var route = cluster is null ? new DedicatedStreamRoute(core, pool, connection)
                 : new DedicatedStreamRoute(cluster, pool, connection, slot, version, asking);
-            if (!route.IsCurrent()) throw new InvalidOperationException("The measured route must remain current.");
+
+            if (!route.IsCurrent())
+            {
+                throw new InvalidOperationException("The measured route must remain current.");
+            }
+
             if (control)
             {
                 var legacy = CreateLegacyValidator(core, cluster, pool, connection, slot, version, asking);
-                if (!legacy()) throw new InvalidOperationException("The legacy route must remain current.");
+
+                if (!legacy())
+                {
+                    throw new InvalidOperationException("The legacy route must remain current.");
+                }
+
                 GC.KeepAlive(legacy);
             }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - start;
     }
 

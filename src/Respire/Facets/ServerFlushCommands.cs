@@ -27,6 +27,7 @@ internal sealed partial class ServerCommands
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(FlushAsync("FLUSHDB", FlushVerb(false, mode), cancellationToken, observation: observation)));
@@ -38,6 +39,7 @@ internal sealed partial class ServerCommands
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(FlushAsync("FLUSHALL", FlushVerb(true, mode), cancellationToken, observation: observation)));

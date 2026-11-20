@@ -17,18 +17,37 @@ public sealed partial class RespireSearchClient
         ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
         ArgumentNullException.ThrowIfNull(terms);
         var count = terms.Count;
-        if (count == 0) throw new ArgumentException("At least one synonym term is required.", nameof(terms));
+
+        if (count == 0)
+        {
+            throw new ArgumentException("At least one synonym term is required.", nameof(terms));
+        }
+
         var offset = skipInitialScan ? 1 : 0;
         var arguments = new string[checked(count + offset)];
-        if (skipInitialScan) arguments[0] = "SKIPINITIALSCAN";
+
+        if (skipInitialScan)
+        {
+            arguments[0] = "SKIPINITIALSCAN";
+        }
+
         for (var i = 0; i < count; i++)
         {
             var term = terms[i];
-            if (string.IsNullOrWhiteSpace(term)) throw new ArgumentException("Synonym terms cannot be null or whitespace.", nameof(terms));
+
+            if (string.IsNullOrWhiteSpace(term))
+            {
+                throw new ArgumentException("Synonym terms cannot be null or whitespace.", nameof(terms));
+            }
+
             arguments[i + offset] = term;
         }
+
         if (!skipInitialScan && arguments[0].Equals("SKIPINITIALSCAN", StringComparison.OrdinalIgnoreCase))
+        {
             throw new ArgumentException("Place the literal SKIPINITIALSCAN term after another term, or explicitly enable skipInitialScan.", nameof(terms));
+        }
+
         await ExecuteAsync(RespireSearchCommands.UpdateSynonyms, [index, groupId, .. (arguments).Select(static value => (RespireValue)value)], cancellationToken).ConfigureAwait(false);
     }
 
@@ -39,16 +58,25 @@ public sealed partial class RespireSearchClient
         return await ExecuteAsync<IReadOnlyDictionary<string, IReadOnlyList<string>>>(RespireSearchCommands.GetSynonyms, [index], cancellationToken, result =>
         {
             const string command = "FT.SYNDUMP";
+
             if (result.IsNull || result.Type is not (RespireDataType.Array or RespireDataType.Map) || (result.Count & 1) != 0)
+            {
                 throw RespireSearchReply.Unexpected(command, "term/group pairs were expected");
+            }
+
             var terms = new Dictionary<string, IReadOnlyList<string>>(result.Count / 2, StringComparer.Ordinal);
+
             for (var i = 0; i < result.Count; i += 2)
             {
                 var term = RespireSearchReply.ReadString(result[i], command);
                 var groups = RespireSearchReply.ReadStringCollection(result[i + 1], command);
+
                 if (!terms.TryAdd(term, groups))
+                {
                     throw RespireSearchReply.Unexpected(command, "a duplicate synonym term");
+                }
             }
+
             return terms;
         }).ConfigureAwait(false);
     }

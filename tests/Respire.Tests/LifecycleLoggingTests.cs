@@ -45,6 +45,7 @@ public partial class LifecycleLoggingTests
             (logger => logger.LogWarning("Sentinel event monitoring did not stop within {Timeout}; {Count} task(s) still running", delay, 1),
                 logger => logger.SentinelMonitorShutdownTimedOut(delay, tasks)),
         ];
+
         foreach (var (legacy, typed) in cases)
         {
             var expected = Capture(legacy);
@@ -57,6 +58,7 @@ public partial class LifecycleLoggingTests
                 await Assert.That(actual.EventId.Id).IsEqualTo(expected.EventId.Id);
                 await Assert.That(actual.EventId.Name).IsEqualTo(expected.EventId.Name);
             }
+
             await Assert.That(ReferenceEquals(actual.Error, expected.Error)).IsTrue();
             await Assert.That(actual.Message).IsEqualTo(expected.Message);
             await Assert.That(actual.State).IsEquivalentTo(expected.State);
@@ -92,7 +94,8 @@ public partial class LifecycleLoggingTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("localhost", 1)], LoggerFactory = factory,
+            Endpoints = [new("localhost", 1)],
+            LoggerFactory = factory,
         });
 #pragma warning restore RESP010
         var logger = factory.CreateLogger("Respire.Logging.Allocations");
@@ -119,6 +122,7 @@ public partial class LifecycleLoggingTests
         RespireEndpoint endpoint, RespireChannel channel, Task[] tasks, in RespValue reply, bool control, int iterations)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < iterations; i++)
         {
             if (control)
@@ -126,6 +130,7 @@ public partial class LifecycleLoggingTests
                 logger.LogWarning(error, "Reconnect to {Host}:{Port} exhausted its {Attempts} attempts", endpoint.Host, endpoint.Port, i);
                 continue;
             }
+
             logger.ReconnectExhausted(endpoint.Host, endpoint.Port, i, error);
             logger.ClusterReadRoleRetry(i, "READONLY", RespireReadFrom.PrimaryPreferred);
             logger.MovingPublishedLate(endpoint.Host, endpoint.Port, i);
@@ -138,9 +143,9 @@ public partial class LifecycleLoggingTests
             logger.SentinelPeerDiscoveryUnavailable(in reply);
             logger.ConnectionInflightFailed(i, endpoint.Host, endpoint.Port, error);
             hub.LogGapObserverFailure(error);
-            logger.TryLog((error, i), static (logger, state)
-                => logger.SubscriptionRecoveryAttemptFailed(state.i, state.error));
+            logger.TryLog((error, i), static (logger, state) => logger.SubscriptionRecoveryAttemptFailed(state.i, state.error));
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -198,7 +203,15 @@ public partial class LifecycleLoggingTests
     private sealed class MessageProbeException : Exception
     {
         internal int MessageReads;
-        public override string Message { get { MessageReads++; return "computed diagnostic message"; } }
+
+        public override string Message
+        {
+            get
+            {
+                MessageReads++;
+                return "computed diagnostic message";
+            }
+        }
     }
 
     private sealed class ProbeFactory(bool enabled = true, bool capture = false, Exception? providerError = null,
@@ -211,13 +224,21 @@ public partial class LifecycleLoggingTests
         internal int LogCalls;
         internal int ProviderFailures;
         internal Entry? Entry;
+
         public ILogger CreateLogger(string categoryName) => new ProbeLogger(this);
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
 
         private sealed class ProbeLogger(ProbeFactory owner) : ILogger
         {
             public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
             public bool IsEnabled(LogLevel level)
             {
                 if (owner._fromIsEnabled && owner._providerError is { } error)
@@ -225,20 +246,26 @@ public partial class LifecycleLoggingTests
                     owner.ProviderFailures++;
                     throw error;
                 }
+
                 return owner._enabled;
             }
+
             public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception,
                 Func<TState, Exception?, string> formatter)
             {
                 owner.LogCalls++;
+
                 if (owner._providerError is { } error)
                 {
                     owner.ProviderFailures++;
                     throw error;
                 }
+
                 if (owner._capture)
+                {
                     owner.Entry = new(level, eventId, exception, formatter(state, exception),
                         ((IEnumerable<KeyValuePair<string, object?>>)state!).ToArray());
+                }
             }
         }
     }

@@ -52,7 +52,11 @@ internal sealed class ClusterReplicaRegistry
             _byEndpoint.Add(replica.Endpoint, node);
         }
 
-        if (!string.IsNullOrEmpty(replica.NodeId)) SetId(node, replica.NodeId);
+        if (!string.IsNullOrEmpty(replica.NodeId))
+        {
+            SetId(node, replica.NodeId);
+        }
+
         return node;
     }
 
@@ -78,17 +82,35 @@ internal sealed class ClusterReplicaRegistry
     {
         // Dictionary.Remove preserves enumerators on the supported .NET 8+ runtimes.
         foreach (var (endpoint, node) in _byEndpoint)
-            if (!retained.Contains(node)) _byEndpoint.Remove(endpoint);
+        {
+            if (!retained.Contains(node))
+            {
+                _byEndpoint.Remove(endpoint);
+            }
+        }
+
         foreach (var (id, node) in _byId)
-            if (!active.Contains(node)) _byId.Remove(id);
+        {
+            if (!active.Contains(node))
+            {
+                _byId.Remove(id);
+            }
+        }
+
         foreach (var (node, id) in _ids)
-            if (!_byId.TryGetValue(id, out var current) || !ReferenceEquals(current, node)) _ids.Remove(node);
+        {
+            if (!_byId.TryGetValue(id, out var current) || !ReferenceEquals(current, node))
+            {
+                _ids.Remove(node);
+            }
+        }
     }
 
     /// <summary>Removes every mapping to a transport whose cleanup has completed.</summary>
     internal void Forget(RespireConnectionMultiplexer node)
     {
         var endpoint = new RespireEndpoint(node.Host, node.Port);
+
         if (_byEndpoint.TryGetValue(endpoint, out var current) && ReferenceEquals(current, node))
         {
             _byEndpoint.Remove(endpoint);
@@ -110,6 +132,7 @@ internal sealed class ClusterReplicaRegistry
             Debug.Assert(IsCurrent(node) && endpoint.Port == node.Port,
                 "A replica transport is stored only under the endpoint it was created for.");
         }
+
         foreach (var (id, node) in _byId)
         {
             Debug.Assert(isOwned(node), "Every replica identity transport must remain owned.");
@@ -126,10 +149,12 @@ internal sealed class ClusterReplicaRegistry
         {
             _byId.Remove(previousId);
         }
+
         if (_byId.TryGetValue(id, out var previousNode) && !ReferenceEquals(previousNode, node))
         {
             _ids.Remove(previousNode);
         }
+
         _byId[id] = node;
         _ids[node] = id;
     }

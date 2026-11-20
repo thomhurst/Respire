@@ -31,12 +31,20 @@ public static class RespireJobQueueServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(serialize);
         ArgumentNullException.ThrowIfNull(deserialize);
         var stream = RespireJobQueue<T>.GetStreamKey(queueName);
+
         if (services.Any(service => service.ServiceType == typeof(QueueRegistration)
             && service.ImplementationInstance is QueueRegistration registration && registration.Name == queueName))
+        {
             throw new ArgumentException("Each job queue must have a unique name within the service collection.", nameof(queueName));
+        }
+
         options ??= new RespireStreamWorkerOptions { DeliveryLimit = 5 };
+
         if (options.GroupStart != RespireStreamId.Beginning && options.GroupStart != (RespireStreamId)"0-0")
+        {
             throw new ArgumentException("Job queue groups must start at the beginning.", nameof(options));
+        }
+
         queueOptions?.Validate();
         options = options with
         {

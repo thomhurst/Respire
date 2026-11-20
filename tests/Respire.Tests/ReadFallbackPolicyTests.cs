@@ -11,6 +11,7 @@ public class ReadFallbackPolicyTests
     public async Task ReplicaCandidatesPreserveHealthZoneAndRotationOrder()
     {
         var candidates = new ReadFallbackPolicy.ReplicaCandidates<int>();
+
         try
         {
             await Assert.That(candidates.Offer(1, local: false, linked: false, RespireReadFrom.AzAffinity)).IsFalse();
@@ -18,11 +19,13 @@ public class ReadFallbackPolicyTests
             await Assert.That(candidates.Offer(3, local: true, linked: false, RespireReadFrom.AzAffinity)).IsFalse();
             await Assert.That(candidates.Offer(4, local: false, linked: true, RespireReadFrom.AzAffinity)).IsFalse();
             await Assert.That(candidates.Offer(5, local: false, linked: true, RespireReadFrom.AzAffinity)).IsFalse();
+
             foreach (var expected in new[] { 4, 5, 2, 3, 1 })
             {
                 await Assert.That(candidates.TryTake(out var candidate)).IsTrue();
                 await Assert.That(candidate).IsEqualTo(expected);
             }
+
             await Assert.That(candidates.TryTake(out _)).IsFalse();
             await Assert.That(candidates.Offer(6, local: true, linked: true, RespireReadFrom.AzAffinity)).IsTrue();
             await Assert.That(candidates.Offer(7, local: false, linked: true, RespireReadFrom.Replica)).IsTrue();
@@ -43,43 +46,49 @@ public class ReadFallbackPolicyTests
         foreach (var policy in new[] { RespireReadFrom.Primary, RespireReadFrom.Replica,
                      RespireReadFrom.PrimaryPreferred, RespireReadFrom.ReplicaPreferred, RespireReadFrom.Nearest,
                      RespireReadFrom.AzAffinity, RespireReadFrom.AzAffinityReplicasAndPrimary })
-        foreach (var onReplica in new[] { false, true })
-        foreach (var code in new[] { "LOADING", "MASTERDOWN", "CLUSTERDOWN", "ERR", "MOVED", "ASK" })
         {
-            var error = new RespireServerException($"{code} unavailable");
-            var expected = (code is "LOADING" or "MASTERDOWN" or "CLUSTERDOWN")
-                && (policy == RespireReadFrom.ReplicaPreferred && onReplica
-                    || policy == RespireReadFrom.PrimaryPreferred && !onReplica
-                    || ReadFallbackPolicy.UsesAvailabilityZone(policy));
-            await Assert.That(ReadFallbackPolicy.CanFallBackToOtherRole(error, policy, 123, onReplica)).IsEqualTo(expected);
-            await Assert.That(ReadFallbackPolicy.CanFallBackToOtherRole(error, policy, null, onReplica)).IsFalse();
-            await Assert.That(ReadFallbackPolicy.IsStrictReplicaAsk(error, policy))
-                .IsEqualTo(policy == RespireReadFrom.Replica && code == "ASK");
-
-            var fallback = new ReadFallbackPolicy.RoleFallback(policy);
-            await Assert.That(fallback.RecoveryPolicy).IsEqualTo(policy);
-            await Assert.That(fallback.TrySwitch(error, null, onReplica)).IsFalse();
-            await Assert.That(fallback.OriginalFailure).IsNull();
-            await Assert.That(fallback.ReplicaOnly).IsNull();
-            await Assert.That(fallback.TrySwitch(error, 123, onReplica)).IsEqualTo(expected);
-            await Assert.That(fallback.Policy).IsEqualTo(policy);
-            if (!expected)
+            foreach (var onReplica in new[] { false, true })
             {
-                await Assert.That(fallback.OriginalFailure).IsNull();
-                await Assert.That(fallback.ReplicaOnly).IsNull();
-                await Assert.That(fallback.RecoveryPolicy).IsEqualTo(policy);
-                continue;
-            }
+                foreach (var code in new[] { "LOADING", "MASTERDOWN", "CLUSTERDOWN", "ERR", "MOVED", "ASK" })
+                {
+                    var error = new RespireServerException($"{code} unavailable");
+                    var expected = (code is "LOADING" or "MASTERDOWN" or "CLUSTERDOWN")
+                        && (policy == RespireReadFrom.ReplicaPreferred && onReplica
+                            || policy == RespireReadFrom.PrimaryPreferred && !onReplica
+                            || ReadFallbackPolicy.UsesAvailabilityZone(policy));
+                    await Assert.That(ReadFallbackPolicy.CanFallBackToOtherRole(error, policy, 123, onReplica)).IsEqualTo(expected);
+                    await Assert.That(ReadFallbackPolicy.CanFallBackToOtherRole(error, policy, null, onReplica)).IsFalse();
+                    await Assert.That(ReadFallbackPolicy.IsStrictReplicaAsk(error, policy))
+                        .IsEqualTo(policy == RespireReadFrom.Replica && code == "ASK");
 
-            var narrowed = onReplica ? RespireReadFrom.Primary : RespireReadFrom.Replica;
-            await Assert.That(fallback.RecoveryPolicy).IsEqualTo(narrowed);
-            await Assert.That(fallback.ReplicaOnly).IsEqualTo((bool?)!onReplica);
-            var later = new RespireServerException("CLUSTERDOWN fallback unavailable");
-            foreach (var laterRole in new[] { false, true })
-            {
-                await Assert.That(fallback.TrySwitch(later, 123, laterRole)).IsFalse();
-                await Assert.That(ReferenceEquals(fallback.OriginalFailure, error)).IsTrue();
-                await Assert.That(fallback.RecoveryPolicy).IsEqualTo(narrowed);
+                    var fallback = new ReadFallbackPolicy.RoleFallback(policy);
+                    await Assert.That(fallback.RecoveryPolicy).IsEqualTo(policy);
+                    await Assert.That(fallback.TrySwitch(error, null, onReplica)).IsFalse();
+                    await Assert.That(fallback.OriginalFailure).IsNull();
+                    await Assert.That(fallback.ReplicaOnly).IsNull();
+                    await Assert.That(fallback.TrySwitch(error, 123, onReplica)).IsEqualTo(expected);
+                    await Assert.That(fallback.Policy).IsEqualTo(policy);
+
+                    if (!expected)
+                    {
+                        await Assert.That(fallback.OriginalFailure).IsNull();
+                        await Assert.That(fallback.ReplicaOnly).IsNull();
+                        await Assert.That(fallback.RecoveryPolicy).IsEqualTo(policy);
+                        continue;
+                    }
+
+                    var narrowed = onReplica ? RespireReadFrom.Primary : RespireReadFrom.Replica;
+                    await Assert.That(fallback.RecoveryPolicy).IsEqualTo(narrowed);
+                    await Assert.That(fallback.ReplicaOnly).IsEqualTo((bool?)!onReplica);
+                    var later = new RespireServerException("CLUSTERDOWN fallback unavailable");
+
+                    foreach (var laterRole in new[] { false, true })
+                    {
+                        await Assert.That(fallback.TrySwitch(later, 123, laterRole)).IsFalse();
+                        await Assert.That(ReferenceEquals(fallback.OriginalFailure, error)).IsTrue();
+                        await Assert.That(fallback.RecoveryPolicy).IsEqualTo(narrowed);
+                    }
+                }
             }
         }
     }

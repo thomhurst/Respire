@@ -43,10 +43,23 @@ public class DeferredRawCommandTests
         Array.Fill(key, (byte)'x');
         Array.Fill(value, (byte)'x');
         args[0] = "changed";
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         batch?.Dispose();
-        if (transaction is not null) await transaction.DisposeAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.DisposeAsync();
+        }
+
         var result = pending.Result;
         var nested = result[0];
         await Assert.That(nested.AsBytes()).IsEquivalentTo(new byte[] { 255, 0 }, CollectionOrdering.Matching);
@@ -75,10 +88,16 @@ public class DeferredRawCommandTests
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var failed = queue.Execute("GET", "wrong");
         var good = queue.Execute("GET", "good");
+
         if (transaction is not null)
+        {
             await transaction.CommitAsync();
+        }
         else
+        {
             await Assert.That((await batch!.TryExecuteAsync()).FailureCount).IsEqualTo(1);
+        }
+
         await Assert.That(() => failed.Result).Throws<RespireServerException>();
         using var result = good.Result;
         await Assert.That(result.AsString()).IsEqualTo("ok");
@@ -126,9 +145,13 @@ public class DeferredRawCommandTests
 #pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
+
         foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, transaction })
+        {
             await Assert.That(() => queue.Execute(name.ToLowerInvariant(), "BLOCK", 0, "STREAMS", "key", "$"))
                 .Throws<NotSupportedException>();
+        }
+
         await Assert.That(batch.Count).IsEqualTo(0);
         await Assert.That(transaction.Count).IsEqualTo(0);
     }
@@ -159,7 +182,9 @@ public class DeferredRawCommandTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("localhost", 1)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("localhost", 1)],
         });
 #pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
@@ -203,7 +228,9 @@ public class DeferredRawCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("{tenant}:");
@@ -211,9 +238,21 @@ public class DeferredRawCommandTests
         await using var transaction = transactional ? view.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = cases.Select(item => queue.Execute(item.Command, item.Args)).ToArray();
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
-        foreach (var item in pending) item.Result.Dispose();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
+        foreach (var item in pending)
+        {
+            item.Result.Dispose();
+        }
+
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         await Assert.That(owner.ReceivedCommands.Where(c => c is not "MULTI" and not "EXEC"))
             .IsEquivalentTo(cases.Select(item => item.Wire), CollectionOrdering.Matching);
@@ -231,8 +270,16 @@ public class DeferredRawCommandTests
         await using var transaction = transactional ? view.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = queue.Execute("EVAL", "return ARGV[1]", 0, "argument");
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         using var result = pending.Result;
         await Assert.That(server.ReceivedCommands.Where(c => c is not "MULTI" and not "EXEC"))
             .IsEquivalentTo(["EVAL return ARGV[1] 0 argument"]);

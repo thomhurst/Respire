@@ -27,16 +27,20 @@ internal sealed partial class RedisRateLimiter
         while (true)
         {
             Task changed;
+
             lock (_queueGate)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
+
                 if (_settingsChange is null)
                 {
                     _redisReaders++;
                     return;
                 }
+
                 changed = _settingsChange.Task;
             }
+
             await changed.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
@@ -46,7 +50,11 @@ internal sealed partial class RedisRateLimiter
         lock (_queueGate)
         {
             Volatile.Write(ref _lastActivity, Stopwatch.GetTimestamp());
-            if (--_redisReaders == 0) _readersDrained?.TrySetResult();
+
+            if (--_redisReaders == 0)
+            {
+                _readersDrained?.TrySetResult();
+            }
         }
     }
 
@@ -60,62 +68,102 @@ internal sealed partial class RedisRateLimiter
         RespireRateLimitUpdateMode mode, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(settings);
+
         if (mode is not RespireRateLimitUpdateMode.Migrate and not RespireRateLimitUpdateMode.Adopt)
+        {
             throw new ArgumentOutOfRangeException(nameof(mode));
+        }
+
         if (composite != (_kind == RedisRateLimiterKind.Composite))
+        {
             throw new ArgumentException("Use the single-definition overload for standalone limiters and the list overload for composites.", nameof(settings));
+        }
+
         var definitions = composite ? SnapshotLimits(settings) : settings.ToArray();
+
         if (!composite && definitions[0].Kind != _kind)
+        {
             throw new ArgumentException("An update cannot change the limiter algorithm.", nameof(settings));
+        }
+
         var configurations = definitions.Select(static definition => definition.Configuration).ToArray();
         await _updateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         Interlocked.Increment(ref _activeAcquisitions);
         var migrationStarted = false;
+
         try
         {
             Task drained;
             string[] previous;
+
             lock (_queueGate)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 previous = GetConfigurations();
+
                 if (previous.Length != definitions.Length)
+                {
                     throw new ArgumentException("An update cannot change the number of composite components.", nameof(settings));
+                }
+
                 for (var i = 0; i < previous.Length; i++)
+                {
                     if (previous[i][0] != configurations[i][0])
+                    {
                         throw new ArgumentException("An update cannot change component algorithms or their order.", nameof(settings));
-                if (previous.SequenceEqual(configurations)) return;
+                    }
+                }
+
+                if (previous.SequenceEqual(configurations))
+                {
+                    return;
+                }
+
                 _settingsChange = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 _readersDrained = _redisReaders == 0 ? null : new(TaskCreationOptions.RunContinuationsAsynchronously);
                 drained = _readersDrained?.Task ?? Task.CompletedTask;
             }
+
             await drained.WaitAsync(cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             ObjectDisposedException.ThrowIf(_disposed, this);
+
             if (mode == RespireRateLimitUpdateMode.Migrate)
             {
                 var args = new RespireValue[2 + previous.Length * 2];
                 args[0] = composite ? 1 : 0;
                 args[1] = previous.Length;
+
                 for (var i = 0; i < previous.Length; i++)
                 {
                     args[2 + i] = previous[i];
                     args[2 + previous.Length + i] = configurations[i];
                 }
+
                 migrationStarted = true;
                 // Cancellation is honored before submission. Once submitted, observe the migration
                 // reply so cancellation cannot knowingly leave local and Redis settings out of sync.
                 using var result = await _coordination.ExecuteCompositeRateLimitAsync(
                     UpdateScript, _key, args, CancellationToken.None).ConfigureAwait(false);
-                if (result.AsInteger() != 1) throw new RespireProtocolException("Rate-limit migration returned an invalid response.");
+
+                if (result.AsInteger() != 1)
+                {
+                    throw new RespireProtocolException("Rate-limit migration returned an invalid response.");
+                }
             }
+
             lock (_queueGate)
             {
                 _permitLimit = definitions.Min(static definition => definition.PermitLimit);
+
                 if (composite)
                 {
                     _compositeArguments = new RespireValue[1 + definitions.Length];
-                    for (var i = 0; i < definitions.Length; i++) _compositeArguments[i + 1] = configurations[i];
+
+                    for (var i = 0; i < definitions.Length; i++)
+                    {
+                        _compositeArguments[i + 1] = configurations[i];
+                    }
                 }
                 else
                 {
@@ -126,14 +174,20 @@ internal sealed partial class RedisRateLimiter
                     _tokenBucketExpiryMs = _kind == RedisRateLimiterKind.TokenBucket
                         ? _periodMs * (((long)_permitLimit + _tokensPerPeriod - 1) / _tokensPerPeriod) : 0;
                 }
+
                 _settingsVersion++;
+
                 for (var node = _queue.First; node is not null;)
                 {
                     var next = node.Next;
                     var request = node.Value;
                     request.SetRetryAfter(TimeSpan.Zero);
+
                     if (!request.IsProcessing && request.PermitCount > _permitLimit)
+                    {
                         CompleteQueued(request, new RedisRateLimitLease(false, null));
+                    }
+
                     node = next;
                 }
             }
@@ -155,6 +209,7 @@ internal sealed partial class RedisRateLimiter
                 _disposed = true;
                 FailQueuedRequests(new InvalidOperationException("Rate-limit migration failed; reconcile Redis state before creating a replacement limiter."));
             }
+
             throw;
         }
         finally
@@ -165,6 +220,7 @@ internal sealed partial class RedisRateLimiter
                 _settingsChange = null;
                 _readersDrained = null;
             }
+
             SignalQueueChanged();
             Volatile.Write(ref _lastActivity, Stopwatch.GetTimestamp());
             Interlocked.Decrement(ref _activeAcquisitions);
@@ -175,7 +231,10 @@ internal sealed partial class RedisRateLimiter
     private string[] GetConfigurations()
     {
         if (_kind == RedisRateLimiterKind.Composite)
+        {
             return _compositeArguments!.Skip(1).Select(static value => value.ToString()).ToArray();
+        }
+
         var extra = _kind == RedisRateLimiterKind.SlidingWindow ? _segments : _tokensPerPeriod;
         return [string.Create(CultureInfo.InvariantCulture, $"{(int)_kind},{_permitLimit},{_periodMs},{extra}")];
     }

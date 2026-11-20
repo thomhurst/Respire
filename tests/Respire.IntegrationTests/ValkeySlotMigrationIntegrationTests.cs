@@ -23,9 +23,11 @@ public class ValkeySlotMigrationIntegrationTests
         var token = deadline.Token;
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [cluster.Endpoint(0)], AllowAdmin = true,
+            Endpoints = [cluster.Endpoint(0)],
+            AllowAdmin = true,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
-            CommandTimeout = TimeSpan.FromSeconds(5), ConnectTimeout = TimeSpan.FromSeconds(5),
+            CommandTimeout = TimeSpan.FromSeconds(5),
+            ConnectTimeout = TimeSpan.FromSeconds(5),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         var source = client.Server.OnNode(cluster.Endpoint(0));
@@ -37,21 +39,36 @@ public class ValkeySlotMigrationIntegrationTests
             new(cluster.NodeIds[1], [new(0, 0), new(2, 2)]),
             new(cluster.NodeIds[2], [new(4, 4)])], token);
         RespireValkeySlotMigration[] completed;
+
         while (true)
         {
             completed = await source.ClusterGetSlotMigrationsAsync(token);
             completed.Should().HaveCount(2);
             completed.Should().NotContain(job => job.State == "failed" || job.State == "cancelled");
-            if (completed.All(job => job.State == "success")) break;
+
+            if (completed.All(job => job.State == "success"))
+            {
+                break;
+            }
+
             await Task.Delay(50, token);
         }
+
         var exported = completed.Single(job => job.TargetNodeId == cluster.NodeIds[1]);
         exported.Operation.Should().Be("EXPORT");
         exported.SourceNodeId.Should().Be(cluster.NodeIds[0]);
         exported.CreateTime.Should().BeAfter(DateTimeOffset.UtcNow.AddMinutes(-5));
         exported.IsTerminal.Should().BeTrue();
-        if (image.Contains("9.1", StringComparison.Ordinal)) exported.RemainingReplicationBytes.Should().Be(0);
-        else exported.RemainingReplicationBytes.Should().BeNull();
+
+        if (image.Contains("9.1", StringComparison.Ordinal))
+        {
+            exported.RemainingReplicationBytes.Should().Be(0);
+        }
+        else
+        {
+            exported.RemainingReplicationBytes.Should().BeNull();
+        }
+
         (await cluster.CommandAsync(1, token, "GET", key)).TrimEnd('\r', '\n').Should().Be("owned-value");
         (await target.ClusterGetSlotMigrationsAsync(token)).Should().Contain(job => job.Name == exported.Name && job.Operation == "IMPORT");
 
@@ -88,7 +105,12 @@ public class ValkeySlotMigrationIntegrationTests
     private sealed class OwnedCluster(IContainer container) : IAsyncDisposable
     {
         private NodeCommandSessions? _nodes;
-        internal string[] NodeIds { get; } = new string[3];
+
+        internal string[] NodeIds
+        {
+            get;
+        } = new string[3];
+
         internal RespireEndpoint Endpoint(int index) => new(container.Hostname, container.GetMappedPublicPort(7000 + index));
 
         internal static async Task<OwnedCluster> StartAsync(string image)
@@ -101,6 +123,7 @@ public class ValkeySlotMigrationIntegrationTests
                 .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(7000)
                     .UntilInternalTcpPortIsAvailable(7001).UntilInternalTcpPortIsAvailable(7002)).Build(), [7000, 7001, 7002], deadline.Token);
             var cluster = new OwnedCluster(container);
+
             try
             {
                 for (var node = 0; node < 3; node++)
@@ -113,9 +136,15 @@ public class ValkeySlotMigrationIntegrationTests
                 // Migration sockets use internal ports; only client connections use random host ports.
                 await cluster.CommandAsync(0, deadline.Token, "CLUSTER", "MEET", "127.0.0.1", "7001");
                 await cluster.CommandAsync(0, deadline.Token, "CLUSTER", "MEET", "127.0.0.1", "7002");
+
                 for (var node = 0; node < 3; node++)
+                {
                     while (!(await cluster.CommandAsync(node, deadline.Token, "CLUSTER", "INFO")).Contains("cluster_state:ok", StringComparison.Ordinal))
+                    {
                         await Task.Delay(50, deadline.Token);
+                    }
+                }
+
                 return cluster;
             }
             catch { await cluster.DisposeAsync(); throw; }
@@ -131,7 +160,11 @@ public class ValkeySlotMigrationIntegrationTests
 
         public async ValueTask DisposeAsync()
         {
-            if (_nodes is not null) await _nodes.DisposeAsync();
+            if (_nodes is not null)
+            {
+                await _nodes.DisposeAsync();
+            }
+
             await container.DisposeAsync();
         }
     }

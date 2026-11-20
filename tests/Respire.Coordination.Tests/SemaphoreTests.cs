@@ -25,7 +25,12 @@ public class SemaphoreTests(RedisTestContainer fixture)
         var winners = attempts.Where(attempt => attempt.Acquired).ToArray();
         await Assert.That(winners.Length).IsEqualTo(3);
         await Assert.That(winners.Select(attempt => attempt.Permit).Distinct().Count()).IsEqualTo(3);
-        foreach (var winner in winners) await winner.Permit.ReleaseAsync();
+
+        foreach (var winner in winners)
+        {
+            await winner.Permit.ReleaseAsync();
+        }
+
         await using var replacement = await new RespireSemaphore(firstClient, key, capacity: 1).TryAcquireAsync();
         await Assert.That(replacement.Acquired).IsTrue();
     }
@@ -49,8 +54,11 @@ public class SemaphoreTests(RedisTestContainer fixture)
         await second.Permit.ReleaseAsync();
         await using var afterDrain = await changed.TryAcquireAsync();
         await Assert.That(afterDrain.Acquired).IsTrue();
+
         await using (var atCapacity = await changed.TryAcquireAsync())
+        {
             await Assert.That(atCapacity.Acquired).IsFalse();
+        }
     }
 
     [Test]
@@ -86,8 +94,12 @@ public class SemaphoreTests(RedisTestContainer fixture)
         key[2] = 2;
         await using var permit = await semaphore.TryAcquireAsync(TimeSpan.FromSeconds(20));
         await Assert.That(permit.Acquired).IsTrue();
+
         await using (var blocked = await new RespireSemaphore(view, new byte[] { 0xff, 0, 1 }, capacity: 1).TryAcquireAsync())
+        {
             await Assert.That(blocked.Acquired).IsFalse();
+        }
+
         await Assert.That(() => new RespireSemaphore(client, "invalid", 0)).Throws<ArgumentOutOfRangeException>();
     }
 
@@ -127,8 +139,11 @@ public class SemaphoreTests(RedisTestContainer fixture)
             .Throws<OperationCanceledException>();
         await Assert.That(permit.Permit.IsReleased).IsFalse();
         await Assert.That(await permit.Permit.VerifyStillHeldAsync()).IsTrue();
+
         await using (var blocked = await semaphore.TryAcquireAsync())
+        {
             await Assert.That(blocked.Acquired).IsFalse();
+        }
     }
 
     [Test]
@@ -152,7 +167,9 @@ public class SemaphoreTests(RedisTestContainer fixture)
 
     private ValueTask<RespireClient> ConnectAsync(int protocol) => RespireClient.ConnectAsync(new RespireOptions
     {
-        Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
-        Connections = 1, Protocol = (RespireProtocol)protocol,
+        Endpoints = [new(fixture.Host, fixture.Port)],
+        Database = fixture.IsolatedDatabase,
+        Connections = 1,
+        Protocol = (RespireProtocol)protocol,
     });
 }

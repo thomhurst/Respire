@@ -10,26 +10,96 @@ internal sealed class StressTestResult
     /// </summary>
     private const int MinSamplesForDrift = 6;
 
-    public required string Scenario { get; init; }
-    public required string ScenarioDescription { get; init; }
-    public required string Client { get; init; }
-    public required int DurationSeconds { get; init; }
-    public required int WarmupSeconds { get; init; }
-    public required int Concurrency { get; init; }
-    public required int ValueSizeBytes { get; init; }
-    public required DateTime StartedAtUtc { get; init; }
-    public required DateTime CompletedAtUtc { get; init; }
-    public required double ElapsedSeconds { get; init; }
-    public required long Operations { get; init; }
-    public required long Errors { get; init; }
-    public required IReadOnlyList<string> ErrorSamples { get; init; }
-    public required IReadOnlyList<double> OperationsPerSecondSamples { get; init; }
-    public required LatencySnapshot Latency { get; init; }
-    public required GcSnapshot Gc { get; init; }
-    public required double CpuTimeSeconds { get; init; }
+    public required string Scenario
+    {
+        get; init;
+    }
+
+    public required string ScenarioDescription
+    {
+        get; init;
+    }
+
+    public required string Client
+    {
+        get; init;
+    }
+
+    public required int DurationSeconds
+    {
+        get; init;
+    }
+
+    public required int WarmupSeconds
+    {
+        get; init;
+    }
+
+    public required int Concurrency
+    {
+        get; init;
+    }
+
+    public required int ValueSizeBytes
+    {
+        get; init;
+    }
+
+    public required DateTime StartedAtUtc
+    {
+        get; init;
+    }
+
+    public required DateTime CompletedAtUtc
+    {
+        get; init;
+    }
+
+    public required double ElapsedSeconds
+    {
+        get; init;
+    }
+
+    public required long Operations
+    {
+        get; init;
+    }
+
+    public required long Errors
+    {
+        get; init;
+    }
+
+    public required IReadOnlyList<string> ErrorSamples
+    {
+        get; init;
+    }
+
+    public required IReadOnlyList<double> OperationsPerSecondSamples
+    {
+        get; init;
+    }
+
+    public required LatencySnapshot Latency
+    {
+        get; init;
+    }
+
+    public required GcSnapshot Gc
+    {
+        get; init;
+    }
+
+    public required double CpuTimeSeconds
+    {
+        get; init;
+    }
 
     /// <summary>True when the watchdog saw no completed operations for its full window.</summary>
-    public required bool Stalled { get; init; }
+    public required bool Stalled
+    {
+        get; init;
+    }
 
     public double OperationsPerSecond =>
         ElapsedSeconds > 0 ? Operations / ElapsedSeconds : 0;
@@ -50,8 +120,11 @@ internal sealed class StressTestResult
         get
         {
             var samples = OperationsPerSecondSamples;
+
             if (samples.Count < MinSamplesForDrift)
+            {
                 return null;
+            }
 
             var third = samples.Count / 3;
             var first = samples.Take(third).Average();

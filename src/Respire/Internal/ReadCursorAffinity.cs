@@ -40,7 +40,11 @@ internal sealed class ReadCursorAffinity
     {
         if (affinity is not null)
         {
-            if (affinity.IsPinned) return await GetPinnedConnectionAsync(router, affinity, cancellationToken, observation, readyOnly).ConfigureAwait(false);
+            if (affinity.IsPinned)
+            {
+                return await GetPinnedConnectionAsync(router, affinity, cancellationToken, observation, readyOnly).ConfigureAwait(false);
+            }
+
             var first = await router.SelectAsync(readFrom, cancellationToken, observation, readyOnly: readyOnly).ConfigureAwait(false);
             affinity.Replica = first.Replica;
             affinity.Primary = first.Primary;
@@ -51,23 +55,38 @@ internal sealed class ReadCursorAffinity
         // Queue admission alone does not invalidate a raw scan's issuing server.
         // Only a fresh queued cursor may bypass an unavailable pin to recover elsewhere.
         var reselectUnavailablePin = reselectSharedCursor && !isContinuation;
+
         if (_shared.TryGetValue(readFrom, out var shared))
         {
             var pinned = await TryReuseSharedPinAsync(router, readFrom, shared, cancellationToken, observation,
                 readyOnly, reselectUnavailablePin).ConfigureAwait(false);
-            if (pinned is not null) return pinned;
+
+            if (pinned is not null)
+            {
+                return pinned;
+            }
         }
 
         // The server that issued this cursor is gone, so no other server can continue it.
-        if (isContinuation) throw CursorLost();
+        if (isContinuation)
+        {
+            throw CursorLost();
+        }
         // A fresh cursor reselects; the stale pin's node must not name a later selection failure.
         observation.UseEndpoint(null);
 
         if (readyOnly)
         {
-            if (!_sharedGate.Wait(0)) throw new ReadEndpointRouter.BacklogSelectionRequiredException();
+            if (!_sharedGate.Wait(0))
+            {
+                throw new ReadEndpointRouter.BacklogSelectionRequiredException();
+            }
         }
-        else await _sharedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        else
+        {
+            await _sharedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         try
         {
             // Another publisher may have replaced the rejected pin while we waited.
@@ -76,7 +95,12 @@ internal sealed class ReadCursorAffinity
             {
                 var pinned = await TryReuseSharedPinAsync(router, readFrom, shared, cancellationToken, observation,
                     readyOnly, reselectUnavailablePin).ConfigureAwait(false);
-                if (pinned is not null) return pinned;
+
+                if (pinned is not null)
+                {
+                    return pinned;
+                }
+
                 observation.UseEndpoint(null);
             }
 
@@ -99,6 +123,7 @@ internal sealed class ReadCursorAffinity
                 observation.UseEndpoint(pinned.ActiveConnectionEndpoint, cancellationToken);
                 return await cluster.GetPinnedReadConnectionAsync(slot, pinned, cancellationToken, readFrom: affinity.ReadFrom).ConfigureAwait(false);
             }
+
             var first = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken, observation).ConfigureAwait(false);
             affinity.ClusterSlot = slot;
             affinity.ClusterNode = first.Multiplexer;
@@ -107,13 +132,22 @@ internal sealed class ReadCursorAffinity
         }
 
         var key = (readFrom, slot);
+
         if (_clusterShared.TryGetValue(key, out var shared) && shared.ClusterNode is { } sharedNode)
         {
             observation.UseEndpoint(sharedNode.ActiveConnectionEndpoint, cancellationToken);
-            try { return await cluster.GetPinnedReadConnectionAsync(slot, sharedNode, cancellationToken, revalidate: !isContinuation, readFrom: shared.ReadFrom).ConfigureAwait(false); }
+
+            try
+            {
+                return await cluster.GetPinnedReadConnectionAsync(slot, sharedNode, cancellationToken, revalidate: !isContinuation, readFrom: shared.ReadFrom).ConfigureAwait(false);
+            }
             catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
             {
-                if (!isContinuation) ReadEndpointRouter.RecordCandidateFailure(observation, error, sharedNode.ActiveConnectionEndpoint);
+                if (!isContinuation)
+                {
+                    ReadEndpointRouter.RecordCandidateFailure(observation, error, sharedNode.ActiveConnectionEndpoint);
+                }
+
                 _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
             }
         }
@@ -122,20 +156,30 @@ internal sealed class ReadCursorAffinity
             throw CursorLost();
         }
 
-        if (isContinuation) throw CursorLost();
+        if (isContinuation)
+        {
+            throw CursorLost();
+        }
+
         await _sharedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
             if (_clusterShared.TryGetValue(key, out shared) && shared.ClusterNode is { } currentNode)
             {
                 observation.UseEndpoint(currentNode.ActiveConnectionEndpoint, cancellationToken);
-                try { return await cluster.GetPinnedReadConnectionAsync(slot, currentNode, cancellationToken, revalidate: true, readFrom: shared.ReadFrom).ConfigureAwait(false); }
+
+                try
+                {
+                    return await cluster.GetPinnedReadConnectionAsync(slot, currentNode, cancellationToken, revalidate: true, readFrom: shared.ReadFrom).ConfigureAwait(false);
+                }
                 catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
                 {
                     ReadEndpointRouter.RecordCandidateFailure(observation, error, currentNode.ActiveConnectionEndpoint);
                     _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
                 }
             }
+
             var connection = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken, observation).ConfigureAwait(false);
             _clusterShared[key] = new ReadAffinity { ClusterNode = connection.Multiplexer, ClusterSlot = slot, ReadFrom = readFrom };
             return connection;
@@ -156,7 +200,11 @@ internal sealed class ReadCursorAffinity
     internal bool TryGetShared(RespireReadFrom readFrom, out ReadAffinity? affinity)
         => _shared.TryGetValue(readFrom, out affinity);
 
-    internal void Clear() { _shared.Clear(); _clusterShared.Clear(); }
+    internal void Clear()
+    {
+        _shared.Clear();
+        _clusterShared.Clear();
+    }
 
     private static RespireConnectionException CursorLost()
         => new("The server that issued this cursor left the read topology or failed. Restart the scan with cursor 0.");
@@ -167,23 +215,36 @@ internal sealed class ReadCursorAffinity
     {
         if (reselectUnavailablePin)
         {
-            if (shared.Replica is { IsCoolingDown: true }) return null;
+            if (shared.Replica is { IsCoolingDown: true })
+            {
+                return null;
+            }
+
             if (shared.Primary is { } primary)
             {
                 // A fresh queued scan must not wait for primary discovery while a replica
                 // is usable. Select from this ready snapshot without entering EnsureConnectedAsync;
                 // a concurrent retirement/socket loss is handled by normal backlog admission.
                 cancellationToken.ThrowIfCancellationRequested();
+
                 if (!router.Core.TryGetReadyPrimaryMultiplexer(out var current)
-                    || !ReferenceEquals(current, primary) || !primary.IsConnected) return null;
+                    || !ReferenceEquals(current, primary) || !primary.IsConnected)
+                {
+                    return null;
+                }
+
                 observation.UseEndpoint(primary.ActiveConnectionEndpoint, cancellationToken);
                 var zone = ReadFallbackPolicy.UsesAvailabilityZone(shared.ReadFrom)
                     ? router.Core.Options.ClientAvailabilityZone : null;
                 return zone is null ? primary.GetConnection() : primary.GetConnectionForZone(zone);
             }
         }
+
         if (await IsPinCurrentAsync(router, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false))
+        {
             return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false);
+        }
+
         _shared.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
         return null;
     }
@@ -192,7 +253,10 @@ internal sealed class ReadCursorAffinity
         ReadEndpointRouter router, RespireReadFrom readFrom, ReadAffinity shared, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation, bool readyOnly = false)
     {
-        try { return await GetPinnedConnectionAsync(router, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false); }
+        try
+        {
+            return await GetPinnedConnectionAsync(router, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false);
+        }
         catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
         {
             // The issuing server failed, so its cursors are lost. A fresh cursor reselects.
@@ -207,28 +271,44 @@ internal sealed class ReadCursorAffinity
     {
         if (affinity.Replica is { } replica)
         {
-            if (router.IsCurrent(replica)) return true;
+            if (router.IsCurrent(replica))
+            {
+                return true;
+            }
             // A lost continuation belongs to the removed replica that issued the cursor.
             observation.UseEndpoint(replica.Endpoint, cancellationToken);
             return false;
         }
         // An unreachable or replaced primary invalidates the pin so the policy can reselect.
         var core = router.Core;
+
         if (readyOnly)
         {
-            if (!core.TryGetReadyPrimaryMultiplexer(out var ready)) throw new ReadEndpointRouter.BacklogSelectionRequiredException();
+            if (!core.TryGetReadyPrimaryMultiplexer(out var ready))
+            {
+                throw new ReadEndpointRouter.BacklogSelectionRequiredException();
+            }
+
             return ReferenceEquals(ready, affinity.Primary);
         }
         // Without Sentinel the pinned primary is the active endpoint. Sentinel records each
         // resolved primary before dialling it and clears the endpoint while querying Sentinels.
         var pinned = core.Sentinel is null ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null;
-        try { await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false); }
+
+        try
+        {
+            await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
+        }
         catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
         {
             ReadEndpointRouter.RecordCandidateFailure(observation, error, core.Sentinel is null ? pinned : observation.Endpoint);
             return false;
         }
-        if (ReferenceEquals(core.Multiplexer, affinity.Primary)) return true;
+
+        if (ReferenceEquals(core.Multiplexer, affinity.Primary))
+        {
+            return true;
+        }
         // Connecting recorded the replacement generation. A lost continuation belongs to the
         // pin's retired owner; a fresh selection records its own node afterwards.
         observation.UseEndpoint(affinity.Primary?.ActiveConnectionEndpoint, cancellationToken);
@@ -242,35 +322,50 @@ internal sealed class ReadCursorAffinity
     {
         var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(affinity.ReadFrom)
             ? router.Core.Options.ClientAvailabilityZone : null;
+
         if (affinity.Replica is { } replica)
         {
             // The issuing replica owns this failure even when it has left the topology.
             observation.UseEndpoint(replica.Endpoint, cancellationToken);
             // Never recreate an entry for a replica removed from the topology.
             if (!router.IsCurrent(replica))
+            {
                 throw new RespireConnectionException(
                     $"Read replica {replica.Endpoint} that issued the cursor was removed from the topology.");
+            }
+
             return await replica.GetConnectionAsync(cancellationToken, preferredZone, readyOnly).ConfigureAwait(false);
         }
 
         var core = router.Core;
-        if (affinity.Primary is { } pinnedPrimary) observation.UseEndpoint(pinnedPrimary.ActiveConnectionEndpoint, cancellationToken);
+
+        if (affinity.Primary is { } pinnedPrimary)
+        {
+            observation.UseEndpoint(pinnedPrimary.ActiveConnectionEndpoint, cancellationToken);
+        }
+
         RespireConnectionMultiplexer multiplexer;
+
         if (readyOnly)
         {
-            if (!core.TryGetReadyPrimaryMultiplexer(out multiplexer)) throw new ReadEndpointRouter.BacklogSelectionRequiredException();
+            if (!core.TryGetReadyPrimaryMultiplexer(out multiplexer))
+            {
+                throw new ReadEndpointRouter.BacklogSelectionRequiredException();
+            }
         }
         else
         {
             await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
             multiplexer = core.Multiplexer;
         }
+
         if (!ReferenceEquals(multiplexer, affinity.Primary))
         {
             // Connecting recorded the replacement generation; the failure belongs to the cursor's owner.
             observation.UseEndpoint(affinity.Primary?.ActiveConnectionEndpoint);
             throw new RespireConnectionException("The primary that issued the cursor was replaced.");
         }
+
         return preferredZone is null ? multiplexer.GetConnection() : multiplexer.GetConnectionForZone(preferredZone);
     }
 }

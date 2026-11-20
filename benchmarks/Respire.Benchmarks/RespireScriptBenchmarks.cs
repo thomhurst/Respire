@@ -9,7 +9,10 @@ public class RespireScriptBenchmarks
     private string _source = null!;
 
     [Params(13, 1024)]
-    public int Length { get; set; }
+    public int Length
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public void Setup() => _source = new string('x', Length);

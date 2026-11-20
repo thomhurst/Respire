@@ -30,18 +30,26 @@ public class ProxyTests
             await using var stream = new NetworkStream(socket);
             await Assert.That(await Read(stream, 3, token)).IsEquivalentTo(new byte[] { 5, 1, authenticate ? (byte)2 : (byte)0 });
             await Fragment(stream, new byte[] { 5, authenticate ? (byte)2 : (byte)0 }, token);
+
             if (authenticate)
             {
                 await Assert.That(await Read(stream, 13, token)).IsEquivalentTo(new byte[] { 1, 4, 117, 115, 101, 114, 6, 115, 101, 99, 114, 101, 116 });
                 await Fragment(stream, new byte[] { 1, 0 }, token);
             }
+
             await Assert.That(await Read(stream, 4, token)).IsEquivalentTo(new byte[] { 5, 1, 0, (byte)addressType });
             var length = addressType == 3 ? (await Read(stream, 1, token))[0] : addressType == 1 ? 4 : 16;
             var address = await Read(stream, length, token);
+
             if (addressType == 3)
+            {
                 await Assert.That(Encoding.ASCII.GetString(address)).IsEqualTo(host == "bücher.example" ? "xn--bcher-kva.example" : host);
+            }
             else
+            {
                 await Assert.That(new IPAddress(address)).IsEqualTo(IPAddress.Parse(host));
+            }
+
             await Assert.That(await Read(stream, 2, token)).IsEquivalentTo(new byte[] { 24, 236 });
             // Exercise all three bound-address encodings, and coalesce the first tunnel data.
             byte[] bound = addressType == 3 ? [3, 1, (byte)'x'] : [(byte)addressType, .. new byte[length]];
@@ -104,7 +112,11 @@ public class ProxyTests
             using var socket = await peer.AcceptSocketAsync(token);
             await using var stream = new NetworkStream(socket);
             await ReadHeaders(stream, token);
-            if (response == "eof") socket.Shutdown(SocketShutdown.Send);
+
+            if (response == "eof")
+            {
+                socket.Shutdown(SocketShutdown.Send);
+            }
             else
             {
                 var data = response switch
@@ -115,6 +127,7 @@ public class ProxyTests
                 };
                 await stream.WriteAsync(Encoding.ASCII.GetBytes(data), token);
             }
+
             var error = await Assert.That(async () => await connecting).Throws<IOException>();
             await Assert.That(error!.Message).Contains(message);
             await AssertClosed(stream, token);
@@ -143,6 +156,7 @@ public class ProxyTests
             await Read(stream, 3, token);
             await stream.WriteAsync(new byte[] { failure == "version" ? (byte)4 : (byte)5,
                 failure == "method" ? (byte)255 : auth && failure != "downgrade" ? (byte)2 : (byte)0 }, token);
+
             if (failure == "auth")
             {
                 await Read(stream, 5, token);
@@ -153,13 +167,21 @@ public class ProxyTests
                 await Read(stream, 10, token);
                 byte[] response = failure switch
                 {
-                    "reply-version" => [4, 0, 0, 1], "reserved" => [5, 0, 1, 1],
-                    "rejected" => [5, 5, 0, 1], "address-type" => [5, 0, 0, 2],
-                    "empty-host" => [5, 0, 0, 3, 0], _ => [5, 0, 0, 4, 1],
+                    "reply-version" => [4, 0, 0, 1],
+                    "reserved" => [5, 0, 1, 1],
+                    "rejected" => [5, 5, 0, 1],
+                    "address-type" => [5, 0, 0, 2],
+                    "empty-host" => [5, 0, 0, 3, 0],
+                    _ => [5, 0, 0, 4, 1],
                 };
                 await stream.WriteAsync(response, token);
-                if (failure == "truncated") socket.Shutdown(SocketShutdown.Send);
+
+                if (failure == "truncated")
+                {
+                    socket.Shutdown(SocketShutdown.Send);
+                }
             }
+
             await Assert.That(async () => await connecting).Throws<IOException>();
             await AssertClosed(stream, token);
         });
@@ -179,14 +201,20 @@ public class ProxyTests
             var connecting = factory(new("127.0.0.1"), cancel.Token).AsTask();
             using var socket = await peer.AcceptSocketAsync(token);
             await using var stream = new NetworkStream(socket);
-            if (http) await ReadHeaders(stream, token);
+
+            if (http)
+            {
+                await ReadHeaders(stream, token);
+            }
             else
             {
                 await Read(stream, 3, token);
+
                 if (stage != "method")
                 {
                     await stream.WriteAsync(new byte[] { 5, 2 }, token);
                     await Read(stream, 5, token);
+
                     if (stage == "connect")
                     {
                         await stream.WriteAsync(new byte[] { 1, 0 }, token);
@@ -194,6 +222,7 @@ public class ProxyTests
                     }
                 }
             }
+
             cancel.Cancel();
             await Assert.That(async () => await connecting).Throws<OperationCanceledException>();
             await AssertClosed(stream, token);
@@ -216,8 +245,16 @@ public class ProxyTests
                 options.ToConnectionOptions(), cancellationToken: token);
             using var socket = await peer.AcceptSocketAsync(token);
             await using var stream = new NetworkStream(socket);
-            if (http) await ReadHeaders(stream, token);
-            else await Read(stream, 3, token);
+
+            if (http)
+            {
+                await ReadHeaders(stream, token);
+            }
+            else
+            {
+                await Read(stream, 3, token);
+            }
+
             await Assert.That(async () => await connecting).Throws<RespireTimeoutException>();
             await AssertClosed(stream, token);
         });
@@ -235,13 +272,15 @@ public class ProxyTests
             {
                 ConnectionFactory = http ? RespireProxy.HttpConnect(proxy) : RespireProxy.Socks5(proxy),
                 UseTls = true,
-                Protocol = RespireProtocol.Resp2, LibraryName = null,
+                Protocol = RespireProtocol.Resp2,
+                LibraryName = null,
                 TlsOptions = new() { RemoteCertificateValidationCallback = (_, received, _, _) => received?.GetCertHashString() == certificate.GetCertHashString() },
             };
             var connecting = Respire.Networking.RespireConnection.ConnectAsync("redis.internal", 6379,
                 options.ToConnectionOptions(), cancellationToken: token);
             using var socket = await peer.AcceptSocketAsync(token);
             await using var stream = new NetworkStream(socket);
+
             if (http)
             {
                 await ReadHeaders(stream, token);
@@ -256,11 +295,16 @@ public class ProxyTests
                 await Read(stream, length + 2, token);
                 await stream.WriteAsync(new byte[] { 5, 0, 0, 1, 0, 0, 0, 0, 0, 0 }, token);
             }
+
             string? targetHost = null;
             await using var tls = new SslStream(stream, leaveInnerStreamOpen: true);
             await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
             {
-                ServerCertificateSelectionCallback = (_, name) => { targetHost = name; return certificate; },
+                ServerCertificateSelectionCallback = (_, name) =>
+                {
+                    targetHost = name;
+                    return certificate;
+                },
             }, token);
             await using var connection = await connecting;
             await Assert.That(targetHost).IsEqualTo("redis.internal");
@@ -273,8 +317,12 @@ public class ProxyTests
     public async Task RejectsInvalidDestinationsAndPreCanceledAttempts(bool http)
     {
         var factory = http ? RespireProxy.HttpConnect(new("localhost", 1)) : RespireProxy.Socks5(new("localhost", 1));
+
         foreach (var host in new[] { "bad\r\nInjected: x", "/tmp/redis.sock", "fe80::1%3" })
+        {
             await Assert.That(async () => await factory(new(host), default)).Throws<ArgumentException>();
+        }
+
         await Assert.That(async () => await factory(new("redis", 0), default)).Throws<ArgumentOutOfRangeException>();
         using var canceled = new CancellationTokenSource();
         canceled.Cancel();
@@ -311,24 +359,35 @@ public class ProxyTests
 
     private static async Task Fragment(Stream stream, byte[] bytes, CancellationToken token)
     {
-        foreach (var b in bytes) await stream.WriteAsync(new byte[] { b }, token);
+        foreach (var b in bytes)
+        {
+            await stream.WriteAsync(new byte[] { b }, token);
+        }
     }
 
     private static async Task<string> ReadHeaders(Stream stream, CancellationToken token)
     {
         var bytes = new List<byte>();
+
         while (bytes.Count < 16384)
         {
             bytes.Add((await Read(stream, 1, token))[0]);
+
             if (bytes.Count >= 4 && bytes.TakeLast(4).SequenceEqual("\r\n\r\n"u8.ToArray()))
+            {
                 return Encoding.ASCII.GetString(bytes.ToArray());
+            }
         }
+
         throw new IOException("Test request exceeded header limit.");
     }
 
     private static async Task AssertClosed(Stream stream, CancellationToken token)
     {
-        try { await Assert.That(await stream.ReadAsync(new byte[1], token)).IsEqualTo(0); }
+        try
+        {
+            await Assert.That(await stream.ReadAsync(new byte[1], token)).IsEqualTo(0);
+        }
         catch (IOException) { /* A close with unread inbound bytes can send TCP RST. */ }
     }
 }

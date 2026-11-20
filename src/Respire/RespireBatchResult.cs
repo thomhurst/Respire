@@ -23,13 +23,22 @@ public readonly record struct RespireBatchResult
     }
 
     /// <summary>Total number of commands in the batch.</summary>
-    public int Count { get; }
+    public int Count
+    {
+        get;
+    }
 
     /// <summary>Number of commands whose pending result faulted; equal to <see cref="Failures"/> count.</summary>
-    public int FailureCount { get; }
+    public int FailureCount
+    {
+        get;
+    }
 
     /// <summary>The earliest failure in original queue order, or null when every command succeeded.</summary>
-    public Exception? FirstError { get; }
+    public Exception? FirstError
+    {
+        get;
+    }
 
     /// <summary>
     /// Failed commands in their original queue order. Empty when every command succeeded.

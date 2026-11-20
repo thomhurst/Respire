@@ -45,7 +45,12 @@ public sealed class RespireHashChangeTracker<T> where T : class
         ArgumentNullException.ThrowIfNull(encode);
         ArgumentNullException.ThrowIfNull(mappedFields);
         ArgumentNullException.ThrowIfNull(fieldTtls);
-        if (!Enum.IsDefined(expiryMode)) throw new ArgumentOutOfRangeException(nameof(expiryMode));
+
+        if (!Enum.IsDefined(expiryMode))
+        {
+            throw new ArgumentOutOfRangeException(nameof(expiryMode));
+        }
+
         _client = client;
         _key = key.Snapshot();
         _encode = encode;
@@ -64,11 +69,13 @@ public sealed class RespireHashChangeTracker<T> where T : class
         {
             var encoded = encode(value);
             var owned = new Dictionary<string, RespireValue>(encoded.Count, StringComparer.Ordinal);
+
             foreach (var field in encoded)
             {
                 ArgumentNullException.ThrowIfNull(field.Value);
                 owned.Add(field.Key, snapshot(field.Value));
             }
+
             return owned;
         };
     }
@@ -83,26 +90,45 @@ public sealed class RespireHashChangeTracker<T> where T : class
     {
         ArgumentNullException.ThrowIfNull(value);
         cancellationToken.ThrowIfCancellationRequested();
+
         if (Interlocked.CompareExchange(ref _updating, 1, 0) != 0)
+        {
             throw new InvalidOperationException("A hash tracker cannot run overlapping updates.");
+        }
+
         try
         {
             if (_writeTimedOut)
+            {
                 throw new InvalidOperationException("A timed-out hash write may still execute. Wait for prior commands to settle and recreate the tracker from persisted values.");
+            }
+
             var next = _encode(value);
             var changed = new List<string>();
             var writes = new Dictionary<string, RespireValue>(StringComparer.Ordinal);
+
             foreach (var field in _mappedFields)
             {
                 var present = next.TryGetValue(field, out var text);
+
                 if (!_retryFields.Contains(field) && _baseline is not null && _baseline.TryGetValue(field, out var previous) == present
-                    && (!present || ValuesEqual(previous, text))) continue;
+                    && (!present || ValuesEqual(previous, text)))
+                {
+                    continue;
+                }
+
                 changed.Add(field);
-                if (present) writes.Add(field, text!);
+
+                if (present)
+                {
+                    writes.Add(field, text!);
+                }
             }
+
             if (changed.Count != 0)
             {
                 var writeStarted = false;
+
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -113,14 +139,24 @@ public sealed class RespireHashChangeTracker<T> where T : class
                 {
                     // A command timeout abandons only the response wait. No retry through this
                     // client can prove that an accepted write on another connection has settled.
-                    if (writeStarted && error is RespireTimeoutException { IsCommandNotSubmitted: false }) _writeTimedOut = true;
+                    if (writeStarted && error is RespireTimeoutException { IsCommandNotSubmitted: false })
+                    {
+                        _writeTimedOut = true;
+                    }
                     // Read-only preflight failures cannot change the hash. Preserve any earlier
                     // retry fields, but retain this delta only when writes may have applied.
                     if (writeStarted)
-                        foreach (var field in changed) _retryFields.Add(field);
+                    {
+                        foreach (var field in changed)
+                        {
+                            _retryFields.Add(field);
+                        }
+                    }
+
                     throw;
                 }
             }
+
             _baseline = next;
             _retryFields.Clear();
             cancellationToken.ThrowIfCancellationRequested();

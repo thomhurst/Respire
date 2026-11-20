@@ -15,7 +15,9 @@ public abstract class StandaloneRedisTestContainer(string image) : IAsyncInitial
         _container ?? throw new InvalidOperationException("Redis container has not been initialized.");
 
     public string ConnectionString => $"redis://{Host}:{Port}";
+
     public string Host => Container.Hostname;
+
     public int Port => Container.GetMappedPublicPort(RedisPort);
 
     public async Task InitializeAsync()

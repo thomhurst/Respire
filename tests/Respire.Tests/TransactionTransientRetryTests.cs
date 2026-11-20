@@ -55,7 +55,12 @@ public class TransactionTransientRetryTests
         {
             transactions.Add(transaction);
             var value = transaction.Increment("result");
-            if (++callbacks == 1) await transaction.InspectForTests().WatchConnection!.DisposeAsync();
+
+            if (++callbacks == 1)
+            {
+                await transaction.InspectForTests().WatchConnection!.DisposeAsync();
+            }
+
             return value;
         });
         await Assert.That(callbacks).IsEqualTo(2);
@@ -86,6 +91,7 @@ public class TransactionTransientRetryTests
             pendings.Add(transaction.Increment("result"));
             return callbacks;
         }).AsTask();
+
         if (permitted)
         {
             await Assert.That(await operation).IsEqualTo(2);
@@ -123,8 +129,16 @@ public class TransactionTransientRetryTests
         {
             callbacks++;
             transaction.Set("result", "1");
-            if (unknown) transaction.Execute("GET", "result");
-            else transaction.Increment("result");
+
+            if (unknown)
+            {
+                transaction.Execute("GET", "result");
+            }
+            else
+            {
+                transaction.Increment("result");
+            }
+
             return ValueTask.CompletedTask;
         })).Throws<RespireConnectionException>();
         await Assert.That(callbacks).IsEqualTo(1);
@@ -141,19 +155,29 @@ public class TransactionTransientRetryTests
 #pragma warning restore RESP010
         var callbacks = 0;
         Exception? failure = null;
+
         try
         {
             await client.RunTransactionAsync(["watched"], async (transaction, token) =>
             {
                 var attempt = ++callbacks;
                 _ = transaction.Set("result", "done");
+
                 if (attempt is 1 or 3 || exhaustConflicts && attempt == 4)
+                {
                     await client.IncrementAsync("watched", cancellationToken: token);
-                if (attempt == 2) throw new RespireConnectionException("callback read connection lost");
+                }
+
+                if (attempt == 2)
+                {
+                    throw new RespireConnectionException("callback read connection lost");
+                }
             }, new() { MaxAttempts = 3 });
         }
         catch (Exception error) { failure = error; }
+
         await Assert.That(callbacks).IsEqualTo(4);
+
         if (exhaustConflicts)
         {
             await Assert.That(failure is RespireTransactionConflictException { Attempts: 3 }).IsTrue();
@@ -177,8 +201,15 @@ public class TransactionTransientRetryTests
         await Assert.That(async () => await client.RunTransactionAsync(["watched"], async (transaction, token) =>
         {
             _ = transaction.Set("result", "done");
-            if (++callbacks == 2) await client.IncrementAsync("watched", cancellationToken: token);
-            else throw new RespireConnectionException("callback read connection lost");
+
+            if (++callbacks == 2)
+            {
+                await client.IncrementAsync("watched", cancellationToken: token);
+            }
+            else
+            {
+                throw new RespireConnectionException("callback read connection lost");
+            }
         }, new() { MaxAttempts = 2 })).Throws<RespireConnectionException>();
         await Assert.That(callbacks).IsEqualTo(3);
         await Assert.That(await client.ExistsAsync("result")).IsFalse();
@@ -252,6 +283,7 @@ public class TransactionTransientRetryTests
             callbacks++;
             tokens.Add(token);
             deadlines.Add(transaction.HelperRetryContext!.Deadline.Ticks);
+
             if (callbacks == 1)
             {
                 clock.Advance(budget / 2);
@@ -262,6 +294,7 @@ public class TransactionTransientRetryTests
                 clock.Advance(budget / 4);
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
             }
+
             _ = transaction.Set("result", "done");
         }, options).AsTask().WaitAsync(TimeSpan.FromSeconds(30))).Throws<RespireTimeoutException>();
         await Assert.That(callbacks).IsEqualTo(2);
@@ -318,14 +351,27 @@ public class TransactionTransientRetryTests
         {
             if (instrument.Meter.Name == "Respire" && (instrument.Name == "respire.command.retries"
                 || instrument.Name.StartsWith("respire.transaction.watch.", StringComparison.Ordinal)))
+            {
                 owner.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
         {
-            if (Activity.Current?.TraceId != trace.TraceId) return;
+            if (Activity.Current?.TraceId != trace.TraceId)
+            {
+                return;
+            }
+
             var name = instrument.Name;
+
             foreach (var tag in tags)
-                if (tag.Key == "respire.command.retry.outcome") name = (string)tag.Value!;
+            {
+                if (tag.Key == "respire.command.retry.outcome")
+                {
+                    name = (string)tag.Value!;
+                }
+            }
+
             events.AddOrUpdate(name, value, (_, old) => old + value);
         });
         listener.Start();
@@ -339,8 +385,16 @@ public class TransactionTransientRetryTests
             transaction.Increment("result");
             return ValueTask.CompletedTask;
         }).AsTask();
-        if (exhaust) await Assert.That(async () => await operation).Throws<RespireConnectionException>();
-        else await operation;
+
+        if (exhaust)
+        {
+            await Assert.That(async () => await operation).Throws<RespireConnectionException>();
+        }
+        else
+        {
+            await operation;
+        }
+
         await Assert.That(events["attempted"]).IsEqualTo(1);
         await Assert.That(events[exhaust ? "exhausted" : "succeeded"]).IsEqualTo(1);
         await Assert.That(events.Keys.Any(name => name.StartsWith("respire.transaction.watch.", StringComparison.Ordinal))).IsFalse();
@@ -369,13 +423,25 @@ public class TransactionTransientRetryTests
         var callbacks = 0;
         await client.RunTransactionAsync(["watched"], async (transaction, token) =>
         {
-            if (callbacks == 1) await Assert.That(previous!.IsConnected).IsFalse();
+            if (callbacks == 1)
+            {
+                await Assert.That(previous!.IsConnected).IsFalse();
+            }
+
             previous = transaction.InspectForTests().WatchConnection;
             deadlines.Add(transaction.HelperRetryContext!.Deadline.Ticks);
             tokens.Add(token);
             _ = transaction.Set("result", "done");
-            if (++callbacks == 1) throw new RespireConnectionException("before EXEC");
-            if (callbacks == 2) await client.IncrementAsync("watched", cancellationToken: token);
+
+            if (++callbacks == 1)
+            {
+                throw new RespireConnectionException("before EXEC");
+            }
+
+            if (callbacks == 2)
+            {
+                await client.IncrementAsync("watched", cancellationToken: token);
+            }
         });
         await Assert.That(callbacks).IsEqualTo(3);
         await Assert.That(deadlines.Distinct().Count()).IsEqualTo(1);

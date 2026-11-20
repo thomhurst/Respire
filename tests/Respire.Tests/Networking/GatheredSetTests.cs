@@ -22,6 +22,7 @@ public sealed class GatheredSetTests
         var responses = Enumerable.Range(0, count).Select(_ => new BarrierResponse()).ToArray();
         var leases = new GatheredSetWriteLease[count];
         var completions = new ValueTask<bool>[count];
+
         for (var control = 0; control < 2; control++)
         {
             RentLeases();
@@ -42,7 +43,10 @@ public sealed class GatheredSetTests
 
         void RentLeases()
         {
-            for (var index = 0; index < count; index++) leases[index] = GatheredSetWriteLease.Rent();
+            for (var index = 0; index < count; index++)
+            {
+                leases[index] = GatheredSetWriteLease.Rent();
+            }
         }
 
         void DrainResponses()
@@ -61,22 +65,34 @@ public sealed class GatheredSetTests
         ValueTask<bool>[] completions, bool allocateControl)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < responses.Length; index++)
         {
             completions[index] = leases[index].CompleteResponseAsync(responses[index].Task);
-            if (allocateControl) GC.KeepAlive(new byte[37]);
+
+            if (allocateControl)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
     private sealed class BarrierResponse : IValueTaskSource<bool>
     {
         private ManualResetValueTaskSourceCore<bool> _core;
+
         internal ValueTask<bool> Task => new(this, _core.Version);
+
         internal void Complete() => _core.SetResult(true);
+
         internal void Reset() => _core.Reset();
+
         bool IValueTaskSource<bool>.GetResult(short token) => _core.GetResult(token);
+
         ValueTaskSourceStatus IValueTaskSource<bool>.GetStatus(short token) => _core.GetStatus(token);
+
         void IValueTaskSource<bool>.OnCompleted(Action<object?> continuation, object? state, short token,
             ValueTaskSourceOnCompletedFlags flags) => _core.OnCompleted(continuation, state, token, flags);
     }
@@ -133,6 +149,7 @@ public sealed class GatheredSetTests
             "cancel" => new OperationCanceledException(cancellation.Token),
             _ => null,
         };
+
         if (responseFirst)
         {
             response.Complete(outcome == "true", expected);
@@ -146,14 +163,24 @@ public sealed class GatheredSetTests
             await Assert.That(completion.IsCompleted).IsFalse();
             response.Complete(outcome == "true", expected);
         }
-        if (expected is null) await Assert.That(await completion).IsEqualTo(outcome == "true");
+
+        if (expected is null)
+        {
+            await Assert.That(await completion).IsEqualTo(outcome == "true");
+        }
         else
         {
             Exception? actual = null;
-            try { await completion; }
+
+            try
+            {
+                await completion;
+            }
             catch (Exception error) { actual = error; }
+
             await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
         }
+
         await Assert.That(response.ConsumptionCount).IsEqualTo(1);
         await Assert.That(response.ObservedAmbient).IsEqualTo("caller");
     }
@@ -189,12 +216,18 @@ public sealed class GatheredSetTests
     public async Task FaultedResponseDoesNotLeakItsOutcomeIntoReusedLeases()
     {
         var expected = new InvalidOperationException("response error");
+
         for (var iteration = 0; iteration < 128; iteration++)
         {
             var failure = GatheredSetWriteLease.Rent().CompleteResponseAsync(ValueTask.FromException<bool>(expected));
             Exception? actual = null;
-            try { await failure; }
+
+            try
+            {
+                await failure;
+            }
             catch (Exception error) { actual = error; }
+
             await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
             await Assert.That(await GatheredSetWriteLease.Rent().CompleteResponseAsync(ValueTask.FromResult(true))).IsTrue();
         }
@@ -211,8 +244,13 @@ public sealed class GatheredSetTests
         await Assert.That(completion.IsCompleted).IsFalse();
         lease.ReleaseWrite();
         Exception? actual = null;
-        try { await completion; }
+
+        try
+        {
+            await completion;
+        }
         catch (Exception error) { actual = error; }
+
         await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
         var next = GatheredSetWriteLease.Rent();
         next.RetainWrite();
@@ -227,9 +265,13 @@ public sealed class GatheredSetTests
     {
         private Action<object?>? _continuation;
         private object? _state;
+
         internal void InvokeLateCallback() => _continuation!(_state);
+
         bool IValueTaskSource<bool>.GetResult(short token) => throw new InvalidOperationException("No response was published.");
+
         ValueTaskSourceStatus IValueTaskSource<bool>.GetStatus(short token) => ValueTaskSourceStatus.Pending;
+
         void IValueTaskSource<bool>.OnCompleted(Action<object?> continuation, object? state, short token,
             ValueTaskSourceOnCompletedFlags flags)
         {
@@ -242,23 +284,50 @@ public sealed class GatheredSetTests
     private sealed class ControlledResponse(AsyncLocal<string?> ambient) : IValueTaskSource<bool>
     {
         private ManualResetValueTaskSourceCore<bool> _core = new() { RunContinuationsAsynchronously = true };
-        internal TaskCompletionSource Consumed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal int ConsumptionCount { get; private set; }
-        internal string? ObservedAmbient { get; private set; }
+
+        internal TaskCompletionSource Consumed
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal int ConsumptionCount
+        {
+            get; private set;
+        }
+
+        internal string? ObservedAmbient
+        {
+            get; private set;
+        }
+
         internal ValueTask<bool> Task => new(this, _core.Version);
+
         internal void Complete(bool result, Exception? error)
         {
-            if (error is null) _core.SetResult(result);
-            else _core.SetException(error);
+            if (error is null)
+            {
+                _core.SetResult(result);
+            }
+            else
+            {
+                _core.SetException(error);
+            }
         }
+
         bool IValueTaskSource<bool>.GetResult(short token)
         {
             ConsumptionCount++;
             ObservedAmbient = ambient.Value;
-            try { return _core.GetResult(token); }
+
+            try
+            {
+                return _core.GetResult(token);
+            }
             finally { Consumed.TrySetResult(); }
         }
+
         ValueTaskSourceStatus IValueTaskSource<bool>.GetStatus(short token) => _core.GetStatus(token);
+
         void IValueTaskSource<bool>.OnCompleted(Action<object?> continuation, object? state, short token,
             ValueTaskSourceOnCompletedFlags flags) => _core.OnCompleted(continuation, state, token, flags);
     }
@@ -290,7 +359,9 @@ public sealed class GatheredSetTests
 #pragma warning disable RESP010 // This gathered-write scenario owns its client, transport gates, and borrowed-memory lifetime.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -326,7 +397,9 @@ public sealed class GatheredSetTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             LibraryName = null, // Reads stay parked until the application write is in flight.
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(500) : null,
             ConnectionIdleReadTimeout = receiveOnly ? TimeSpan.FromMilliseconds(200) : null,
@@ -348,18 +421,29 @@ public sealed class GatheredSetTests
         using var cancellation = new CancellationTokenSource();
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var pending = client.SetAsync("parked", (RespireValue)payload, cancellationToken: cancellation.Token).AsTask();
+
         while (connection.CaptureTimeoutDiagnostics().InflightBytes == 0 || socket.Poll(0, SelectMode.SelectWrite))
         {
-            if (pending.IsCompleted) await pending;
+            if (pending.IsCompleted)
+            {
+                await pending;
+            }
+
             await Task.Delay(1, guard.Token);
         }
+
         await Assert.That(connection.WriteBufferCapacity).IsEqualTo(initialCapacity);
         await Assert.That(connection.CaptureTimeoutDiagnostics().PendingWriteBytes > 0).IsTrue();
+
         if (boundary is "cancel" or "deadline")
         {
-            if (boundary == "cancel") await cancellation.CancelAsync();
+            if (boundary == "cancel")
+            {
+                await cancellation.CancelAsync();
+            }
             // Cancellation's native completion reservation is observable while the write stays parked.
             await WaitForNativeCompletionAsync(connection, guard.Token);
+
             if (receiveOnly)
             {
                 // Explicitly disabling write bounds must survive multiple receive intervals.
@@ -367,22 +451,32 @@ public sealed class GatheredSetTests
                 await Assert.That(connection.IsConnected).IsTrue();
                 await Assert.That(ReadBorrowedWatch(connection).Timestamp).IsEqualTo(0);
             }
+
             var remaining = connection.CaptureTimeoutDiagnostics().PendingWriteBytes;
             Console.WriteLine($"GATHER_WRITE_BOUNDARY {boundary}: pending write bytes {remaining}");
             await Assert.That(remaining > 0).IsTrue();
             await Assert.That(pending.IsCompleted).IsFalse();
             reads.TrySetResult();
+
             if (boundary == "cancel")
+            {
                 await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<OperationCanceledException>();
+            }
             else
+            {
                 await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<RespireTimeoutException>();
+            }
+
             payload.AsSpan().Fill((byte)'b');
             // Public cancellation waits for the write lease, not the cancelled reply's FIFO slot.
             // CommandsSeen is published before the fake peer sends that reply. Yield until the
             // client drains it so inspecting 5 MiB cannot compete with the peer/receiver while
             // the receive-only scenario's 200 ms response deadline is still running.
             while (connection.InspectForTests().Inflight.Count != 0 && connection.IsConnected)
+            {
                 await Task.Delay(1, guard.Token);
+            }
+
             await Assert.That(connection.IsConnected).IsTrue();
             await Assert.That(server.ReceivedArguments[0][2].AsSpan().IndexOfAnyExcept((byte)'a')).IsEqualTo(-1);
             var next = await client.SetAsync("after", "unchanged", cancellationToken: guard.Token);
@@ -391,12 +485,20 @@ public sealed class GatheredSetTests
         }
         else
         {
-            if (boundary == "peer-close") server.CloseConnections();
-            else await client.DisposeAsync();
+            if (boundary == "peer-close")
+            {
+                server.CloseConnections();
+            }
+            else
+            {
+                await client.DisposeAsync();
+            }
+
             await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<Exception>();
             // The public completion has released every send reference; caller reuse is permitted.
             payload.AsSpan().Fill((byte)'b');
         }
+
         reads.TrySetResult();
     }
 
@@ -422,7 +524,9 @@ public sealed class GatheredSetTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             LibraryName = null, // Reads may be parked before connection setup.
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(250) : null,
             ConnectionIdleReadTimeout = independent ? null : TimeSpan.FromSeconds(1),
@@ -436,6 +540,7 @@ public sealed class GatheredSetTests
         var payload = Enumerable.Repeat((byte)'a', 5 * 1024 * 1024).ToArray();
         using var cancellation = new CancellationTokenSource();
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         if (pausedConsumer)
         {
             var reply = new byte[1024 * 1024 + 12];
@@ -444,31 +549,53 @@ public sealed class GatheredSetTests
             "\r\n"u8.CopyTo(reply.AsSpan(reply.Length - 2));
             server.ReplyOverride = (_, command) =>
             {
-                if (command != "GET paused") return null;
+                if (command != "GET paused")
+                {
+                    return null;
+                }
+
                 server.ReadGate = reads.Task;
                 return reply;
             };
         }
+
         await using var paused = pausedConsumer ? await client.Strings.GetStreamAsync("paused", guard.Token) : null;
+
         if (pausedConsumer)
         {
             await Assert.That(paused is not null).IsTrue();
             var suppressions = typeof(RespireConnection).GetField("_responseTimeoutSuppressions",
                 BindingFlags.Instance | BindingFlags.NonPublic)!;
-            while ((int)suppressions.GetValue(connection)! == 0) await Task.Delay(1, guard.Token);
+
+            while ((int)suppressions.GetValue(connection)! == 0)
+            {
+                await Task.Delay(1, guard.Token);
+            }
             // A consumer pause alone must survive a real watchdog interval. Do not fake the suppression count.
             await Task.Delay(TimeSpan.FromMilliseconds(1200), guard.Token);
             await Assert.That(connection.IsConnected).IsTrue();
         }
+
         var pending = client.SetAsync("never-resumed", (RespireValue)payload,
             cancellationToken: cancellation.Token).AsTask();
+
         while (connection.CaptureTimeoutDiagnostics().InflightBytes == 0 || socket.Poll(0, SelectMode.SelectWrite))
         {
-            if (pending.IsCompleted) await pending;
+            if (pending.IsCompleted)
+            {
+                await pending;
+            }
+
             await Task.Delay(1, guard.Token);
         }
+
         await Assert.That(connection.CaptureTimeoutDiagnostics().PendingWriteBytes > 0).IsTrue();
-        if (boundary == "cancel") await cancellation.CancelAsync();
+
+        if (boundary == "cancel")
+        {
+            await cancellation.CancelAsync();
+        }
+
         if (boundary is "cancel" or "deadline")
         {
             await WaitForNativeCompletionAsync(connection, guard.Token);
@@ -478,13 +605,20 @@ public sealed class GatheredSetTests
         // with a timeout alone: the guard token would surface as an OperationCanceledException
         // and let the "cancel" case pass without the caller's cancellation completing it.
         if (boundary == "cancel")
+        {
             await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(8))).Throws<OperationCanceledException>();
+        }
         else if (boundary == "deadline")
+        {
             await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(8))).Throws<RespireTimeoutException>();
+        }
         else
+        {
             // Socket backpressure can be temporary: further successful sends reset the
             // idle watchdog. Bound the whole test, not three seconds from the first stall.
             await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<RespireConnectionException>();
+        }
+
         await Assert.That(connection.IsConnected).IsFalse();
         await Assert.That(server.CommandsSeen).IsEqualTo(pausedConsumer ? 1 : 0);
         // Completion is observable while the peer remains parked: every kernel send reference
@@ -511,7 +645,9 @@ public sealed class GatheredSetTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             LibraryName = null, // Reads stay parked until the application write is in flight.
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(250) : null,
             // A resumed 5 MiB copied send can remain pending while Linux drains it, especially
@@ -529,11 +665,17 @@ public sealed class GatheredSetTests
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         // SET GET uses the copied serializer. Park the real kernel send before borrowing another array.
         var copied = client.Strings.GetAndSetAsync("copied-first", new byte[5 * 1024 * 1024]).AsTask();
+
         while (connection.CaptureTimeoutDiagnostics().InflightBytes == 0 || socket.Poll(0, SelectMode.SelectWrite))
         {
-            if (copied.IsCompleted) await copied;
+            if (copied.IsCompleted)
+            {
+                await copied;
+            }
+
             await Task.Delay(1, guard.Token);
         }
+
         var payload = Enumerable.Repeat((byte)'a', 512 * 1024).ToArray();
         var pending = client.SetAsync("queued-borrowed", (RespireValue)payload,
             cancellationToken: cancellation.Token).AsTask();
@@ -549,6 +691,7 @@ public sealed class GatheredSetTests
         long timestampBefore;
         (int Buffers, long Timestamp) watchAfter;
         enter.Invoke(gate, null);
+
         try
         {
             // Inspect under the admission gate so a completed send cannot race the comparison.
@@ -559,11 +702,17 @@ public sealed class GatheredSetTests
             watchAfter = ReadBorrowedWatch(connection);
         }
         finally { exit.Invoke(gate, null); }
-        if (boundary == "cancel") await cancellation.CancelAsync();
+
+        if (boundary == "cancel")
+        {
+            await cancellation.CancelAsync();
+        }
+
         try
         {
             await Assert.That(watchAfter.Timestamp).IsEqualTo(timestampBefore);
             await Assert.That(watchAfter.Buffers).IsEqualTo(1);
+
             if (boundary == "resume")
             {
                 reads.TrySetResult();
@@ -583,12 +732,20 @@ public sealed class GatheredSetTests
                 await Assert.That(await client.SetAsync("following", "small", cancellationToken: guard.Token)).IsTrue();
                 return;
             }
+
             if (boundary == "cancel")
+            {
                 await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3), guard.Token)).Throws<OperationCanceledException>();
+            }
             else if (boundary == "deadline")
+            {
                 await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3), guard.Token)).Throws<RespireTimeoutException>();
+            }
             else
+            {
                 await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3), guard.Token)).Throws<RespireConnectionException>();
+            }
+
             await Assert.That(connection.IsConnected).IsFalse();
             await Assert.That(server.CommandsSeen).IsEqualTo(0);
             payload.AsSpan().Fill((byte)'b');
@@ -597,9 +754,25 @@ public sealed class GatheredSetTests
         {
             // Always consume the preceding command, including when the regression times out.
             await client.DisposeAsync();
-            try { await copied; } catch (RespireException) { }
-            try { await small; } catch (RespireException) { }
-            try { await additional; } catch (RespireException) { }
+
+            try
+            {
+                await copied;
+            }
+            catch (RespireException) { }
+
+            try
+            {
+                await small;
+            }
+            catch (RespireException) { }
+
+            try
+            {
+                await additional;
+            }
+            catch (RespireException) { }
+
             reads.TrySetResult();
         }
     }
@@ -643,9 +816,12 @@ public sealed class GatheredSetTests
 #pragma warning disable RESP010 // This gathered-write scenario owns its client, transport gates, and borrowed-memory lifetime.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
-            ConnectionIdleReadTimeout = independent ? null : TimeSpan.FromMilliseconds(200), CommandTimeout = null,
+            ConnectionIdleReadTimeout = independent ? null : TimeSpan.FromMilliseconds(200),
+            CommandTimeout = null,
             GatheredWriteStallTimeout = independent ? TimeSpan.FromMilliseconds(200) : null,
         });
 #pragma warning restore RESP010
@@ -669,7 +845,9 @@ public sealed class GatheredSetTests
 #pragma warning disable RESP010 // This gathered-write scenario owns its client, transport gates, and borrowed-memory lifetime.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = deadline ? TimeSpan.FromMilliseconds(500) : null,
         });
@@ -689,6 +867,7 @@ public sealed class GatheredSetTests
         var producer = Task.Factory.StartNew(() =>
         {
             enter.Invoke(gate, null);
+
             try
             {
                 published.TrySetResult(client.SetAsync("queued", (RespireValue)payload,
@@ -698,21 +877,38 @@ public sealed class GatheredSetTests
             catch (Exception error) { published.TrySetException(error); throw; }
             finally { exit.Invoke(gate, null); }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
         try
         {
             var pending = await published.Task.WaitAsync(guard.Token);
-            if (!deadline) await cancellation.CancelAsync();
+
+            if (!deadline)
+            {
+                await cancellation.CancelAsync();
+            }
+
             await WaitForNativeCompletionAsync(connection, guard.Token);
             await Assert.That(server.CommandsSeen).IsEqualTo(0);
             await Assert.That(pending.IsCompleted).IsFalse();
             release.TrySetResult();
             await producer.WaitAsync(guard.Token);
+
             if (deadline)
+            {
                 await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<RespireTimeoutException>();
+            }
             else
+            {
                 await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<OperationCanceledException>();
+            }
+
             payload.AsSpan().Fill((byte)'b');
-            while (server.CommandsSeen == 0) await Task.Delay(1, guard.Token);
+
+            while (server.CommandsSeen == 0)
+            {
+                await Task.Delay(1, guard.Token);
+            }
+
             await Assert.That(server.ReceivedArguments[0][2].All(value => value == (byte)'a')).IsTrue();
         }
         finally
@@ -727,7 +923,11 @@ public sealed class GatheredSetTests
         while (true)
         {
             if (connection.InspectForTests().Inflight.TryPeek(out var source)
-                && PendingResponse.IsCompleted(source.State) && source.InspectForTests().ReferenceCount == 1) return;
+                && PendingResponse.IsCompleted(source.State) && source.InspectForTests().ReferenceCount == 1)
+            {
+                return;
+            }
+
             await Task.Delay(1, guard);
         }
     }
@@ -738,10 +938,12 @@ public sealed class GatheredSetTests
         var gathered = new WriteBuffer(1024);
         var copied = new WriteBuffer(1024);
         var completions = new List<ValueTask<bool>>();
+
         try
         {
             var bytes = Enumerable.Range(0, 8192 + 24).Select(index => (byte)index).ToArray();
             var slice = new ArraySegment<byte>(bytes, 11, 8192);
+
             for (var index = 0; index < 256; index++)
             {
                 var command = new SetCommand($"key-{index}", new RespireValue(slice.AsMemory()),
@@ -762,33 +964,52 @@ public sealed class GatheredSetTests
                 small.Write(ref writer);
                 writer.Complete();
             }
+
             await Assert.That(gathered.PrepareBorrowedPayload()).IsFalse();
             using var wire = new MemoryStream();
             var cursor = 0;
+
             while (true)
             {
                 var segments = gathered.GetSendSegments(ref cursor);
                 await Assert.That(segments.Count).IsLessThanOrEqualTo(16);
-                if (segments.Count == 0) break;
+
+                if (segments.Count == 0)
+                {
+                    break;
+                }
+
                 while (segments.Count != 0)
                 {
                     // Short progress crosses headers, sliced payloads, trailers and vector batches.
                     var sent = Math.Min(29, segments.Sum(segment => segment.Count));
                     var remaining = sent;
+
                     foreach (var segment in segments)
                     {
                         var count = Math.Min(remaining, segment.Count);
                         wire.Write(segment.AsSpan()[..count]);
                         remaining -= count;
-                        if (remaining == 0) break;
+
+                        if (remaining == 0)
+                        {
+                            break;
+                        }
                     }
+
                     WriteBuffer.ConsumeSentSegments(segments, sent);
                 }
             }
+
             await Assert.That(wire.ToArray().AsSpan().SequenceEqual(copied.WrittenMemory.Span)).IsTrue();
             await Assert.That(completions.All(completion => !completion.IsCompleted)).IsTrue();
             gathered.CompleteWrite();
-            foreach (var completion in completions) await Assert.That(await completion).IsTrue();
+
+            foreach (var completion in completions)
+            {
+                await Assert.That(await completion).IsTrue();
+            }
+
             gathered.Reset();
             await Assert.That(gathered.HasBorrowedPayloads).IsFalse();
         }
@@ -804,7 +1025,9 @@ public sealed class GatheredSetTests
 #pragma warning disable RESP010 // This gathered-write scenario owns its client, transport gates, and borrowed-memory lifetime.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -822,7 +1045,9 @@ public sealed class GatheredSetTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             LibraryName = null, // The stream parks its first write until the application cancels.
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             TestingStreamFactory = async (host, port, token) =>
             {
@@ -836,6 +1061,7 @@ public sealed class GatheredSetTests
         payload.AsSpan().Fill((byte)'a');
         using var cancellation = new CancellationTokenSource();
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
         try
         {
             var pending = client.SetAsync("copied", (RespireValue)payload, cancellationToken: cancellation.Token).AsTask();
@@ -846,7 +1072,12 @@ public sealed class GatheredSetTests
             // The stream still owns the accepted write. Its payload is the client's copy.
             await Assert.That(stream.Pending.Span.IndexOf(payload)).IsEqualTo(-1);
             stream.Resume.TrySetResult();
-            while (server.CommandsSeen == 0) await Task.Delay(1, guard.Token);
+
+            while (server.CommandsSeen == 0)
+            {
+                await Task.Delay(1, guard.Token);
+            }
+
             await Assert.That(server.ReceivedArguments[0][2].All(value => value == (byte)'a')).IsTrue();
             await Assert.That(await client.SetAsync("following", "small", cancellationToken: guard.Token)).IsTrue();
             await Assert.That(server.ReceivedCommands[1]).IsEqualTo("SET following small");
@@ -857,17 +1088,37 @@ public sealed class GatheredSetTests
     private sealed class NonArrayMemory(int length) : MemoryManager<byte>
     {
         private readonly byte[] _bytes = new byte[length];
+
         public override Span<byte> GetSpan() => _bytes;
+
         public override MemoryHandle Pin(int elementIndex = 0) => throw new NotSupportedException();
-        public override void Unpin() { }
-        protected override void Dispose(bool disposing) { }
+
+        public override void Unpin()
+        {
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+        }
     }
 
     private sealed class PausedWriteStream(Stream inner) : Stream
     {
-        internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal ReadOnlyMemory<byte> Pending { get; private set; }
+        internal TaskCompletionSource Started
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Resume
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal ReadOnlyMemory<byte> Pending
+        {
+            get; private set;
+        }
+
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
             Pending = buffer;
@@ -875,18 +1126,41 @@ public sealed class GatheredSetTests
             await Resume.Task;
             await inner.WriteAsync(buffer, cancellationToken);
         }
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
             => inner.ReadAsync(buffer, cancellationToken);
+
         public override bool CanRead => true;
+
         public override bool CanWrite => true;
+
         public override bool CanSeek => false;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
+
         public override void Flush() => inner.Flush();
+
         public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+
         public override void Write(byte[] buffer, int offset, int count) => inner.Write(buffer, offset, count);
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
-        protected override void Dispose(bool disposing) { if (disposing) inner.Dispose(); base.Dispose(disposing); }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
     }
 }

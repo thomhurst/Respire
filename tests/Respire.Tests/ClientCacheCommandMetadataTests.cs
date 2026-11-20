@@ -52,6 +52,7 @@ public class ClientCacheCommandMetadataTests
             return copy.GetClientCacheMetadata("ZUNIONSTORE");
         }).ToArray();
         start.SetResult();
+
         foreach (var value in await Task.WhenAll(readers))
         {
             await Assert.That(value.IsInitialized).IsTrue();
@@ -60,6 +61,7 @@ public class ClientCacheCommandMetadataTests
             await Assert.That(value.MutationKind).IsEqualTo(RawCommandKeyLayouts.MutationKind.FirstArgument);
             await Assert.That(value.CacheableRead).IsFalse();
         }
+
         await Assert.That(default(Verb).CacheMetadata.IsInitialized).IsFalse();
     }
 
@@ -94,11 +96,16 @@ public class ClientCacheCommandMetadataTests
     private sealed class ColdMetadataContext : IDisposable
     {
         private readonly AssemblyLoadContext _context = new($"cold-cache-{Guid.NewGuid()}", isCollectible: true);
-        internal MethodInfo GetMetadata { get; }
+
+        internal MethodInfo GetMetadata
+        {
+            get;
+        }
 
         internal ColdMetadataContext(string firstCommand)
         {
             var assembly = _context.LoadFromAssemblyPath(typeof(RespireClient).Assembly.Location);
+
             if (firstCommand == "verbs")
             {
                 // Materialize all normal typed verbs without invoking a cache-specific API.
@@ -109,6 +116,7 @@ public class ClientCacheCommandMetadataTests
                 var stream = assembly.GetType("Respire.Commands.StreamReadCommand")!;
                 _ = stream.GetProperty("ReadKind")!.GetValue(Activator.CreateInstance(stream));
             }
+
             GetMetadata = assembly.GetType("Respire.Commands.ClientCacheCommandMetadata")!
                 .GetMethod("Get", BindingFlags.Static | BindingFlags.NonPublic)!;
         }
@@ -125,9 +133,11 @@ public class ClientCacheCommandMetadataTests
     public async Task ColdInitializationWorksFromEveryMetadataEntryPoint(string first)
     {
         var context = new AssemblyLoadContext($"cache-metadata-{Guid.NewGuid()}", isCollectible: true);
+
         try
         {
             var assembly = context.LoadFromAssemblyPath(typeof(RespireClient).Assembly.Location);
+
             if (first == "verb")
             {
                 var constructor = assembly.GetType("Respire.Commands.Verb")!
@@ -138,34 +148,43 @@ public class ClientCacheCommandMetadataTests
                     .IsEqualTo(nameof(RespireCommandRetryCategory.WriteAccumulating));
             }
             else if (first == "layout")
+            {
                 assembly.GetType("Respire.Commands.RawCommandKeyLayouts")!
                     .GetMethod("GetMutationKind", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, ["SET"]);
+            }
             else if (first == "policy")
+            {
                 assembly.GetType("Respire.CommandCacheMutationMetadata")!
                     .GetMethod("Get", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, ["SET"]);
+            }
             else if (first == "retry")
             {
                 var category = assembly.GetType("Respire.CommandRetryCategoryMetadata")!
                     .GetMethod("Get", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, ["SET"]);
                 await Assert.That(category!.ToString()).IsEqualTo(nameof(RespireCommandRetryCategory.WriteAccumulating));
             }
+
             var root = assembly.GetType("Respire.RespireCommands")!;
             var count = 0;
+
             foreach (var group in root.GetNestedTypes(BindingFlags.Public))
-            foreach (var field in group.GetFields(BindingFlags.Public | BindingFlags.Static))
             {
-                var descriptor = field.GetValue(null)!;
-                var type = descriptor.GetType();
-                var name = (string)type.GetProperty("Name")!.GetValue(descriptor)!;
-                await Assert.That(string.IsNullOrWhiteSpace(name)).IsFalse();
-                var verb = type.GetProperty("Verb", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(descriptor)!;
-                var metadata = verb.GetType().GetProperty("CacheMetadata")!.GetValue(verb)!;
-                var policy = metadata.GetType().GetProperty("Policy", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(metadata)!;
-                await Assert.That(policy.ToString()).IsEqualTo(type.GetProperty("CacheMutation")!.GetValue(descriptor)!.ToString()).Because(name);
-                await Assert.That(verb.GetType().GetField("RetryCategory")!.GetValue(verb)!.ToString())
-                    .IsEqualTo(type.GetProperty("RetryCategory")!.GetValue(descriptor)!.ToString()).Because(name);
-                count++;
+                foreach (var field in group.GetFields(BindingFlags.Public | BindingFlags.Static))
+                {
+                    var descriptor = field.GetValue(null)!;
+                    var type = descriptor.GetType();
+                    var name = (string)type.GetProperty("Name")!.GetValue(descriptor)!;
+                    await Assert.That(string.IsNullOrWhiteSpace(name)).IsFalse();
+                    var verb = type.GetProperty("Verb", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(descriptor)!;
+                    var metadata = verb.GetType().GetProperty("CacheMetadata")!.GetValue(verb)!;
+                    var policy = metadata.GetType().GetProperty("Policy", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(metadata)!;
+                    await Assert.That(policy.ToString()).IsEqualTo(type.GetProperty("CacheMutation")!.GetValue(descriptor)!.ToString()).Because(name);
+                    await Assert.That(verb.GetType().GetField("RetryCategory")!.GetValue(verb)!.ToString())
+                        .IsEqualTo(type.GetProperty("RetryCategory")!.GetValue(descriptor)!.ToString()).Because(name);
+                    count++;
+                }
             }
+
             await Assert.That(count).IsEqualTo(RespireCommands.All.Length);
         }
         finally { context.Unload(); }
@@ -175,6 +194,7 @@ public class ClientCacheCommandMetadataTests
     public async Task EveryCatalogAndRegisteredLayoutRetainsItsCacheClassification()
     {
         var cache = new ClientSideCacheCoordinator(new());
+
         foreach (var descriptor in RespireCommands.All.ToArray())
         {
             var metadata = descriptor.Verb.CacheMetadata;
@@ -187,11 +207,13 @@ public class ClientCacheCommandMetadataTests
             await VerifyMutationAdmissionAsync(cache, descriptor.Name, typed, metadata);
             await VerifyMutationAdmissionAsync(cache, descriptor.Name, new CatalogCommand(descriptor, []), metadata);
         }
+
         foreach (var entry in RawCommandKeyLayouts.MutationClassifications)
         {
             var metadata = new Verb(entry.Operation).CacheMetadata;
             await Assert.That(metadata.MutationKind).IsEqualTo(entry.Mutation).Because(entry.Operation);
         }
+
         await Assert.That(Unsafe.SizeOf<ClientCacheCommandMetadata>()).IsEqualTo(4);
     }
 
@@ -203,7 +225,9 @@ public class ClientCacheCommandMetadataTests
             await Assert.That(() => cache.BeforeCommand(operation, in command)).Throws<NotSupportedException>();
             return;
         }
+
         var fence = cache.BeforeCommand(operation, in command);
+
         try
         {
             await Assert.That(fence.IsRequired).IsEqualTo(metadata.Policy != RespireCacheMutation.ReadOnly)
@@ -220,6 +244,7 @@ public class ClientCacheCommandMetadataTests
             var command = new Cmd(verb);
             await Assert.That(command.GetCacheMutation("SCRIPT FLUSH")).IsEqualTo(RespireCacheMutation.ReadOnly);
         }
+
         await Assert.That(new Verb("get").CacheMetadata.CacheableRead).IsTrue();
         await Assert.That(new Verb("set").CacheMetadata.Policy).IsEqualTo(RespireCacheMutation.Mutation);
         await Assert.That(ClientCacheCommandMetadata.GetForWireVerb("script flush async").Policy)
@@ -334,12 +359,22 @@ public class ClientCacheCommandMetadataTests
         var del = new CmdN(Verbs.Del, ["a", "b"]);
         var before = GC.GetAllocatedBytesForCurrentThread();
         var total = 0;
+
         for (var index = 0; index < 1_000; index++)
         {
             total += Classify(in set, "SET") + Classify(in get, "GET") + Classify(in del, "DEL");
-            if (get.GetClientCacheMetadata("GET").CacheableRead) total++;
-            if (allocate) GC.KeepAlive(new byte[37]);
+
+            if (get.GetClientCacheMetadata("GET").CacheableRead)
+            {
+                total++;
+            }
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return (GC.GetAllocatedBytesForCurrentThread() - before, total);
     }
 

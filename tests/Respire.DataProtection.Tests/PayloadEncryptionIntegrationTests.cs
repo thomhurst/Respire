@@ -52,7 +52,8 @@ public class PayloadEncryptionIntegrationTests(RedisTestContainer redis)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
         var codec = Codec();
         await using var map = new RespireMap<string, string>(client, "map", key => key,
@@ -79,6 +80,7 @@ public class PayloadEncryptionIntegrationTests(RedisTestContainer redis)
         var options = new RespireStreamWorkerOptions { ReadWait = TimeSpan.FromMilliseconds(20) };
         string stream;
         string field;
+
         if (jobs)
         {
             services.AddRespireJobQueue<JobHandler, string>("encrypted",
@@ -97,12 +99,14 @@ public class PayloadEncryptionIntegrationTests(RedisTestContainer redis)
                 entry => Encoding.UTF8.GetString(codec.Decode(entry["payload"])), options);
             await client.Streams.AddAsync(stream, ("payload", codec.Encode("worker secret"u8)));
         }
+
         var entry = (await client.Streams.ReadAsync(stream)).Single();
         await Assert.That(entry[field].AsSpan().SequenceEqual("worker secret"u8)).IsFalse();
         await using var provider = services.BuildServiceProvider();
         var worker = provider.GetServices<IHostedService>().Single();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await worker.StartAsync(deadline.Token);
+
         try
         {
             await Assert.That(await received.Task.WaitAsync(deadline.Token)).IsEqualTo("worker secret");

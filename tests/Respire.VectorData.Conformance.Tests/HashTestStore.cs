@@ -22,7 +22,10 @@ internal sealed class HashTestStore(RedisServerFixture server, RespireProtocol p
 
     public override VectorStoreCollection<TKey, TRecord> CreateCollection<TKey, TRecord>(string name, VectorStoreCollectionDefinition definition)
     {
-        if (typeof(TKey) != typeof(string)) throw new NotSupportedException("The connector supports string keys only.");
+        if (typeof(TKey) != typeof(string))
+        {
+            throw new NotSupportedException("The connector supports string keys only.");
+        }
         // A fresh mapper registration lets distance/index tests recreate the same record with a new schema.
         var store = new RespireVectorStore(_client!, _namespace);
         _stores.Add(store);
@@ -35,19 +38,35 @@ internal sealed class HashTestStore(RedisServerFixture server, RespireProtocol p
 
     protected override async Task StopAsync()
     {
-        if (_client is not { } client) return;
+        if (_client is not { } client)
+        {
+            return;
+        }
+
         _client = null;
+
         try
         {
             // Include collections whose tests wrote records without creating an index.
             foreach (var name in _collections)
+            {
                 await DefaultVectorStore.EnsureCollectionDeletedAsync(name).ConfigureAwait(false);
+            }
         }
         finally
         {
-            foreach (var collection in _handles) collection.Dispose();
+            foreach (var collection in _handles)
+            {
+                collection.Dispose();
+            }
+
             _handles.Clear();
-            foreach (var store in _stores) store.Dispose();
+
+            foreach (var store in _stores)
+            {
+                store.Dispose();
+            }
+
             _stores.Clear();
             _collections.Clear();
             await client.DisposeAsync().ConfigureAwait(false);

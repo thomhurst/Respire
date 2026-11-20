@@ -25,7 +25,11 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = Options(fake, protocol);
         // Five dependent commands span multiple capacity-limited pipeline chunks.
-        if (mode == "batch") options = options with { MaxInflightCommands = 2 };
+        if (mode == "batch")
+        {
+            options = options with { MaxInflightCommands = 2 };
+        }
+
         await using var root = await RespireClient.ConnectAsync(options);
         var client = root.WithKeyPrefix($"import:{Guid.NewGuid():N}:");
         await client.Hashes.SetAsync("key", "old", "old");
@@ -33,6 +37,7 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
         (await client.Keys.ExpiryAsync("key")).HasExpiry.Should().BeTrue();
         await using var session = await client.Hashes.CreateImportSessionAsync();
         byte[] binary = [0, 128, 255];
+
         if (mode == "immediate")
         {
             (await session.PrepareAsync("schema", "z", "a")).Should().BeTrue();
@@ -51,13 +56,22 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
             _ = queue.Hashes.PrepareImport("second", "other");
             var discarded = queue.Hashes.DiscardImport("schema");
             var cleared = queue.Hashes.DiscardAllImports();
-            if (multi is not null) await multi.CommitAsync();
-            else await batch!.ExecuteAsync();
+
+            if (multi is not null)
+            {
+                await multi.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
+
             prepared.Result.Should().BeTrue();
             imported.Result.Should().BeTrue();
             discarded.Result.Should().BeTrue();
             cleared.Result.Should().Be(1);
         }
+
         (await client.Hashes.GetStringAsync("key", "z")).Should().Be("z-value");
         (await client.Hashes.GetStringAsync("key", "old")).Should().BeNull();
         (await client.Hashes.GetBytesAsync("key", "a")).Should().Equal(binary);
@@ -82,9 +96,13 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
         await using var admin = await TestRespSession.ConnectAsync(options);
         var username = $"import-queue-acl:{Guid.NewGuid():N}";
         var key = username + ":key";
+
         using (var created = await admin.CommandAsync("ACL", "SETUSER", username, "on", ">import-test",
                    "~*", "+@all", "-himport|set"))
+        {
             created.AsString().Should().Be("OK");
+        }
+
         try
         {
             await using var client = await RespireClient.ConnectAsync(options with { Username = username, Password = "import-test" });
@@ -95,9 +113,17 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
             Func<Task> commit = async () => await transaction.CommitAsync();
             (await commit.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("NOPERM");
             pending.Status.Should().Be(RespirePendingStatus.Faulted);
-            using (var exists = await admin.CommandAsync("EXISTS", key)) exists.AsInteger().Should().Be(0);
+
+            using (var exists = await admin.CommandAsync("EXISTS", key))
+            {
+                exists.AsInteger().Should().Be(0);
+            }
+
             using (var restored = await admin.CommandAsync("ACL", "SETUSER", username, "+himport|set"))
+            {
                 restored.AsString().Should().Be("OK");
+            }
+
             (await session.SetAsync(key, "schema", "retained")).Should().BeTrue();
             using var imported = await admin.CommandAsync("HGET", key, "field");
             imported.AsString().Should().Be("retained");
@@ -121,8 +147,12 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
         await using var wire = await TestRespSession.ConnectAsync(options);
         await using var other = await TestRespSession.ConnectAsync(options);
         var key = $"raw-import:{Guid.NewGuid():N}";
+
         using (var prepared = await wire.CommandAsync("HIMPORT", "PREPARE", "schema", "z", "a"))
+        {
             prepared.AsString().Should().Be("OK");
+        }
+
         string[][] invalid =
         [
             ["HIMPORT", "PREPARE", "schema", "z", "z"],
@@ -131,23 +161,55 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
             ["HIMPORT", "SET", key, "unknown", "one"],
             ["HIMPORT", "DISCARD"], ["HIMPORT", "DISCARDALL", "extra"],
         ];
+
         foreach (var args in invalid)
         {
             using var rejected = await wire.CommandAsync(args);
             rejected.IsError.Should().BeTrue(string.Join(' ', args));
         }
+
         using (var isolated = await other.CommandAsync("HIMPORT", "SET", key, "schema", "one", "two"))
+        {
             isolated.IsError.Should().BeTrue();
+        }
+
         using (var imported = await wire.CommandAsync("HIMPORT", "SET", key, "schema", "one", "two"))
+        {
             imported.AsString().Should().Be("OK");
-        using (var read = await wire.CommandAsync("HGET", key, "a")) read.AsString().Should().Be("two");
-        using (var discarded = await wire.CommandAsync("HIMPORT", "DISCARD", "schema")) discarded.AsInteger().Should().Be(1);
-        using (var absent = await wire.CommandAsync("HIMPORT", "DISCARD", "schema")) absent.AsInteger().Should().Be(0);
-        using (var clear = await wire.CommandAsync("HIMPORT", "DISCARDALL")) clear.AsInteger().Should().Be(0);
+        }
+
+        using (var read = await wire.CommandAsync("HGET", key, "a"))
+        {
+            read.AsString().Should().Be("two");
+        }
+
+        using (var discarded = await wire.CommandAsync("HIMPORT", "DISCARD", "schema"))
+        {
+            discarded.AsInteger().Should().Be(1);
+        }
+
+        using (var absent = await wire.CommandAsync("HIMPORT", "DISCARD", "schema"))
+        {
+            absent.AsInteger().Should().Be(0);
+        }
+
+        using (var clear = await wire.CommandAsync("HIMPORT", "DISCARDALL"))
+        {
+            clear.AsInteger().Should().Be(0);
+        }
+
         if (!useFake)
         {
-            using (var prepared = await wire.CommandAsync("HIMPORT", "PREPARE", "reset", "field")) prepared.IsError.Should().BeFalse();
-            using (var reset = await wire.CommandAsync("RESET")) reset.AsString().Should().Be("RESET");
+            using (var prepared = await wire.CommandAsync("HIMPORT", "PREPARE", "reset", "field"))
+            {
+                prepared.IsError.Should().BeFalse();
+            }
+
+            using (var reset = await wire.CommandAsync("RESET"))
+            {
+                reset.AsString().Should().Be("RESET");
+            }
+
             using var expired = await wire.CommandAsync("HIMPORT", "SET", key, "reset", "value");
             expired.IsError.Should().BeTrue();
         }
@@ -164,6 +226,7 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(Options(fake, protocol));
         var key = $"watch-import:{Guid.NewGuid():N}";
         await using var session = await client.Hashes.CreateImportSessionAsync();
+
         await using (var unchanged = await client.CreateTransactionAsync([key]))
         {
             await session.PrepareAsync("schema", "field");
@@ -173,6 +236,7 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
             _ = unchanged.GetString(key);
             (await unchanged.CommitAsync()).Should().BeTrue();
         }
+
         await session.PrepareAsync("schema", "field");
         await using var changed = await client.CreateTransactionAsync([key]);
         var pending = changed.Hashes.GetString(key, "field");
@@ -191,20 +255,29 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
         await client.Hashes.SetAsync(key, "field", "old");
         // Cache population must follow the write's native retirement, not only its caller.
         using var retirement = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (client.Core.ClientCache!.InspectForTests().ActiveMutationCount != 0)
+        {
             await Task.Delay(1, retirement.Token);
+        }
+
         (await client.Hashes.GetStringAsync(key, "field")).Should().Be("old");
         (await client.Hashes.GetStringAsync(key, "field")).Should().Be("old");
         client.ClientSideCache!.GetStatistics().Hits.Should().BeGreaterThan(0);
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
+
         if (transaction)
         {
             await using var multi = session.CreateTransaction();
             _ = multi.Hashes.Import(key, "schema", "new");
             await multi.CommitAsync();
         }
-        else await session.SetAsync(key, "schema", "new");
+        else
+        {
+            await session.SetAsync(key, "schema", "new");
+        }
+
         (await client.Hashes.GetStringAsync(key, "field")).Should().Be("new");
     }
 
@@ -222,9 +295,13 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
         await using var admin = await TestRespSession.ConnectAsync(options);
         var username = $"import-acl:{Guid.NewGuid():N}";
         var key = username + ":key";
+
         using (var created = await admin.CommandAsync("ACL", "SETUSER", username, "on", ">import-test",
                    "~*", "+@all", denyExec ? "-exec" : "-multi"))
+        {
             created.AsString().Should().Be("OK");
+        }
+
         try
         {
             await using var client = await RespireClient.ConnectAsync(options with { Username = username, Password = "import-test" });
@@ -236,7 +313,12 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
             // Redis 8.10 wraps a denied EXEC in EXECABORT; a denied MULTI returns NOPERM directly.
             (await commit.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be(denyExec ? "EXECABORT" : "NOPERM");
             pending.Status.Should().Be(RespirePendingStatus.Faulted);
-            using (var exists = await admin.CommandAsync("EXISTS", key)) exists.AsInteger().Should().Be(0);
+
+            using (var exists = await admin.CommandAsync("EXISTS", key))
+            {
+                exists.AsInteger().Should().Be(0);
+            }
+
             if (denyExec)
             {
                 Func<Task> reuse = async () => await session.PrepareAsync("later", "field");
@@ -270,12 +352,14 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
         await client.Keys.ExpireAsync(key, TimeSpan.FromMinutes(1));
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
+
         foreach (var name in new[] { "schema", "unknown" })
         {
             Func<Task> import = async () => await session.SetAsync(key, name, "value");
             var error = await import.Should().ThrowAsync<RespireServerException>();
             error.Which.Code.Should().Be("WRONGTYPE");
         }
+
         (await client.GetStringAsync(key)).Should().Be("old");
         (await client.Keys.ExpiryAsync(key)).HasExpiry.Should().BeTrue();
         await session.SetAsync(key + ":valid", "schema", "value");

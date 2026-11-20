@@ -35,6 +35,7 @@ public sealed class RespireDataProtectionValueCodec : IRespireValueCodec
     public byte[] Encode(ReadOnlySpan<byte> payload)
     {
         var plaintext = _compression is null ? payload.ToArray() : _compression.Encode(payload);
+
         try
         {
             return _protector.Protect(plaintext);
@@ -59,6 +60,7 @@ public sealed class RespireDataProtectionValueCodec : IRespireValueCodec
     public byte[] Decode(ReadOnlySpan<byte> payload)
     {
         byte[] plaintext;
+
         try
         {
             plaintext = _protector.Unprotect(payload.ToArray());
@@ -70,7 +72,9 @@ public sealed class RespireDataProtectionValueCodec : IRespireValueCodec
         }
 
         if (_compression is null)
+        {
             return plaintext;
+        }
 
         try
         {
@@ -87,6 +91,7 @@ public sealed class RespireDataProtectionValueCodec : IRespireValueCodec
     {
         ArgumentNullException.ThrowIfNull(destination);
         var plaintext = Decode(payload);
+
         try
         {
             destination.Write(plaintext);

@@ -24,12 +24,16 @@ public class CommandWriteOutcomeTests
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { TestingStreamFactory = copiedTransport ? async (host, port, token) =>
+            new()
+            {
+                TestingStreamFactory = copiedTransport ? async (host, port, token) =>
                 {
                     var transport = await GatedTransport.ConnectAsync(host, port, 0, token);
                     transport.ReleaseWrite.TrySetResult();
                     return transport;
-                } : null });
+                }
+                : null
+            });
         var bytes = new byte[8192];
         bytes.AsSpan().Fill((byte)'a');
         var lease = GatheredSetWriteLease.Rent();
@@ -37,8 +41,13 @@ public class CommandWriteOutcomeTests
             new SetCommand("key", new RespireValue(bytes.AsMemory()), default, RespireSetWhen.Always, returnOld: false),
             new ArraySegment<byte>(bytes), lease);
         CommandAttemptResult attempt;
-        try { attempt = await connection.SendAttemptAsync(command, commandName: "SET"); }
+
+        try
+        {
+            attempt = await connection.SendAttemptAsync(command, commandName: "SET");
+        }
         finally { await lease.CompleteResponseAsync(ValueTask.FromResult(true)).AsTask().WaitAsync(Guard); }
+
         using var response = attempt.GetResult();
         await Assert.That(response.AsString()).IsEqualTo("OK");
         await Assert.That(server.ReceivedArguments[0][2].AsSpan().SequenceEqual(bytes)).IsTrue();
@@ -66,6 +75,7 @@ public class CommandWriteOutcomeTests
             : await connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame),
                 commandName: "PING", throwOnError: throwOnError);
         await Assert.That(attempt.WriteOutcome).IsEqualTo(CommandWriteOutcome.EffectMayHaveReachedServer);
+
         if (throwOnError)
         {
             var error = await Assert.That(() => attempt.GetResult()).ThrowsExactly<RespireServerException>();
@@ -93,11 +103,17 @@ public class CommandWriteOutcomeTests
     {
         var askingReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.OkReply)
-        { SuppressReply = command =>
+        {
+            SuppressReply = command =>
             {
-                if (command == "ASKING") askingReceived.TrySetResult();
+                if (command == "ASKING")
+                {
+                    askingReceived.TrySetResult();
+                }
+
                 return cancelPrelude && command == "ASKING";
-            } };
+            }
+        };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         using var caller = new CancellationTokenSource();
         await using var source = new MemoryStream("data"u8.ToArray());
@@ -106,9 +122,15 @@ public class CommandWriteOutcomeTests
         var pending = connection.SendAskingStreamAttemptAsync(asking, command, caller.Token,
             CommandDeadline.None, default).AsTask();
         await askingReceived.Task.WaitAsync(Guard);
-        if (cancelPrelude) caller.Cancel();
+
+        if (cancelPrelude)
+        {
+            caller.Cancel();
+        }
+
         var attempt = await pending.WaitAsync(Guard);
         await Assert.That(attempt.WriteOutcome).IsEqualTo(CommandWriteOutcome.EffectMayHaveReachedServer);
+
         if (cancelPrelude)
         {
             var error = await Assert.That(() => attempt.GetResult()).Throws<OperationCanceledException>();
@@ -131,17 +153,31 @@ public class CommandWriteOutcomeTests
         var fiveReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var commands = 0;
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
-        { SuppressReply = _ =>
+        {
+            SuppressReply = _ =>
             {
                 var count = ++commands;
-                if (count == 4) fourReceived.TrySetResult();
-                if (count == 5) fiveReceived.TrySetResult();
+
+                if (count == 4)
+                {
+                    fourReceived.TrySetResult();
+                }
+
+                if (count == 5)
+                {
+                    fiveReceived.TrySetResult();
+                }
+
                 return true;
-            } };
+            }
+        };
         GatedTransport? transport = null;
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { TestingStreamFactory = async (host, port, token) =>
-                transport = await GatedTransport.ConnectAsync(host, port, 0, token) });
+            new()
+            {
+                TestingStreamFactory = async (host, port, token) =>
+                transport = await GatedTransport.ConnectAsync(host, port, 0, token)
+            });
         var first = connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await transport!.WriteEntered.Task.WaitAsync(Guard);
         SetProducerPosition(connection, long.MaxValue - 28);
@@ -156,12 +192,14 @@ public class CommandWriteOutcomeTests
         var afterWrap = connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await fiveReceived.Task.WaitAsync(Guard);
         await connection.DisposeAsync().AsTask().WaitAsync(Guard);
+
         foreach (var pending in new[] { first, beforeWrap, atMaximum, afterWrap })
         {
             var attempt = await pending.WaitAsync(Guard);
             await Assert.That(attempt.WriteOutcome).IsEqualTo(CommandWriteOutcome.EffectMayHaveReachedServer);
             await Assert.That(() => attempt.GetResult()).Throws<RespireConnectionException>();
         }
+
         var invalidRange = await wrapping.WaitAsync(Guard);
         await Assert.That(invalidRange.WriteOutcome).IsEqualTo(CommandWriteOutcome.Unknown);
         await Assert.That(() => invalidRange.GetResult()).Throws<RespireConnectionException>();
@@ -175,6 +213,7 @@ public class CommandWriteOutcomeTests
         var enter = gate.GetType().GetMethod("Enter")!;
         var exit = gate.GetType().GetMethod("Exit")!;
         enter.Invoke(gate, null);
+
         try
         {
             var progress = typeof(RespireConnection).GetField("_producerProgress", flags)!.GetValue(connection)!;
@@ -209,16 +248,32 @@ public class CommandWriteOutcomeTests
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
-        if (retire) await connection.RetireAsync();
-        else await connection.DisposeAsync();
+
+        if (retire)
+        {
+            await connection.RetireAsync();
+        }
+        else
+        {
+            await connection.DisposeAsync();
+        }
+
         var serialized = false;
         var attempt = await connection.SendAttemptAsync(new CallbackCommand(() => serialized = true));
         // Small frames retain their existing off-gate serialization before the authoritative
         // closed check. Retirement is checked earlier; neither path admits or writes the frame.
         await Assert.That(serialized).IsEqualTo(!retire);
         await Assert.That(attempt.WriteOutcome).IsEqualTo(CommandWriteOutcome.DefinitelyUnwritten);
-        if (retire) await Assert.That(() => attempt.GetResult()).ThrowsExactly<RespireConnectionRetiredException>();
-        else await Assert.That(() => attempt.GetResult()).Throws<RespireConnectionException>();
+
+        if (retire)
+        {
+            await Assert.That(() => attempt.GetResult()).ThrowsExactly<RespireConnectionRetiredException>();
+        }
+        else
+        {
+            await Assert.That(() => attempt.GetResult()).Throws<RespireConnectionException>();
+        }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
     }
 
@@ -228,8 +283,11 @@ public class CommandWriteOutcomeTests
         await using var server = new FakeRespServer(FakeRespServer.PongReply) { SuppressReply = _ => true };
         GatedTransport? transport = null;
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { TestingStreamFactory = async (host, port, token) =>
-                transport = await GatedTransport.ConnectAsync(host, port, 0, token) });
+            new()
+            {
+                TestingStreamFactory = async (host, port, token) =>
+                transport = await GatedTransport.ConnectAsync(host, port, 0, token)
+            });
         var selected = connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await transport!.WriteEntered.Task.WaitAsync(Guard);
 #pragma warning disable RESP010 // This client only owns the transaction context for the gated transport fixture and is disposed with the test.
@@ -263,14 +321,22 @@ public class CommandWriteOutcomeTests
         await using var server = new FakeRespServer(FakeRespServer.PongReply) { SuppressReply = _ => true };
         GatedTransport? transport = null;
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { TestingStreamFactory = async (host, port, token) =>
-                transport = await GatedTransport.ConnectAsync(host, port, prefixLength, token) });
+            new()
+            {
+                TestingStreamFactory = async (host, port, token) =>
+                transport = await GatedTransport.ConnectAsync(host, port, prefixLength, token)
+            });
         var selected = connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await transport!.WriteEntered.Task.WaitAsync(Guard);
         // The actual transport can have accepted a prefix, although the connection's successful
         // write counter is still zero. A second frame stays in the unselected active buffer.
         var queuedFrame = new byte[FakeRespServer.PingFrame.Length * queuedReplies];
-        for (var i = 0; i < queuedReplies; i++) FakeRespServer.PingFrame.CopyTo(queuedFrame, i * FakeRespServer.PingFrame.Length);
+
+        for (var i = 0; i < queuedReplies; i++)
+        {
+            FakeRespServer.PingFrame.CopyTo(queuedFrame, i * FakeRespServer.PingFrame.Length);
+        }
+
         var queued = connection.SendAttemptAsync(new RawCommand(queuedFrame), repliesBeforeFinal: queuedReplies - 1).AsTask();
         await Assert.That(connection.InspectForTests().Inflight.Count).IsEqualTo(1 + queuedReplies);
         await Assert.That(connection.CaptureTimeoutDiagnostics().PendingWriteBytes).IsEqualTo((long)FakeRespServer.PingFrame.Length * (1 + queuedReplies));
@@ -292,8 +358,11 @@ public class CommandWriteOutcomeTests
         await using var server = new FakeRespServer(":11\r\n"u8.ToArray(), ":22\r\n"u8.ToArray(), ":33\r\n"u8.ToArray());
         GatedTransport? transport = null;
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { TestingStreamFactory = async (host, port, token) =>
-                transport = await GatedTransport.ConnectAsync(host, port, 0, token) });
+            new()
+            {
+                TestingStreamFactory = async (host, port, token) =>
+                transport = await GatedTransport.ConnectAsync(host, port, 0, token)
+            });
         var first = connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await transport!.WriteEntered.Task.WaitAsync(Guard);
         using var caller = new CancellationTokenSource();
@@ -323,7 +392,13 @@ public class CommandWriteOutcomeTests
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
-        { SuppressReply = _ => { received.TrySetResult(); return true; } };
+        {
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            }
+        };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new() { MaxInflightCommands = 1, CommandTimeout = TimeSpan.FromSeconds(1) });
         var occupying = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), armCommandDeadline: false).AsTask();
@@ -333,13 +408,25 @@ public class CommandWriteOutcomeTests
         var pending = connection.SendAttemptAsync(new CallbackCommand(() => serialized = true), caller.Token,
             commandName: "PING").AsTask();
         await Assert.That(pending.IsCompleted).IsFalse();
-        if (failureKind == "cancel") caller.Cancel();
-        else if (failureKind == "dispose") await connection.DisposeAsync().AsTask().WaitAsync(Guard);
+
+        if (failureKind == "cancel")
+        {
+            caller.Cancel();
+        }
+        else if (failureKind == "dispose")
+        {
+            await connection.DisposeAsync().AsTask().WaitAsync(Guard);
+        }
+
         var attempt = await pending.WaitAsync(Guard);
         await Assert.That(attempt.WriteOutcome).IsEqualTo(CommandWriteOutcome.DefinitelyUnwritten);
         // Teardown can free ring capacity before waking this waiter. The existing small-frame
         // serializer may then run, but the dead check still rejects its admission under the gate.
-        if (failureKind != "dispose") await Assert.That(serialized).IsFalse();
+        if (failureKind != "dispose")
+        {
+            await Assert.That(serialized).IsFalse();
+        }
+
         if (failureKind == "cancel")
         {
             var error = await Assert.That(() => attempt.GetResult()).Throws<OperationCanceledException>();
@@ -351,7 +438,11 @@ public class CommandWriteOutcomeTests
             await Assert.That(error!.CommandName).IsEqualTo("PING");
             await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.WaitingForCapacity);
         }
-        else await Assert.That(() => attempt.GetResult()).Throws<RespireConnectionException>();
+        else
+        {
+            await Assert.That(() => attempt.GetResult()).Throws<RespireConnectionException>();
+        }
+
         await connection.DisposeAsync().AsTask().WaitAsync(Guard);
         await Assert.That(async () => await occupying.WaitAsync(Guard)).Throws<RespireConnectionException>();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["PING"]);
@@ -362,7 +453,13 @@ public class CommandWriteOutcomeTests
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
-        { SuppressReply = _ => { received.TrySetResult(); return true; } };
+        {
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            }
+        };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new() { CompletionSourcePoolSize = 1 });
         using var caller = new CancellationTokenSource();
@@ -376,7 +473,12 @@ public class CommandWriteOutcomeTests
         // raw source has returned without returning another raw source that could replace it.
         var barrier = connection.SendStringAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         using var guard = new CancellationTokenSource(Guard);
-        while (server.CommandsSeen != 2) await Task.Delay(1, guard.Token);
+
+        while (server.CommandsSeen != 2)
+        {
+            await Task.Delay(1, guard.Token);
+        }
+
         await server.SendRawAsync("+PONG\r\n+PONG\r\n"u8.ToArray());
         var barrierReply = await barrier.WaitAsync(guard.Token);
         await Assert.That(barrierReply).IsEqualTo("PONG");
@@ -410,20 +512,29 @@ public class CommandWriteOutcomeTests
             using var socket = await listener.AcceptSocketAsync(deadline.Token);
             await using var network = new NetworkStream(socket, ownsSocket: false);
             await using var secure = tls ? new SslStream(network, leaveInnerStreamOpen: true) : null;
+
             if (secure is not null)
+            {
                 await secure.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
                 { ServerCertificate = certificate, EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13 }, deadline.Token);
+            }
+
             Stream transport = secure is not null ? secure : network;
             var frame = new byte[FakeRespServer.PingFrame.Length];
             await transport.ReadExactlyAsync(frame, deadline.Token);
             received.TrySetResult(frame);
             await close.Task.WaitAsync(deadline.Token);
         });
+
         try
         {
             await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", port,
-                new() { UseTls = tls, TlsOptions = tls ? new SslClientAuthenticationOptions
-                { TargetHost = "localhost", RemoteCertificateValidationCallback = (_, _, _, _) => true } : null });
+                new()
+                {
+                    UseTls = tls,
+                    TlsOptions = tls ? new SslClientAuthenticationOptions
+                    { TargetHost = "localhost", RemoteCertificateValidationCallback = (_, _, _, _) => true } : null
+                });
             var pending = connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
             var frame = await received.Task.WaitAsync(deadline.Token);
             await Assert.That(frame.AsSpan().SequenceEqual(FakeRespServer.PingFrame)).IsTrue();
@@ -438,7 +549,12 @@ public class CommandWriteOutcomeTests
             close.TrySetResult();
             deadline.Cancel();
             listener.Stop();
-            try { await peer; } catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+
+            try
+            {
+                await peer;
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
         }
     }
 
@@ -459,6 +575,7 @@ public class CommandWriteOutcomeTests
         var error = await Assert.That(() => attempt.GetResult()).ThrowsExactly<IOException>();
         await Assert.That(ReferenceEquals(error, original)).IsTrue();
         await Assert.That(connection.IsConnected).IsEqualTo(!afterHeader);
+
         if (!afterHeader)
         {
             using var next = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
@@ -488,6 +605,7 @@ public class CommandWriteOutcomeTests
             // No more reads: the bounded socket buffers cannot accept the remaining 5 MiB.
             await close.Task.WaitAsync(deadline.Token);
         });
+
         try
         {
             await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", port,
@@ -513,7 +631,12 @@ public class CommandWriteOutcomeTests
             close.TrySetResult();
             deadline.Cancel();
             listener.Stop();
-            try { await peer; } catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+
+            try
+            {
+                await peer;
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
         }
     }
 
@@ -528,6 +651,7 @@ public class CommandWriteOutcomeTests
         await using var source = new LatePayload();
         var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, RespireSetWhen.Always);
         var pending = connection.SendAttemptAsync(command, caller.Token, commandName: "SET").AsTask();
+
         try
         {
             await source.ReadEntered.Task.WaitAsync(Guard);
@@ -542,6 +666,7 @@ public class CommandWriteOutcomeTests
             await Assert.That(next.AsString()).IsEqualTo("PONG");
         }
         finally { source.ReleaseRead.TrySetResult(); }
+
         await pool.Returned.Task.WaitAsync(Guard);
         await Assert.That(pool.ReturnCount).IsEqualTo(1);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["PING"]);
@@ -553,8 +678,12 @@ public class CommandWriteOutcomeTests
         await using var server = new FakeRespServer(":11\r\n"u8.ToArray(), ":22\r\n"u8.ToArray(), ":33\r\n"u8.ToArray());
         GatedTransport? transport = null;
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { CommandTimeout = TimeSpan.FromSeconds(1), TestingStreamFactory = async (host, port, token) =>
-                transport = await GatedTransport.ConnectAsync(host, port, 0, token) });
+            new()
+            {
+                CommandTimeout = TimeSpan.FromSeconds(1),
+                TestingStreamFactory = async (host, port, token) =>
+                transport = await GatedTransport.ConnectAsync(host, port, 0, token)
+            });
         var first = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), armCommandDeadline: false).AsTask();
         await transport!.WriteEntered.Task.WaitAsync(Guard);
         var pending = connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame), commandName: "PING").AsTask();
@@ -577,11 +706,26 @@ public class CommandWriteOutcomeTests
         var serverCommands = 0;
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
-        { SuppressReply = _ => { if (serverCommands++ == 2) received.TrySetResult(); return true; } };
+        {
+            SuppressReply = _ =>
+            {
+                if (serverCommands++ == 2)
+                {
+                    received.TrySetResult();
+                }
+
+                return true;
+            }
+        };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         using var caller = new CancellationTokenSource();
         var frame = new byte[FakeRespServer.PingFrame.Length * 3];
-        for (var i = 0; i < 3; i++) FakeRespServer.PingFrame.CopyTo(frame, i * FakeRespServer.PingFrame.Length);
+
+        for (var i = 0; i < 3; i++)
+        {
+            FakeRespServer.PingFrame.CopyTo(frame, i * FakeRespServer.PingFrame.Length);
+        }
+
         var pending = connection.SendAttemptAsync(new RawCommand(frame), caller.Token,
             repliesBeforeFinal: 2, firstQueueReply: 0).AsTask();
         await received.Task.WaitAsync(Guard);
@@ -601,14 +745,19 @@ public class CommandWriteOutcomeTests
     private static (WeakReference<PendingResponse> Source, long State) CaptureSourceIdentity(RespireConnection connection)
     {
         if (!connection.InspectForTests().Inflight.TryPeek(out var source))
+        {
             throw new InvalidOperationException("The controlled reply must still own its source.");
+        }
+
         return (new WeakReference<PendingResponse>(source), source.State);
     }
 
     private readonly struct FailingCommand(int bound, Exception failure, Action? beforeFailure = null) : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public int GetWriteSizeHint() => bound == -1 ? throw failure : bound;
+
         public void Write(ref RespWriter writer)
         {
             writer.WriteRaw("*1\r\n$4\r\nPI"u8);
@@ -620,13 +769,20 @@ public class CommandWriteOutcomeTests
     private readonly struct CallbackCommand(Action serialized) : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
-        public void Write(ref RespWriter writer) { serialized(); writer.WriteRaw(FakeRespServer.PingFrame); }
+
+        public void Write(ref RespWriter writer)
+        {
+            serialized();
+            writer.WriteRaw(FakeRespServer.PingFrame);
+        }
     }
 
     private readonly struct LargeSetCommand(byte[] payload, bool knownBound) : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public int GetWriteSizeHint() => knownBound ? payload.Length + 64 : 0;
+
         public void Write(ref RespWriter writer)
         {
             writer.WriteArrayHeader(3);
@@ -638,8 +794,16 @@ public class CommandWriteOutcomeTests
 
     private sealed class LatePayload : MemoryStream
     {
-        internal TaskCompletionSource ReadEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource ReleaseRead { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReadEntered
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ReleaseRead
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             ReadEntered.TrySetResult();
@@ -652,9 +816,16 @@ public class CommandWriteOutcomeTests
     private sealed class ReadOwnershipPool : ArrayPool<byte>
     {
         private int _returnCount;
+
         internal int ReturnCount => Volatile.Read(ref _returnCount);
-        internal TaskCompletionSource Returned { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Returned
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override byte[] Rent(int minimumLength) => new byte[minimumLength];
+
         public override void Return(byte[] array, bool clearArray = false)
         {
             Interlocked.Increment(ref _returnCount);
@@ -665,9 +836,14 @@ public class CommandWriteOutcomeTests
     private sealed class FailingPayload(bool afterHeader, Exception failure) : MemoryStream
     {
         private bool _first = true;
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (!afterHeader || !_first) throw failure;
+            if (!afterHeader || !_first)
+            {
+                throw failure;
+            }
+
             _first = false;
             buffer.Span.Clear();
             return ValueTask.FromResult(buffer.Length);
@@ -677,15 +853,36 @@ public class CommandWriteOutcomeTests
     private sealed class GatedTransport(Socket socket, int prefixLength) : NetworkStream(socket, ownsSocket: true)
     {
         private int _disposed;
-        internal int WriteCalls { get; private set; }
-        internal int BytesWritten { get; private set; }
-        internal TaskCompletionSource WriteEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource ReleaseWrite { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal int WriteCalls
+        {
+            get; private set;
+        }
+
+        internal int BytesWritten
+        {
+            get; private set;
+        }
+
+        internal TaskCompletionSource WriteEntered
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ReleaseWrite
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         internal static async Task<GatedTransport> ConnectAsync(string host, int port, int prefixLength, CancellationToken token)
         {
             var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
-            try { await socket.ConnectAsync(host, port, token); return new(socket, prefixLength); }
+
+            try
+            {
+                await socket.ConnectAsync(host, port, token);
+                return new(socket, prefixLength);
+            }
             catch { socket.Dispose(); throw; }
         }
 
@@ -699,10 +896,12 @@ public class CommandWriteOutcomeTests
                     BytesWritten += prefixLength;
                     buffer = buffer[prefixLength..];
                 }
+
                 WriteEntered.TrySetResult();
                 await ReleaseWrite.Task.WaitAsync(cancellationToken);
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             }
+
             await base.WriteAsync(buffer, cancellationToken);
             BytesWritten += buffer.Length;
         }

@@ -10,7 +10,7 @@ public class BuildProjectsModule : Module<CommandResult>
     protected override async Task<CommandResult> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Building Respire solution...");
-        
+
         return await context.Tools.DotNet.BuildAsync(new DotNetBuildOptions
         {
             ProjectSolution = "../Respire.slnx",

@@ -30,11 +30,17 @@ public class PubSubPrefixNotificationIntegrationTests(KeyNotificationRedisContai
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
         await view.SetAsync(logical, "value", cancellationToken: deadline.Token);
+
         while (await reader.MoveNextAsync())
         {
             var message = reader.Current;
+
             if (!message.TryParseKeyNotification(fullPrefix, out var notification)
-                || notification.Type != RespireKeyNotificationType.Set) continue;
+                || notification.Type != RespireKeyNotificationType.Set)
+            {
+                continue;
+            }
+
             notification.KeyBytes.ToArray().Should().Equal(logical.ToBytes());
             notification.Database.Should().Be(options.Database);
             message.Channel.ToString().Should().StartWith(family == "event" ? "__keyevent@" : "__keyspace@");
@@ -42,6 +48,7 @@ public class PubSubPrefixNotificationIntegrationTests(KeyNotificationRedisContai
             subscription.Targets.Single().RoutingSlot.Should().Be(descriptor.RoutingSlot);
             return;
         }
+
         throw new InvalidOperationException("The notification subscription ended before its SET event.");
     }
 }

@@ -28,14 +28,24 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
         var codec = CreateCodec(deflate);
         await using var cache = new RespireDistributedCache((IRespireClient)client, new()
         {
-            InstanceName = "codec:", ValueCodec = codec,
+            InstanceName = "codec:",
+            ValueCodec = codec,
         });
         byte[][] values = [[], [0, 255, 128, 1], Enumerable.Repeat((byte)42, 4096).ToArray()];
+
         for (var index = 0; index < values.Length; index++)
         {
             var key = "value-" + index;
-            if (synchronous) await Task.Run(() => cache.Set(key, values[index], new()));
-            else await cache.SetAsync(key, values[index], new());
+
+            if (synchronous)
+            {
+                await Task.Run(() => cache.Set(key, values[index], new()));
+            }
+            else
+            {
+                await cache.SetAsync(key, values[index], new());
+            }
+
             var value = synchronous ? await Task.Run(() => cache.Get(key)) : await cache.GetAsync(key);
             await Assert.That(value!.AsSpan().SequenceEqual(values[index])).IsTrue();
             using var stored = await client.ExecuteAsync("HMGET", "codec:" + key, "absexp", "sldexp", "data");
@@ -47,6 +57,7 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
             await Assert.That(frame[5]).IsEqualTo(index == 2 ? codec.AlgorithmId : (byte)0);
             await Assert.That(codec.Decode(frame).AsSpan().SequenceEqual(values[index])).IsTrue();
         }
+
         await Assert.That(synchronous ? await Task.Run(() => cache.Get("missing")) : await cache.GetAsync("missing")).IsNull();
     }
 
@@ -62,8 +73,16 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
         var last = first.Append([1, 2, 3]);
         var sequence = new ReadOnlySequence<byte>(first, 0, last, last.Memory.Length);
         IBufferDistributedCache bufferCache = cache;
-        if (synchronous) await Task.Run(() => bufferCache.Set("buffer", sequence, new()));
-        else await bufferCache.SetAsync("buffer", sequence, new());
+
+        if (synchronous)
+        {
+            await Task.Run(() => bufferCache.Set("buffer", sequence, new()));
+        }
+        else
+        {
+            await bufferCache.SetAsync("buffer", sequence, new());
+        }
+
         var destination = new ArrayBufferWriter<byte>();
         destination.Write(new byte[] { 99 });
         var found = synchronous ? await Task.Run(() => bufferCache.TryGet("buffer", destination))
@@ -87,13 +106,23 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
         await using var raw = new RespireDistributedCache((IRespireClient)client);
         await using var cache = new RespireDistributedCache((IRespireClient)client, new() { ValueCodec = codec });
         var frame = codec.Encode([1, 2, 3]);
+
         switch (corruption)
         {
-            case "legacy": frame = [1, 2, 3]; break;
-            case "checksum": frame[^1] ^= 1; break;
-            case "oversized": BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(6), 8193); break;
-            case "algorithm": frame[5] = 255; break;
+            case "legacy":
+                frame = [1, 2, 3];
+                break;
+            case "checksum":
+                frame[^1] ^= 1;
+                break;
+            case "oversized":
+                BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(6), 8193);
+                break;
+            case "algorithm":
+                frame[5] = 255;
+                break;
         }
+
         await raw.SetAsync("invalid", frame, new());
         await Assert.That(async () => await cache.GetAsync("invalid")).Throws<InvalidDataException>();
         var destination = new ArrayBufferWriter<byte>();
@@ -132,12 +161,14 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
             Serializer = new RespireValueCodecSerializer(RespireSerializer.Default, new RejectCallsCodec()),
         });
         var options = new RespireCacheOptions { ValueCodec = CreateCodec() };
+
         await using (var cache = new RespireDistributedCache((IRespireClient)client, options))
         {
             options.ValueCodec = new RejectCallsCodec();
             await cache.SetAsync("captured", [0, 255], new());
             await Assert.That((await cache.GetAsync("captured"))!.AsSpan().SequenceEqual(new byte[] { 0, 255 })).IsTrue();
         }
+
         await client.PingAsync(); // Disposing a cache must not dispose its borrowed client or codec.
         await using var raw = new RespireDistributedCache((IRespireClient)client);
         await raw.SetAsync("raw", [0, 255], new());
@@ -152,19 +183,30 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
         var services = new ServiceCollection();
-        if (!owned) services.AddSingleton<IRespireClient>(client);
+
+        if (!owned)
+        {
+            services.AddSingleton<IRespireClient>(client);
+        }
+
         services.AddRespireDistributedCache(options =>
         {
-            if (owned) options.ClientOptions = _ => RespireOptions.Parse(fixture.IsolatedConnectionString);
+            if (owned)
+            {
+                options.ClientOptions = _ => RespireOptions.Parse(fixture.IsolatedConnectionString);
+            }
+
             options.ValueCodec = CreateCodec();
             options.InstanceName = "di-codec:";
         });
+
         await using (var provider = services.BuildServiceProvider())
         {
             var cache = provider.GetRequiredService<IDistributedCache>();
             await cache.SetAsync("value", [0, 255], new());
             await Assert.That((await cache.GetAsync("value"))!.AsSpan().SequenceEqual(new byte[] { 0, 255 })).IsTrue();
         }
+
         await client.PingAsync();
         using var stored = await client.ExecuteAsync("HGET", "di-codec:value", "data");
         await Assert.That(CreateCodec().Decode(stored.AsSpan()).AsSpan().SequenceEqual(new byte[] { 0, 255 })).IsTrue();
@@ -178,30 +220,46 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
         var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
         await cache.SetAsync("expiry", [1, 2, 3], new()
         {
-            AbsoluteExpiration = deadline, SlidingExpiration = TimeSpan.FromSeconds(10),
+            AbsoluteExpiration = deadline,
+            SlidingExpiration = TimeSpan.FromSeconds(10),
         });
         using var metadata = await client.ExecuteAsync("HMGET", "expiry", "absexp", "sldexp");
         await Assert.That(metadata[0].AsString()).IsEqualTo(deadline.UtcTicks.ToString());
         await Assert.That(metadata[1].AsString()).IsEqualTo(TimeSpan.FromSeconds(10).Ticks.ToString());
-        using (var shortened = await client.ExecuteAsync("PEXPIRE", "expiry", 2000)) { }
+
+        using (var shortened = await client.ExecuteAsync("PEXPIRE", "expiry", 2000))
+        {
+        }
+
         await Assert.That(await cache.GetAsync("expiry")).IsNotNull();
+
         using (var refreshed = await client.ExecuteAsync("PTTL", "expiry"))
         {
             await Assert.That(refreshed.AsInteger()).IsGreaterThan(2000);
             await Assert.That(refreshed.AsInteger()).IsLessThanOrEqualTo(10_000);
         }
+
         await using var refreshOnly = new RespireDistributedCache((IRespireClient)client, new() { ValueCodec = new RejectCallsCodec() });
         await Task.Run(() => refreshOnly.Refresh("expiry"));
         await refreshOnly.RefreshAsync("expiry");
         await cache.SetAsync("absolute-cap", [1], new()
         {
-            AbsoluteExpiration = deadline, SlidingExpiration = TimeSpan.FromSeconds(60),
+            AbsoluteExpiration = deadline,
+            SlidingExpiration = TimeSpan.FromSeconds(60),
         });
+
         using (var capped = await client.ExecuteAsync("PTTL", "absolute-cap"))
+        {
             await Assert.That(capped.AsInteger()).IsLessThanOrEqualTo(30_000);
+        }
+
         await refreshOnly.RemoveAsync("absolute-cap");
         await Assert.That(await client.ExistsAsync("absolute-cap")).IsFalse();
-        using (var expireNow = await client.ExecuteAsync("PEXPIRE", "expiry", 0)) { }
+
+        using (var expireNow = await client.ExecuteAsync("PEXPIRE", "expiry", 0))
+        {
+        }
+
         await Assert.That(await cache.GetAsync("expiry")).IsNull();
         var destination = new ArrayBufferWriter<byte>();
         await Assert.That(await cache.TryGetAsync("expiry", destination)).IsFalse();
@@ -238,8 +296,14 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
         destination.Write(new byte[] { 99 });
         var error = await Assert.That(async () =>
         {
-            if (synchronous) await Task.Run(() => cache.TryGet("partial-decode", destination));
-            else await cache.TryGetAsync("partial-decode", destination);
+            if (synchronous)
+            {
+                await Task.Run(() => cache.TryGet("partial-decode", destination));
+            }
+            else
+            {
+                await cache.TryGetAsync("partial-decode", destination);
+            }
         }).Throws<InvalidDataException>();
         await Assert.That(error).IsSameReferenceAs(expected);
         await Assert.That(destination.WrittenSpan.SequenceEqual(new byte[] { 99 })).IsTrue();
@@ -250,7 +314,9 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
     private sealed class PartialFailureCodec(Exception failure) : IRespireValueCodec
     {
         public byte[] Encode(ReadOnlySpan<byte> payload) => payload.ToArray();
+
         public byte[] Decode(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("Buffer reads must use the destination overload.");
+
         public void Decode(ReadOnlySpan<byte> payload, IBufferWriter<byte> destination)
         {
             destination.GetSpan(1)[0] = 42;
@@ -258,6 +324,7 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
             throw failure;
         }
     }
+
     private sealed class CancellingCodec(CancellationTokenSource cancellation) : IRespireValueCodec
     {
         public byte[] Encode(ReadOnlySpan<byte> payload)
@@ -265,15 +332,23 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
             cancellation.Cancel();
             return payload.ToArray();
         }
+
         public byte[] Decode(ReadOnlySpan<byte> payload) => payload.ToArray();
     }
 
     private sealed class DestinationCodec : IRespireValueCodec
     {
         private readonly RespireBrotliValueCodec _inner = new();
-        public int DestinationDecodes { get; private set; }
+
+        public int DestinationDecodes
+        {
+            get; private set;
+        }
+
         public byte[] Encode(ReadOnlySpan<byte> payload) => _inner.Encode(payload);
+
         public byte[] Decode(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("Buffer reads must use the destination overload.");
+
         public void Decode(ReadOnlySpan<byte> payload, IBufferWriter<byte> destination)
         {
             DestinationDecodes++;
@@ -284,6 +359,7 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
     private sealed class RejectCallsCodec : IRespireValueCodec
     {
         public byte[] Encode(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("Codec must not be invoked.");
+
         public byte[] Decode(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("Codec must not be invoked.");
     }
 

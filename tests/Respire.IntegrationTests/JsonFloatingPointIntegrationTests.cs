@@ -20,6 +20,7 @@ public partial class JsonFloatingPointIntegrationTests(VersionedServerFixture se
     {
         var lease = await servers.LeaseAsync(image);
         await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
+
         using (var info = await client.ExecuteAsync(RespireCommands.Server.INFO, "server"))
         {
             var versionLine = info.AsString()!.Split('\n').Single(line => line.StartsWith("redis_version:", StringComparison.Ordinal));
@@ -29,6 +30,7 @@ public partial class JsonFloatingPointIntegrationTests(VersionedServerFixture se
 
         var prefixed = client.WithKeyPrefix($"fpha:{Guid.NewGuid():N}:");
         var json = prefixed.Json;
+
         foreach (var type in Enum.GetValues<RespireJsonFloatingPointType>())
         {
             var key = type.ToString();

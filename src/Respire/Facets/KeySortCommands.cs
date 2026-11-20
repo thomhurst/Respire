@@ -32,6 +32,7 @@ internal sealed partial class KeyCommands
     public ValueTask<string?[]> SortAsync(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?[]>.Start();
+
         try
         {
             var (operation, command) = SortCommand(client, key, options);
@@ -45,6 +46,7 @@ internal sealed partial class KeyCommands
     public ValueTask<T?[]> SortAsync<T>(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T?[]>.Start();
+
         try
         {
             var (operation, command) = SortCommand(client, key, options);
@@ -56,6 +58,7 @@ internal sealed partial class KeyCommands
     public ValueTask<long> SortStoreAsync(RespireKey key, RespireKey destination, RespireSortOptions? options = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
+
         try
         {
             var (operation, command) = SortCommand(client, key, options, destination);
@@ -83,23 +86,34 @@ internal sealed partial class KeyCommands
     internal static void ValidateRandom(RespireClient client)
     {
         if (!client.KeyPrefixBytes.IsEmpty || client.Core.Cluster is not null)
+        {
             throw new NotSupportedException("RANDOMKEY requires an unprefixed, non-Cluster client; it samples the entire selected database.");
+        }
     }
 
     internal static void ValidateMove(RespireClient client, int database)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(database);
+
         if (client.Core.Cluster is not null)
+        {
             throw new NotSupportedException("MOVE is not supported by Cluster clients.");
+        }
     }
 
     internal static (string Operation, CmdN Command) SortCommand(
         RespireClient client, RespireKey key, RespireSortOptions? options, RespireKey? destination = null)
     {
         if (options?.ReadOnly == true && destination.HasValue)
+        {
             throw new ArgumentException("SORT_RO does not support STORE.", nameof(options));
+        }
+
         if (options?.Limit is { } limit)
+        {
             ArgumentOutOfRangeException.ThrowIfNegative(limit.Offset);
+        }
+
         var operation = options?.ReadOnly == true ? "SORT_RO" : "SORT";
         var source = client.Key(in key);
         var count = checked(2 + (options?.By is not null ? 2 : 0) + (options?.Limit is not null ? 3 : 0)
@@ -107,17 +121,20 @@ internal sealed partial class KeyCommands
         var arguments = new RespireValue[count];
         var index = 0;
         arguments[index++] = source;
+
         if (options?.By is { } by)
         {
             arguments[index++] = "BY";
             arguments[index++] = SortPattern(client, source, by, operation, isGet: false);
         }
+
         if (options?.Limit is { } slice)
         {
             arguments[index++] = "LIMIT";
             arguments[index++] = slice.Offset;
             arguments[index++] = slice.Count;
         }
+
         if (options is not null)
         {
             foreach (var pattern in options.Get.Span)
@@ -126,8 +143,14 @@ internal sealed partial class KeyCommands
                 arguments[index++] = SortPattern(client, source, pattern, operation, isGet: true);
             }
         }
+
         arguments[index++] = options?.Descending == true ? "DESC" : "ASC";
-        if (options?.Alpha == true) arguments[index++] = "ALPHA";
+
+        if (options?.Alpha == true)
+        {
+            arguments[index++] = "ALPHA";
+        }
+
         if (destination is { } target)
         {
             var resolved = client.Key(in target);
@@ -135,6 +158,7 @@ internal sealed partial class KeyCommands
             arguments[index++] = "STORE";
             arguments[index++] = resolved;
         }
+
         return (operation, new CmdN(options?.ReadOnly == true ? Verbs.SortRo : Verbs.Sort, arguments));
     }
 
@@ -142,31 +166,46 @@ internal sealed partial class KeyCommands
     {
         var bytes = new byte[pattern.WireLength];
         pattern.AsValue().WriteWirePayload(bytes);
+
         if ((isGet && bytes.AsSpan().SequenceEqual("#"u8)) || !bytes.Contains((byte)'*'))
+        {
             return bytes; // GET # is the member; patterns without * do not access external keys.
+        }
 
         var prefix = client.KeyPrefixBytes;
+
         if (prefix.Contains((byte)'*') || prefix.IndexOf("->"u8) >= 0 || prefix.Contains((byte)0))
+        {
             throw new NotSupportedException("SORT external patterns cannot be used with a key prefix containing *, ->, or NUL.");
+        }
+
         byte[] resolved = prefix.IsEmpty ? bytes : [.. prefix, .. bytes];
+
         if (client.Core.Cluster is not null)
         {
             // Redis interprets -> as a field separator only after the first wildcard.
             // Hash-tag validation must therefore inspect the complete prefixed pattern.
             if (resolved.Contains((byte)0) || !ClusterHash.TryGetFixedPatternSlot(resolved, out var slot))
+            {
                 throw new NotSupportedException("Cluster SORT external patterns require a fixed nonempty hash tag before the wildcard (Redis 7.4+).");
+            }
             // Match the other multi-key facets: reject CROSSSLOT locally using the shared exception type.
             if (source.AsKey().ClusterSlot != slot)
+            {
                 throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext,
                     operation, source.AsKey().ClusterSlot, slot, resolved);
+            }
         }
+
         return resolved;
     }
 
     private static void ValidateSortSlot(RespireClient client, RespireValue source, RespireValue other, string operation)
     {
         if (client.Core.Cluster is not null && source.AsKey().ClusterSlot != other.AsKey().ClusterSlot)
+        {
             throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext,
                 operation, source.AsKey().ClusterSlot, other.AsKey().ClusterSlot, other);
+        }
     }
 }

@@ -37,16 +37,28 @@ public class DashboardFlowRetryTests(RedisTestContainer redis)
         var dead = (await client.Streams.RangeAsync(queue.DeadLetterStreamKey)).Single();
         var flowKey = dead.GetString("_respire.job.flow")!;
         byte[] originalFlow;
-        using (var reply = await client.ExecuteAsync("GET", [flowKey])) originalFlow = reply.AsBytes().ToArray();
-        if (removeFlow) await Assert.That(await queue.RemoveFlowAsync("flow")).IsTrue();
+
+        using (var reply = await client.ExecuteAsync("GET", [flowKey]))
+        {
+            originalFlow = reply.AsBytes().ToArray();
+        }
+
+        if (removeFlow)
+        {
+            await Assert.That(await queue.RemoveFlowAsync("flow")).IsTrue();
+        }
+
         var originalEntries = await client.Streams.CountAsync(queue.StreamKey);
         var originalEvents = await client.Streams.CountAsync(queue.EventsStreamKey);
 
         var options = new RespireDashboardOptions();
         options.Streams.Add(new()
         {
-            Name = "jobs", Stream = queue.StreamKey, Group = RespireJobQueue<string>.ConsumerGroup,
-            DeadLetterStream = queue.DeadLetterStreamKey, IsJobQueue = true,
+            Name = "jobs",
+            Stream = queue.StreamKey,
+            Group = RespireJobQueue<string>.ConsumerGroup,
+            DeadLetterStream = queue.DeadLetterStreamKey,
+            IsJobQueue = true,
         });
         await Assert.That(await new DashboardState(client, options).MutateAsync(0, dead.Id.ToString(), true, deadline.Token)).IsEqualTo(1);
         var retried = (await client.Streams.RangeAsync(queue.StreamKey)).Last();
@@ -67,15 +79,24 @@ public class DashboardFlowRetryTests(RedisTestContainer redis)
         await Assert.That(await client.Streams.CountAsync(queue.EventsStreamKey)).IsEqualTo(originalEvents + 1);
         var remainingDead = await client.Streams.RangeAsync(queue.DeadLetterStreamKey);
         await Assert.That(remainingDead.Length).IsEqualTo(failRetry ? 1 : 0);
+
         if (failRetry)
         {
             await Assert.That(remainingDead[0].GetString("_respire.source_id")).IsEqualTo(retried.Id.ToString());
             await Assert.That(remainingDead[0].GetString("_respire.job.flow")).IsNull();
             await Assert.That(remainingDead[0].GetString("_respire.job.node")).IsNull();
         }
+
         using var retained = await client.ExecuteAsync("GET", [flowKey]);
-        if (removeFlow) await Assert.That(retained.IsNull).IsTrue();
-        else await Assert.That(retained.AsBytes().SequenceEqual(originalFlow)).IsTrue();
+
+        if (removeFlow)
+        {
+            await Assert.That(retained.IsNull).IsTrue();
+        }
+        else
+        {
+            await Assert.That(retained.AsBytes().SequenceEqual(originalFlow)).IsTrue();
+        }
     }
 
     private static async Task<RespireJobEvent> RunWorkerUntilAsync(IRespireClient client, RespireJobQueue<string> queue,
@@ -87,10 +108,17 @@ public class DashboardFlowRetryTests(RedisTestContainer redis)
         await using var provider = services.BuildServiceProvider();
         var worker = provider.GetRequiredService<IHostedService>();
         await worker.StartAsync(token);
+
         try
         {
             await foreach (var entry in queue.ReadEventsAsync(after, token))
-                if (entry.JobId == lastJob) return entry;
+            {
+                if (entry.JobId == lastJob)
+                {
+                    return entry;
+                }
+            }
+
             throw new InvalidOperationException("The worker did not publish its terminal event.");
         }
         finally { await worker.StopAsync(CancellationToken.None); }

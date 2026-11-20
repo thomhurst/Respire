@@ -18,8 +18,10 @@ public class FakeCollectionScanParityTests(RedisTestContainer fixture)
         await using var fake = useFake ? new RespireFakeServer() : null;
         await using var client = await RespireClient.ConnectAsync(
             (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString))
-            with { Protocol = (RespireProtocol)protocol, Connections = 1 });
+            with
+            { Protocol = (RespireProtocol)protocol, Connections = 1 });
         byte[] member = [0, 255, 128, 13, 10];
+
         foreach (var command in new[] { "SSCAN", "HSCAN", "ZSCAN" })
         {
             var key = $"{Guid.NewGuid():N}:{command}";
@@ -42,10 +44,16 @@ public class FakeCollectionScanParityTests(RedisTestContainer fixture)
             var stride = command == "SSCAN" ? 1 : 2;
             page[1].Count.Should().Be(2 * stride);
             var found = new Dictionary<string, string>();
+
             for (var i = 0; i < page[1].Count; i += stride)
             {
                 page[1][i].Type.Should().Be(RespireDataType.BulkString);
-                if (stride == 2) page[1][i + 1].Type.Should().Be(RespireDataType.BulkString);
+
+                if (stride == 2)
+                {
+                    page[1][i + 1].Type.Should().Be(RespireDataType.BulkString);
+                }
+
                 var name = Convert.ToHexString(page[1][i].AsBytes());
                 found[name] = command switch
                 {
@@ -54,6 +62,7 @@ public class FakeCollectionScanParityTests(RedisTestContainer fixture)
                     _ => name,
                 };
             }
+
             found.Keys.Should().BeEquivalentTo(Convert.ToHexString(member), "");
             found[Convert.ToHexString(member)].Should().Be(command == "ZSCAN" ? "1.5" : Convert.ToHexString(member));
             found[""].Should().Be(command == "ZSCAN" ? "-inf" : "");

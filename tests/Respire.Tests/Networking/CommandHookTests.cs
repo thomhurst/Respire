@@ -20,7 +20,13 @@ public partial class CommandHookTests
         var rejected = new InvalidOperationException("SCRIPT FLUSH denied");
         var hook = new RecordingHook
         {
-            Before = context => { if (context.Command == "SCRIPT FLUSH") throw rejected; },
+            Before = context =>
+            {
+                if (context.Command == "SCRIPT FLUSH")
+                {
+                    throw rejected;
+                }
+            },
         };
 #pragma warning disable RESP010 // This command hook scenario owns its client, observer state and scripted transport.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
@@ -33,16 +39,27 @@ public partial class CommandHookTests
             ((RespireCommand)"SCRIPT", ["FLUSH"]),
             ((RespireCommand)"script flush", []),
         ];
+
         foreach (var (command, args) in cases)
         {
             var error = await Failure(async () =>
             {
-                if (route == "forget") await client.ExecuteFireAndForgetAsync(command, args);
-                else if (route == "lease") { using var result = await client.ExecuteLeaseAsync(command, args); }
-                else { using var result = await client.ExecuteAsync(command, args); }
+                if (route == "forget")
+                {
+                    await client.ExecuteFireAndForgetAsync(command, args);
+                }
+                else if (route == "lease")
+                {
+                    using var result = await client.ExecuteLeaseAsync(command, args);
+                }
+                else
+                {
+                    using var result = await client.ExecuteAsync(command, args);
+                }
             });
             await Assert.That(error).IsSameReferenceAs(rejected);
         }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
         await Assert.That(hook.Entered.Count).IsEqualTo(cases.Length);
         await Assert.That(hook.Entered.All(c => c.Command == "SCRIPT FLUSH")).IsTrue();
@@ -70,8 +87,10 @@ public partial class CommandHookTests
         var hook = new RecordingHook { Before = reject ? _ => throw new InvalidOperationException("Rejected") : null };
         var options = new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", endpoint.Port)], UseCluster = true,
-            Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", endpoint.Port)],
+            UseCluster = true,
+            Protocol = RespireProtocol.Resp2,
+            ThreadPoolMonitoring = false,
         };
 #pragma warning disable RESP010 // This preflight scenario owns isolated client options and hooks to verify rejection before I/O.
         await using var plain = RespireClient.Create(options);
@@ -84,26 +103,38 @@ public partial class CommandHookTests
             ("MGET", ["{a}:one", "{b}:two"], false, RespireCommandFlags.None),
             ("JSON.MGET", ["{a}:one", "{b}:two", "$"], true, RespireCommandFlags.None),
         ];
+
         foreach (var item in cases)
+        {
             await Check(item.Name, item.Args, item.Prefix, item.Flags);
+        }
+
         if (catalog)
         {
             await Check("SELECT", [1], false, RespireCommandFlags.None);
             await Check("KEYS", ["*"], true, RespireCommandFlags.None);
             await Check("GET", [RespireValue.Null], true, RespireCommandFlags.None);
         }
+
         if (route == "forget")
         {
             await Check("BLPOP", ["key", 0], false, RespireCommandFlags.None);
-            if (!catalog) await Check("SELECT", [1], false, RespireCommandFlags.None);
+
+            if (!catalog)
+            {
+                await Check("SELECT", [1], false, RespireCommandFlags.None);
+            }
         }
         else
         {
             await Check("GET", ["key"], false, (RespireCommandFlags)128);
             await Check("FUNCTION FLUSH", [], false, RespireCommandFlags.NoRedirect);
         }
+
         if (!catalog)
+        {
             await Check("MGET {a}:one", ["{b}:two"], false, RespireCommandFlags.None);
+        }
 
         await Assert.That(hook.Entered.Count).IsEqualTo(0);
         await Assert.That(hook.Completed.Count).IsEqualTo(0);
@@ -120,9 +151,18 @@ public partial class CommandHookTests
 
             async Task Send(IRespireClient client)
             {
-                if (route == "forget") await client.ExecuteFireAndForgetAsync(command, args);
-                else if (route == "lease") { using var result = await client.ExecuteLeaseAsync(command, args, flags); }
-                else { using var result = await client.ExecuteAsync(command, args, flags); }
+                if (route == "forget")
+                {
+                    await client.ExecuteFireAndForgetAsync(command, args);
+                }
+                else if (route == "lease")
+                {
+                    using var result = await client.ExecuteLeaseAsync(command, args, flags);
+                }
+                else
+                {
+                    using var result = await client.ExecuteAsync(command, args, flags);
+                }
             }
         }
     }
@@ -150,7 +190,10 @@ public partial class CommandHookTests
         var baseline = server.CommandsSeen;
         hook.Before = _ =>
         {
-            if (server.CommandsSeen != baseline) throw new InvalidOperationException("Dispatched before admission.");
+            if (server.CommandsSeen != baseline)
+            {
+                throw new InvalidOperationException("Dispatched before admission.");
+            }
         };
         await Execute(client, route);
         var result = hook.Completed.Single();
@@ -219,7 +262,11 @@ public partial class CommandHookTests
         await using var server = Server();
         server.SuppressReply = command =>
         {
-            if (command != "GET key") return false;
+            if (command != "GET key")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -228,13 +275,20 @@ public partial class CommandHookTests
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
-        if (!pending) cancellation.Cancel();
+
+        if (!pending)
+        {
+            cancellation.Cancel();
+        }
+
         var response = client.GetStringAsync("key", cancellation.Token).AsTask();
+
         if (pending)
         {
             await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
             cancellation.Cancel();
         }
+
         var error = await Failure(async () => await response);
         var result = hook.Completed.Single();
         await Assert.That(result.Outcome).IsEqualTo(RespireCommandOutcome.Canceled);
@@ -258,7 +312,8 @@ public partial class CommandHookTests
         {
             Endpoints = [new("127.0.0.1", endpoint.Port)],
             ClientSideCache = new() { CoalesceConcurrentMisses = route == "raw-coalesced" },
-            CommandHook = hook, ThreadPoolMonitoring = false,
+            CommandHook = hook,
+            ThreadPoolMonitoring = false,
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -295,7 +350,11 @@ public partial class CommandHookTests
         {
             SuppressReply = command =>
             {
-                if (command != "GET key") return false;
+                if (command != "GET key")
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -425,7 +484,11 @@ public partial class CommandHookTests
 
         static bool HoldRead(string command, TaskCompletionSource received)
         {
-            if (command != "GET key") return false;
+            if (command != "GET key")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         }
@@ -442,7 +505,10 @@ public partial class CommandHookTests
         var reentrant = new ConcurrentQueue<Task<long>>();
         hook.Before = context =>
         {
-            if (context.Command == "GET") reentrant.Enqueue(client.Strings.LengthAsync("key").AsTask());
+            if (context.Command == "GET")
+            {
+                reentrant.Enqueue(client.Strings.LengthAsync("key").AsTask());
+            }
         };
         await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => client.GetStringAsync("key").AsTask()));
         await Task.WhenAll(reentrant);
@@ -472,28 +538,57 @@ public partial class CommandHookTests
     {
         switch (route)
         {
-            case "string": await client.GetStringAsync("key"); break;
-            case "bytes": await client.GetBytesAsync("key"); break;
-            case "typed": await client.GetAsync<int>("key"); break;
-            case "facet": await client.Strings.GetStringAsync("key"); break;
-            case "converted": await client.Strings.LengthAsync("key"); break;
-            case "raw": using (await client.ExecuteAsync("GET", "key")) { } break;
-            case "catalog": using (await client.ExecuteAsync(RespireCommands.String.GET, "key")) { } break;
+            case "string":
+                await client.GetStringAsync("key");
+                break;
+            case "bytes":
+                await client.GetBytesAsync("key");
+                break;
+            case "typed":
+                await client.GetAsync<int>("key");
+                break;
+            case "facet":
+                await client.Strings.GetStringAsync("key");
+                break;
+            case "converted":
+                await client.Strings.LengthAsync("key");
+                break;
+            case "raw":
+                using (await client.ExecuteAsync("GET", "key"))
+                {
+                }
+                break;
+            case "catalog":
+                using (await client.ExecuteAsync(RespireCommands.String.GET, "key"))
+                {
+                }
+                break;
             case "lease":
                 using (var result = await client.ExecuteLeaseAsync("GET", "key"))
+                {
                     await Assert.That(result.AsString()).IsEqualTo("42");
+                }
                 break;
-            case "forget": await client.ExecuteFireAndForgetAsync("GET", "key"); break;
+            case "forget":
+                await client.ExecuteFireAndForgetAsync("GET", "key");
+                break;
             case "interpolated-owned":
                 using (var result = await client.ExecuteAsync($"GET {"key"}"))
+                {
                     await Assert.That(result.AsString()).IsEqualTo("42");
+                }
                 break;
             case "interpolated-lease":
                 using (var result = await client.ExecuteLeaseAsync($"GET {"key"}"))
+                {
                     await Assert.That(result.AsString()).IsEqualTo("42");
+                }
                 break;
-            case "interpolated-forget": await client.ExecuteFireAndForgetAsync($"GET {"key"}"); break;
-            default: throw new ArgumentOutOfRangeException(nameof(route));
+            case "interpolated-forget":
+                await client.ExecuteFireAndForgetAsync($"GET {"key"}");
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(route));
         }
     }
 
@@ -505,14 +600,22 @@ public partial class CommandHookTests
 
     private static RespireOptions Options(FakeRespServer server, RespireCommandHook hook) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-        Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5), CommandHook = hook,
+        Endpoints = [new("127.0.0.1", server.Port)],
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromSeconds(5),
+        CommandHook = hook,
     };
 
     private static async Task<Exception> Failure(Func<Task> action)
     {
-        try { await action(); }
+        try
+        {
+            await action();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure.");
     }
 
@@ -523,17 +626,23 @@ public partial class CommandHookTests
         internal bool ThrowOnCompleted;
         internal readonly ConcurrentQueue<RespireCommandContext> Entered = new();
         internal readonly ConcurrentQueue<(RespireCommandContext Context, object? State, RespireCommandOutcome Outcome, Exception? Error)> Completed = new();
+
         public override object? OnExecuting(RespireCommandContext context)
         {
             Entered.Enqueue(context);
             Before?.Invoke(context);
             return context;
         }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Completed.Enqueue((context, state, outcome, error));
             After?.Invoke();
-            if (ThrowOnCompleted) throw new InvalidOperationException("Observer failure");
+
+            if (ThrowOnCompleted)
+            {
+                throw new InvalidOperationException("Observer failure");
+            }
         }
     }
 }

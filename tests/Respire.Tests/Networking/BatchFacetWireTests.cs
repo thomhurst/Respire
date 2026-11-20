@@ -119,6 +119,7 @@ public class BatchFacetWireTests
                 .Throws<OperationCanceledException>();
             await Assert.That(error).IsSameReferenceAs(pending.Error);
         }
+
         await Assert.That(pending.Error is OperationCanceledException).IsTrue();
         await Assert.That(batch.IsSent).IsTrue();
         await Assert.That(async () => await batch.ExecuteAsync()).ThrowsExactly<InvalidOperationException>();
@@ -184,6 +185,7 @@ public class BatchFacetWireTests
                 .ThrowsExactly<RespireTimeoutException>();
             await Assert.That(thrown).IsSameReferenceAs(timedOut.Error);
         }
+
         var error = await Assert.That(timedOut.Error).IsTypeOf<RespireTimeoutException>();
         await Assert.That(error!.CommandName).IsEqualTo("GET");
     }
@@ -233,6 +235,7 @@ public class BatchFacetWireTests
             await Assert.That(second.Error).IsSameReferenceAs(error);
             return;
         }
+
         var result = await batch.TryExecuteAsync();
 
         await Assert.That(result.Count).IsEqualTo(2);

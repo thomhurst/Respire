@@ -24,6 +24,7 @@ public class NativeDispatchOwnershipTests
         Exception expected = callerCancellation ? new OperationCanceledException(cancellation.Token)
             : new IOException("original setup failure");
         Exception? actual = null;
+
         try
         {
             await using var connection = await RespireConnection.ConnectAsync("scripted", 6379, new()
@@ -32,18 +33,30 @@ public class NativeDispatchOwnershipTests
                 ObserveEstablishmentErrors = true,
                 ConnectionFactory = (_, _) =>
                 {
-                    if (callerCancellation) cancellation.Cancel();
+                    if (callerCancellation)
+                    {
+                        cancellation.Cancel();
+                    }
+
                     return ValueTask.FromException<Stream>(expected);
                 },
             }, cancellationToken: cancellation.Token);
         }
         catch (Exception error) { actual = error; }
+
         await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
+
         if (callerCancellation)
+        {
             await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+        }
+
         await Assert.That(capture.Items.Count).IsEqualTo(callerCancellation ? 0 : 1);
+
         if (!callerCancellation)
+        {
             await Assert.That((bool)capture.Items.Single().Tags["redis.client.errors.internal"]!).IsTrue();
+        }
     }
 
     [Test]
@@ -63,7 +76,11 @@ public class NativeDispatchOwnershipTests
         {
             SuppressReply = command =>
             {
-                if (command is not ("GET key" or "STRLEN key")) return false;
+                if (command is not ("GET key" or "STRLEN key"))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return outcome is "pending" or "cancelled";
             },
@@ -74,10 +91,12 @@ public class NativeDispatchOwnershipTests
         using var capture = new Capture(throwOnMeasurement: true, commandMetrics: commandMetrics);
         using var cancellation = new CancellationTokenSource();
         Task? pending = null;
+
         if (outcome != "idle")
         {
             pending = ConsumeNativeRoute(client, route, cancellation.Token);
             await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
             if (outcome == "cancelled")
             {
                 cancellation.Cancel();
@@ -85,7 +104,10 @@ public class NativeDispatchOwnershipTests
                 await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
                 await Assert.That(pending.IsCanceled).IsTrue();
             }
-            else if (outcome == "success") await pending;
+            else if (outcome == "success")
+            {
+                await pending;
+            }
         }
         // The RESP2 client sends no handshake, so ConnectAsync can finish while the socket still
         // sits in the listener backlog. On Windows, stopping the listener then neither resets nor
@@ -94,20 +116,33 @@ public class NativeDispatchOwnershipTests
         await server.DisposeAsync();
         await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));
         Exception? callerError = null;
+
         if (outcome == "pending")
+        {
             callerError = await Assert.That(async () => await pending!).Throws<RespireConnectionException>();
+        }
+
         var items = capture.Items.ToArray();
         var final = items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
         var physical = items.Where(item => (bool)item.Tags["redis.client.errors.internal"]!).ToArray();
         await Assert.That(physical.Length).IsEqualTo(1);
         await Assert.That(physical[0].Tags["redis.client.errors.category"]).IsEqualTo("network");
         await Assert.That(final.Length).IsEqualTo(outcome is "pending" or "cancelled" ? 1 : 0);
+
         foreach (var item in items)
+        {
             await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
+        }
+
         if (outcome == "pending")
+        {
             await Assert.That(final[0].Tags["error.type"]).IsEqualTo(callerError!.GetType().FullName);
+        }
+
         if (outcome == "cancelled")
+        {
             await Assert.That(final[0].Tags["redis.client.errors.category"]).IsEqualTo("cancelled");
+        }
     }
 
     [Test]
@@ -126,7 +161,11 @@ public class NativeDispatchOwnershipTests
         {
             SuppressReply = command =>
             {
-                if (command is not ("GET key" or "STRLEN key")) return false;
+                if (command is not ("GET key" or "STRLEN key"))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -159,16 +198,41 @@ public class NativeDispatchOwnershipTests
     {
         switch (route)
         {
-            case "raw": using (await client.ExecuteAsync("GET", ["key"], cancellationToken: token)) { } break;
-            case "catalog": using (await client.ExecuteAsync(RespireCommands.String.GET, ["key"], cancellationToken: token)) { } break;
-            case "interpolated": using (await client.ExecuteAsync($"GET key", cancellationToken: token)) { } break;
-            case "string": _ = await client.GetStringAsync("key", token); break;
-            case "bytes": _ = await client.GetBytesAsync("key", token); break;
-            case "typed": _ = await client.Strings.LengthAsync("key", token); break;
-            case "facet-string": _ = await client.Strings.GetStringAsync("key", token); break;
-            case "facet-bytes": _ = await client.Strings.GetBytesAsync("key", token); break;
-            case "facet-typed": _ = await client.Strings.GetAsync<string>("key", token); break;
-            default: throw new ArgumentOutOfRangeException(nameof(route));
+            case "raw":
+                using (await client.ExecuteAsync("GET", ["key"], cancellationToken: token))
+                {
+                }
+                break;
+            case "catalog":
+                using (await client.ExecuteAsync(RespireCommands.String.GET, ["key"], cancellationToken: token))
+                {
+                }
+                break;
+            case "interpolated":
+                using (await client.ExecuteAsync($"GET key", cancellationToken: token))
+                {
+                }
+                break;
+            case "string":
+                _ = await client.GetStringAsync("key", token);
+                break;
+            case "bytes":
+                _ = await client.GetBytesAsync("key", token);
+                break;
+            case "typed":
+                _ = await client.Strings.LengthAsync("key", token);
+                break;
+            case "facet-string":
+                _ = await client.Strings.GetStringAsync("key", token);
+                break;
+            case "facet-bytes":
+                _ = await client.Strings.GetBytesAsync("key", token);
+                break;
+            case "facet-typed":
+                _ = await client.Strings.GetAsync<string>("key", token);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(route));
         }
     }
 
@@ -177,7 +241,11 @@ public class NativeDispatchOwnershipTests
     private sealed class Capture : IDisposable
     {
         private readonly MeterListener _listener = new();
-        internal ConcurrentQueue<Item> Items { get; } = new();
+
+        internal ConcurrentQueue<Item> Items
+        {
+            get;
+        } = new();
 
         internal Capture(bool throwOnMeasurement, bool commandMetrics)
         {
@@ -185,14 +253,22 @@ public class NativeDispatchOwnershipTests
             {
                 if (ReferenceEquals(instrument.Meter, RespireTelemetry.Meter) && (instrument.Name == "redis.client.errors"
                     || commandMetrics && instrument.Name == "db.client.operation.duration"))
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
                 Items.Enqueue(new(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
-                if (throwOnMeasurement) throw new InvalidOperationException("Listener failure must remain isolated.");
+
+                if (throwOnMeasurement)
+                {
+                    throw new InvalidOperationException("Listener failure must remain isolated.");
+                }
             });
-            _listener.SetMeasurementEventCallback<double>((_, _, _, _) => { });
+            _listener.SetMeasurementEventCallback<double>((_, _, _, _) =>
+            {
+            });
             _listener.Start();
         }
 

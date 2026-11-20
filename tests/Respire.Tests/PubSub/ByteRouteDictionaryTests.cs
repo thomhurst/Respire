@@ -44,20 +44,28 @@ public class ByteRouteDictionaryTests
         var seen = new Dictionary<int, long>();
         var random = new Random(300);
         Span<byte> bytes = stackalloc byte[8];
+
         for (var attempt = 0; attempt < 1_000_000; attempt++)
         {
             var candidate = random.NextInt64();
             System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(bytes, candidate);
             var hash = hasher.Hash(bytes);
+
             if (seen.TryGetValue(hash, out var previous))
             {
-                if (previous == candidate) continue;
+                if (previous == candidate)
+                {
+                    continue;
+                }
+
                 var second = new RespireChannel(bytes.ToArray());
                 System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(bytes, previous);
                 return (new RespireChannel(bytes.ToArray()), second);
             }
+
             seen.Add(hash, candidate);
         }
+
         throw new InvalidOperationException("The fixed test inputs did not produce a hash collision.");
     }
 
@@ -73,15 +81,23 @@ public class ByteRouteDictionaryTests
         }).ToArray();
         var routes = new ByteRouteDictionary<int>();
         var expected = new Dictionary<string, int>(StringComparer.Ordinal);
+
         for (var operation = 0; operation < 1000; operation++)
         {
             var channel = channels[random.Next(channels.Length)];
             var key = Convert.ToHexString(channel.Bytes.Span);
+
             switch (random.Next(4))
             {
                 case 0:
-                    if (expected.TryAdd(key, operation)) routes.Add(channel, operation);
-                    else await Assert.That(() => routes.Add(channel, operation)).Throws<ArgumentException>();
+                    if (expected.TryAdd(key, operation))
+                    {
+                        routes.Add(channel, operation);
+                    }
+                    else
+                    {
+                        await Assert.That(() => routes.Add(channel, operation)).Throws<ArgumentException>();
+                    }
                     break;
                 case 1:
                     await Assert.That(routes.Remove(channel)).IsEqualTo(expected.Remove(key));
@@ -100,6 +116,7 @@ public class ByteRouteDictionaryTests
             await Assert.That(routes.Names.Select(name => Convert.ToHexString(name.Bytes.Span)))
                 .IsEquivalentTo(expected.Keys);
             await Assert.That(routes.Values).IsEquivalentTo(expected.Values);
+
             if (operation % 200 == 199)
             {
                 routes.Clear();
@@ -203,11 +220,17 @@ public class ByteRouteDictionaryTests
     private static long MeasureLookups(ByteRouteDictionary<int> routes, byte[] name, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1_000; i++)
         {
             _ = routes.TryGetValue(name, out _, out _);
-            if (allocate) GC.KeepAlive(AllocateControl());
+
+            if (allocate)
+            {
+                GC.KeepAlive(AllocateControl());
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 

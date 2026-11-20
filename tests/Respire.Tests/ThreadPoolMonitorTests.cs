@@ -19,7 +19,9 @@ public class ThreadPoolMonitorTests
         // Thread-pool limits are process-wide. Never starve the parallel test runner.
         var start = new ProcessStartInfo("dotnet")
         {
-            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
             CreateNoWindow = true,
         };
         start.ArgumentList.Add(typeof(ThreadPoolMonitorTests).Assembly.Location);
@@ -27,6 +29,7 @@ public class ThreadPoolMonitorTests
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEndAsync();
         var errors = process.StandardError.ReadToEndAsync();
+
         try
         {
             await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(20));
@@ -34,7 +37,11 @@ public class ThreadPoolMonitorTests
         }
         finally
         {
-            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync();
+            }
         }
     }
 
@@ -44,16 +51,27 @@ public class ThreadPoolMonitorTests
         var options = new RespireOptions { Endpoints = [new("localhost")] };
         await Assert.That(options.ThreadPoolMonitoring).IsTrue();
         await Assert.That(options.ThreadPoolWarningThreshold).IsEqualTo(TimeSpan.FromMilliseconds(500));
+
         foreach (var threshold in new[] { TimeSpan.Zero, TimeSpan.FromMilliseconds(-1) })
+        {
             await Assert.That(() => RespireClient.Create(options with { ThreadPoolWarningThreshold = threshold }))
                 .ThrowsExactly<RespireConfigurationException>();
+        }
     }
 
     [ModuleInitializer]
     internal static void RunIsolatedProbe()
     {
-        if (Environment.GetEnvironmentVariable(ChildMode) != "starvation") return;
-        try { RunStarvation(); Environment.Exit(0); }
+        if (Environment.GetEnvironmentVariable(ChildMode) != "starvation")
+        {
+            return;
+        }
+
+        try
+        {
+            RunStarvation();
+            Environment.Exit(0);
+        }
         catch (Exception error) { Console.Error.WriteLine(error); Environment.Exit(1); }
     }
 
@@ -65,7 +83,15 @@ public class ThreadPoolMonitorTests
         Require(ThreadPool.SetMaxThreads(1, maxIo), "Could not set maximum workers.");
         using var blocked = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
-        ThreadPool.UnsafeQueueUserWorkItem(_ => { blocked.Set(); release.Wait(TimeSpan.FromSeconds(15)); }, 0, preferLocal: false);
+        ThreadPool.UnsafeQueueUserWorkItem(
+            _ =>
+            {
+                blocked.Set();
+                release.Wait(TimeSpan.FromSeconds(15));
+            },
+            0,
+            preferLocal: false
+        );
         Require(blocked.Wait(TimeSpan.FromSeconds(5)), "Worker did not enter the blocking operation.");
         var ambient = new AsyncLocal<string?>();
         using var logger = new ProbeLogger(ambient);
@@ -76,7 +102,9 @@ public class ThreadPoolMonitorTests
             InstrumentPublished = (instrument, owner) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name.StartsWith("respire.thread_pool.", StringComparison.Ordinal))
+                {
                     owner.EnableMeasurementEvents(instrument);
+                }
             },
         };
         listener.SetMeasurementEventCallback<double>((instrument, value, _, _) => measurements[instrument.Name] = value);
@@ -84,7 +112,8 @@ public class ThreadPoolMonitorTests
         listener.Start();
         var options = new RespireOptions
         {
-            Endpoints = [new("localhost", 1)], LoggerFactory = logger,
+            Endpoints = [new("localhost", 1)],
+            LoggerFactory = logger,
             ThreadPoolWarningThreshold = TimeSpan.FromMilliseconds(50),
         };
         var disabled = RespireClient.Create(options with { ThreadPoolMonitoring = false });
@@ -95,6 +124,7 @@ public class ThreadPoolMonitorTests
         ambient.Value = "request context";
         var throwingClient = RespireClient.Create(options with { LoggerFactory = throwingLogger });
         var client = RespireClient.Create(options);
+
         try
         {
             Require(logger.Warning.Wait(TimeSpan.FromSeconds(5)), "No starvation warning while the worker was blocked.");
@@ -127,7 +157,12 @@ public class ThreadPoolMonitorTests
             Require(ThreadPoolMonitor.Latest is null, "Last disposal retained an active sample.");
             Require(snapshot.IsPending, "Published timeout snapshot was mutated during disposal.");
             RespireClient restarted;
-            using (ExecutionContext.SuppressFlow()) restarted = RespireClient.Create(options);
+
+            using (ExecutionContext.SuppressFlow())
+            {
+                restarted = RespireClient.Create(options);
+            }
+
             try
             {
                 Thread.Sleep(TimeSpan.FromMilliseconds(100));
@@ -157,7 +192,10 @@ public class ThreadPoolMonitorTests
 
     private static void Require(bool condition, string message)
     {
-        if (!condition) throw new InvalidOperationException(message);
+        if (!condition)
+        {
+            throw new InvalidOperationException(message);
+        }
     }
 
     private sealed class ProbeLogger(AsyncLocal<string?> ambient, bool throwOnWarning = false) : ILoggerFactory, ILogger
@@ -166,16 +204,33 @@ public class ThreadPoolMonitorTests
         internal string Message = "";
         internal string? ObservedContext;
         internal int Count;
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
         public void Dispose() => Warning.Dispose();
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel level) => level >= LogLevel.Warning;
+
         public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            if (level != LogLevel.Warning) return;
+            if (level != LogLevel.Warning)
+            {
+                return;
+            }
+
             Interlocked.Increment(ref Count);
-            if (throwOnWarning) throw new InvalidOperationException("Observer failure.");
+
+            if (throwOnWarning)
+            {
+                throw new InvalidOperationException("Observer failure.");
+            }
+
             ObservedContext = ambient.Value;
             Message = formatter(state, exception);
             Warning.Set();

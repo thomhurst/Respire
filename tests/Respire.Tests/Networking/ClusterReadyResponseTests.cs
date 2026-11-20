@@ -28,9 +28,18 @@ public class ClusterReadyResponseTests
         harness.MoveSlotToTarget();
         var reply = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var retired = new RespireConnectionRetiredException("127.0.0.1", harness.Source.Port);
-        if (completedBeforeCreate) reply.SetException(retired);
+
+        if (completedBeforeCreate)
+        {
+            reply.SetException(retired);
+        }
+
         var pending = harness.Create(new(reply.Task), new Probe());
-        if (!completedBeforeCreate) reply.SetException(retired);
+
+        if (!completedBeforeCreate)
+        {
+            reply.SetException(retired);
+        }
 
         await Assert.That(await pending.AsTask().WaitAsync(harness.Timeout)).IsEqualTo("value");
         await Assert.That(harness.Target.ReceivedCommands.Count(command => command == "GET ready")).IsEqualTo(1);
@@ -143,7 +152,10 @@ public class ClusterReadyResponseTests
 
     private static void Prepare(TaskCompletionSource<string?>[] replies)
     {
-        for (var i = 0; i < replies.Length; i++) replies[i] = new();
+        for (var i = 0; i < replies.Length; i++)
+        {
+            replies[i] = new();
+        }
     }
 
     // Measures only issuing the pending wrappers; completion and consumption follow outside the window.
@@ -152,19 +164,30 @@ public class ClusterReadyResponseTests
     {
         var probe = new Probe();
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < replies.Length; i++)
         {
             var reply = new ValueTask<string?>(replies[i].Task);
             responses[i] = mode == 2 ? AwaitAsync(reply) : harness.Create(reply, probe);
-            if (mode == 1) GC.KeepAlive(new byte[37]);
+
+            if (mode == 1)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
         for (var i = 0; i < replies.Length; i++)
         {
             replies[i].SetResult("value");
+
             if (responses[i].GetAwaiter().GetResult() != "value")
+            {
                 throw new InvalidOperationException("The pooled cluster reply returned the wrong value.");
+            }
         }
+
         return allocated;
     }
 
@@ -193,7 +216,12 @@ public class ClusterReadyResponseTests
         public string? Convert(in RespValue response)
         {
             probe.Conversions++;
-            if (probe.Failure is { } failure) throw failure;
+
+            if (probe.Failure is { } failure)
+            {
+                throw failure;
+            }
+
             return ResponseReader.StringOrNull(in response);
         }
 
@@ -210,8 +238,16 @@ public class ClusterReadyResponseTests
         private RespireClient _client = null!;
         private RespireConnection _connection = null!;
 
-        public FakeRespServer Source { get; } = Primary();
-        public FakeRespServer Target { get; } = Primary();
+        public FakeRespServer Source
+        {
+            get;
+        } = Primary();
+
+        public FakeRespServer Target
+        {
+            get;
+        } = Primary();
+
         public CancellationToken Timeout => _timeout.Token;
 
         public static async Task<Harness> StartAsync()
@@ -219,8 +255,11 @@ public class ClusterReadyResponseTests
             var harness = new Harness();
             harness._client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Endpoints = [new("127.0.0.1", harness.Source.Port)], UseCluster = true,
-                Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+                Endpoints = [new("127.0.0.1", harness.Source.Port)],
+                UseCluster = true,
+                Protocol = RespireProtocol.Resp2,
+                Connections = 1,
+                ThreadPoolMonitoring = false,
             });
             harness._connection = harness._client.Core.Cluster!.TryAcquireReadyConnection(Slot, default)
                 ?? throw new InvalidOperationException("The cluster slot has no ready connection.");

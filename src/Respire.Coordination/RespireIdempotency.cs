@@ -22,11 +22,22 @@ public sealed class RespireIdempotencyResult
         => (State, OwnerToken, Result) = (state, ownerToken, result ?? ReadOnlyMemory<byte>.Empty);
 
     /// <summary>The outcome of this attempt.</summary>
-    public RespireIdempotencyState State { get; }
+    public RespireIdempotencyState State
+    {
+        get;
+    }
+
     /// <summary>The secret completion/abandon token, present only for <see cref="RespireIdempotencyState.Started"/>.</summary>
-    public string? OwnerToken { get; }
+    public string? OwnerToken
+    {
+        get;
+    }
+
     /// <summary>The binary result when completed; otherwise empty. Empty completed results are valid.</summary>
-    public ReadOnlyMemory<byte> Result { get; }
+    public ReadOnlyMemory<byte> Result
+    {
+        get;
+    }
 }
 
 /// <summary>Atomic expiring idempotency claims and binary result replay using a caller-owned Redis client.</summary>
@@ -104,8 +115,12 @@ public sealed class RespireIdempotency
     {
         ValidateKey(key);
         var milliseconds = ttl.Ticks / TimeSpan.TicksPerMillisecond;
+
         if (milliseconds <= 0)
+        {
             throw new ArgumentOutOfRangeException(nameof(ttl), "TTL must be at least one millisecond.");
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
         return CoordinationCommandHooks.RunAsync(_client, "IDEMPOTENCY BEGIN", cancellationToken,
             (Store: this, Key: key.Snapshot(), Milliseconds: milliseconds, Fingerprint: fingerprint, Token: cancellationToken),
@@ -118,8 +133,12 @@ public sealed class RespireIdempotency
         var owner = Guid.NewGuid().ToString("N");
         using var result = await CoordinationCommandHooks.ExecuteAsync(_client, Begin, [key],
             [owner, fingerprint is null ? "0" : "1" + fingerprint, milliseconds], cancellationToken).ConfigureAwait(false);
+
         if (result.Type != RespireDataType.Array || result.Count == 0 || result[0].Type != RespireDataType.Integer)
+        {
             throw new RespireProtocolException("Redis returned an invalid idempotency outcome.");
+        }
+
         return result[0].AsInteger() switch
         {
             0 when result.Count == 1 => new(RespireIdempotencyState.Started, owner),
@@ -160,8 +179,12 @@ public sealed class RespireIdempotency
     {
         using var result = await CoordinationCommandHooks.ExecuteAsync(_client, script, [key], arguments, cancellationToken)
             .ConfigureAwait(false);
+
         if (result.Type != RespireDataType.Integer)
+        {
             throw new RespireProtocolException("Redis returned an invalid idempotency transition outcome.");
+        }
+
         return result.AsInteger() switch
         {
             0 => false,
@@ -172,6 +195,9 @@ public sealed class RespireIdempotency
 
     private static void ValidateKey(RespireKey key)
     {
-        if (key.IsEmpty) throw new ArgumentException("The idempotency key must not be empty.", nameof(key));
+        if (key.IsEmpty)
+        {
+            throw new ArgumentException("The idempotency key must not be empty.", nameof(key));
+        }
     }
 }

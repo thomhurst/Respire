@@ -31,23 +31,35 @@ public sealed partial class RespireServerNode
     internal RespireServerNode(RespireClient client, RespireEndpoint endpoint)
     {
         ValidateEndpoint(endpoint, allowUnixSocket: true);
+
         if (endpoint.Port == 0 && client.Core.Options.UseTls)
+        {
             throw new ArgumentException("Unix sockets cannot use TLS.", nameof(endpoint));
+        }
+
         _client = client;
         Endpoint = endpoint;
     }
 
     /// <summary>The exact endpoint used by every operation.</summary>
-    public RespireEndpoint Endpoint { get; }
+    public RespireEndpoint Endpoint
+    {
+        get;
+    }
 
     /// <summary>Generates an owned hexadecimal password. Bits must be 1 through 1024; default is 256. Redis: ACL GENPASS.</summary>
     public ValueTask<string> AclGeneratePasswordAsync(int? bits = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string>.Start();
         var observation = owner.Observation;
+
         try
         {
-            if (bits is < 1 or > 1024) throw new ArgumentOutOfRangeException(nameof(bits));
+            if (bits is < 1 or > 1024)
+            {
+                throw new ArgumentOutOfRangeException(nameof(bits));
+            }
+
             return owner.Attach(ExecuteAsync("ACL GENPASS", bits is { } count ? [count] : [], ServerDiagnosticsParser.Text, cancellationToken, observation: observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -58,6 +70,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<byte[][]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ExecuteAsync("ACL USERS", [], AclParser.ByteStrings, cancellationToken, observation: observation));
@@ -70,6 +83,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("ACL LOAD", [], cancellationToken, observation: observation))));
@@ -82,6 +96,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("ACL SAVE", [], cancellationToken, observation: observation))));
@@ -97,19 +112,36 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             options ??= new();
             var arguments = new List<RespireValue>(3);
+
             switch (options.SaveMode)
             {
-                case RespireShutdownSaveMode.Default: break;
-                case RespireShutdownSaveMode.Save: arguments.Add("SAVE"); break;
-                case RespireShutdownSaveMode.NoSave: arguments.Add("NOSAVE"); break;
-                default: throw new ArgumentOutOfRangeException(nameof(options));
+                case RespireShutdownSaveMode.Default:
+                    break;
+                case RespireShutdownSaveMode.Save:
+                    arguments.Add("SAVE");
+                    break;
+                case RespireShutdownSaveMode.NoSave:
+                    arguments.Add("NOSAVE");
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(options));
             }
-            if (options.Now) arguments.Add("NOW");
-            if (options.Force) arguments.Add("FORCE");
+
+            if (options.Now)
+            {
+                arguments.Add("NOW");
+            }
+
+            if (options.Force)
+            {
+                arguments.Add("FORCE");
+            }
+
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(ShutdownWriteAsync(arguments.ToArray(), cancellationToken, observation: observation))));
         }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -120,6 +152,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("SHUTDOWN", ["ABORT"], cancellationToken, NodeCallKind.ControlMutation, observation: observation))));
@@ -132,19 +165,37 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             options ??= new();
+
             if (options.Force && (options.Target is null || options.Timeout is null))
+            {
                 throw new ArgumentException("Forced failover requires Target and Timeout.", nameof(options));
+            }
+
             var arguments = new List<RespireValue>(6);
+
             if (options.Target is { } target)
             {
                 ValidateEndpoint(target, allowUnixSocket: false);
-                arguments.Add("TO"); arguments.Add(target.Host); arguments.Add(target.Port);
-                if (options.Force) arguments.Add("FORCE");
+                arguments.Add("TO");
+                arguments.Add(target.Host);
+                arguments.Add(target.Port);
+
+                if (options.Force)
+                {
+                    arguments.Add("FORCE");
+                }
             }
-            if (options.Timeout is { } timeout) { arguments.Add("TIMEOUT"); arguments.Add(Milliseconds(timeout, nameof(options))); }
+
+            if (options.Timeout is { } timeout)
+            {
+                arguments.Add("TIMEOUT");
+                arguments.Add(Milliseconds(timeout, nameof(options)));
+            }
+
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("FAILOVER", arguments.ToArray(), cancellationToken, observation: observation))));
         }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -155,6 +206,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("FAILOVER", ["ABORT"], cancellationToken, observation: observation))));
@@ -167,6 +219,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             ValidateEndpoint(primary, allowUnixSocket: false);
@@ -180,6 +233,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("REPLICAOF", ["NO", "ONE"], cancellationToken, observation: observation))));
@@ -192,6 +246,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             ArgumentOutOfRangeException.ThrowIfNegative(first);
@@ -206,6 +261,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -220,16 +276,30 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(path);
             var tokens = new List<RespireValue>(1 + configuration.Length * 3 + arguments.Length + 1) { path };
+
             foreach (var pair in configuration)
             {
                 ArgumentException.ThrowIfNullOrWhiteSpace(pair.Key, nameof(configuration));
-                tokens.Add("CONFIG"); tokens.Add(pair.Key); tokens.Add(Snapshot(pair.Value, nameof(configuration)));
+                tokens.Add("CONFIG");
+                tokens.Add(pair.Key);
+                tokens.Add(Snapshot(pair.Value, nameof(configuration)));
             }
-            if (!arguments.IsEmpty) { tokens.Add("ARGS"); foreach (var argument in arguments) tokens.Add(Snapshot(argument, nameof(arguments))); }
+
+            if (!arguments.IsEmpty)
+            {
+                tokens.Add("ARGS");
+
+                foreach (var argument in arguments)
+                {
+                    tokens.Add(Snapshot(argument, nameof(arguments)));
+                }
+            }
+
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("MODULE LOADEX", tokens.ToArray(), cancellationToken, observation: observation))));
         }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -240,6 +310,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -253,6 +324,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<string>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ExecuteAsync("MEMORY MALLOC-STATS", [], ServerDiagnosticsParser.Text, cancellationToken, observation: observation));
@@ -265,6 +337,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<string>.Start();
         var observation = owner.Observation;
+
         try
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(eventName);
@@ -279,13 +352,23 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<RespireCommandKeyFlags[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(command.Name, nameof(command));
             var words = command.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             var tokens = new RespireValue[words.Length + arguments.Length];
-            for (var index = 0; index < words.Length; index++) tokens[index] = words[index];
-            for (var index = 0; index < arguments.Length; index++) tokens[words.Length + index] = Snapshot(arguments[index], nameof(arguments));
+
+            for (var index = 0; index < words.Length; index++)
+            {
+                tokens[index] = words[index];
+            }
+
+            for (var index = 0; index < arguments.Length; index++)
+            {
+                tokens[words.Length + index] = Snapshot(arguments[index], nameof(arguments));
+            }
+
             return owner.Attach(ExecuteAsync("COMMAND GETKEYSANDFLAGS", tokens, ServerNodeParser.KeysAndFlags, cancellationToken, observation: observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -297,6 +380,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("SCRIPT KILL", [], cancellationToken, NodeCallKind.ControlMutation, observation: observation))));
@@ -309,6 +393,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("FUNCTION KILL", [], cancellationToken, NodeCallKind.ControlMutation, observation: observation))));
@@ -321,61 +406,72 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("BACKUP START", [], cancellationToken, observation: observation))));
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }
+
     /// <summary>Seals an incremental backup. Requires AllowAdmin and Redis 8.10 or later. Redis: BACKUP SEAL.</summary>
     public ValueTask BackupSealAsync(CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("BACKUP SEAL", [], cancellationToken, observation: observation))));
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }
+
     /// <summary>Aborts an incremental backup. Requires AllowAdmin and Redis 8.10 or later. Redis: BACKUP ABORT.</summary>
     public ValueTask BackupAbortAsync(CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("BACKUP ABORT", [], cancellationToken, observation: observation))));
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }
+
     /// <summary>Deletes backup artifacts. Requires AllowAdmin and Redis 8.10 or later. Redis: BACKUP CLEANUP.</summary>
     public ValueTask BackupCleanupAsync(CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("BACKUP CLEANUP", [], cancellationToken, observation: observation))));
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }
+
     /// <summary>Returns owned backup state. Redis 8.10 or later. Redis: BACKUP STATUS.</summary>
     public ValueTask<RespireBackupStatus> BackupStatusAsync(CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireBackupStatus>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ExecuteAsync("BACKUP STATUS", [], ServerNodeParser.BackupStatus, cancellationToken, observation: observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }
+
     /// <summary>Lists owned immutable backup file paths. Redis 8.10 or later. Redis: BACKUP LIST.</summary>
     public ValueTask<string[]> BackupListAsync(CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ExecuteAsync("BACKUP LIST", [], AclParser.Strings, cancellationToken, observation: observation));
@@ -389,6 +485,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<byte[][]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ExecuteAsync("KEYS", [Snapshot(pattern, nameof(pattern))], AclParser.ByteStrings, cancellationToken, observation: observation));
@@ -413,28 +510,61 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<RespireMigrateResult>.Start();
         var observation = owner.Observation;
+
         try
         {
             ValidateEndpoint(destination, allowUnixSocket: false);
             ArgumentOutOfRangeException.ThrowIfNegative(database);
-            if (keys.IsEmpty) throw new ArgumentException("At least one key is required.", nameof(keys));
+
+            if (keys.IsEmpty)
+            {
+                throw new ArgumentException("At least one key is required.", nameof(keys));
+            }
+
             options ??= new();
+
             if (options.CommandTimeout is { } commandTimeout && commandTimeout < TimeSpan.FromMilliseconds(1))
+            {
                 throw new ArgumentOutOfRangeException(nameof(options), "MIGRATE CommandTimeout must be at least one millisecond.");
+            }
+
             if (options.Username is not null && options.Password is null)
+            {
                 throw new ArgumentException("Destination username requires a password.", nameof(options));
+            }
+
             var tokens = new List<RespireValue>(keys.Length + 12)
-                { destination.Host, destination.Port, "", database, Milliseconds(timeout, nameof(timeout)) };
-            if (options.Copy) tokens.Add("COPY");
-            if (options.Replace) tokens.Add("REPLACE");
+            { destination.Host, destination.Port, "", database, Milliseconds(timeout, nameof(timeout)) };
+
+            if (options.Copy)
+            {
+                tokens.Add("COPY");
+            }
+
+            if (options.Replace)
+            {
+                tokens.Add("REPLACE");
+            }
+
             if (options.Password is { } password)
             {
                 tokens.Add(options.Username is null ? "AUTH" : "AUTH2");
-                if (options.Username is { } username) tokens.Add(username);
+
+                if (options.Username is { } username)
+                {
+                    tokens.Add(username);
+                }
+
                 tokens.Add(password);
             }
+
             tokens.Add("KEYS");
-            foreach (var key in keys) tokens.Add(key.AsValue().Snapshot());
+
+            foreach (var key in keys)
+            {
+                tokens.Add(key.AsValue().Snapshot());
+            }
+
             return owner.Attach(ExecuteAsync("MIGRATE", tokens.ToArray(), ServerNodeParser.Migration, cancellationToken, NodeCallKind.Mutation,
                 commandTimeout: options.CommandTimeout, observation: observation));
         }
@@ -443,7 +573,12 @@ public sealed partial class RespireServerNode
 
     private delegate T ReplyParser<T>(in RespValue reply);
 
-    private enum NodeCallKind { Read, Mutation, ControlMutation }
+    private enum NodeCallKind
+    {
+        Read,
+        Mutation,
+        ControlMutation
+    }
 
     private ValueTask<T> ExecuteAsync<T>(string operation, RespireValue[] arguments, ReplyParser<T> parser,
         CancellationToken cancellationToken, NodeCallKind callKind = NodeCallKind.Read,
@@ -471,7 +606,10 @@ public sealed partial class RespireServerNode
                 static s =>
                 {
                     if (s.Kind is NodeCallKind.Mutation or NodeCallKind.ControlMutation)
+                    {
                         ServerCommands.EnsureAdminAllowed(s.Node._client, s.Operation);
+                    }
+
                     return s.Operation;
                 })
             : WithNodeConnectionUnhookedAsync(operation, callKind, state, execute,
@@ -483,20 +621,29 @@ public sealed partial class RespireServerNode
         CancellationToken cancellationToken, TimeSpan? commandTimeout = null, RespireTelemetry.ErrorObservation observation = default)
     {
         if (observation.IsEmpty)
+        {
             return await DispatchResponseSource<T>.Run(
                 (Node: this, Operation: operation, Kind: callKind, State: state, Execute: execute,
                     Token: cancellationToken, Timeout: commandTimeout),
                 static (call, owner) => call.Node.WithNodeConnectionUnhookedAsync(call.Operation, call.Kind,
                     call.State, call.Execute, call.Token, call.Timeout, owner)).ConfigureAwait(false);
+        }
+
         try
         {
             var mutation = callKind is NodeCallKind.Mutation or NodeCallKind.ControlMutation;
-            if (mutation) ServerCommands.EnsureAdminAllowed(_client, operation);
+
+            if (mutation)
+            {
+                ServerCommands.EnsureAdminAllowed(_client, operation);
+            }
+
             ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
             cancellationToken.ThrowIfCancellationRequested();
             var cache = mutation ? _client.Core.ClientCache : null;
             var fence = cache is null ? default : cache.BeginUnknownMutation();
             DedicatedConnectionPool? pool = null;
+
             try
             {
                 pool = _client.Core.CreateServerPool(Endpoint,
@@ -508,8 +655,14 @@ public sealed partial class RespireServerNode
             {
                 // Explicit-node commands retain conservative completion work. Disposing this
                 // operation's pool drains its native owners before the outer fence can leave.
-                try { if (pool is not null) await _client.Core.ReleaseServerPoolAsync(pool).ConfigureAwait(false); }
-                finally { if (fence.IsRequired) cache!.CompleteMutation(in fence); }
+                try
+                {
+                    if (pool is not null)
+                    {
+                        await _client.Core.ReleaseServerPoolAsync(pool).ConfigureAwait(false);
+                    }
+                }
+                finally { if (fence.IsRequired) { cache!.CompleteMutation(in fence); } }
             }
         }
         catch (Exception error)
@@ -546,13 +699,21 @@ public sealed partial class RespireServerNode
     {
         var result = new RespireValue[rest.Length + 1];
         result[0] = first;
-        for (var index = 0; index < rest.Length; index++) result[index + 1] = Snapshot(rest[index], nameof(rest));
+
+        for (var index = 0; index < rest.Length; index++)
+        {
+            result[index + 1] = Snapshot(rest[index], nameof(rest));
+        }
+
         return result;
     }
 
     private static long Milliseconds(TimeSpan timeout, string name)
     {
-        if (timeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(name, "Timeout must be positive.");
+        if (timeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(name, "Timeout must be positive.");
+        }
         // Round up so a sub-millisecond positive timeout never means Redis' unbounded zero.
         return timeout.Ticks / TimeSpan.TicksPerMillisecond + (timeout.Ticks % TimeSpan.TicksPerMillisecond == 0 ? 0 : 1);
     }
@@ -560,7 +721,15 @@ public sealed partial class RespireServerNode
     private static void ValidateEndpoint(RespireEndpoint endpoint, bool allowUnixSocket)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(endpoint.Host, nameof(endpoint));
-        if (allowUnixSocket && endpoint.Port == 0 && RespireEndpoint.IsValidUnixPath(endpoint.Host)) return;
-        if (endpoint.Port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(endpoint), "A TCP endpoint requires port 1 through 65535.");
+
+        if (allowUnixSocket && endpoint.Port == 0 && RespireEndpoint.IsValidUnixPath(endpoint.Host))
+        {
+            return;
+        }
+
+        if (endpoint.Port is < 1 or > 65535)
+        {
+            throw new ArgumentOutOfRangeException(nameof(endpoint), "A TCP endpoint requires port 1 through 65535.");
+        }
     }
 }

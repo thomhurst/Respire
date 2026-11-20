@@ -22,7 +22,10 @@ public class RespireException : Exception
 
     private sealed class EndpointHolder(RespireEndpoint value)
     {
-        internal RespireEndpoint Value { get; } = value;
+        internal RespireEndpoint Value
+        {
+            get;
+        } = value;
     }
 
     // Populate only at a boundary that knows the failed attempt. Never replace an origin
@@ -38,11 +41,17 @@ public class RespireException : Exception
         }
     }
 
-    internal bool IsCommandNotSubmitted { get; set; }
+    internal bool IsCommandNotSubmitted
+    {
+        get; set;
+    }
 
     // Candidate-selection failures have no single origin, even when observation still
     // remembers the last candidate. Keep their individual endpoints on the inner causes.
-    internal bool HasAmbiguousEndpoint { get; init; }
+    internal bool HasAmbiguousEndpoint
+    {
+        get; init;
+    }
 
     // Only a transparent wrapper opts into classification through its cause.
     // Meaningful wrappers retain their own category and canonical exception type.
@@ -74,6 +83,7 @@ public class RespireConnectionException : RespireException
     // Several failed candidates have no single cause; preserve connection meaning.
     internal override Exception? ErrorCause => InnerException is AggregateException { InnerExceptions.Count: not 1 }
         ? null : InnerException;
+
     /// <summary>Creates a connection exception.</summary>
     public RespireConnectionException(string message) : base(message)
     {
@@ -89,6 +99,7 @@ public class RespireConnectionException : RespireException
 public sealed class RespireAuthenticationException : RespireConnectionException
 {
     internal override Exception? ErrorCause => null;
+
     /// <summary>Creates a credential acquisition, renewal, or authentication failure.</summary>
     public RespireAuthenticationException(string message) : base(message) { }
 
@@ -100,6 +111,7 @@ public sealed class RespireAuthenticationException : RespireConnectionException
 public sealed class RespireReconnectLimitException : RespireConnectionException
 {
     internal override Exception? ErrorCause => null;
+
     /// <summary>Creates a recovery limit exception.</summary>
     public RespireReconnectLimitException(string message) : base(message) { }
 
@@ -161,6 +173,7 @@ public sealed class RespireTransactionAbortedException() : RespireException(
 public sealed class RespireTransactionRetryException : RespireException
 {
     internal override Exception? ErrorCause => ServerError;
+
     internal RespireTransactionRetryException(RespireServerException serverError)
         : base("Redis Cluster rejected the watched transaction. Start a new WATCH attempt and re-read all inputs before retrying.", serverError)
     {
@@ -169,7 +182,10 @@ public sealed class RespireTransactionRetryException : RespireException
     }
 
     /// <summary>The original MOVED, ASK, or READONLY rejection.</summary>
-    public RespireServerException ServerError { get; }
+    public RespireServerException ServerError
+    {
+        get;
+    }
 }
 
 /// <summary>The server answered a command with a RESP error reply ("-WRONGTYPE ...").</summary>
@@ -191,10 +207,16 @@ public sealed class RespireServerException : RespireException
     /// The error's leading code token ("ERR", "WRONGTYPE", "NOSCRIPT", "BUSYGROUP", …), or an
     /// empty string when the reply had no recognizable code.
     /// </summary>
-    public string Code { get; }
+    public string Code
+    {
+        get;
+    }
 
     /// <summary>The Redis command that produced the error, when known.</summary>
-    public string? CommandName { get; }
+    public string? CommandName
+    {
+        get;
+    }
 
     /// <summary>Whether retrying may succeed without changing the command.</summary>
     public bool IsTransient => Code is
@@ -208,6 +230,7 @@ public sealed class RespireServerException : RespireException
     {
         var end = message.IndexOf(' ');
         var token = end < 0 ? message : message[..end];
+
         foreach (var c in token)
         {
             if (c is not (>= 'A' and <= 'Z') and not (>= '0' and <= '9') and not '_')
@@ -224,6 +247,7 @@ public sealed class RespireServerException : RespireException
 public sealed class RespireScriptingEngineUnavailableException : RespireException
 {
     internal override Exception? ErrorCause => ServerError;
+
     internal RespireScriptingEngineUnavailableException(string engine, RespireEndpoint endpoint, RespireServerException serverError)
         : base($"Scripting engine '{engine}' is unavailable at {endpoint}. Load the engine on that server before retrying the command.", serverError)
     {
@@ -233,13 +257,19 @@ public sealed class RespireScriptingEngineUnavailableException : RespireExceptio
     }
 
     /// <summary>The engine named by the server's command error.</summary>
-    public string Engine { get; }
+    public string Engine
+    {
+        get;
+    }
 
     /// <summary>The endpoint whose connection confirmed the missing engine.</summary>
     public new RespireEndpoint Endpoint => base.Endpoint!.Value;
 
     /// <summary>The original command error; engine detection does not replay it.</summary>
-    public RespireServerException ServerError { get; }
+    public RespireServerException ServerError
+    {
+        get;
+    }
 }
 
 /// <summary>Known Redis error reply codes.</summary>
@@ -295,7 +325,9 @@ public sealed class RespireTimeoutException : RespireException
     /// <summary>Creates a command timeout exception, preserving an underlying timeout snapshot.</summary>
     public RespireTimeoutException(string commandName, TimeSpan timeout, Exception innerException)
         : this(commandName, timeout, innerException,
-            (innerException as RespireTimeoutException)?.Diagnostics ?? RespireTimeoutDiagnostics.Unavailable) { }
+            (innerException as RespireTimeoutException)?.Diagnostics ?? RespireTimeoutDiagnostics.Unavailable)
+    {
+    }
 
     internal RespireTimeoutException(string commandName, TimeSpan timeout, Exception? innerException,
         RespireTimeoutDiagnostics diagnostics)
@@ -327,13 +359,22 @@ public sealed class RespireTimeoutException : RespireException
             "Check library replication and replica health.");
 
     /// <summary>The Redis command whose response or function propagation wait timed out.</summary>
-    public string CommandName { get; }
+    public string CommandName
+    {
+        get;
+    }
 
     /// <summary>The response or function propagation timeout budget that elapsed.</summary>
-    public TimeSpan Timeout { get; }
+    public TimeSpan Timeout
+    {
+        get;
+    }
 
     /// <summary>A snapshot captured on the timeout path; unavailable connection fields are null.</summary>
-    public RespireTimeoutDiagnostics Diagnostics { get; }
+    public RespireTimeoutDiagnostics Diagnostics
+    {
+        get;
+    }
 
     private static string CreateMessage(string commandName, TimeSpan timeout, RespireTimeoutDiagnostics diagnostics)
         => $"{commandName} timed out after {timeout.TotalMilliseconds:0}ms. " +

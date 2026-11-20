@@ -69,8 +69,12 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         var history = await first.ReadAsync("chat");
         history.Should().HaveCount(80);
         history.Select(m => m.Text).Distinct().Should().HaveCount(80);
+
         for (var i = 0; i < history.Count; i += 2)
+        {
             history[i + 1].Text.Should().Be(history[i].Text.Replace(":request", ":response", StringComparison.Ordinal));
+        }
+
         await first.ClearAsync("chat");
     }
 
@@ -82,17 +86,35 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         var store = new RespireChatHistoryStore(redis, new() { StoreName = name, TimeToLive = TimeSpan.FromMinutes(5) });
         var key = "respire:history:v1:" + Hash(name) + ":" + Hash("chat");
         await store.AppendAsync("chat", [new(ChatRole.User, "hello")]);
-        using (var ttl = await redis.ExecuteAsync("PTTL", [key])) ttl.AsInteger().Should().BeInRange(1, 300000);
+
+        using (var ttl = await redis.ExecuteAsync("PTTL", [key]))
+        {
+            ttl.AsInteger().Should().BeInRange(1, 300000);
+        }
+
         (await store.ExpireAsync("chat", TimeSpan.FromMinutes(1))).Should().BeTrue();
         using var expiry = await redis.ExecuteAsync("PEXPIRETIME", [key]);
         await store.ReadAsync("chat");
         await store.TrimAsync("chat", 1);
         await store.AppendAsync("chat", []);
-        using (var unchanged = await redis.ExecuteAsync("PEXPIRETIME", [key])) unchanged.AsInteger().Should().Be(expiry.AsInteger());
+
+        using (var unchanged = await redis.ExecuteAsync("PEXPIRETIME", [key]))
+        {
+            unchanged.AsInteger().Should().Be(expiry.AsInteger());
+        }
+
         await store.AppendAsync("chat", [new(ChatRole.Assistant, "reply")]);
-        using (var renewed = await redis.ExecuteAsync("PEXPIRETIME", [key])) renewed.AsInteger().Should().BeGreaterThan(expiry.AsInteger());
+
+        using (var renewed = await redis.ExecuteAsync("PEXPIRETIME", [key]))
+        {
+            renewed.AsInteger().Should().BeGreaterThan(expiry.AsInteger());
+        }
         // Force expiry on the server clock: verifies expired history is absent without a timing-sensitive delay.
-        using (var expired = await redis.ExecuteAsync("PEXPIREAT", [key, 1])) expired.AsInteger().Should().Be(1);
+        using (var expired = await redis.ExecuteAsync("PEXPIREAT", [key, 1]))
+        {
+            expired.AsInteger().Should().Be(1);
+        }
+
         (await store.ReadAsync("chat")).Should().BeEmpty();
         (await store.ExpireAsync("missing", TimeSpan.FromMinutes(1))).Should().BeFalse();
         await store.AppendAsync("missing", []);
@@ -105,6 +127,7 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         await using var redis = await Connect(protocol);
         var store = Store(redis);
         var provider = new RecordingChatClient();
+
         using (var chat = new ChatClientBuilder(provider).UseRespireChatHistory(store, "chat").Build())
         {
             await chat.GetResponseAsync([new(ChatRole.User, "one")]);
@@ -122,6 +145,7 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
             Func<Task> cancellation = () => chat.GetResponseAsync([new(ChatRole.User, "cancelled")], cancellationToken: cancelled.Token);
             await cancellation.Should().ThrowAsync<OperationCanceledException>();
         }
+
         provider.Disposed.Should().BeTrue();
         // Disposing the pipeline must not dispose the Redis client.
         await store.ClearAsync("chat");
@@ -134,12 +158,26 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         var store = Store(redis);
         var provider = new RecordingChatClient();
         using var chat = new ChatClientBuilder(provider).UseRespireChatHistory(store, "chat").Build();
-        await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "abandoned")])) break;
+
+        await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "abandoned")]))
+        {
+            break;
+        }
+
         (await store.ReadAsync("chat")).Should().BeEmpty();
-        await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "complete")])) { }
+
+        await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "complete")]))
+        {
+        }
+
         (await store.ReadAsync("chat")).Select(m => m.Text).Should().Equal("complete", "hello world");
         provider.Fail = true;
-        Func<Task> failure = async () => { await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "failed")])) { } };
+        Func<Task> failure = async () =>
+        {
+            await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "failed")]))
+            {
+            }
+        };
         await failure.Should().ThrowAsync<InvalidOperationException>();
         (await store.ReadAsync("chat")).Should().HaveCount(2);
         await store.ClearAsync("chat");
@@ -158,11 +196,23 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
             .Build();
         var options = new ChatOptions
         {
-            Tools = [AIFunctionFactory.Create(() => { invocations++; return "rain"; }, "weather")],
+            Tools = [
+                AIFunctionFactory.Create(
+                    () =>
+                    {
+                        invocations++;
+                        return "rain";
+                    },
+                    "weather"
+                )
+            ],
         };
+
         if (streaming)
         {
-            await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "weather?")], options)) { }
+            await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "weather?")], options))
+            {
+            }
         }
         else
         {
@@ -186,9 +236,12 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
 
         // A new pipeline must load the complete tool exchange from Redis, in either response mode.
         using var next = new ChatClientBuilder(provider).UseRespireChatHistory(store, "chat").UseFunctionInvocation().Build();
+
         if (streaming)
         {
-            await foreach (var _ in next.GetStreamingResponseAsync([new(ChatRole.User, "thanks")], options)) { }
+            await foreach (var _ in next.GetStreamingResponseAsync([new(ChatRole.User, "thanks")], options))
+            {
+            }
         }
         else
         {
@@ -222,9 +275,12 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         {
             Tools = [AIFunctionFactory.Create(() => "rain", "weather")],
         };
+
         if (streaming)
         {
-            await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "weather?")], options)) { }
+            await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "weather?")], options))
+            {
+            }
         }
         else
         {
@@ -307,6 +363,7 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         await using var redis = await Connect(protocol);
         var name = Guid.NewGuid().ToString("N");
         var store = new RespireChatHistoryStore(redis, new() { StoreName = name });
+
         foreach (var invalid in MalformedNames)
         {
             var replacement = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(invalid));
@@ -323,8 +380,11 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
                 () => store.ExpireAsync(invalid, TimeSpan.FromMinutes(1)).AsTask(),
                 () => store.ClearAsync(invalid).AsTask(),
             ];
+
             foreach (var operation in operations)
+            {
                 await operation.Should().ThrowAsync<ArgumentException>();
+            }
 
             (await store.ReadAsync(replacement)).Select(m => m.Text).Should().Equal("first", "second");
             using var unchanged = await redis.ExecuteAsync("PEXPIRETIME", [key]);
@@ -338,6 +398,7 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
     {
         await using var redis = await Connect(protocol);
         var prefix = Guid.NewGuid().ToString("N");
+
         foreach (var invalid in MalformedNames)
         {
             var replacement = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(invalid));
@@ -355,6 +416,7 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
     {
         await using var redis = await Connect(protocol);
         var store = Store(redis);
+
         foreach (var invalid in MalformedNames)
         {
             var inner = new RecordingChatClient();
@@ -363,7 +425,9 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
             await response.Should().ThrowAsync<ArgumentException>();
             Func<Task> streaming = async () =>
             {
-                await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "request")])) { }
+                await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "request")]))
+                {
+                }
             };
             await streaming.Should().ThrowAsync<ArgumentException>();
             inner.LastRequest.Should().BeEmpty();
@@ -371,7 +435,10 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
             var provider = new RespireChatHistoryProvider(store, _ => invalid);
             var agent = new TestAgent();
             var session = new TestSession();
-            Func<Task> load = async () => { await provider.InvokingAsync(new(agent, session, [])); };
+            Func<Task> load = async () =>
+            {
+                await provider.InvokingAsync(new(agent, session, []));
+            };
             await load.Should().ThrowAsync<ArgumentException>();
             Func<Task> save = async () =>
             {
@@ -390,9 +457,11 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         await using var redis = await Connect(protocol);
         string[] names = ["ordinary", "caf\u00E9", "\uFFFD", "\uD83D\uDE00", "\uD83D\uDE01", "e\u0301", "\u00E9"];
         var prefix = Guid.NewGuid().ToString("N");
+
         foreach (var storeName in names)
         {
             var store = new RespireChatHistoryStore(redis, new() { StoreName = prefix + storeName });
+
             foreach (var conversation in names)
             {
                 var marker = storeName + ":" + conversation;
@@ -407,6 +476,7 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         foreach (var storeName in names)
         {
             var store = new RespireChatHistoryStore(redis, new() { StoreName = prefix + storeName });
+
             foreach (var conversation in names)
             {
                 (await store.ReadAsync(conversation)).Select(m => m.Text).Should().Equal(storeName + ":" + conversation);
@@ -430,18 +500,25 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
     {
         protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) => new(new TestSession());
+
         protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null,
             AgentRunOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null,
             AgentRunOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private sealed class ToolLoopChatClient : IChatClient
     {
-        public List<List<ChatMessage>> Requests { get; } = [];
+        public List<List<ChatMessage>> Requests
+        {
+            get;
+        } = [];
 
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null,
             CancellationToken cancellationToken = default)
@@ -467,18 +544,38 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
-        public void Dispose() { }
+
+        public void Dispose()
+        {
+        }
     }
 
     private sealed class RecordingChatClient : IChatClient
     {
-        public List<ChatMessage> LastRequest { get; private set; } = [];
-        public bool Fail { get; set; }
-        public bool Disposed { get; private set; }
+        public List<ChatMessage> LastRequest
+        {
+            get; private set;
+        } = [];
+
+        public bool Fail
+        {
+            get; set;
+        }
+
+        public bool Disposed
+        {
+            get; private set;
+        }
+
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
             LastRequest = messages.ToList();
-            if (Fail) throw new InvalidOperationException("provider failed");
+
+            if (Fail)
+            {
+                throw new InvalidOperationException("provider failed");
+            }
+
             return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "reply")));
         }
 
@@ -488,11 +585,17 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
             LastRequest = messages.ToList();
             yield return new(ChatRole.Assistant, "hello");
             await Task.CompletedTask;
-            if (Fail) throw new InvalidOperationException("provider failed");
+
+            if (Fail)
+            {
+                throw new InvalidOperationException("provider failed");
+            }
+
             yield return new(ChatRole.Assistant, " world");
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
         public void Dispose() => Disposed = true;
     }
 }

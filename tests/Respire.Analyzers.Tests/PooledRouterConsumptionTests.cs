@@ -37,9 +37,13 @@ public class PooledRouterConsumptionTests
             .ToArray();
         var compilation = TestInspectionSource.CreateCompilation(trees);
         var calls = FindProtectedCalls(compilation);
+
         foreach (var name in ProtectedMethods)
+        {
             await Assert.That(calls.Any(call => compilation.GetSemanticModel(call.SyntaxTree).GetSymbolInfo(call).Symbol
                 is IMethodSymbol method && method.Name == name)).IsTrue();
+        }
+
         var violations = await FindViolationsAsync(compilation, calls);
         await Assert.That(violations).IsEmpty();
     }
@@ -47,9 +51,11 @@ public class PooledRouterConsumptionTests
     private static InvocationExpressionSyntax[] FindProtectedCalls(CSharpCompilation compilation)
     {
         var calls = new List<InvocationExpressionSyntax>();
+
         foreach (var tree in compilation.SyntaxTrees)
         {
             var model = compilation.GetSemanticModel(tree);
+
             foreach (var call in tree.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
                 var name = call.Expression switch
@@ -59,45 +65,77 @@ public class PooledRouterConsumptionTests
                     SimpleNameSyntax simple => simple.Identifier.ValueText,
                     _ => ""
                 };
-                if (!ProtectedMethods.Contains(name)) continue;
+
+                if (!ProtectedMethods.Contains(name))
+                {
+                    continue;
+                }
                 // Fail closed on unresolved calls; an unbound new caller must not escape analysis.
                 if (model.GetOperation(call) is not IInvocationOperation invocation)
+                {
                     throw new InvalidOperationException($"Unresolved routing call: {tree.FilePath}: {call}");
-                if (!IsProtected(invocation.TargetMethod)) continue;
+                }
+
+                if (!IsProtected(invocation.TargetMethod))
+                {
+                    continue;
+                }
+
                 if (call.Expression is MemberBindingExpressionSyntax && !IsDirectConditionalReturn(call))
+                {
                     throw new InvalidOperationException($"Unsupported pooled routing conditional result: {tree.FilePath}: {call}");
+                }
+
                 calls.Add(call);
             }
+
             foreach (var reference in tree.GetRoot().DescendantNodes().OfType<SimpleNameSyntax>())
             {
                 if (!ProtectedMethods.Contains(reference.Identifier.ValueText)
-                    || model.GetSymbolInfo(reference).Symbol is not IMethodSymbol method || !IsProtected(method)) continue;
+                    || model.GetSymbolInfo(reference).Symbol is not IMethodSymbol method || !IsProtected(method))
+                {
+                    continue;
+                }
+
                 if (reference.Ancestors().OfType<InvocationExpressionSyntax>()
                     .Any(call => model.GetOperation(call) is INameOfOperation
                         || call.Expression.Span.Contains(reference.Span)
                             && model.GetOperation(call) is IInvocationOperation invocation
-                            && SymbolEqualityComparer.Default.Equals(invocation.TargetMethod.OriginalDefinition, method.OriginalDefinition))) continue;
+                            && SymbolEqualityComparer.Default.Equals(invocation.TargetMethod.OriginalDefinition, method.OriginalDefinition)))
+                {
+                    continue;
+                }
+
                 throw new InvalidOperationException($"Unsupported pooled routing method reference: {tree.FilePath}: {reference}");
             }
         }
+
         return calls.ToArray();
     }
 
     private static bool IsDirectConditionalReturn(InvocationExpressionSyntax call)
     {
         SyntaxNode? result = call.Parent as ConditionalAccessExpressionSyntax;
-        if (result is null) return false;
-        while (result.Parent is ParenthesizedExpressionSyntax parentheses) result = parentheses;
+
+        if (result is null)
+        {
+            return false;
+        }
+
+        while (result.Parent is ParenthesizedExpressionSyntax parentheses)
+        {
+            result = parentheses;
+        }
+
         return result.Parent is ReturnStatementSyntax or ArrowExpressionClauseSyntax;
     }
 
-    private static bool IsProtected(IMethodSymbol method)
-        => method.ContainingType.ToDisplayString() switch
-        {
-            "Respire.Internal.ReadEndpointRouter" => method.Name == "GetConnectionAsync",
-            "Respire.RespireClient" => method.Name is "SendReadFromAsync" or "SendBulkStreamViaReadRouterAsync",
-            _ => false
-        };
+    private static bool IsProtected(IMethodSymbol method) => method.ContainingType.ToDisplayString() switch
+    {
+        "Respire.Internal.ReadEndpointRouter" => method.Name == "GetConnectionAsync",
+        "Respire.RespireClient" => method.Name is "SendReadFromAsync" or "SendBulkStreamViaReadRouterAsync",
+        _ => false
+    };
 
     private static async Task<string[]> FindViolationsAsync(CSharpCompilation compilation, InvocationExpressionSyntax[] calls)
     {
@@ -160,11 +198,16 @@ public class PooledRouterConsumptionTests
         var compilation = TestInspectionSource.CreateCompilation([CSharpSyntaxTree.ParseText(source.Replace("DECLARATION", declaration, StringComparison.Ordinal))]);
         await Assert.That(compilation.GetDiagnostics().Where(item => item.Severity == DiagnosticSeverity.Error).ToArray()).IsEmpty();
         var rejected = false;
-        try { FindProtectedCalls(compilation); }
+
+        try
+        {
+            FindProtectedCalls(compilation);
+        }
         catch (InvalidOperationException error) when (error.Message.StartsWith("Unsupported pooled routing", StringComparison.Ordinal))
         {
             rejected = true;
         }
+
         await Assert.That(rejected).IsTrue();
     }
 
@@ -183,12 +226,17 @@ public class PooledRouterConsumptionTests
             var compilation = TestInspectionSource.CreateCompilation([CSharpSyntaxTree.ParseText(source)]);
             await Assert.That(compilation.GetDiagnostics().Where(item => item.Severity == DiagnosticSeverity.Error).ToArray()).IsEmpty();
             InvocationExpressionSyntax[] calls;
-            try { calls = FindProtectedCalls(compilation); }
+
+            try
+            {
+                calls = FindProtectedCalls(compilation);
+            }
             catch (InvalidOperationException error) when (error.Message.StartsWith("Unsupported pooled routing conditional result:", StringComparison.Ordinal))
             {
                 await Assert.That(requiresReview).IsTrue();
                 continue;
             }
+
             await Assert.That(requiresReview).IsFalse();
             await Assert.That(calls.Length).IsEqualTo(1);
             var violations = await FindViolationsAsync(compilation, calls);
@@ -205,7 +253,12 @@ public class PooledRouterConsumptionTests
             concurrentAnalysis: true, logAnalyzerExecutionTime: false, reportSuppressedDiagnostics: true);
         var diagnostics = await compilation.WithAnalyzers([new UseValueTasksCorrectlyAnalyzer()], options).GetAnalyzerDiagnosticsAsync();
         var failures = diagnostics.Where(item => item.Id == "AD0001").ToArray();
-        if (failures.Length != 0) throw new InvalidOperationException(string.Join(Environment.NewLine, failures.Select(item => item.ToString())));
+
+        if (failures.Length != 0)
+        {
+            throw new InvalidOperationException(string.Join(Environment.NewLine, failures.Select(item => item.ToString())));
+        }
+
         return diagnostics.Where(item => item.Id == "CA2012").ToImmutableArray();
     }
 }

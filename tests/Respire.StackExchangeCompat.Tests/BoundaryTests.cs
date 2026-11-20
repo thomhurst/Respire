@@ -27,12 +27,14 @@ public class BoundaryTests(RedisTestContainer fixture)
             bytes, bytes.AsMemory(1, 4), new ReadOnlySequence<byte>(first, 0, last, last.Memory.Length),
             "", "Grüße 🫁", long.MinValue, ulong.MaxValue, 1.2345678901234567, double.PositiveInfinity, true,
         ];
+
         foreach (var value in values)
         {
             var expected = (byte[]?)value;
             var converted = await client.ExecuteStackExchangeAsync("ECHO", [value]);
             await Assert.That(((byte[]?)converted)!.SequenceEqual(expected!)).IsTrue();
         }
+
         await Assert.That(client.IsConnected).IsTrue();
         await client.PingAsync();
     }
@@ -88,6 +90,7 @@ public class BoundaryTests(RedisTestContainer fixture)
     {
         await using var client = await ConnectAsync(protocol);
         var original = CultureInfo.CurrentCulture;
+
         try
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
@@ -111,22 +114,33 @@ public class BoundaryTests(RedisTestContainer fixture)
                 ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : null,
             SuppressReply = command =>
             {
-                if (command != "ECHO value") return false;
+                if (command != "ECHO value")
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
         };
         await using var cancellationClient = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespireProtocol)protocol, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var cancellation = new CancellationTokenSource();
         var pending = cancellationClient.ExecuteStackExchangeAsync("ECHO", ["value"], cancellationToken: cancellation.Token).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
         cancellation.Cancel();
         OperationCanceledException? failure = null;
-        try { await pending.WaitAsync(TimeSpan.FromSeconds(10)); }
+
+        try
+        {
+            await pending.WaitAsync(TimeSpan.FromSeconds(10));
+        }
         catch (OperationCanceledException error) { failure = error; }
+
         await Assert.That(failure is not null).IsTrue();
         await Assert.That(failure!.CancellationToken).IsEqualTo(cancellation.Token);
         await client.ExecuteStackExchangeAsync("INCR", ["not-an-integer-key"]);
@@ -217,12 +231,14 @@ public class ResultBoundaryTests
         using var parser = new RespParseState(int.MaxValue);
         var position = 0;
         RespValue parsed = default;
+
         for (var length = 1; length <= frame.Length; length++)
         {
             var status = parser.TryParse(frame.AsSpan(0, length), ref position, out parsed, out _);
             await Assert.That(status).IsEqualTo(length == frame.Length
                 ? RespParseStatus.Done : RespParseStatus.NeedMoreData);
         }
+
         using (parsed)
         using (var root = RespireResult.CreateOwned(in parsed))
         {
@@ -233,6 +249,7 @@ public class ResultBoundaryTests
             await Assert.That(result[0].Resp2Type).IsEqualTo(ResultType.BulkString);
             await Assert.That(result[1].Resp2Type).IsEqualTo(ResultType.Array);
             await Assert.That(result[2].Resp3Type).IsEqualTo(ResultType.Null);
+
             for (var index = 0; index < 3; index++)
             {
                 var value = parsed.AsArray()[index];
@@ -257,12 +274,14 @@ public class ResultBoundaryTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var root = await client.ExecuteAsync("ECHO", "ignored");
         RedisResult converted;
+
         try
         {
             converted = root.ToStackExchangeResult();
             await Assert.That(root.IsDisposed).IsFalse();
         }
         finally { root.Dispose(); }
+
         await Assert.That(converted.Resp3Type).IsEqualTo(expectedType);
         await Assert.That((string?)converted).IsEqualTo(expectedValue);
     }
@@ -328,14 +347,20 @@ public class ResultBoundaryTests
         var capture = (CapturingClient)client;
         capture.Native = native;
         using var cancellation = new CancellationTokenSource();
+
         try
         {
             if (unsupported)
+            {
                 await Assert.That(async () => await client.ExecuteStackExchangeAsync("ECHO", ["value"],
                     RespireCommandFlags.NoRedirect, cancellation.Token)).Throws<NotSupportedException>();
+            }
             else
+            {
                 await Assert.That((string?)await client.ExecuteStackExchangeAsync("ECHO", ["value"],
                     RespireCommandFlags.NoRedirect, cancellation.Token)).IsEqualTo("abcd");
+            }
+
             await Assert.That(capture.Captured.IsDisposed).IsTrue();
             await Assert.That(capture.Flags).IsEqualTo(RespireCommandFlags.NoRedirect);
             await Assert.That(capture.Token).IsEqualTo(cancellation.Token);
@@ -381,8 +406,13 @@ public class ResultBoundaryTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var root = await client.ExecuteAsync("ECHO", "ignored");
         NotSupportedException? failure = null;
-        try { root.ToStackExchangeResult(); }
+
+        try
+        {
+            root.ToStackExchangeResult();
+        }
         catch (NotSupportedException error) { failure = error; }
+
         await Assert.That(failure is not null).IsTrue();
         await Assert.That(failure!.Message.Contains("native ExecuteAsync and RespireResult", StringComparison.Ordinal)).IsTrue();
         await Assert.That(root.IsDisposed).IsFalse();
@@ -398,7 +428,10 @@ public class ResultBoundaryTests
         protected override object? Invoke(MethodInfo? method, object?[]? arguments)
         {
             if (method?.Name != nameof(IRespireClient.ExecuteLeaseAsync) || arguments?.Length != 4)
+            {
                 throw new NotSupportedException("The ownership control permits only the leased raw execution boundary.");
+            }
+
             Flags = (RespireCommandFlags)arguments[2]!;
             Token = (CancellationToken)arguments[3]!;
             return CaptureAsync((RespireCommand)arguments[0]!, (RespireValue[])arguments[1]!);

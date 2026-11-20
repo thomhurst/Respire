@@ -31,9 +31,14 @@ public class HealthProbeResponseOwnershipTests
         var role = default(RespValue);
         byte[]? roleBuffer = null;
         byte[]? unrelatedReply = null;
+
         try
         {
-            for (var i = 0; i < held.Length; i++) held[i] = RespirePools.ResponsePayloads.Rent(roleWire.Length);
+            for (var i = 0; i < held.Length; i++)
+            {
+                held[i] = RespirePools.ResponsePayloads.Rent(roleWire.Length);
+            }
+
             var results = await client.ProbeHealthAsync();
             await Assert.That(results.Length).IsEqualTo(1);
             await Assert.That(results[0].Error).IsTypeOf<RespireServerException>();
@@ -56,10 +61,19 @@ public class HealthProbeResponseOwnershipTests
         {
             // Keep a failing regression from returning the aliased buffer a third time.
             if (unrelatedReply is not null && !ReferenceEquals(unrelatedReply, roleBuffer))
+            {
                 RespirePools.ResponsePayloads.Return(unrelatedReply);
+            }
+
             role.Dispose();
+
             foreach (var buffer in held)
-                if (buffer is not null) RespirePools.ResponsePayloads.Return(buffer);
+            {
+                if (buffer is not null)
+                {
+                    RespirePools.ResponsePayloads.Return(buffer);
+                }
+            }
         }
     }
 }

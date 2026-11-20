@@ -16,12 +16,14 @@ public class HybridValidationTests
         using var store = new RespireVectorStore(client);
         store.RegisterMapper(new MovieMapper());
         using var collection = store.GetHashCollection<Movie>("movies");
+
         if (variant == 3)
         {
             var invalidSkip = () => new HybridSearchOptions<Movie> { Skip = -1 };
             invalidSkip.Should().Throw<ArgumentOutOfRangeException>();
             return;
         }
+
         var options = variant switch
         {
             4 => new HybridSearchOptions<Movie> { ScoreThreshold = double.NaN },
@@ -33,8 +35,15 @@ public class HybridValidationTests
         Func<Task> search = () => Collect(collection.HybridSearchAsync(
             variant == 8 ? new float[] { 1 } : variant == 9 ? new float[] { float.NaN, 0 } : new float[] { 1, 0 },
             variant == 1 ? [] : variant == 2 ? [" "] : ["apples"], variant == 0 ? 0 : 1, options));
-        if (variant == 7) await search.Should().ThrowAsync<NotSupportedException>();
-        else await search.Should().ThrowAsync<ArgumentException>();
+
+        if (variant == 7)
+        {
+            await search.Should().ThrowAsync<NotSupportedException>();
+        }
+        else
+        {
+            await search.Should().ThrowAsync<ArgumentException>();
+        }
     }
 
     [Test, Arguments(null), Arguments(double.NaN), Arguments(double.PositiveInfinity)]
@@ -89,9 +98,12 @@ public class HybridValidationTests
     private sealed class InvalidTextMapper(int variant) : RespireVectorDataHashMapper<Movie>
     {
         private readonly MovieMapper _inner = new();
+
         public override IReadOnlyList<RespireVectorDataVectorField> VectorFields => _inner.VectorFields;
+
         public override IReadOnlyList<RespireSearchField> DataFields =>
             [new("title", variant == 1 ? RespireSearchFieldType.Tag : RespireSearchFieldType.Text, NoIndex: variant == 2)];
+
         public override IReadOnlyList<RespireVectorDataTextField> TextFields => variant switch
         {
             0 => [new(nameof(Movie.Title), "missing")],
@@ -100,10 +112,18 @@ public class HybridValidationTests
             5 => [],
             _ => [new(nameof(Movie.Title), "title")],
         };
+
         public override string GetKey(Movie record) => _inner.GetKey(record);
+
         public override IReadOnlyDictionary<string, ReadOnlyMemory<byte>> Write(Movie record) => _inner.Write(record);
+
         public override Movie Read(string key, IReadOnlyDictionary<string, ReadOnlyMemory<byte>> fields) => _inner.Read(key, fields);
     }
 
-    private static async Task Collect<T>(IAsyncEnumerable<T> values) { await foreach (var value in values) { } }
+    private static async Task Collect<T>(IAsyncEnumerable<T> values)
+    {
+        await foreach (var value in values)
+        {
+        }
+    }
 }

@@ -15,12 +15,19 @@ internal static class IsolatedTagDescriber
             "--show-object-format", "--path-format=absolute", "--git-path", "objects", "--git-path", "shallow",
             "--git-path", "info/grafts", "HEAD"))
             .Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
-        if (metadata.Length != 5) throw new InvalidOperationException("Git returned unexpected repository metadata.");
+
+        if (metadata.Length != 5)
+        {
+            throw new InvalidOperationException("Git returned unexpected repository metadata.");
+        }
+
         var (objectFormat, objects, shallow, grafts, head) = (metadata[0], metadata[1], metadata[2], metadata[3], metadata[4]);
         // rev-parse reports the default shallow path even when --shallow-file/GIT_SHALLOW_FILE
         // selects another boundary; Git resolves a relative value from the worktree root.
         if (Environment.GetEnvironmentVariable("GIT_SHALLOW_FILE") is { Length: > 0 } shallowFile)
+        {
             shallow = Path.GetFullPath(shallowFile, repositoryRoot);
+        }
 
         // Copy replacements only when the source applies them. The isolated commands inherit
         // GIT_REPLACE_REF_BASE and GIT_NO_REPLACE_OBJECTS, so they read the same namespace.
@@ -34,11 +41,17 @@ internal static class IsolatedTagDescriber
         var localRefs = await GitCommand.RunAsync(repositoryRoot, cancellationToken,
             ["for-each-ref", "--format=%(objectname) %(refname)", .. refPatterns]);
         var packedRefs = new StringBuilder();
+
         foreach (var line in localRefs.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var separator = line.IndexOf(' ');
             var name = line[(separator + 1)..];
-            if (name.StartsWith("refs/tags/", StringComparison.Ordinal) && !isStableTag(name[10..])) continue;
+
+            if (name.StartsWith("refs/tags/", StringComparison.Ordinal) && !isStableTag(name[10..]))
+            {
+                continue;
+            }
+
             packedRefs.Append(line).Append('\n');
         }
 
@@ -50,7 +63,12 @@ internal static class IsolatedTagDescriber
             "-c", "init.defaultRefFormat=files", "init", "--bare", "--quiet", "--template=", $"--object-format={objectFormat}");
         await File.WriteAllTextAsync(Path.Combine(temporary.FullName, "objects", "info", "alternates"),
             objects + "\n", cancellationToken);
-        if (File.Exists(shallow)) File.Copy(shallow, Path.Combine(temporary.FullName, "shallow"));
+
+        if (File.Exists(shallow))
+        {
+            File.Copy(shallow, Path.Combine(temporary.FullName, "shallow"));
+        }
+
         if (File.Exists(grafts))
         {
             Directory.CreateDirectory(Path.Combine(temporary.FullName, "info"));
@@ -71,6 +89,7 @@ internal static class IsolatedTagDescriber
     private sealed class TemporaryRepository(ILogger? logger) : IDisposable
     {
         private readonly DirectoryInfo _directory = Directory.CreateTempSubdirectory("respire-stable-version-");
+
         internal string FullName => _directory.FullName;
 
         public void Dispose()
@@ -80,15 +99,22 @@ internal static class IsolatedTagDescriber
             try
             {
                 foreach (var file in _directory.EnumerateFiles("*", SearchOption.AllDirectories))
+                {
                     file.Attributes &= ~FileAttributes.ReadOnly;
+                }
+
                 _directory.Delete(recursive: true);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 if (logger is not null)
+                {
                     logger.LogWarning(exception, "Could not remove temporary Git metadata at {Path}", _directory.FullName);
+                }
                 else
+                {
                     Trace.TraceWarning("Could not remove temporary Git metadata at {0}: {1}", _directory.FullName, exception.Message);
+                }
             }
         }
     }

@@ -11,15 +11,31 @@ internal static class ReadFallbackPolicy
     // Keeping this state inline avoids an allocation on the normal read path.
     internal struct RoleFallback(RespireReadFrom policy)
     {
-        internal RespireReadFrom Policy { get; } = policy;
-        internal bool? ReplicaOnly { get; private set; }
-        internal RespireServerException? OriginalFailure { get; private set; }
+        internal RespireReadFrom Policy
+        {
+            get;
+        } = policy;
+
+        internal bool? ReplicaOnly
+        {
+            get; private set;
+        }
+
+        internal RespireServerException? OriginalFailure
+        {
+            get; private set;
+        }
+
         internal RespireReadFrom RecoveryPolicy => ReplicaOnly is { } replica
             ? AfterRoleSwitch(replica) : Policy;
 
         internal bool TrySwitch(RespireServerException error, bool onReplica)
         {
-            if (OriginalFailure is not null || !CanFallBackToOtherRole(error, Policy, onReplica)) return false;
+            if (OriginalFailure is not null || !CanFallBackToOtherRole(error, Policy, onReplica))
+            {
+                return false;
+            }
+
             OriginalFailure = error;
             ReplicaOnly = !onReplica;
             return true;
@@ -43,12 +59,29 @@ internal static class ReadFallbackPolicy
         internal bool Offer(T candidate, bool local, bool linked, RespireReadFrom policy)
         {
             var useZone = UsesAvailabilityZone(policy);
-            if (linked && (!useZone || local)) return true;
+
+            if (linked && (!useZone || local))
+            {
+                return true;
+            }
+
             var rank = 2;
-            if (linked) rank = 0;
-            else if (useZone && local) rank = 1;
+
+            if (linked)
+            {
+                rank = 0;
+            }
+            else if (useZone && local)
+            {
+                rank = 1;
+            }
+
             var ranked = (candidate, rank);
-            if (_count == 0) _first = ranked;
+
+            if (_count == 0)
+            {
+                _first = ranked;
+            }
             else
             {
                 if (_overflow is null)
@@ -63,8 +96,10 @@ internal static class ReadFallbackPolicy
                     Return(_overflow);
                     _overflow = larger;
                 }
+
                 _overflow[_count] = ranked;
             }
+
             _count++;
             return false;
         }
@@ -78,20 +113,31 @@ internal static class ReadFallbackPolicy
                 {
                     var ranked = _overflow is null ? _first : _overflow[_next];
                     _next++;
-                    if (ranked.Rank != _rank) continue;
+
+                    if (ranked.Rank != _rank)
+                    {
+                        continue;
+                    }
+
                     candidate = ranked.Value;
                     return true;
                 }
+
                 _rank++;
                 _next = 0;
             }
+
             candidate = default!;
             return false;
         }
 
         internal void Dispose()
         {
-            if (_overflow is not null) Return(_overflow);
+            if (_overflow is not null)
+            {
+                Return(_overflow);
+            }
+
             this = default;
         }
 
@@ -111,14 +157,31 @@ internal static class ReadFallbackPolicy
     // Latency narrows only the best existing policy tier; it never overrides role, link or AZ.
     internal static int LatencyPriority(RespireReadFrom policy, bool primary, bool local, bool linked)
     {
-        if (!UsesAvailabilityZone(policy)) return linked ? 0 : 1;
+        if (!UsesAvailabilityZone(policy))
+        {
+            return linked ? 0 : 1;
+        }
+
         if (policy == RespireReadFrom.AzAffinityReplicasAndPrimary)
         {
-            if (primary) return local ? 1 : 5;
-            if (linked) return local ? 0 : 2;
+            if (primary)
+            {
+                return local ? 1 : 5;
+            }
+
+            if (linked)
+            {
+                return local ? 0 : 2;
+            }
+
             return local ? 3 : 4;
         }
-        if (linked) return local ? 0 : 1;
+
+        if (linked)
+        {
+            return local ? 0 : 1;
+        }
+
         return local ? 2 : 3;
     }
 

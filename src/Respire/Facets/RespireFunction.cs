@@ -25,16 +25,32 @@ public sealed class RespireFunction
     }
 
     /// <summary>The server-registered function name.</summary>
-    public string Name { get; }
+    public string Name
+    {
+        get;
+    }
+
     /// <summary>Whether Redis must reject writes during this invocation.</summary>
-    public bool IsReadOnly { get; }
+    public bool IsReadOnly
+    {
+        get;
+    }
+
     /// <summary>The optional library used for bounded reload after a missing-function error.</summary>
-    public RespireFunctionLibrary? Library { get; }
+    public RespireFunctionLibrary? Library
+    {
+        get;
+    }
+
     /// <summary>
     /// The caller-declared retry risk of one complete call. Defaults to
     /// <see cref="RespireCommandRetryCategory.Never"/>, including read-only functions.
     /// </summary>
-    public RespireCommandRetryCategory RetryCategory { get; }
+    public RespireCommandRetryCategory RetryCategory
+    {
+        get;
+    }
+
     /// <summary>References a function that the application loads separately.</summary>
     public static RespireFunction Create(string name, bool readOnly = false) => new(name, readOnly, null);
 
@@ -49,10 +65,16 @@ public sealed class RespireFunction
     /// <exception cref="ArgumentOutOfRangeException">The category is not a defined value.</exception>
     public RespireFunction WithRetryCategory(RespireCommandRetryCategory category)
     {
-        if (!Enum.IsDefined(category)) throw new ArgumentOutOfRangeException(nameof(category));
+        if (!Enum.IsDefined(category))
+        {
+            throw new ArgumentOutOfRangeException(nameof(category));
+        }
+
         return new(Name, IsReadOnly, Library, category);
     }
+
     internal string Operation => IsReadOnly ? "FCALL_RO" : "FCALL";
+
     internal Verb Verb => IsReadOnly ? RespireCommands.Scripting.FCALL_RO.Verb : RespireCommands.Scripting.FCALL.Verb;
 }
 
@@ -62,37 +84,61 @@ public sealed class RespireFunction
 public sealed class RespireFunctionLibrary
 {
     private readonly ConditionalWeakTable<ClientCore, FunctionReloadState> _reloadStates = new();
+
     private RespireFunctionLibrary(string source, string name, bool replace)
         => (Source, Name, Replace) = (source, name, replace);
 
     /// <summary>Source including the Redis engine/name header.</summary>
-    public string Source { get; }
+    public string Source
+    {
+        get;
+    }
+
     /// <summary>The name declared in the source header.</summary>
-    public string Name { get; }
+    public string Name
+    {
+        get;
+    }
+
     /// <summary>Whether loading may replace an existing library with different source.</summary>
-    public bool Replace { get; }
+    public bool Replace
+    {
+        get;
+    }
 
     /// <summary>Creates a reusable library with an unquoted name header. Redis validates the engine and function definitions when loaded.</summary>
     public static RespireFunctionLibrary Create(string source, bool replace = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(source);
         var header = source.Split('\n', 2)[0];
+
         if (!header.StartsWith("#!", StringComparison.Ordinal))
+        {
             throw new ArgumentException("A Redis function library requires an engine/name header.", nameof(source));
+        }
+
         var names = header.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
             .Where(token => token.StartsWith("name=", StringComparison.Ordinal)).ToArray();
+
         if (names.Length != 1 || names[0].Length == 5)
+        {
             throw new ArgumentException("The library header must declare exactly one nonempty name.", nameof(source));
+        }
+
         var name = names[0][5..];
         // Redis also accepts quoted header tokens. Require the simple unquoted form here
         // instead of guessing its shell-style escape rules and caching the wrong name.
         if (name.IndexOfAny(['\"', '\\', '\'']) >= 0)
+        {
             throw new ArgumentException("Reusable library names must use an unquoted, unescaped header token.", nameof(source));
+        }
+
         return new(source, name, replace);
     }
 
     /// <summary>References a function in this library, enabling one reload/retry for immediate execution.</summary>
     public RespireFunction Function(string name, bool readOnly = false) => new(name, readOnly, this);
+
     internal FunctionReloadState ReloadState(ClientCore core) => _reloadStates.GetValue(core, static _ => new());
 
     internal sealed class FunctionReloadState
@@ -112,6 +158,7 @@ public enum RespireFunctionFlushMode
     /// <summary>Release memory asynchronously.</summary>
     Async
 }
+
 /// <summary>How FUNCTION RESTORE handles existing libraries. Append is Redis's default.</summary>
 public enum RespireFunctionRestorePolicy
 {
@@ -122,22 +169,27 @@ public enum RespireFunctionRestorePolicy
     /// <summary>Replace colliding library names; function name conflicts still fail.</summary>
     Replace
 }
+
 /// <summary>Owned metadata for a registered function.</summary>
 public sealed record RespireFunctionInfo(string Name, string? Description,
     [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
         Justification = "Response DTO retains its existing array storage without copying on access.")]
     string[] Flags);
+
 /// <summary>Owned library metadata. Code is present only when WITHCODE was requested.</summary>
 public sealed record RespireFunctionLibraryInfo(string Name, string Engine,
     [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
         Justification = "Response DTO retains its existing array storage without copying on access.")]
     RespireFunctionInfo[] Functions, string? Code);
+
 /// <summary>Owned execution details. Command arguments retain their binary representation.</summary>
 public sealed record RespireRunningFunction(string Name,
     [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
         Justification = "Response DTO retains its existing array storage without copying on access.")]
     byte[][] Command, long DurationMilliseconds);
+
 /// <summary>Counts for one execution engine.</summary>
 public sealed record RespireFunctionEngineStats(long LibrariesCount, long FunctionsCount);
+
 /// <summary>Owned FUNCTION STATS result for one server.</summary>
 public sealed record RespireFunctionStats(RespireRunningFunction? RunningFunction, IReadOnlyDictionary<string, RespireFunctionEngineStats> Engines);

@@ -33,13 +33,22 @@ public enum RespireMetricGroups
 public sealed record RespireMetricsOptions
 {
     /// <summary>Enabled groups. Selecting a group does not create measurements that Respire does not implement.</summary>
-    public RespireMetricGroups Groups { get; init; } = RespireMetricGroups.Default;
+    public RespireMetricGroups Groups
+    {
+        get; init;
+    } = RespireMetricGroups.Default;
 
     /// <summary>Allowed command names, case insensitive. Empty allows all commands. Collections are copied on configuration.</summary>
-    public IReadOnlyCollection<string> CommandAllowList { get; init; } = [];
+    public IReadOnlyCollection<string> CommandAllowList
+    {
+        get; init;
+    } = [];
 
     /// <summary>Blocked command names, case insensitive. Blocking takes precedence over allowing. Collections are copied on configuration.</summary>
-    public IReadOnlyCollection<string> CommandBlockList { get; init; } = [];
+    public IReadOnlyCollection<string> CommandBlockList
+    {
+        get; init;
+    } = [];
 }
 
 /// <summary>Selects Redis metrics for every Respire client in the process, independently of tracing.</summary>
@@ -74,7 +83,10 @@ public static class RespireMetrics
         internal Selection(RespireMetricsOptions options)
         {
             if ((options.Groups & ~RespireMetricGroups.All) != 0)
+            {
                 throw new ArgumentOutOfRangeException(nameof(options), "Unknown Redis metric group.");
+            }
+
             Groups = options.Groups;
             _allow = CopyCommands(options.CommandAllowList, nameof(options.CommandAllowList));
             _block = CopyCommands(options.CommandBlockList, nameof(options.CommandBlockList));
@@ -83,6 +95,7 @@ public static class RespireMetrics
 
         /// <summary>Requires every bit in a composite group; None is always included.</summary>
         internal bool Includes(RespireMetricGroups group) => (Groups & group) == group;
+
         internal bool IncludesCommand(string operation)
             => !HasCommandFilters || !_block.Contains(operation) && (_allow.Count == 0 || _allow.Contains(operation));
 
@@ -97,28 +110,46 @@ public static class RespireMetrics
         {
             ArgumentNullException.ThrowIfNull(commands, parameter);
             var copy = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var command in commands)
             {
                 if (string.IsNullOrEmpty(command) || command.Length > 64)
+                {
                     throw new ArgumentException("Command names must contain 1 to 64 ASCII characters.", parameter);
+                }
+
                 var previousSpace = true;
+
                 foreach (var character in command)
                 {
                     if (character == ' ')
                     {
-                        if (previousSpace) throw new ArgumentException("Command names cannot contain leading or repeated spaces.", parameter);
+                        if (previousSpace)
+                        {
+                            throw new ArgumentException("Command names cannot contain leading or repeated spaces.", parameter);
+                        }
+
                         previousSpace = true;
                     }
                     else
                     {
                         if (!CommandNameRules.IsValidCharacter(character))
+                        {
                             throw new ArgumentException("Command names must use ASCII letters, digits, '.', '_', '-', or single spaces.", parameter);
+                        }
+
                         previousSpace = false;
                     }
                 }
-                if (previousSpace) throw new ArgumentException("Command names cannot contain trailing spaces.", parameter);
+
+                if (previousSpace)
+                {
+                    throw new ArgumentException("Command names cannot contain trailing spaces.", parameter);
+                }
+
                 copy.Add(command.ToUpperInvariant());
             }
+
             return copy.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
         }
     }

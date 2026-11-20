@@ -48,11 +48,19 @@ internal sealed class CorrectionCoordinator(ClientCore core)
         CleanupRetryPolicy policy, Action<string> onAbandoned)
     {
         var queue = core.CoordinationCleanupQueue;
+
         if (queue is not null)
+        {
             return queue.EnqueueAsync(attempt, shouldContinue, policy.Limit, policy.InitialDelay,
                 policy.MaximumDelay, onAbandoned);
-        try { onAbandoned("client_disposed"); }
+        }
+
+        try
+        {
+            onAbandoned("client_disposed");
+        }
         catch { /* Diagnostics must not stop cleanup callers. */ }
+
         return Task.FromResult(false);
     }
 
@@ -63,7 +71,12 @@ internal sealed class CorrectionCoordinator(ClientCore core)
         => EnqueueAsync(async cancellationToken =>
         {
             var ordered = await fence.TryAsync(attemptTimeout, cancellationToken, onFenceFailure).ConfigureAwait(false);
-            if (ordered != CleanupAttemptResult.Succeeded) return ordered;
+
+            if (ordered != CleanupAttemptResult.Succeeded)
+            {
+                return ordered;
+            }
+
             return await AttemptAsync(core, correct, attemptTimeout, cancellationToken).ConfigureAwait(false);
         }, null, retry, reason => onAbandoned(fence.IsAcknowledged ? "release" : "fence", reason));
 
@@ -79,6 +92,7 @@ internal sealed class CorrectionCoordinator(ClientCore core)
     {
         using var bound = CancellationTokenSource.CreateLinkedTokenSource(stopping);
         bound.CancelAfter(timeout);
+
         try
         {
             await attempt(state, bound.Token).ConfigureAwait(false);
@@ -86,7 +100,10 @@ internal sealed class CorrectionCoordinator(ClientCore core)
         }
         catch (Exception error)
         {
-            if (acknowledged?.Invoke() == true) return CleanupAttemptResult.Succeeded;
+            if (acknowledged?.Invoke() == true)
+            {
+                return CleanupAttemptResult.Succeeded;
+            }
             // Legacy clients have no core to inspect, so preserve their terminal disposal contract.
             return error is ObjectDisposedException && (owner is null || owner.Disposed)
                 || error is OperationCanceledException && stopping.IsCancellationRequested
@@ -148,15 +165,25 @@ internal sealed class CorrectionCoordinator(ClientCore core)
         var previous = TimeSpan.MaxValue;
         var requiresOrdering = identity.ServerClientId > 0 || identity.Connection is { Multiplexer: null };
         var canFence = identity.ServerClientId > 0;
+
         while (true)
         {
             var sent = Stopwatch.GetTimestamp();
             var pass = send(state, requiresOrdering, identity);
+
             if (!await WaitAsync(pass, waitBound).ConfigureAwait(false))
             {
-                if (!canFence) return; // The idempotent ordered pass can still complete later.
+                if (!canFence)
+                {
+                    return; // The idempotent ordered pass can still complete later.
+                }
+
                 var fence = createFence(state, identity);
-                if (fence is null) return;
+
+                if (fence is null)
+                {
+                    return;
+                }
                 // Rejected or unanswered fences propagate; no dependent pass may run without proof.
                 await fence.EnsureBoundedAsync().ConfigureAwait(false);
                 canFence = false;
@@ -172,7 +199,12 @@ internal sealed class CorrectionCoordinator(ClientCore core)
             identity = requiresOrdering ? identity with { ServerClientId = 0 } : default;
             canFence = false;
             var roundTrip = Stopwatch.GetElapsedTime(sent);
-            if (roundTrip < tolerance || roundTrip > previous / 2) return;
+
+            if (roundTrip < tolerance || roundTrip > previous / 2)
+            {
+                return;
+            }
+
             previous = roundTrip;
         }
     }
@@ -194,11 +226,15 @@ internal sealed class CorrectionFence(
     private bool _acknowledged;
     // The only accesses are arguments to Debug.Assert, so Release sends do no extra atomic work.
     private int _activeAttempts;
+
     internal bool IsAcknowledged => Volatile.Read(ref _acknowledged);
 
     internal async ValueTask EnsureBoundedAsync()
     {
-        if (IsAcknowledged) return;
+        if (IsAcknowledged)
+        {
+            return;
+        }
         // A cold control handshake can outlast the foreground broadcast wait. Fence sends
         // disable command deadlines, so give them the independent connection timeout budget.
         using var deadline = new CancellationTokenSource(owner?.Options.ConnectTimeout ?? TimeSpan.FromSeconds(10));
@@ -207,9 +243,14 @@ internal sealed class CorrectionFence(
 
     internal async ValueTask EnsureAsync(CancellationToken cancellationToken = default)
     {
-        if (IsAcknowledged) return;
+        if (IsAcknowledged)
+        {
+            return;
+        }
+
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(identity.ServerClientId);
         Debug.Assert(Interlocked.Increment(ref _activeAttempts) == 1, "The correction owner must serialize fence attempts.");
+
         try
         {
             await send(identity, cancellationToken, () => Volatile.Write(ref _acknowledged, true)).ConfigureAwait(false);
@@ -225,13 +266,23 @@ internal sealed class CorrectionFence(
     internal ValueTask<CleanupAttemptResult> TryAsync(TimeSpan timeout, CancellationToken stopping = default,
         Action<Exception>? onFailure = null)
     {
-        if (IsAcknowledged) return new(CleanupAttemptResult.Succeeded);
+        if (IsAcknowledged)
+        {
+            return new(CleanupAttemptResult.Succeeded);
+        }
+
         if (onFailure is null)
+        {
             return CorrectionCoordinator.AttemptAsync(owner, EnsureAsync, timeout, stopping, () => IsAcknowledged);
+        }
+
         return CorrectionCoordinator.AttemptAsync(owner, (Fence: this, OnFailure: onFailure),
                 static async (state, token) =>
                 {
-                    try { await state.Fence.EnsureAsync(token).ConfigureAwait(false); }
+                    try
+                    {
+                        await state.Fence.EnsureAsync(token).ConfigureAwait(false);
+                    }
                     catch (Exception error)
                     {
                         state.OnFailure?.Invoke(error);

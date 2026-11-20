@@ -23,7 +23,11 @@ public class KeyNotificationDeliveryTests
         var stalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (command != "SUBSCRIBE stalled") return false;
+            if (command != "SUBSCRIBE stalled")
+            {
+                return false;
+            }
+
             stalled.TrySetResult();
             return true;
         };
@@ -71,7 +75,8 @@ public class KeyNotificationDeliveryTests
 #pragma warning disable RESP010 // This notification scenario owns its client and subscription recovery or overflow state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         long measurements = 0;
@@ -79,14 +84,22 @@ public class KeyNotificationDeliveryTests
         listener.InstrumentPublished = (instrument, current) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.pubsub.messages.dropped")
+            {
                 current.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref measurements, value));
         listener.Start();
         await using var subscription = await client.SubscribeAsync(descriptor,
             new RespireSubscriptionOptions(BufferSize: 1, Overflow: overflow), default);
         var dropped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        subscription.DeliveryGap += _ => { if (subscription.DroppedMessages == 2) dropped.TrySetResult(); };
+        subscription.DeliveryGap += _ =>
+        {
+            if (subscription.DroppedMessages == 2)
+            {
+                dropped.TrySetResult();
+            }
+        };
         await server.SendRawAsync(Data(descriptor, false, "set").Concat(Data(descriptor, false, "del"))
             .Concat(Data(descriptor, false, "expire")).ToArray());
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -96,9 +109,11 @@ public class KeyNotificationDeliveryTests
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
         var found = false;
         var gap = false;
+
         for (var index = 0; index < 2; index++)
         {
             await Assert.That(await reader.MoveNextAsync()).IsTrue();
+
             if (reader.Current.TryParseKeyNotification(out var notification))
             {
                 found = true;
@@ -111,6 +126,7 @@ public class KeyNotificationDeliveryTests
                 await Assert.That(reader.Current.Gap!.DroppedMessages).IsEqualTo(2L);
             }
         }
+
         await Assert.That(found && gap).IsTrue();
     }
 
@@ -128,7 +144,12 @@ public class KeyNotificationDeliveryTests
         var descriptor = pattern ? RespireChannel.KeySpacePrefix("tenant:", 0)
             : RespireChannel.KeySpaceSingleKey("tenant:key", 0);
         var ordinary = new RespireChannel(descriptor.Bytes);
-        if (pattern) ordinary = RespireChannel.Pattern(ordinary);
+
+        if (pattern)
+        {
+            ordinary = RespireChannel.Pattern(ordinary);
+        }
+
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         server.ReplyOverride = (_, command) => command == "HELLO 3"
             ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray()
@@ -144,6 +165,7 @@ public class KeyNotificationDeliveryTests
         await using var second = await client.SubscribeAsync(descriptorFirst ? ordinary : descriptor);
         await server.SendRawAsync(Data(descriptor, resp3, "set"));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         foreach (var subscription in new[] { first, second })
         {
             await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
@@ -153,16 +175,19 @@ public class KeyNotificationDeliveryTests
             await Assert.That(message.Channel.NotificationDatabase).IsNull();
             await Assert.That(message.Channel.RoutingSlot).IsNull();
             await Assert.That(message.Channel.ToString()).IsEqualTo("__keyspace@0__:tenant:key");
+
             if (pattern)
             {
                 await Assert.That(message.Pattern!.Value.IsNotification).IsFalse();
                 await Assert.That(message.Pattern.Value.Kind).IsEqualTo(RespireSubscriptionKind.Pattern);
                 await Assert.That(message.Pattern.Value).IsEqualTo(ordinary);
             }
+
             await Assert.That(message.TryParseKeyNotification(out var notification)).IsTrue();
             await Assert.That(notification.Database).IsEqualTo(0);
             await Assert.That(notification.Type).IsEqualTo(RespireKeyNotificationType.Set);
         }
+
         await Assert.That(descriptor.IsNotification).IsTrue();
         await Assert.That(descriptor.NotificationDatabase).IsEqualTo(0);
     }
@@ -170,9 +195,15 @@ public class KeyNotificationDeliveryTests
     private static byte[] Confirmation(RespireChannel descriptor, bool push, bool unsubscribe)
     {
         var verb = descriptor.Kind == RespireSubscriptionKind.Pattern ? "psubscribe" : "subscribe";
-        if (unsubscribe) verb = descriptor.Kind == RespireSubscriptionKind.Pattern ? "punsubscribe" : "unsubscribe";
+
+        if (unsubscribe)
+        {
+            verb = descriptor.Kind == RespireSubscriptionKind.Pattern ? "punsubscribe" : "unsubscribe";
+        }
+
         return Encoding.ASCII.GetBytes($"{(push ? '>' : '*')}3\r\n{Bulk(verb)}{Bulk(descriptor.ToString())}:{(unsubscribe ? 0 : 1)}\r\n");
     }
+
     private static byte[] Data(RespireChannel descriptor, bool push, string payload)
     {
         var pattern = descriptor.Kind == RespireSubscriptionKind.Pattern;
@@ -180,5 +211,6 @@ public class KeyNotificationDeliveryTests
             + Bulk(pattern ? "pmessage" : "message") + (pattern ? Bulk(descriptor.ToString()) : "")
             + Bulk("__keyspace@0__:tenant:key") + Bulk(payload));
     }
+
     private static string Bulk(string value) => $"${value.Length}\r\n{value}\r\n";
 }

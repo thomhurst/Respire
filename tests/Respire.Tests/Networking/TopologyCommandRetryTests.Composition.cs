@@ -23,10 +23,26 @@ public partial class TopologyCommandRetryTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (command == "GET key") return Count(ref fallbackReads, Value);
-                if (command == "SENTINEL SENTINELS mymaster") return "*0\r\n"u8.ToArray();
-                if (command != (topology == "Sentinel" ? "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" : "CLUSTER SLOTS")) return null;
-                if (Interlocked.Increment(ref discoveries) == 1) return "-ERR injected discovery failure\r\n"u8.ToArray();
+                if (command == "GET key")
+                {
+                    return Count(ref fallbackReads, Value);
+                }
+
+                if (command == "SENTINEL SENTINELS mymaster")
+                {
+                    return "*0\r\n"u8.ToArray();
+                }
+
+                if (command != (topology == "Sentinel" ? "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" : "CLUSTER SLOTS"))
+                {
+                    return null;
+                }
+
+                if (Interlocked.Increment(ref discoveries) == 1)
+                {
+                    return "-ERR injected discovery failure\r\n"u8.ToArray();
+                }
+
                 return topology == "Sentinel" ? PrimaryReply(primary.Port) : Slots(primary.Port);
             },
         };
@@ -48,8 +64,12 @@ public partial class TopologyCommandRetryTests
     public static IEnumerable<(string, RespireCommandRetryCategory)> PossibleWriteCases()
     {
         foreach (var shape in new[] { "Sentinel", "Cluster", "raw", "script", "function", "group" })
-        foreach (var category in Enum.GetValues<RespireCommandRetryCategory>())
-            yield return (shape, category);
+        {
+            foreach (var category in Enum.GetValues<RespireCommandRetryCategory>())
+            {
+                yield return (shape, category);
+            }
+        }
     }
 
     [Test]
@@ -62,20 +82,40 @@ public partial class TopologyCommandRetryTests
         CompositionFixture? owner = null;
         await using var fixture = await CompositionFixture.ConnectAsync(shape, command =>
         {
-            if (!IsCompositionRead(command)) return null;
+            if (!IsCompositionRead(command))
+            {
+                return null;
+            }
+
             if (Interlocked.Increment(ref calls) == 1)
             {
-                if (shape == "group") return TryAgain;
+                if (shape == "group")
+                {
+                    return TryAgain;
+                }
+
                 owner!.Server.CloseConnections();
                 return null;
             }
+
             return Value;
         }, new() { InitialBackoff = TimeSpan.Zero });
         owner = fixture;
         var retries = category is RespireCommandRetryCategory.Always or RespireCommandRetryCategory.Connection or RespireCommandRetryCategory.ReadOnly;
-        if (retries) await Assert.That(await fixture.ReadAsync(default, category)).IsEqualTo("value");
-        else if (shape == "group") await Assert.That(async () => await fixture.ReadAsync(default, category)).ThrowsExactly<RespireServerException>();
-        else await Assert.That(async () => await fixture.ReadAsync(default, category)).Throws<RespireConnectionException>();
+
+        if (retries)
+        {
+            await Assert.That(await fixture.ReadAsync(default, category)).IsEqualTo("value");
+        }
+        else if (shape == "group")
+        {
+            await Assert.That(async () => await fixture.ReadAsync(default, category)).ThrowsExactly<RespireServerException>();
+        }
+        else
+        {
+            await Assert.That(async () => await fixture.ReadAsync(default, category)).Throws<RespireConnectionException>();
+        }
+
         await Assert.That(calls).IsEqualTo(retries ? 2 : 1);
         await Assert.That(evidence.Retries.GetValueOrDefault("attempted")).IsEqualTo(retries ? 1 : 0);
         await Assert.That(evidence.Retries.GetValueOrDefault("succeeded")).IsEqualTo(retries ? 1 : 0);
@@ -102,6 +142,7 @@ public partial class TopologyCommandRetryTests
         // Error observation happens after eligibility, before entering backoff. No timing race
         // with peer receipt, and cancellation cannot accidentally target the next logical call.
         await evidence.ErrorObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (shape == "group")
         {
             // Member final-error telemetry precedes the group's retry admission. Allow
@@ -109,6 +150,7 @@ public partial class TopologyCommandRetryTests
             await Task.Delay(100);
             await Assert.That(pending.IsCompleted).IsFalse();
         }
+
         cancellation.Cancel();
         var error = await Failure(async () => await pending);
         await Assert.That(error).IsTypeOf<OperationCanceledException>();
@@ -130,7 +172,11 @@ public partial class TopologyCommandRetryTests
         var lateReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var fixture = await CompositionFixture.ConnectAsync(shape, command =>
             IsCompositionRead(command) ? Interlocked.Increment(ref calls) switch
-            { 1 => TryAgain, 2 => "$4\r\nlate\r\n"u8.ToArray(), _ => Value } : null,
+            {
+                1 => TryAgain,
+                2 => "$4\r\nlate\r\n"u8.ToArray(),
+                _ => Value
+            } : null,
             new() { InitialBackoff = TimeSpan.FromSeconds(2), MaxBackoff = TimeSpan.FromSeconds(2), Jitter = 0 },
             timeout: TimeSpan.FromMilliseconds(3500));
         // Install the gate only after the first error was processed. The second attempt
@@ -138,7 +184,16 @@ public partial class TopologyCommandRetryTests
         var elapsed = Stopwatch.StartNew();
         var pending = fixture.ReadAsync(default).AsTask();
         await evidence.ErrorObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        fixture.Server.GateCommand(shape switch { "script" => "EVALSHA", "function" => "FCALL_RO", _ => "GET key" }, lateReply.Task);
+        fixture.Server.GateCommand(
+            shape switch
+            {
+                "script" => "EVALSHA",
+                "function" => "FCALL_RO",
+                _ => "GET key"
+            },
+            lateReply.Task
+        );
+
         try
         {
             await Assert.That(async () => await pending).ThrowsExactly<RespireTimeoutException>();
@@ -148,6 +203,7 @@ public partial class TopologyCommandRetryTests
             await Assert.That(evidence.Retries.GetValueOrDefault("succeeded")).IsEqualTo(0);
         }
         finally { lateReply.TrySetResult(); }
+
         await Assert.That(await fixture.ReadAsync(default)).IsEqualTo("value");
         await Assert.That(calls).IsEqualTo(3);
         await Assert.That(evidence.Retries.GetValueOrDefault("attempted")).IsEqualTo(1);
@@ -170,16 +226,33 @@ public partial class TopologyCommandRetryTests
         var unselected = false;
         await using var fixture = await CompositionFixture.ConnectAsync(shape, command =>
         {
-            if (!IsCompositionRead(command)) return null;
+            if (!IsCompositionRead(command))
+            {
+                return null;
+            }
+
             Interlocked.Increment(ref calls);
-            if (unselected) return "-LOADING unselected\r\n"u8.ToArray();
+
+            if (unselected)
+            {
+                return "-LOADING unselected\r\n"u8.ToArray();
+            }
+
             return exhaust || calls % 2 == 1 ? TryAgain : Value;
         }, new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero, RetryableErrors = RespireRetryableErrors.TryAgain });
+
         for (var i = 0; i < 32; i++)
+        {
             await Assert.That(await fixture.ReadAsync(default)).IsEqualTo("value");
+        }
+
         exhaust = true;
+
         for (var i = 0; i < 32; i++)
+        {
             await Assert.That(async () => await fixture.ReadAsync(default)).ThrowsExactly<RespireServerException>();
+        }
+
         unselected = true;
         await Assert.That(async () => await fixture.ReadAsync(default)).ThrowsExactly<RespireServerException>();
         await Assert.That(calls).IsEqualTo(129);
@@ -207,6 +280,7 @@ public partial class TopologyCommandRetryTests
                 reply(command) ?? (command == "ROLE" ? RoleReply("master") : command.StartsWith("HELLO", StringComparison.Ordinal)
                     ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : null));
             FakeRespServer? sentinel = null;
+
             try
             {
                 if (shape == "group")
@@ -214,21 +288,34 @@ public partial class TopologyCommandRetryTests
                     var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, 0)], GroupOptions() with { RetryPolicy = policy });
                     return new(server, null, null, group, shape);
                 }
-                if (shape == "Sentinel") sentinel = Sentinel(() => server.Port);
+
+                if (shape == "Sentinel")
+                {
+                    sentinel = Sentinel(() => server.Port);
+                }
+
                 var options = shape switch
                 {
-                    "Sentinel" => SentinelOptions(sentinel!), "Cluster" => ClusterOptions(server), _ => StandaloneOptions(server),
+                    "Sentinel" => SentinelOptions(sentinel!),
+                    "Cluster" => ClusterOptions(server),
+                    _ => StandaloneOptions(server),
                 };
                 var client = await RespireClient.ConnectAsync(options with
                 {
-                    RetryPolicy = policy, CommandTimeout = timeout ?? TimeSpan.FromSeconds(5), Connections = 1,
+                    RetryPolicy = policy,
+                    CommandTimeout = timeout ?? TimeSpan.FromSeconds(5),
+                    Connections = 1,
                     Protocol = RespireProtocol.Resp2,
                 });
                 return new(server, client, sentinel, null, shape);
             }
             catch
             {
-                if (sentinel is not null) await sentinel.DisposeAsync();
+                if (sentinel is not null)
+                {
+                    await sentinel.DisposeAsync();
+                }
+
                 await server.DisposeAsync();
                 throw;
             }
@@ -236,28 +323,53 @@ public partial class TopologyCommandRetryTests
 
         internal async ValueTask<string?> ReadAsync(CancellationToken token, RespireCommandRetryCategory category = RespireCommandRetryCategory.ReadOnly)
         {
-            if (group is not null) return await group.ExecuteAsync((member, callerToken) => member.GetStringAsync("key", callerToken),
+            if (group is not null)
+            {
+                return await group.ExecuteAsync((member, callerToken) => member.GetStringAsync("key", callerToken),
                 category, token);
-            if (shape == "script") return await client!.Scripts.ExecuteStringAsync(
+            }
+
+            if (shape == "script")
+            {
+                return await client!.Scripts.ExecuteStringAsync(
                 RespireScript.Create("return redis.call('GET', KEYS[1])").WithRetryCategory(category),
                 ["key"], cancellationToken: token);
-            if (shape == "function") return await client!.Functions.ExecuteStringAsync(
+            }
+
+            if (shape == "function")
+            {
+                return await client!.Functions.ExecuteStringAsync(
                 RespireFunction.Create("reader", readOnly: true).WithRetryCategory(category),
                 ["key"], cancellationToken: token);
+            }
+
             if (shape == "raw" || category != RespireCommandRetryCategory.ReadOnly)
             {
                 using var result = await client!.ExecuteAsync(RespireCommand.Create("GET").WithRetryCategory(category),
                     ["key"], cancellationToken: token);
                 return result.AsString();
             }
+
             return await client!.GetStringAsync("key", token);
         }
 
         public async ValueTask DisposeAsync()
         {
-            if (group is not null) await group.DisposeAsync();
-            if (client is not null) await client.DisposeAsync();
-            if (sentinel is not null) await sentinel.DisposeAsync();
+            if (group is not null)
+            {
+                await group.DisposeAsync();
+            }
+
+            if (client is not null)
+            {
+                await client.DisposeAsync();
+            }
+
+            if (sentinel is not null)
+            {
+                await sentinel.DisposeAsync();
+            }
+
             await server.DisposeAsync();
         }
     }
@@ -269,7 +381,9 @@ public partial class TopologyCommandRetryTests
         private long _finalErrors;
         internal readonly ConcurrentDictionary<string, long> Retries = new();
         internal readonly TaskCompletionSource ErrorObserved = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         internal long InternalErrors => Interlocked.Read(ref _internalErrors);
+
         internal long FinalErrors => Interlocked.Read(ref _finalErrors);
 
         internal CompositionEvidence(bool throwAfterRecording = false)
@@ -277,22 +391,38 @@ public partial class TopologyCommandRetryTests
             _listener.InstrumentPublished = static (instrument, listener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name is "respire.command.retries" or "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
             {
                 foreach (var tag in tags)
                 {
                     if (instrument.Name == "respire.command.retries" && tag.Key == "respire.command.retry.outcome")
+                    {
                         Retries.AddOrUpdate((string)tag.Value!, value, (_, old) => old + value);
+                    }
+
                     if (instrument.Name == "redis.client.errors" && tag.Key == "redis.client.errors.internal")
                     {
-                        if (Equals(tag.Value, true)) Interlocked.Add(ref _internalErrors, value);
-                        else Interlocked.Add(ref _finalErrors, value);
+                        if (Equals(tag.Value, true))
+                        {
+                            Interlocked.Add(ref _internalErrors, value);
+                        }
+                        else
+                        {
+                            Interlocked.Add(ref _finalErrors, value);
+                        }
+
                         ErrorObserved.TrySetResult();
                     }
                 }
-                if (throwAfterRecording) throw new InvalidOperationException("Injected listener failure.");
+
+                if (throwAfterRecording)
+                {
+                    throw new InvalidOperationException("Injected listener failure.");
+                }
             });
             _listener.Start();
         }

@@ -23,7 +23,12 @@ public class JobTransactionIntegrationTests(RedisTestContainer redis)
     {
         await using var root = await Connect(protocol);
         var client = root.WithKeyPrefix("tenant:");
-        if (decorated) client = JobTransactionTests.Wrap(client);
+
+        if (decorated)
+        {
+            client = JobTransactionTests.Wrap(client);
+        }
+
         var queue = new RespireJobQueue<string>(client, "transaction", Encoding.UTF8.GetBytes);
         using var activity = new Activity("caller").SetIdFormat(ActivityIdFormat.W3C).Start();
         await using var transaction = client.CreateTransaction();
@@ -45,6 +50,7 @@ public class JobTransactionIntegrationTests(RedisTestContainer redis)
         await Assert.That(entries[0].GetString("_respire.job.payload")).IsEqualTo("payload");
         await Assert.That(entries[0].GetString("traceparent")).IsEqualTo(activity.Id);
         await Assert.That(await root.Streams.CountAsync(stream)).IsEqualTo(0);
+
         if (scheduled)
         {
             await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(0);
@@ -91,9 +97,15 @@ public class JobTransactionIntegrationTests(RedisTestContainer redis)
         await using var transaction = await client.CreateTransactionAsync(key);
         var saved = transaction.Set(key, "paid");
         var pending = Enqueue(queue, transaction, scheduled);
-        if (conflict) await client.SetAsync(key, "changed");
+
+        if (conflict)
+        {
+            await client.SetAsync(key, "changed");
+        }
+
         await Assert.That(await transaction.CommitAsync()).IsEqualTo(!conflict);
         await Assert.That(await client.GetStringAsync(key)).IsEqualTo(conflict ? "changed" : "paid");
+
         if (conflict)
         {
             await Assert.That(saved.Status).IsEqualTo(RespirePendingStatus.Aborted);
@@ -101,7 +113,10 @@ public class JobTransactionIntegrationTests(RedisTestContainer redis)
             await AssertNoJob(client, queue);
             await Assert.That((await queue.EnqueueAsync("job", "retry")).Enqueued).IsTrue();
         }
-        else await Assert.That(pending.Result.Enqueued).IsTrue();
+        else
+        {
+            await Assert.That(pending.Result.Enqueued).IsTrue();
+        }
     }
 
     [Test]

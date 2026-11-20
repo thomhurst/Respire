@@ -21,19 +21,25 @@ public static class RespireHybridCacheServiceCollectionExtensions
         configure?.Invoke(options);
         ArgumentOutOfRangeException.ThrowIfLessThan(options.MaxObservedKeys, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(options.MaxRememberedTagInvalidations, 1);
+
         if (options.ObservationSweepInterval <= TimeSpan.Zero
             || options.ObservationSweepInterval.TotalMilliseconds > uint.MaxValue - 1)
+        {
             throw new ArgumentOutOfRangeException(nameof(configure), "ObservationSweepInterval must be a positive timer interval.");
+        }
+
         ArgumentNullException.ThrowIfNull(options.TrackingOptions);
         ArgumentOutOfRangeException.ThrowIfLessThan(options.MaxTagInvalidationMessageBytes, 34);
         ArgumentOutOfRangeException.ThrowIfLessThan(options.TagInvalidationBufferSize, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(options.MaxTagsPerEntry, 1);
+
         if (options.TagInvalidationChannel is not null || options.TagInvalidationNamespace is not null)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(options.TagInvalidationChannel);
             ArgumentException.ThrowIfNullOrWhiteSpace(options.TagInvalidationNamespace);
             TagInvalidationMessage.ValidateNamespace(options.TagInvalidationNamespace, options.MaxTagInvalidationMessageBytes);
         }
+
         var snapshot = options.Snapshot();
 
         // The public keyed registration supplies Microsoft's constructor factory without
@@ -65,7 +71,11 @@ public static class RespireHybridCacheServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        services.AddRespireDistributedCache(configureCache ?? (_ => { }));
+        services.AddRespireDistributedCache(
+            configureCache ?? (_ =>
+            {
+            })
+        );
         return configureHybridCache is null
             ? services.AddHybridCache()
             : services.AddHybridCache(configureHybridCache);

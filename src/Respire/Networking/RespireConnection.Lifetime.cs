@@ -5,11 +5,19 @@ namespace Respire.Networking;
 internal sealed partial class RespireConnection
 {
     private TimeProvider? _connectionLifetimeClock;
-    internal long? LifetimeExpiresAt { get; private set; }
+
+    internal long? LifetimeExpiresAt
+    {
+        get; private set;
+    }
 
     private void InitializeConnectionLifetime(RespireConnectionOptions options)
     {
-        if (options.ConnectionMaxLifetime is not { } lifetime) return;
+        if (options.ConnectionMaxLifetime is not { } lifetime)
+        {
+            return;
+        }
+
         _connectionLifetimeClock = options.ConnectionLifetimeTimeProvider;
         var duration = lifetime.TotalSeconds + Random.Shared.NextDouble() * options.ConnectionMaxLifetimeJitter.TotalSeconds;
         var now = _connectionLifetimeClock.GetTimestamp();

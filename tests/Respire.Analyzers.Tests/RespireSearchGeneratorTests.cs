@@ -128,8 +128,11 @@ public class RespireSearchGeneratorTests
                 public object Build() => ModelSearchSchema.Query().Where(p => p.ModelSearchSchema.Matches("value"));
             }
             """;
+
         if (modelNamespace.Length > 0)
+        {
             declaration = "namespace " + modelNamespace + " { " + declaration + " }";
+        }
 
         var (_, diagnostics) = Generate(declaration);
         await Assert.That(diagnostics).IsEmpty();

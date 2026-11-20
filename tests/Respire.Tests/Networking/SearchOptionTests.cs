@@ -11,9 +11,19 @@ namespace Respire.Tests.Networking;
 public class SearchOptionTests
 {
     [Test]
-    [Arguments(0)] [Arguments(1)] [Arguments(2)] [Arguments(3)] [Arguments(4)]
-    [Arguments(5)] [Arguments(6)] [Arguments(7)] [Arguments(8)] [Arguments(9)]
-    [Arguments(10)] [Arguments(11)] [Arguments(12)]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(4)]
+    [Arguments(5)]
+    [Arguments(6)]
+    [Arguments(7)]
+    [Arguments(8)]
+    [Arguments(9)]
+    [Arguments(10)]
+    [Arguments(11)]
+    [Arguments(12)]
     public async Task QueryModifiersHaveSeparateCountedWireTokens(int option)
     {
         (RespireSearchQueryOptions options, string[] expected) = option switch
@@ -55,8 +65,14 @@ public class SearchOptionTests
     }
 
     [Test]
-    [Arguments(0)] [Arguments(1)] [Arguments(2)] [Arguments(3)]
-    [Arguments(4)] [Arguments(5)] [Arguments(6)] [Arguments(7)]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(4)]
+    [Arguments(5)]
+    [Arguments(6)]
+    [Arguments(7)]
     public async Task IndexModifiersPrecedeSchemaAndCountStopwords(int option)
     {
         var definition = new RespireSearchIndexDefinition { Fields = [new("title", RespireSearchFieldType.Text)] };
@@ -81,9 +97,18 @@ public class SearchOptionTests
     }
 
     [Test]
-    [Arguments(2, false, 0)] [Arguments(2, true, 0)] [Arguments(3, false, 0)] [Arguments(3, true, 0)]
-    [Arguments(2, false, 1)] [Arguments(2, true, 1)] [Arguments(3, false, 1)] [Arguments(3, true, 1)]
-    [Arguments(2, false, 2)] [Arguments(2, true, 2)] [Arguments(3, false, 2)] [Arguments(3, true, 2)]
+    [Arguments(2, false, 0)]
+    [Arguments(2, true, 0)]
+    [Arguments(3, false, 0)]
+    [Arguments(3, true, 0)]
+    [Arguments(2, false, 1)]
+    [Arguments(2, true, 1)]
+    [Arguments(3, false, 1)]
+    [Arguments(3, true, 1)]
+    [Arguments(2, false, 2)]
+    [Arguments(2, true, 2)]
+    [Arguments(3, false, 2)]
+    [Arguments(3, true, 2)]
     public async Task MetadataAndTextRemainOwnedAfterNextReply(int protocol, bool noContent, int entryPoint)
     {
         byte[] payload = [0, 255, 128];
@@ -102,7 +127,11 @@ public class SearchOptionTests
 #pragma warning restore RESP010
         var query = new RespireSearchQuery(RespireSearchQueryBuilder.Text("dogs"), new()
         {
-            NoContent = noContent, WithScores = true, ExplainScore = true, WithPayloads = true, WithSortKeys = true,
+            NoContent = noContent,
+            WithScores = true,
+            ExplainScore = true,
+            WithPayloads = true,
+            WithSortKeys = true,
             Highlight = noContent ? null : new() { Fields = ["title"] },
             Summarize = noContent ? null : new() { Fields = ["body"], Separator = " | " },
         });
@@ -119,7 +148,11 @@ public class SearchOptionTests
         await Assert.That(document.ScoreExplanation.Items[1].Items[0].Scalar).IsEqualTo("child");
         await Assert.That(document.Payload!.Value.ToArray()).IsEquivalentTo(payload, CollectionOrdering.Matching);
         await Assert.That(document.SortKey!.Scalar).IsEqualTo("#5");
-        if (noContent) await Assert.That(document.Fields).IsEmpty();
+
+        if (noContent)
+        {
+            await Assert.That(document.Fields).IsEmpty();
+        }
         else
         {
             await Assert.That(document.TextResults["title"]).IsEqualTo(new RespireSearchTextResult("<mark>dogs</mark>", true, false));
@@ -128,8 +161,16 @@ public class SearchOptionTests
     }
 
     [Test]
-    [Arguments(0)] [Arguments(1)] [Arguments(2)] [Arguments(3)] [Arguments(4)]
-    [Arguments(5)] [Arguments(6)] [Arguments(7)] [Arguments(8)] [Arguments(9)]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(4)]
+    [Arguments(5)]
+    [Arguments(6)]
+    [Arguments(7)]
+    [Arguments(8)]
+    [Arguments(9)]
     public async Task InvalidQueryOptionsFailBeforeSending(int option)
     {
         RespireSearchQueryOptions options = option switch
@@ -165,8 +206,10 @@ public class SearchOptionTests
         {
             Stages = [RespireSearchAggregateStage.GroupBy([], RespireSearchReducer.Collect(new()
             {
-                Fields = ["title", "@rating"], Distinct = true,
-                SortBy = [new("rating", RespireSearchSortDirection.Descending)], Limit = (0, 5),
+                Fields = ["title", "@rating"],
+                Distinct = true,
+                SortBy = [new("rating", RespireSearchSortDirection.Descending)],
+                Limit = (0, 5),
             }, "top"))],
         });
         await Assert.That(LastArguments(server)).IsEquivalentTo(new[] { "FT.AGGREGATE", "idx", "*", "GROUPBY", "0", "REDUCE", "COLLECT", "12", "FIELDS", "2", "@title", "@rating", "DISTINCT", "SORTBY", "2", "@rating", "DESC", "LIMIT", "0", "5", "AS", "top" }, CollectionOrdering.Matching);
@@ -174,45 +217,82 @@ public class SearchOptionTests
     }
 
     [Test]
-    [Arguments(2)] [Arguments(3)]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task EveryReplyFlagCombinationPreservesSlotsAcrossDocuments(int protocol)
     {
         for (var flags = 0; flags < 16; flags++)
         {
             var options = new RespireSearchQueryOptions
             {
-                NoContent = (flags & 1) != 0, WithScores = (flags & 2) != 0,
-                WithPayloads = (flags & 4) != 0, WithSortKeys = (flags & 8) != 0,
+                NoContent = (flags & 1) != 0,
+                WithScores = (flags & 2) != 0,
+                WithPayloads = (flags & 4) != 0,
+                WithSortKeys = (flags & 8) != 0,
             };
             var rows = new List<byte[]>();
+
             for (var row = 0; row < 2; row++)
             {
                 var items = new List<byte[]>();
-                if (protocol == 3) items.Add(Bulk("id"));
+
+                if (protocol == 3)
+                {
+                    items.Add(Bulk("id"));
+                }
+
                 items.Add(Bulk("doc:" + row));
+
                 if (options.WithScores)
                 {
-                    if (protocol == 3) items.Add(Bulk("score"));
+                    if (protocol == 3)
+                    {
+                        items.Add(Bulk("score"));
+                    }
+
                     items.Add(Bulk("0.5"));
                 }
+
                 if (options.WithPayloads)
                 {
-                    if (protocol == 3) items.Add(Bulk("payload"));
+                    if (protocol == 3)
+                    {
+                        items.Add(Bulk("payload"));
+                    }
+
                     items.Add(row == 0 ? "$-1\r\n"u8.ToArray() : Bulk(""));
                 }
+
                 if (options.WithSortKeys)
                 {
-                    if (protocol == 3) items.Add(Bulk("sortkey"));
+                    if (protocol == 3)
+                    {
+                        items.Add(Bulk("sortkey"));
+                    }
+
                     items.Add(row == 0 ? "$-1\r\n"u8.ToArray() : Bulk("#5"));
                 }
+
                 if (!options.NoContent)
                 {
-                    if (protocol == 3) items.Add(Bulk("extra_attributes"));
+                    if (protocol == 3)
+                    {
+                        items.Add(Bulk("extra_attributes"));
+                    }
+
                     items.Add(Array(Bulk("title"), Bulk("dogs")));
                 }
-                if (protocol == 3) rows.Add(Map(items.ToArray()));
-                else rows.AddRange(items);
+
+                if (protocol == 3)
+                {
+                    rows.Add(Map(items.ToArray()));
+                }
+                else
+                {
+                    rows.AddRange(items);
+                }
             }
+
             var reply = protocol == 2 ? Array([Integer(2), .. rows])
                 : Map(Bulk("total_results"), Integer(2), Bulk("results"), Array(rows.ToArray()));
             await using var server = Server(reply);
@@ -223,8 +303,16 @@ public class SearchOptionTests
             await Assert.That(result.Documents.Select(document => document.Id).ToArray()).IsEquivalentTo(["doc:0", "doc:1"], CollectionOrdering.Matching);
             await Assert.That(result.Documents[1].Score).IsEqualTo(options.WithScores ? 0.5 : (double?)null);
             await Assert.That(result.Documents[0].Payload).IsNull();
-            if (options.WithPayloads) await Assert.That(result.Documents[1].Payload!.Value.Length).IsEqualTo(0);
-            else await Assert.That(result.Documents[1].Payload).IsNull();
+
+            if (options.WithPayloads)
+            {
+                await Assert.That(result.Documents[1].Payload!.Value.Length).IsEqualTo(0);
+            }
+            else
+            {
+                await Assert.That(result.Documents[1].Payload).IsNull();
+            }
+
             await Assert.That(result.Documents[0].SortKey).IsNull();
             await Assert.That(result.Documents[1].SortKey?.Scalar).IsEqualTo(options.WithSortKeys ? "#5" : null);
             await Assert.That(result.Documents[1].Fields.Count).IsEqualTo(options.NoContent ? 0 : 1);
@@ -239,10 +327,13 @@ public class SearchOptionTests
         var fields = new List<string> { "title" };
         var options = new RespireSearchQueryOptions
         {
-            InKeys = keys, InFields = fields,
-            Highlight = new() { Fields = fields }, Summarize = new() { Fields = fields },
+            InKeys = keys,
+            InFields = fields,
+            Highlight = new() { Fields = fields },
+            Summarize = new() { Fields = fields },
         };
-        keys.Clear(); fields[0] = "body";
+        keys.Clear();
+        fields[0] = "body";
         await using var server = Server(Array(Integer(0)));
 #pragma warning disable RESP010 // This Search option scenario owns its client and bounded fake result frames.
         await using var client = await RespireClient.ConnectAsync(Options(server, 2));
@@ -255,7 +346,12 @@ public class SearchOptionTests
     }
 
     [Test]
-    [Arguments(0)] [Arguments(1)] [Arguments(2)] [Arguments(3)] [Arguments(4)] [Arguments(5)]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(4)]
+    [Arguments(5)]
     public async Task InvalidSchemaOptionsFailBeforeSending(int option)
     {
         var valid = new RespireSearchIndexDefinition { Fields = [new("title", RespireSearchFieldType.Text)] };
@@ -277,7 +373,11 @@ public class SearchOptionTests
     }
 
     [Test]
-    [Arguments(0)] [Arguments(1)] [Arguments(2)] [Arguments(3)] [Arguments(4)]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(4)]
     public async Task InvalidCollectOptionsFailDuringReducerConstruction(int option)
     {
         RespireSearchCollectOptions invalid = option switch
@@ -292,7 +392,8 @@ public class SearchOptionTests
     }
 
     [Test]
-    [Arguments(2)] [Arguments(3)]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task MalformedScoreExplanationIsRejected(int protocol)
     {
         var badScore = Array(Bulk("0.5"));
@@ -307,7 +408,8 @@ public class SearchOptionTests
     }
 
     [Test]
-    [Arguments(2)] [Arguments(3)]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task DefaultTextSelectionPreservesOverlapAndSkipsCollectionValues(int protocol)
     {
         var fields = Array(Bulk("title"), Bulk("<b>dogs</b>..."), Bulk("items"), Array(Bulk("dogs")));
@@ -342,31 +444,52 @@ public class SearchOptionTests
     {
         ReplyOverride = (_, command) =>
         {
-            if (command == "HELLO 3") return "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
-            if (!command.StartsWith("FT.", StringComparison.Ordinal)) return null;
+            if (command == "HELLO 3")
+            {
+                return "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
+            }
+
+            if (!command.StartsWith("FT.", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
             return profile ? Array(reply, Array()) : reply;
         },
     };
 
     private static RespireOptions Options(FakeRespServer server, int protocol) => new()
     {
-        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = (RespireProtocol)protocol, ThreadPoolMonitoring = false,
+        Endpoints = { new("127.0.0.1", server.Port) },
+        Protocol = (RespireProtocol)protocol,
+        ThreadPoolMonitoring = false,
     };
 
     private static string[] LastArguments(FakeRespServer server)
         => server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString).ToArray();
 
     private static byte[] Bulk(string text) => Bulk(Encoding.UTF8.GetBytes(text));
+
     private static byte[] Bulk(byte[] bytes) => Join(Encoding.ASCII.GetBytes("$" + bytes.Length.ToString(CultureInfo.InvariantCulture) + "\r\n"), bytes, "\r\n"u8.ToArray());
+
     private static byte[] Integer(int value) => Encoding.ASCII.GetBytes(":" + value.ToString(CultureInfo.InvariantCulture) + "\r\n");
+
     private static byte[] Array(params byte[][] items) => Collection('*', items.Length, items);
+
     private static byte[] Map(params byte[][] items) => Collection('%', items.Length / 2, items);
+
     private static byte[] Collection(char prefix, int count, byte[][] items)
         => Join([Encoding.ASCII.GetBytes(prefix + count.ToString(CultureInfo.InvariantCulture) + "\r\n"), .. items]);
+
     private static byte[] Join(params byte[][] parts)
     {
         using var stream = new MemoryStream();
-        foreach (var part in parts) stream.Write(part);
+
+        foreach (var part in parts)
+        {
+            stream.Write(part);
+        }
+
         return stream.ToArray();
     }
 }

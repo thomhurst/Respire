@@ -25,18 +25,33 @@ public class ScriptingEngineIntegrationTests
         var script = RespireScript.Create("return 42");
         (await client.Scripts.ExecuteIntegerAsync(script, cancellationToken: token)).Should().Be(42);
         (await older.Scripts.ExecuteIntegerAsync(script, cancellationToken: token)).Should().Be(42);
+
         using (var info = await client.ExecuteAsync("INFO", ["scriptingengines"], cancellationToken: token))
+        {
             info.AsString().Should().Contain("engines_count:1").And.Contain("name=LUA");
+        }
+
         using (var info = await older.ExecuteAsync("INFO", ["scriptingengines"], cancellationToken: token))
+        {
             info.AsString().Should().BeEmpty();
+        }
 
         foreach (var admin in new[] { client, older })
-            using (await admin.ExecuteAsync("ACL SETUSER", ["engine_test", "on", ">fixture-password", "~*", "+@all", "-info"], cancellationToken: token)) { }
+        {
+            using (await admin.ExecuteAsync("ACL SETUSER", ["engine_test", "on", ">fixture-password", "~*", "+@all", "-info"], cancellationToken: token))
+            {
+            }
+        }
+
         await using var restricted = await ConnectAsync(modern, protocol, restricted: true, token);
         await using var restrictedOlder = await ConnectAsync(legacy, protocol, restricted: true, token);
+
         foreach (var user in new[] { restricted, restrictedOlder })
         {
-            Func<Task> info = async () => { using var reply = await user.ExecuteAsync("INFO", ["scriptingengines"], cancellationToken: token); };
+            Func<Task> info = async () =>
+            {
+                using var reply = await user.ExecuteAsync("INFO", ["scriptingengines"], cancellationToken: token);
+            };
             (await info.Should().ThrowExactlyAsync<RespireServerException>()).Which.Code.Should().Be("NOPERM");
             (await user.Scripts.ExecuteIntegerAsync(script, cancellationToken: token)).Should().Be(42);
         }
@@ -49,32 +64,64 @@ public class ScriptingEngineIntegrationTests
         // Neither the EVAL fallback nor its cached EVALSHA call may reinterpret those errors.
         const string applicationError = "ERR Could not find scripting engine 'python'";
         var spoof = RespireScript.Create("return redis.error_reply(\"ERR Could not find scripting engine 'python'\")");
+
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            Func<Task> application = async () => { await client.Scripts.ExecuteIntegerAsync(spoof, cancellationToken: token); };
+            Func<Task> application = async () =>
+            {
+                await client.Scripts.ExecuteIntegerAsync(spoof, cancellationToken: token);
+            };
             (await application.Should().ThrowExactlyAsync<RespireServerException>()).Which.Message.Should().Be(applicationError);
         }
+
         var spoofLibrary = RespireFunctionLibrary.Create("#!lua name=spoof\nredis.register_function('spoof', function() return redis.error_reply(\"ERR Engine 'python' not found\") end)");
-        Func<Task> applicationFunction = async () => { await client.Functions.ExecuteIntegerAsync(spoofLibrary.Function("spoof"), cancellationToken: token); };
+        Func<Task> applicationFunction = async () =>
+        {
+            await client.Functions.ExecuteIntegerAsync(spoofLibrary.Function("spoof"), cancellationToken: token);
+        };
         (await applicationFunction.Should().ThrowExactlyAsync<RespireServerException>()).Which.Message.Should().Be("ERR Engine 'python' not found");
         var dump = await client.Functions.DumpAsync(token);
-        using (await client.ExecuteAsync("MODULE UNLOAD", ["lua"], cancellationToken: token)) { }
-        using (var info = await client.ExecuteAsync("INFO", ["scriptingengines"], cancellationToken: token))
-            info.AsString().Should().Contain("engines_count:0");
 
-        Func<Task> evaluate = async () => { await client.Scripts.ExecuteIntegerAsync(script, cancellationToken: token); };
+        using (await client.ExecuteAsync("MODULE UNLOAD", ["lua"], cancellationToken: token))
+        {
+        }
+
+        using (var info = await client.ExecuteAsync("INFO", ["scriptingengines"], cancellationToken: token))
+        {
+            info.AsString().Should().Contain("engines_count:0");
+        }
+
+        Func<Task> evaluate = async () =>
+        {
+            await client.Scripts.ExecuteIntegerAsync(script, cancellationToken: token);
+        };
         (await evaluate.Should().ThrowExactlyAsync<RespireScriptingEngineUnavailableException>()).Which.Engine.Should().Be("lua");
-        Func<Task> load = async () => { await client.Scripts.LoadAsync(script, token); };
+        Func<Task> load = async () =>
+        {
+            await client.Scripts.LoadAsync(script, token);
+        };
         await load.Should().ThrowExactlyAsync<RespireScriptingEngineUnavailableException>();
-        Func<Task> function = async () => { await client.Functions.ExecuteIntegerAsync(library.Function("answer"), cancellationToken: token); };
+        Func<Task> function = async () =>
+        {
+            await client.Functions.ExecuteIntegerAsync(library.Function("answer"), cancellationToken: token);
+        };
         await function.Should().ThrowExactlyAsync<RespireScriptingEngineUnavailableException>();
-        Func<Task> restore = async () => { await client.Functions.RestoreAsync(dump, cancellationToken: token); };
+        Func<Task> restore = async () =>
+        {
+            await client.Functions.RestoreAsync(dump, cancellationToken: token);
+        };
         await restore.Should().ThrowExactlyAsync<RespireScriptingEngineUnavailableException>();
-        Func<Task> raw = async () => { using var reply = await client.ExecuteAsync("EVAL", ["return 42", 0], cancellationToken: token); };
+        Func<Task> raw = async () =>
+        {
+            using var reply = await client.ExecuteAsync("EVAL", ["return 42", 0], cancellationToken: token);
+        };
         await raw.Should().ThrowExactlyAsync<RespireScriptingEngineUnavailableException>();
 
         // Without INFO permission, preserve the actual script error, not the diagnostic's NOPERM.
-        Func<Task> denied = async () => { await restricted.Scripts.ExecuteIntegerAsync(script, cancellationToken: token); };
+        Func<Task> denied = async () =>
+        {
+            await restricted.Scripts.ExecuteIntegerAsync(script, cancellationToken: token);
+        };
         (await denied.Should().ThrowExactlyAsync<RespireServerException>()).Which.Message
             .Should().Be("ERR Could not find scripting engine 'lua'");
         (await restrictedOlder.Scripts.ExecuteIntegerAsync(script, cancellationToken: token)).Should().Be(42);
@@ -92,10 +139,12 @@ public class ScriptingEngineIntegrationTests
         {
             Endpoints = [new(server.Hostname, server.GetMappedPublicPort(6379))],
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
-            Connections = 1, AllowAdmin = true,
+            Connections = 1,
+            AllowAdmin = true,
             Username = restricted ? "engine_test" : null,
             Password = restricted ? "fixture-password" : null,
-            ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5),
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+            CommandTimeout = TimeSpan.FromSeconds(5),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         }, token);
 }

@@ -24,16 +24,31 @@ internal sealed partial class ClusterRouter
             var awaitingFence = 0;
             var failed = 0;
             long fences = 0, borrowed = 0, connecting = 0;
+
             foreach (var retirement in _retiringNodes.Values)
             {
                 var age = Stopwatch.GetElapsedTime(retirement.StartedAt, now);
-                if (age > oldest) oldest = age;
+
+                if (age > oldest)
+                {
+                    oldest = age;
+                }
+
                 var node = retirement.Node;
                 var pendingFences = node.PendingCorrectionFenceCount;
                 fences += pendingFences;
-                if (!node.RetirementDrained) undrained++;
-                else if (pendingFences != 0) awaitingFence++;
+
+                if (!node.RetirementDrained)
+                {
+                    undrained++;
+                }
+                else if (pendingFences != 0)
+                {
+                    awaitingFence++;
+                }
+
                 var cleanupFailed = retirement.CleanupFailed;
+
                 if (retirement.DedicatedPool is { } pool)
                 {
                     var state = pool.CaptureRetirementState();
@@ -41,8 +56,13 @@ internal sealed partial class ClusterRouter
                     connecting += state.Connecting;
                     cleanupFailed |= state.CleanupFailed;
                 }
-                if (cleanupFailed) failed++;
+
+                if (cleanupFailed)
+                {
+                    failed++;
+                }
             }
+
             return new RespireClusterRetirementSnapshot
             {
                 CapturedAt = capturedAt,

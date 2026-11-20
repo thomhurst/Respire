@@ -34,13 +34,22 @@ public sealed record RespireValueCodecOptions
     /// <summary>Frame version to write: 2 (default) uses XxHash3; 1 uses the legacy SHA-256 checksum.</summary>
     /// <remarks>Both versions remain readable. Use 1 while any reader still requires version 1,
     /// then switch writers to 2 after every reader is upgraded.</remarks>
-    public byte FrameVersion { get; init; } = 2;
+    public byte FrameVersion
+    {
+        get; init;
+    } = 2;
 
     /// <summary>Minimum input bytes before trying compression. Smaller values still receive a frame. Default: 1 KiB.</summary>
-    public int MinimumLength { get; init; } = 1024;
+    public int MinimumLength
+    {
+        get; init;
+    } = 1024;
 
     /// <summary>Maximum original or decoded payload bytes. Checked before output allocation. Default: 8 MiB.</summary>
     /// <remarks>A checksum-valid frame can allocate up to this limit before decompression rejects it.
     /// Choose a lower limit for smaller application values. This does not cap total working memory or object size.</remarks>
-    public int MaximumDecodedLength { get; init; } = 8 * 1024 * 1024;
+    public int MaximumDecodedLength
+    {
+        get; init;
+    } = 8 * 1024 * 1024;
 }

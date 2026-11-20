@@ -10,21 +10,27 @@ public partial interface IRespireBatchStringCommands
     /// <summary>Queues a raw SET with a value/digest comparison; returns whether the value was written.</summary>
     /// <remarks>Keep binary value buffers unchanged until execution completes. The condition owns its comparison operand.</remarks>
     RespirePending<bool> SetConditional(RespireKey key, RespireValue value, RespireValueCondition condition, RespireExpiry expiry = default);
+
     /// <summary>Queues a serialized SET with a raw value/digest comparison; returns whether the value was written.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<bool> SetConditional<T>(RespireKey key, T value, RespireValueCondition condition, RespireExpiry expiry = default);
+
     /// <summary>Queues a conditional SET GET; returns the owned old string even when the condition fails.</summary>
     RespirePending<string?> GetAndSetConditional(RespireKey key, RespireValue value, RespireValueCondition condition, RespireExpiry expiry = default);
+
     /// <summary>Queues a conditional serialized SET GET; deserializes the old value even when the raw condition fails.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T?> GetAndSetConditional<T>(RespireKey key, T value, RespireValueCondition condition, RespireExpiry expiry = default);
+
     /// <summary>Queues conditional deletion of a string. Redis 8.4+: DELEX.</summary>
     RespirePending<bool> DeleteConditional(RespireKey key, RespireValueCondition condition);
+
     /// <summary>Queues deletion only when the string equals the raw operand. Valkey 9.0+: DELIFEQ.</summary>
     /// <remarks>Keep binary operand buffers unchanged until execution completes.</remarks>
     RespirePending<bool> DeleteIfEqual(RespireKey key, RespireValue value);
+
     /// <summary>Queues the hexadecimal digest of a string; returns an owned string, or null when missing. Redis 8.4+: DIGEST.</summary>
     RespirePending<string?> Digest(RespireKey key);
 }

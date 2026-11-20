@@ -10,14 +10,36 @@ internal sealed class MetricOperationNames(int maximumNames = 1024)
 
     internal string GetName(string operation)
     {
-        if (operation.Length is 0 or > 80) return "OTHER";
+        if (operation.Length is 0 or > 80)
+        {
+            return "OTHER";
+        }
+
         foreach (var character in operation)
-            if (!CommandNameRules.IsValidCharacter(character)) return "OTHER";
-        if (_names.TryGetValue(operation, out var name)) return name;
+        {
+            if (!CommandNameRules.IsValidCharacter(character))
+            {
+                return "OTHER";
+            }
+        }
+
+        if (_names.TryGetValue(operation, out var name))
+        {
+            return name;
+        }
+
         lock (_gate)
         {
-            if (_names.TryGetValue(operation, out name)) return name;
-            if (_names.Count == maximumNames) return "OTHER";
+            if (_names.TryGetValue(operation, out name))
+            {
+                return name;
+            }
+
+            if (_names.Count == maximumNames)
+            {
+                return "OTHER";
+            }
+
             name = operation.ToUpperInvariant();
             _names.TryAdd(name, name);
             return name;

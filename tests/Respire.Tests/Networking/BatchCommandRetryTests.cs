@@ -78,9 +78,22 @@ public class BatchCommandRetryTests
         await using var server = Server(_ => null);
         server.ReplyOverride = (_, command) =>
         {
-            if (command == "GET first") return "$3\r\nold\r\n"u8.ToArray();
-            if (command != "GET second") return command == "INCR counter" ? ":1\r\n"u8.ToArray() : null;
-            if (Interlocked.Increment(ref reads) == 1) { server.CloseConnections(); return null; }
+            if (command == "GET first")
+            {
+                return "$3\r\nold\r\n"u8.ToArray();
+            }
+
+            if (command != "GET second")
+            {
+                return command == "INCR counter" ? ":1\r\n"u8.ToArray() : null;
+            }
+
+            if (Interlocked.Increment(ref reads) == 1)
+            {
+                server.CloseConnections();
+                return null;
+            }
+
             return "$5\r\nfinal\r\n"u8.ToArray();
         };
 #pragma warning disable RESP010 // Test-owned client isolates connection loss and safe whole-batch replay without inherited response sources.
@@ -88,16 +101,23 @@ public class BatchCommandRetryTests
 #pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var first = batch.GetString("first");
-        if (unsafeMember) _ = batch.Increment("counter");
+
+        if (unsafeMember)
+        {
+            _ = batch.Increment("counter");
+        }
+
         var second = batch.GetString("second");
         var result = await batch.TryExecuteAsync();
         await Assert.That(reads).IsEqualTo(unsafeMember ? 1 : 2);
         await Assert.That(result.FailureCount == 0).IsEqualTo(!unsafeMember);
+
         if (!unsafeMember)
         {
             await Assert.That(first.Result).IsEqualTo("old");
             await Assert.That(second.Result).IsEqualTo("final");
         }
+
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET first")).IsEqualTo(unsafeMember ? 1 : 2);
     }
 
@@ -111,7 +131,11 @@ public class BatchCommandRetryTests
         {
             TestingStreamFactory = async (host, port, token) =>
             {
-                if (Interlocked.Increment(ref dials) == 1) throw new RespireConnectionException("controlled acquisition failure");
+                if (Interlocked.Increment(ref dials) == 1)
+                {
+                    throw new RespireConnectionException("controlled acquisition failure");
+                }
+
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
                 await socket.ConnectAsync(host, port, token);
                 return new NetworkStream(socket, ownsSocket: true);
@@ -149,10 +173,20 @@ public class BatchCommandRetryTests
         transport!.FailNextWrite = true;
         using var batch = client.CreateBatch();
         var read = batch.GetString("key");
-        if (unsafeMember) _ = batch.Increment("counter");
+
+        if (unsafeMember)
+        {
+            _ = batch.Increment("counter");
+        }
+
         var result = await batch.TryExecuteAsync();
         await Assert.That(result.FailureCount == 0).IsEqualTo(!unsafeMember);
-        if (!unsafeMember) await Assert.That(read.Result).IsEqualTo("value");
+
+        if (!unsafeMember)
+        {
+            await Assert.That(read.Result).IsEqualTo("value");
+        }
+
         await Assert.That(server.ReceivedCommands.Count(command => command == "INCR counter")).IsEqualTo(0);
     }
 
@@ -175,17 +209,27 @@ public class BatchCommandRetryTests
             _ when command.StartsWith("HELLO") => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
             _ => null,
         };
+
         byte[] GateRetry()
         {
-            if (Interlocked.Increment(ref writes) == 1) server.GateCommand("SET key old", releaseRetry.Task);
+            if (Interlocked.Increment(ref writes) == 1)
+            {
+                server.GateCommand("SET key old", releaseRetry.Task);
+            }
+
             return FakeRespServer.OkReply;
         }
+
 #pragma warning disable RESP010 // Test-owned client isolates cache mutation fences and the batch snapshot across a gated retry.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
-            RetryPolicy = new() { InitialBackoff = TimeSpan.Zero,
-                MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins },
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
+            RetryPolicy = new()
+            {
+                InitialBackoff = TimeSpan.Zero,
+                MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins
+            },
         });
 #pragma warning restore RESP010
         using var batch = client.CreateBatch();
@@ -218,11 +262,20 @@ public class BatchCommandRetryTests
         await using var server = Server(_ => null);
         server.ReplyOverride = (_, command) => command == "GET first" && phase == "backoff"
             ? "$5\r\nvalue\r\n"u8.ToArray() : command.StartsWith("GET ") ? TryAgain : null;
-        if (phase == "reply") server.SuppressReply = command =>
+
+        if (phase == "reply")
         {
-            if (command == "GET second") signal.TrySetResult();
+            server.SuppressReply = command =>
+        {
+            if (command == "GET second")
+            {
+                signal.TrySetResult();
+            }
+
             return command.StartsWith("GET ");
         };
+        }
+
 #pragma warning disable RESP010 // Test-owned client isolates the canceled batch attempt and its caller-token lifetime.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.FromSeconds(1), Jitter = 0 } });
@@ -230,9 +283,20 @@ public class BatchCommandRetryTests
         using var batch = client.CreateBatch();
         var first = batch.GetString("first");
         var second = batch.GetString("second");
-        if (phase == "before") caller.Cancel();
+
+        if (phase == "before")
+        {
+            caller.Cancel();
+        }
+
         var execution = batch.TryExecuteAsync(caller.Token).AsTask();
-        if (phase != "before") { await signal.Task.WaitAsync(TimeSpan.FromSeconds(5)); caller.Cancel(); }
+
+        if (phase != "before")
+        {
+            await signal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            caller.Cancel();
+        }
+
         var result = await execution;
         await Assert.That(result.FailureCount).IsEqualTo(2);
         await Assert.That(first.Error).IsTypeOf<OperationCanceledException>();
@@ -250,9 +314,20 @@ public class BatchCommandRetryTests
         await using var server = Server(_ => null);
         server.SuppressReply = command =>
         {
-            if (command != "GET key") return false;
-            if (Interlocked.Increment(ref reads) == 1) firstSeen.TrySetResult();
-            else retrySeen.TrySetResult();
+            if (command != "GET key")
+            {
+                return false;
+            }
+
+            if (Interlocked.Increment(ref reads) == 1)
+            {
+                firstSeen.TrySetResult();
+            }
+            else
+            {
+                retrySeen.TrySetResult();
+            }
+
             return true;
         };
 #pragma warning disable RESP010 // Test-owned client isolates response deadlines and late FIFO replies across the batch retry.
@@ -288,16 +363,27 @@ public class BatchCommandRetryTests
         var events = new ConcurrentDictionary<string, long>();
         using var listener = new MeterListener();
         listener.InstrumentPublished = static (instrument, meter) =>
-        { if (instrument.Name == "respire.command.retries") meter.EnableMeasurementEvents(instrument); };
+        {
+            if (instrument.Name == "respire.command.retries")
+            {
+                meter.EnableMeasurementEvents(instrument);
+            }
+        };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
             foreach (var tag in tags)
-                if (tag.Key == "respire.command.retry.outcome") events.AddOrUpdate((string)tag.Value!, value, (_, count) => count + value);
+            {
+                if (tag.Key == "respire.command.retry.outcome")
+                {
+                    events.AddOrUpdate((string)tag.Value!, value, (_, count) => count + value);
+                }
+            }
         });
         listener.Start();
         await using var server = Server(command => command.StartsWith("GET ") ? TryAgain : null);
 #pragma warning disable RESP010 // Test-owned client isolates retry exhaustion metrics while deliberately reusing its response sources.
         await using var client = await RespireClient.ConnectAsync(Options(server) with { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
+
 #pragma warning restore RESP010
         for (var iteration = 0; iteration < 32; iteration++)
         {
@@ -309,6 +395,7 @@ public class BatchCommandRetryTests
             await Assert.That(first.Error).IsTypeOf<RespireServerException>();
             await Assert.That(second.Error).IsTypeOf<RespireServerException>();
         }
+
         await Assert.That(events["attempted"]).IsEqualTo(32L);
         await Assert.That(events["exhausted"]).IsEqualTo(32L);
         await Assert.That(events.ContainsKey("succeeded")).IsFalse();
@@ -416,8 +503,18 @@ public class BatchCommandRetryTests
         await using var server = Server(command => command.StartsWith("HELLO") ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : null);
         server.SuppressReply = command =>
         {
-            if (command == "SET key first") { writeSeen.TrySetResult(); return true; }
-            if (command == "GET second") { readSeen.TrySetResult(); return true; }
+            if (command == "SET key first")
+            {
+                writeSeen.TrySetResult();
+                return true;
+            }
+
+            if (command == "GET second")
+            {
+                readSeen.TrySetResult();
+                return true;
+            }
+
             return false;
         };
 #pragma warning disable RESP010 // Test-owned client isolates canceled batch mutation fences until injected native replies drain.
@@ -466,8 +563,15 @@ public class BatchCommandRetryTests
         await Assert.That(rounds).IsEqualTo(transientFailure ? 2 : 1);
         await Assert.That(result.FailureCount).IsEqualTo(transientFailure ? 0 : 1);
         await Assert.That(read.Result).IsEqualTo("value");
-        if (transientFailure) await Assert.That(number.Result).IsEqualTo(42);
-        else await Assert.That(number.Error is not null).IsTrue();
+
+        if (transientFailure)
+        {
+            await Assert.That(number.Result).IsEqualTo(42);
+        }
+        else
+        {
+            await Assert.That(number.Error is not null).IsTrue();
+        }
     }
 
     [Test]
@@ -491,13 +595,21 @@ public class BatchCommandRetryTests
 #pragma warning restore RESP010
         transport!.Writes.Clear();
         using var batch = client.CreateBatch();
-        for (var i = 0; i < members; i++) _ = batch.GetString($"key{i}");
+
+        for (var i = 0; i < members; i++)
+        {
+            _ = batch.GetString($"key{i}");
+        }
+
         await batch.ExecuteAsync();
         // Each attempt reaches the transport as one write that carries every member.
         var attempts = transport.Writes.Where(write => write.Contains("GET", StringComparison.Ordinal)).ToArray();
         await Assert.That(attempts.Length).IsEqualTo(2);
+
         foreach (var attempt in attempts)
+        {
             await Assert.That(attempt.Split("GET").Length - 1).IsEqualTo(members);
+        }
     }
 
     [Test]
@@ -517,10 +629,16 @@ public class BatchCommandRetryTests
         var command = new CancelOnAcceptedCommand(caller);
         var first = ((IPendingSink)batch).Add<CancelOnAcceptedCommand, bool>("SET", in command, static (_, _) => true);
         var rest = new List<RespirePending<bool>>();
-        for (var i = 0; i < 63; i++) rest.Add(batch.Set($"unsent{i}", "value"));
+
+        for (var i = 0; i < 63; i++)
+        {
+            rest.Add(batch.Set($"unsent{i}", "value"));
+        }
+
         var result = await batch.TryExecuteAsync(caller.Token);
         await Assert.That(result.FailureCount).IsEqualTo(64);
         await Assert.That(first.Error).IsTypeOf<OperationCanceledException>();
+
         foreach (var pending in rest)
         {
             await Assert.That(pending.Error).IsTypeOf<OperationCanceledException>();
@@ -557,17 +675,34 @@ public class BatchCommandRetryTests
         var finalAttempts = new ConcurrentQueue<int>();
         using var listener = new MeterListener();
         listener.InstrumentPublished = static (instrument, meter) =>
-        { if (instrument.Name == "redis.client.errors") meter.EnableMeasurementEvents(instrument); };
+        {
+            if (instrument.Name == "redis.client.errors")
+            {
+                meter.EnableMeasurementEvents(instrument);
+            }
+        };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             var internalError = false;
             var attempts = 0;
+
             foreach (var tag in tags)
             {
-                if (tag.Key == "redis.client.errors.internal") internalError = Equals(tag.Value, true);
-                if (tag.Key == "redis.client.operation.retry_attempts") attempts = (int)tag.Value!;
+                if (tag.Key == "redis.client.errors.internal")
+                {
+                    internalError = Equals(tag.Value, true);
+                }
+
+                if (tag.Key == "redis.client.operation.retry_attempts")
+                {
+                    attempts = (int)tag.Value!;
+                }
             }
-            if (!internalError) finalAttempts.Enqueue(attempts);
+
+            if (!internalError)
+            {
+                finalAttempts.Enqueue(attempts);
+            }
         });
         listener.Start();
         var rounds = 0;
@@ -596,11 +731,21 @@ public class BatchCommandRetryTests
     {
         var listener = new MeterListener();
         listener.InstrumentPublished = static (instrument, meter) =>
-        { if (instrument.Name == "redis.client.errors") meter.EnableMeasurementEvents(instrument); };
+        {
+            if (instrument.Name == "redis.client.errors")
+            {
+                meter.EnableMeasurementEvents(instrument);
+            }
+        };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             foreach (var tag in tags)
-                if (tag.Key == "redis.client.errors.internal" && Equals(tag.Value, true)) signal.TrySetResult();
+            {
+                if (tag.Key == "redis.client.errors.internal" && Equals(tag.Value, true))
+                {
+                    signal.TrySetResult();
+                }
+            }
         });
         listener.Start();
         return listener;
@@ -609,20 +754,33 @@ public class BatchCommandRetryTests
     private readonly struct CancelOnAcceptedCommand(CancellationTokenSource caller) : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public RespireCommandRetryCategory RetryCategory => RespireCommandRetryCategory.WriteLastWins;
+
         public void Write(ref RespWriter writer) => writer.WriteRaw("*3\r\n$3\r\nSET\r\n$5\r\nfirst\r\n$5\r\nvalue\r\n"u8);
+
         public void OnAccepted() => caller.Cancel();
     }
 
     private sealed class RecordingWriteStream(Stream inner) : Stream
     {
         internal readonly ConcurrentQueue<string> Writes = new();
+
         public override bool CanRead => inner.CanRead;
+
         public override bool CanWrite => inner.CanWrite;
+
         public override bool CanSeek => false;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
+
         public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default) => inner.ReadAsync(buffer, token);
 #pragma warning disable RESP009 // Stream's synchronous override shares the recording shim; the tested Respire transport uses WriteAsync.
         public override void Write(byte[] buffer, int offset, int count) => WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
@@ -632,21 +790,43 @@ public class BatchCommandRetryTests
             Writes.Enqueue(Encoding.ASCII.GetString(buffer.Span));
             return inner.WriteAsync(buffer, token);
         }
+
         public override void Flush() => inner.Flush();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
-        protected override void Dispose(bool disposing) { if (disposing) inner.Dispose(); base.Dispose(disposing); }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
     }
 
     private sealed class PartialWriteStream(Stream inner) : Stream
     {
         internal bool FailNextWrite;
+
         public override bool CanRead => inner.CanRead;
+
         public override bool CanWrite => inner.CanWrite;
+
         public override bool CanSeek => false;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
+
         public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default) => inner.ReadAsync(buffer, token);
 #pragma warning disable RESP009 // Stream's synchronous override shares the partial-write fault shim; the tested Respire transport uses WriteAsync.
         public override void Write(byte[] buffer, int offset, int count) => WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
@@ -659,12 +839,25 @@ public class BatchCommandRetryTests
                 await inner.WriteAsync(buffer[..Math.Max(1, buffer.Length / 2)], token);
                 throw new IOException("controlled partial write failure");
             }
+
             await inner.WriteAsync(buffer, token);
         }
+
         public override void Flush() => inner.Flush();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
-        protected override void Dispose(bool disposing) { if (disposing) inner.Dispose(); base.Dispose(disposing); }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
     }
 
     private static FakeRespServer Server(Func<string, byte[]?> reply) => new(32, FakeRespServer.OkReply)
@@ -672,8 +865,11 @@ public class BatchCommandRetryTests
 
     private static RespireOptions Options(FakeRespServer server) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-        Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(3),
+        Endpoints = [new("127.0.0.1", server.Port)],
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromSeconds(3),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };
 }

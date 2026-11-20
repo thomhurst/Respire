@@ -42,9 +42,23 @@ public class OptOutClientCacheTests
         var inTransaction = false;
         server.ReplyOverride = (_, command) =>
         {
-            if (command == "MULTI") { inTransaction = true; return FakeRespServer.OkReply; }
-            if (command == "EXEC") { inTransaction = false; return "*3\r\n$5\r\nvalue\r\n+OK\r\n$5\r\nvalue\r\n"u8.ToArray(); }
-            if (inTransaction) return "+QUEUED\r\n"u8.ToArray();
+            if (command == "MULTI")
+            {
+                inTransaction = true;
+                return FakeRespServer.OkReply;
+            }
+
+            if (command == "EXEC")
+            {
+                inTransaction = false;
+                return "*3\r\n$5\r\nvalue\r\n+OK\r\n$5\r\nvalue\r\n"u8.ToArray();
+            }
+
+            if (inTransaction)
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
             return command.StartsWith("HELLO ", StringComparison.Ordinal) ? Hello
                 : command == "CLIENT CACHING NO" && prefixError ? "-ERR denied caching\r\n"u8.ToArray()
                 : command.StartsWith("GET ", StringComparison.Ordinal) ? Value : FakeRespServer.OkReply;
@@ -60,6 +74,7 @@ public class OptOutClientCacheTests
         _ = transaction.Set("written", "new");
         var second = transaction.GetString("second");
         await Assert.That(transaction.Count).IsEqualTo(3);
+
         if (prefixError)
         {
             await Assert.That(async () => await transaction.CommitAsync()).ThrowsExactly<RespireServerException>();
@@ -72,6 +87,7 @@ public class OptOutClientCacheTests
             await Assert.That(first.Result).IsEqualTo("value");
             await Assert.That(second.Result).IsEqualTo("value");
         }
+
         await Assert.That(await client.GetStringAsync("after")).IsEqualTo("value");
         await Assert.That(server.ReceivedCommands.SequenceEqual(new[]
         {
@@ -103,11 +119,13 @@ public class OptOutClientCacheTests
         });
 #pragma warning restore RESP010
         await using var transaction = client.WithoutClientCache().CreateTransaction();
+
         if (!empty)
         {
             _ = transaction.Set("written", "new");
             _ = transaction.Set("second", "new");
         }
+
         await transaction.CommitAsync();
         // A following reply proves the transaction drained all of its response slots.
         await client.PingAsync();
@@ -203,6 +221,7 @@ public class OptOutClientCacheTests
         });
 #pragma warning restore RESP010
         var bypass = client.WithKeyPrefix("hot:").WithoutClientCache();
+
         for (var i = 0; i < 2; i++)
         {
             if (raw)
@@ -210,8 +229,12 @@ public class OptOutClientCacheTests
                 using var reply = await client.WithoutClientCache().ExecuteAsync(RespireCommands.String.GET, "hot:key");
                 await Assert.That(reply.AsString()).IsEqualTo("value");
             }
-            else await Assert.That(await bypass.GetStringAsync("key")).IsEqualTo("value");
+            else
+            {
+                await Assert.That(await bypass.GetStringAsync("key")).IsEqualTo("value");
+            }
         }
+
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
         await client.GetStringAsync("hot:key");
         await client.GetStringAsync("hot:key");
@@ -233,6 +256,7 @@ public class OptOutClientCacheTests
         {
             CircuitBreaker = circuit ? new() : null,
         });
+
 #pragma warning restore RESP010
         await using (var stream = await client.WithKeyPrefix("hot:").WithoutClientCache().Strings.GetStreamAsync("key"))
         {
@@ -240,6 +264,7 @@ public class OptOutClientCacheTests
             await stream!.CopyToAsync(received);
             await Assert.That(Encoding.UTF8.GetString(received.ToArray())).IsEqualTo("value");
         }
+
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
         await Assert.That(await client.GetStringAsync("hot:key")).IsEqualTo("value");
         await Assert.That(server.ReceivedCommands.SequenceEqual(new[]
@@ -259,7 +284,8 @@ public class OptOutClientCacheTests
 #pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            MaxInflightCommands = capacity, CircuitBreaker = circuit ? new() : null,
+            MaxInflightCommands = capacity,
+            CircuitBreaker = circuit ? new() : null,
         });
 #pragma warning restore RESP010
         using var batch = client.WithKeyPrefix("hot:").WithoutClientCache().CreateBatch();
@@ -296,9 +322,19 @@ public class OptOutClientCacheTests
 #pragma warning restore RESP010
         var bypass = client.WithoutClientCache();
         RespireKey key = "hot:key";
-        if (surface == 0) await bypass.ExecuteFireAndForgetAsync(RespireCommands.String.GET, key);
-        else if (surface == 1) await bypass.ExecuteFireAndForgetAsync("GET", key);
-        else await bypass.ExecuteFireAndForgetAsync($"GET {key}");
+
+        if (surface == 0)
+        {
+            await bypass.ExecuteFireAndForgetAsync(RespireCommands.String.GET, key);
+        }
+        else if (surface == 1)
+        {
+            await bypass.ExecuteFireAndForgetAsync("GET", key);
+        }
+        else
+        {
+            await bypass.ExecuteFireAndForgetAsync($"GET {key}");
+        }
         // The awaited read is also a FIFO barrier for the discarded reply and its prelude.
         await Assert.That(await client.GetStringAsync("kept")).IsEqualTo("value");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
@@ -322,7 +358,11 @@ public class OptOutClientCacheTests
         server.MinimumCommandsBeforeReply = 2;
         server.SuppressReply = command =>
         {
-            if (command == "SET key new") writeArrived.TrySetResult();
+            if (command == "SET key new")
+            {
+                writeArrived.TrySetResult();
+            }
+
             return false;
         };
         var write = client.WithoutClientCache().SetAsync("key", "new").AsTask();
@@ -390,13 +430,20 @@ public class OptOutClientCacheTests
             await reader.GetStringAsync((i % 2 == 0 ? "skip:" : "keep:") + i);
         }));
         var commands = server.ReceivedCommands.ToArray();
+
         for (var i = 0; i < commands.Length; i++)
         {
             if (commands[i].StartsWith("GET skip:", StringComparison.Ordinal))
+            {
                 await Assert.That(commands[i - 1]).IsEqualTo("CLIENT CACHING NO");
+            }
+
             if (commands[i].StartsWith("GET keep:", StringComparison.Ordinal))
+            {
                 await Assert.That(commands[i - 1] == "CLIENT CACHING NO").IsFalse();
+            }
         }
+
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(20);
     }
 
@@ -423,7 +470,8 @@ public class OptOutClientCacheTests
 #pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(seed) with
         {
-            UseCluster = true, RetryPolicy = new() { MaxAttempts = 2 },
+            UseCluster = true,
+            RetryPolicy = new() { MaxAttempts = 2 },
         });
 #pragma warning restore RESP010
         var reader = bypass ? client.WithoutClientCache() : client;
@@ -433,8 +481,17 @@ public class OptOutClientCacheTests
         await Assert.That(commands.Contains("CLIENT CACHING YES")).IsFalse();
         await Assert.That(commands.Contains("CLIENT CACHING NO")).IsEqualTo(bypass);
         var readIndex = Array.IndexOf(commands, "GET key");
-        if (bypass) await Assert.That(commands[readIndex - 1]).IsEqualTo("CLIENT CACHING NO");
-        if (redirect == "ASK") await Assert.That(commands[readIndex - (bypass ? 2 : 1)]).IsEqualTo("ASKING");
+
+        if (bypass)
+        {
+            await Assert.That(commands[readIndex - 1]).IsEqualTo("CLIENT CACHING NO");
+        }
+
+        if (redirect == "ASK")
+        {
+            await Assert.That(commands[readIndex - (bypass ? 2 : 1)]).IsEqualTo("ASKING");
+        }
+
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(bypass ? 0 : 1);
     }
 
@@ -485,6 +542,7 @@ public class OptOutClientCacheTests
         var asking = new ProtocolCommand<Cmd>(new Cmd(new Verb(-1, "ASKING")));
         var caching = new ClientCachingCommand(optOut: true);
         var get = new Cmd1(Verbs.Get, "key");
+
         if (failingPrelude == 0)
         {
             await using var stream = await connection.SendPrefixedBulkStreamAsync(asking, caching, get);
@@ -496,6 +554,7 @@ public class OptOutClientCacheTests
             await Assert.That(async () => await connection.SendPrefixedBulkStreamAsync(asking, caching, get))
                 .ThrowsExactly<RespireServerException>();
         }
+
         using var pong = await connection.SendAsync(new Cmd(new Verb(-1, "PING")));
         await Assert.That(pong.AsString()).IsEqualTo("PONG");
         await Assert.That(server.ReceivedCommands.SequenceEqual(new[]
@@ -524,7 +583,8 @@ public class OptOutClientCacheTests
 #pragma warning disable RESP010 // Each opt-out scenario owns and disposes its client to isolate tracking configuration and scripted wire state.
         await using var client = await RespireClient.ConnectAsync(Options(seed) with
         {
-            UseCluster = true, RetryPolicy = new() { MaxAttempts = 2 },
+            UseCluster = true,
+            RetryPolicy = new() { MaxAttempts = 2 },
         });
 #pragma warning restore RESP010
         await using var stream = await client.WithoutClientCache().Strings.GetStreamAsync("key");
@@ -533,7 +593,12 @@ public class OptOutClientCacheTests
         var commands = target.ReceivedCommands.ToArray();
         var readIndex = Array.IndexOf(commands, "GET key");
         await Assert.That(commands[readIndex - 1]).IsEqualTo("CLIENT CACHING NO");
-        if (redirect == "ASK") await Assert.That(commands[readIndex - 2]).IsEqualTo("ASKING");
+
+        if (redirect == "ASK")
+        {
+            await Assert.That(commands[readIndex - 2]).IsEqualTo("ASKING");
+        }
+
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
     }
 
@@ -560,7 +625,9 @@ public class OptOutClientCacheTests
     {
         await Assert.That(() => RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("localhost", 1)], UseCluster = cluster, MaxInflightCommands = capacity,
+            Endpoints = [new("localhost", 1)],
+            UseCluster = cluster,
+            MaxInflightCommands = capacity,
             ClientSideCache = new() { TrackingMode = RespireClientTrackingMode.OptOut },
         })).ThrowsExactly<RespireConfigurationException>();
     }
@@ -573,7 +640,8 @@ public class OptOutClientCacheTests
 
     private static RespireOptions Options(FakeRespServer server) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+        Endpoints = [new("127.0.0.1", server.Port)],
+        Connections = 1,
         MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         ClientSideCache = new() { TrackingMode = RespireClientTrackingMode.OptOut },
     };

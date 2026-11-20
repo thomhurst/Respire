@@ -19,12 +19,20 @@ internal sealed class RedisEndpoint : IAsyncDisposable
         _container = container;
     }
 
-    public string Host { get; }
-    public int Port { get; }
+    public string Host
+    {
+        get;
+    }
+
+    public int Port
+    {
+        get;
+    }
 
     public static async Task<RedisEndpoint> CreateAsync()
     {
         var host = Environment.GetEnvironmentVariable("REDIS_HOST");
+
         if (!string.IsNullOrEmpty(host))
         {
             var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var p) ? p : 6379;

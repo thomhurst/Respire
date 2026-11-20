@@ -143,6 +143,7 @@ public class DashboardBatchTests(RedisTestContainer redis)
         options.Streams[0].IsJobQueue = true;
         options.Streams[0].Stream = "{other}:ready";
         await Assert.That(() => new DashboardState(client, options)).Throws<ArgumentException>();
+
         foreach (var id in new[] { " ", new string('x', 4097), "\uD800" })
         {
             options = Options(queue, id);
@@ -167,10 +168,17 @@ public class DashboardBatchTests(RedisTestContainer redis)
         var options = new RespireDashboardOptions();
         var stream = new RespireDashboardStream
         {
-            Name = "Reports", Stream = queue.StreamKey, Group = RespireJobQueue<string>.ConsumerGroup,
+            Name = "Reports",
+            Stream = queue.StreamKey,
+            Group = RespireJobQueue<string>.ConsumerGroup,
             IsJobQueue = true,
         };
-        foreach (var id in ids) stream.BatchIds.Add(id);
+
+        foreach (var id in ids)
+        {
+            stream.BatchIds.Add(id);
+        }
+
         options.Streams.Add(stream);
         return options;
     }

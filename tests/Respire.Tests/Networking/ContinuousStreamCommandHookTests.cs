@@ -123,7 +123,10 @@ public class ContinuousStreamCommandHookTests
         Task<string?>? nested = null;
         hook.Before = context =>
         {
-            if (context.Command == "XREAD") nested = client.GetStringAsync("other").AsTask();
+            if (context.Command == "XREAD")
+            {
+                nested = client.GetStringAsync("other").AsTask();
+            }
         };
         await using var reader = client.Streams.ReadAllAsync("events").GetAsyncEnumerator();
 
@@ -137,7 +140,14 @@ public class ContinuousStreamCommandHookTests
     public async Task CancellationDuringReadCompletesOnceAndDisposalDoesNotReadAgain()
     {
         var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var server = new FakeRespServer { SuppressReply = _ => { reading.TrySetResult(); return true; } };
+        await using var server = new FakeRespServer
+        {
+            SuppressReply = _ =>
+            {
+                reading.TrySetResult();
+                return true;
+            }
+        };
         var hook = new Hook();
         await using var client = Create(server, hook);
         using var cancel = new CancellationTokenSource();
@@ -162,13 +172,17 @@ public class ContinuousStreamCommandHookTests
         await using var server = new FakeRespServer(malformed ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply);
         var hook = new Hook();
         await using var client = Create(server, hook);
+
         if (malformed)
         {
             var error = await Failure(async () => await client.Streams.CreateGroupAsync("events", "group"));
             await Assert.That(hook.Completed.Single().Error).IsSameReferenceAs(error);
         }
         else
+        {
             await Assert.That(await client.Streams.CreateGroupAsync("events", "group")).IsTrue();
+        }
+
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(
             malformed ? RespireCommandOutcome.Failed : RespireCommandOutcome.Succeeded);
     }
@@ -176,14 +190,20 @@ public class ContinuousStreamCommandHookTests
     private static RespireClient Create(FakeRespServer server, Hook hook)
         => RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
-            Endpoints = [new("127.0.0.1", server.Port)], CommandHook = hook,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            CommandHook = hook,
         });
 
     private static async Task<Exception> Failure(Func<Task> action)
     {
-        try { await action(); }
+        try
+        {
+            await action();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure");
     }
 
@@ -192,11 +212,21 @@ public class ContinuousStreamCommandHookTests
         internal Action<RespireCommandContext>? Before;
         internal bool ThrowOnCompleted;
         internal ConcurrentQueue<(string Command, RespireCommandOutcome Outcome, Exception? Error)> Completed = new();
-        public override object? OnExecuting(RespireCommandContext context) { Before?.Invoke(context); return context; }
+
+        public override object? OnExecuting(RespireCommandContext context)
+        {
+            Before?.Invoke(context);
+            return context;
+        }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Completed.Enqueue((context.Command, outcome, error));
-            if (ThrowOnCompleted) throw new InvalidOperationException("Observer");
+
+            if (ThrowOnCompleted)
+            {
+                throw new InvalidOperationException("Observer");
+            }
         }
     }
 }

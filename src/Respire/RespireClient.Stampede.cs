@@ -49,6 +49,7 @@ public sealed partial class RespireClient
         var lockKey = CreateCacheAsideLockKey(key);
         var token = Guid.NewGuid().ToString("N");
         var started = Stopwatch.GetTimestamp();
+
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -56,9 +57,12 @@ public sealed partial class RespireClient
                 cancellationToken, observation).ConfigureAwait(false);
             var found = !entry[0].IsNull;
             var fresh = found && entry[1].AsInteger() > 0;
+
             if (fresh && !ShouldRefreshCacheAside(entry[1].AsInteger(), entry[2].AsDouble(),
                     options.EarlyRefreshBeta, Random.Shared.NextDouble()))
+            {
                 return entry[0].As<T>();
+            }
 
             // An expired payload can retain its generation while a refresh is in flight.
             var version = entry[3].AsString();
@@ -71,19 +75,33 @@ public sealed partial class RespireClient
                 acquired = acquisition != 0;
                 // Empty markers belong to the latest successful acquirer, including
                 // successors that take over an existing pending generation.
-                if (acquisition == 2) version = token + ":pending";
+                if (acquisition == 2)
+                {
+                    version = token + ":pending";
+                }
             }
+
             if (acquired)
+            {
                 // Publication must replace the pending generation, so a contender that read
                 // the empty marker cannot acquire after another caller publishes its value.
                 return await PopulateProtectedCacheAsync(key, lockKey, token, version, factory, expiry,
                     options, cancellationToken, observation).ConfigureAwait(false);
+            }
 
             // A refresh contender can use the value it just read. Missing values never bypass the lease.
-            if (fresh || (found && options.StaleWhileRevalidate > TimeSpan.Zero)) return entry[0].As<T>();
+            if (fresh || (found && options.StaleWhileRevalidate > TimeSpan.Zero))
+            {
+                return entry[0].As<T>();
+            }
+
             var remaining = options.WaitTimeout - Stopwatch.GetElapsedTime(started);
+
             if (remaining <= TimeSpan.Zero)
+            {
                 throw new TimeoutException("Timed out waiting for the cache-aside factory lease.");
+            }
+
             await Task.Delay(remaining < options.RetryDelay ? remaining : options.RetryDelay, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -99,8 +117,12 @@ public sealed partial class RespireClient
         var published = false;
         // Reuse the safe deadline timer: throwing factory callbacks must not escape a timer thread.
         using var lease = new DedicatedAcquisitionCancellation(cancellationToken);
+
         if (options.DistributedSingleFlight)
+        {
             lease.Arm(CommandDeadline.After((long)options.LockTimeout.TotalMilliseconds));
+        }
+
         try
         {
             var started = Stopwatch.GetTimestamp();
@@ -108,27 +130,43 @@ public sealed partial class RespireClient
             lease.Token.ThrowIfCancellationRequested();
             var duration = Math.Max(1, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             ObjectDisposedException.ThrowIf(_core.Disposed, this);
-            if (created is null) return default;
+
+            if (created is null)
+            {
+                return default;
+            }
+
             var serialized = Serialize(created);
             RespireValue.ThrowIfNull(serialized, nameof(factory));
             var bytes = new byte[serialized.GetWireLength()];
             serialized.WriteWirePayload(bytes);
             var absolute = expiry.TryGetAbsoluteUnixMilliseconds(out var milliseconds);
-            if (!absolute) expiry.TryGetRelativeMilliseconds(out milliseconds);
+
+            if (!absolute)
+            {
+                expiry.TryGetRelativeMilliseconds(out milliseconds);
+            }
+
             using var result = await RunCacheAsideScriptAsync(ProtectedCachePublish, key, lockKey,
                 [version, token, options.DistributedSingleFlight ? 1 : 0, bytes, duration,
                     milliseconds, absolute ? 1 : 0, (long)options.StaleWhileRevalidate.TotalMilliseconds],
                 lease.Token, observation).ConfigureAwait(false);
             published = result.AsInteger() == 1;
+
             if (published)
             {
                 // Return through the serializer so callers never share the factory's mutable object.
                 using var value = Protocol.RespValue.BulkString(bytes);
                 return DeserializeBorrowed<T>(in value);
             }
+
             using var winner = await RunCacheAsideScriptAsync(ProtectedCacheRead, key, lockKey, [],
                 cancellationToken, observation).ConfigureAwait(false);
-            if (!winner[0].IsNull && winner[1].AsInteger() > 0) return winner[0].As<T>();
+
+            if (!winner[0].IsNull && winner[1].AsInteger() > 0)
+            {
+                return winner[0].As<T>();
+            }
             // Losing publication is a cache race, not a factory failure. Keep the fencing
             // decision and return an independent copy of this caller's computed value.
             using var computed = Protocol.RespValue.BulkString(bytes);
@@ -141,7 +179,9 @@ public sealed partial class RespireClient
         finally
         {
             if (!published)
+            {
                 await ReleaseProtectedCacheAsync(key, lockKey, token, observation).ConfigureAwait(false);
+            }
         }
     }
 
@@ -149,8 +189,11 @@ public sealed partial class RespireClient
         RespireValue[] args, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         if (!singleFlight)
+        {
             return await RunCacheAsideScriptAsync(ProtectedCacheAcquire, key, lockKey, args, cancellationToken, observation)
                 .ConfigureAwait(false);
+        }
+
         await EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
         var execution = await StartTrackedScriptExecutionAsync(ProtectedCacheAcquire, [key, lockKey], args,
             cancellationToken, requireReliableCorrectionOrdering: true, errorObservation: observation, physicalKeys: true)
@@ -167,6 +210,7 @@ public sealed partial class RespireClient
         TrackedConnectionIdentity identity, RespireTelemetry.ErrorObservation observation)
     {
         using var cleanup = new CancellationTokenSource(_core.Options.ConnectTimeout);
+
         try
         {
             await FenceCorrectionConnectionAsync(identity, cleanup.Token).ConfigureAwait(false);
@@ -225,7 +269,12 @@ public sealed partial class RespireClient
     {
         var tail = new RespireValue[1 + keys.Length + args.Length];
         tail[0] = keys.Length;
-        for (var index = 0; index < keys.Length; index++) tail[index + 1] = keys[index].AsValue();
+
+        for (var index = 0; index < keys.Length; index++)
+        {
+            tail[index + 1] = keys[index].AsValue();
+        }
+
         args.CopyTo(tail.AsSpan(1 + keys.Length));
         return tail;
     }

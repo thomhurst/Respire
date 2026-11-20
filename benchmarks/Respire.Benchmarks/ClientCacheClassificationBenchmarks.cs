@@ -34,6 +34,7 @@ public class ClientCacheClassificationBenchmarks
             var host = Environment.GetEnvironmentVariable("REDIS_HOST");
             var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort)
                 ? configuredPort : 6379;
+
             if (string.IsNullOrEmpty(host))
             {
                 _container = new RedisBuilder("redis:8.10").Build();
@@ -41,9 +42,12 @@ public class ClientCacheClassificationBenchmarks
                 host = _container.Hostname;
                 port = _container.GetMappedPublicPort(6379);
             }
+
             var options = new RespireOptions
             {
-                Endpoints = [new(host, port)], Connections = 1, Protocol = RespireProtocol.Resp3,
+                Endpoints = [new(host, port)],
+                Connections = 1,
+                Protocol = RespireProtocol.Resp3,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             };
             _uncached = await RespireClient.ConnectAsync(options);
@@ -55,6 +59,7 @@ public class ClientCacheClassificationBenchmarks
             _setArguments = _keys.Select(key => new RespireValue[] { key, _value }).ToArray();
             _multiSetArguments = _keys.Select(key => new RespireValue[] { key, _value, key + ":second", _value }).ToArray();
             _deleteArguments = _keys.Select(key => new RespireValue[] { key, key + ":second" }).ToArray();
+
             if (ClassifyTypedSet() != (int)RespireCacheMutation.Mutation
                 || ClassifyMultiKeyMutation() != (int)RespireCacheMutation.Mutation
                 || ClassifyRawCatalogSet() != (int)RespireCacheMutation.Mutation
@@ -64,10 +69,15 @@ public class ClientCacheClassificationBenchmarks
                 || await RawSetConcurrent50Cache() != Callers * WritesPerCaller
                 || await RawSetConcurrent50CacheDisabled() != Callers * WritesPerCaller
                 || await MultiKeyMutationConcurrent50Cache() != Callers * WritesPerCaller)
+            {
                 throw new InvalidOperationException("Cache classification fixture produced unexpected results.");
+            }
             // The multi-key control removes its keys. Restore the read control's source afterward.
             if (!await _cached.SetAsync(_keys[0], _value) || await GetMissCache() != _value)
+            {
                 throw new InvalidOperationException("Cache classification GET fixture was not primed.");
+            }
+
             _cached.ClientSideCache!.Clear();
             _coalescing.ClientSideCache!.Clear();
         }
@@ -119,11 +129,21 @@ public class ClientCacheClassificationBenchmarks
     {
         _cached.ClientSideCache!.Clear();
         var value = await _cached.GetStringAsync(_keys[0]);
-        if (value != _value) throw new InvalidOperationException("GET returned an unexpected value.");
+
+        if (value != _value)
+        {
+            throw new InvalidOperationException("GET returned an unexpected value.");
+        }
+
         return value;
     }
 
-    private enum WriteKind { TypedSet, RawSet, MultiKeyPair }
+    private enum WriteKind
+    {
+        TypedSet,
+        RawSet,
+        MultiKeyPair
+    }
 
     private async Task<long> RunWrites(RespireClient client, WriteKind kind)
     {
@@ -137,31 +157,62 @@ public class ClientCacheClassificationBenchmarks
                 {
                     if (kind == WriteKind.TypedSet)
                     {
-                        if (!await client.SetAsync(_keys[worker], _value)) throw new InvalidOperationException("SET failed.");
+                        if (!await client.SetAsync(_keys[worker], _value))
+                        {
+                            throw new InvalidOperationException("SET failed.");
+                        }
+
                         continue;
                     }
+
                     using var result = await client.ExecuteAsync(
                         kind == WriteKind.RawSet ? RespireCommands.String.SET : RespireCommands.String.MSET,
                         kind == WriteKind.RawSet ? _setArguments[worker] : _multiSetArguments[worker]);
-                    if (result.AsString() != "OK") throw new InvalidOperationException("Raw SET/MSET failed.");
+
+                    if (result.AsString() != "OK")
+                    {
+                        throw new InvalidOperationException("Raw SET/MSET failed.");
+                    }
+
                     if (kind == WriteKind.MultiKeyPair)
                     {
                         using var removed = await client.ExecuteAsync(RespireCommands.Key.DEL, _deleteArguments[worker]);
-                        if (removed.AsInteger() != 2) throw new InvalidOperationException("DEL did not remove both keys.");
+
+                        if (removed.AsInteger() != 2)
+                        {
+                            throw new InvalidOperationException("DEL did not remove both keys.");
+                        }
                     }
                 }
+
                 return (long)WritesPerCaller;
             });
         }
+
         return (await Task.WhenAll(_workers)).Sum();
     }
 
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_cached is not null) await _cached.DisposeAsync();
-        if (_coalescing is not null) await _coalescing.DisposeAsync();
-        if (_uncached is not null) await _uncached.DisposeAsync();
-        if (_container is not null) await _container.DisposeAsync();
+        if (_cached is not null)
+        {
+            await _cached.DisposeAsync();
+        }
+
+        if (_coalescing is not null)
+        {
+            await _coalescing.DisposeAsync();
+        }
+
+        if (_uncached is not null)
+        {
+            await _uncached.DisposeAsync();
+        }
+
+        if (_container is not null)
+        {
+            await _container.DisposeAsync();
+        }
     }
 }

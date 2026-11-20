@@ -26,7 +26,9 @@ public class FunctionIntegrationTests
         var library = RespireFunctionLibrary.Create(Source);
         (await client.Functions.LoadAsync(library)).Should().Be("sample");
         var info = (await client.Functions.ListAsync("sam*", withCode: true)).Single();
-        info.Name.Should().Be("sample"); info.Engine.Should().Be("LUA"); info.Code.Should().Be(Source);
+        info.Name.Should().Be("sample");
+        info.Engine.Should().Be("LUA");
+        info.Code.Should().Be(Source);
         info.Functions.Single(f => f.Name == "echo").Description.Should().Be("binary echo");
         info.Functions.Single(f => f.Name == "echo").Flags.Should().Contain("no-writes");
         (await client.Functions.ListAsync("sample")).Single().Code.Should().BeNull();
@@ -46,23 +48,36 @@ public class FunctionIntegrationTests
         (await client.Functions.DeleteAsync("sample")).Should().BeTrue();
         (await client.Functions.ListAsync()).Should().BeEmpty();
         (await client.Functions.RestoreAsync(dump)).Should().BeTrue();
+
         foreach (var policy in new[] { RespireFunctionRestorePolicy.Replace, RespireFunctionRestorePolicy.Flush })
+        {
             (await client.Functions.RestoreAsync(dump, policy)).Should().BeTrue();
-        Func<Task> collision = async () => { await client.Functions.RestoreAsync(dump); };
+        }
+
+        Func<Task> collision = async () =>
+        {
+            await client.Functions.RestoreAsync(dump);
+        };
         await collision.Should().ThrowAsync<RespireServerException>();
-        Func<Task> invalid = async () => { await client.Functions.RestoreAsync(new byte[] { 0, 255 }); };
+        Func<Task> invalid = async () =>
+        {
+            await client.Functions.RestoreAsync(new byte[] { 0, 255 });
+        };
         await invalid.Should().ThrowAsync<RespireServerException>();
         (await client.Functions.LoadAsync(Source, replace: true)).Should().Be("sample");
+
         foreach (var mode in Enum.GetValues<RespireFunctionFlushMode>())
         {
             (await client.Functions.FlushAsync(mode)).Should().BeTrue();
             (await client.Functions.ListAsync()).Should().BeEmpty();
             await client.Functions.RestoreAsync(dump);
         }
+
         foreach (var transaction in new[] { false, true })
         {
             RespireResult owned;
             byte[] deferredDump;
+
             using (var batch = client.CreateBatch())
             {
                 await using var tx = client.CreateTransaction();
@@ -78,15 +93,38 @@ public class FunctionIntegrationTests
                 var observed = functions.Stats();
                 var deleted = functions.Delete("sample");
                 var restored = functions.Restore(dump);
-                if (transaction) await tx.CommitAsync(); else await batch.ExecuteAsync();
-                flushed.Result.Should().BeTrue(); loaded.Result.Should().Be("sample"); listed.Result.Single().Code.Should().Be(Source);
-                owned = execution.Result; deferredDump = dumped.Result;
-                integer.Result.Should().BeGreaterThan(1); text.Result.Should().Be("text"); typed.Result.Should().Be(new Record(42));
-                observed.Result.Engines["LUA"].FunctionsCount.Should().Be(4); deleted.Result.Should().BeTrue(); restored.Result.Should().BeTrue();
+
+                if (transaction)
+                {
+                    await tx.CommitAsync();
+                }
+                else
+                {
+                    await batch.ExecuteAsync();
+                }
+
+                flushed.Result.Should().BeTrue();
+                loaded.Result.Should().Be("sample");
+                listed.Result.Single().Code.Should().Be(Source);
+                owned = execution.Result;
+                deferredDump = dumped.Result;
+                integer.Result.Should().BeGreaterThan(1);
+                text.Result.Should().Be("text");
+                typed.Result.Should().Be(new Record(42));
+                observed.Result.Engines["LUA"].FunctionsCount.Should().Be(4);
+                deleted.Result.Should().BeTrue();
+                restored.Result.Should().BeTrue();
             }
-            using (owned) { owned[0].AsBytes().Should().Equal(binary); owned[1][0].AsBytes().Should().Equal(binary); }
+
+            using (owned)
+            {
+                owned[0].AsBytes().Should().Equal(binary);
+                owned[1][0].AsBytes().Should().Equal(binary);
+            }
+
             deferredDump.Should().Equal(saved);
         }
+
         dump.Should().Equal(saved);
     }
 
@@ -100,29 +138,47 @@ public class FunctionIntegrationTests
         await using var secondClient = await RespireClient.ConnectAsync($"redis://{server.Hostname}:{server.GetMappedPublicPort(6379)}?protocol={protocol}");
         var library = RespireFunctionLibrary.Create(Source);
         var function = library.Function("write");
+
         foreach (var round in new[] { 0, 1 })
         {
-            if (round == 1) await client.Functions.FlushAsync();
+            if (round == 1)
+            {
+                await client.Functions.FlushAsync();
+            }
+
             var results = await Task.WhenAll(Enumerable.Range(0, 12).Select(i => (i % 2 == 0 ? client : secondClient).Functions.ExecuteIntegerAsync(function, ["counter"]).AsTask()));
             results.Distinct().Should().HaveCount(12);
         }
+
         (await client.GetAsync<long>("counter")).Should().Be(24);
         var replacement = Source + "\nredis.register_function('extra', function() return 99 end)" +
             "\nredis.register_function('user_error', function(keys,args) redis.call('INCR',keys[1]); return redis.error_reply('ERR Function not found in user data') end)";
         var conflicting = RespireFunctionLibrary.Create(replacement).Function("extra");
-        Func<Task> refused = async () => { await client.Functions.ExecuteIntegerAsync(conflicting); };
+        Func<Task> refused = async () =>
+        {
+            await client.Functions.ExecuteIntegerAsync(conflicting);
+        };
         await refused.Should().ThrowAsync<RespireServerException>();
         (await client.Functions.ListAsync("sample", true)).Single().Code.Should().Be(Source);
         var allowed = RespireFunctionLibrary.Create(replacement, replace: true).Function("extra");
         (await client.Functions.ExecuteIntegerAsync(allowed)).Should().Be(99);
         var userError = RespireFunctionLibrary.Create(replacement).Function("user_error");
-        Func<Task> applicationFailure = async () => { await client.Functions.ExecuteIntegerAsync(userError, ["error-counter"]); };
+        Func<Task> applicationFailure = async () =>
+        {
+            await client.Functions.ExecuteIntegerAsync(userError, ["error-counter"]);
+        };
         await applicationFailure.Should().ThrowAsync<RespireServerException>();
         (await client.GetAsync<long>("error-counter")).Should().Be(1);
         var missing = RespireFunctionLibrary.Create(replacement).Function("undefined");
-        Func<Task> absent = async () => { await client.Functions.ExecuteIntegerAsync(missing); };
+        Func<Task> absent = async () =>
+        {
+            await client.Functions.ExecuteIntegerAsync(missing);
+        };
         (await absent.Should().ThrowAsync<RespireServerException>()).Which.Message.Should().Be("ERR Function not found");
-        Func<Task> readOnlyWrite = async () => { await client.Functions.ExecuteIntegerAsync(library.Function("write", true), ["counter"]); };
+        Func<Task> readOnlyWrite = async () =>
+        {
+            await client.Functions.ExecuteIntegerAsync(library.Function("write", true), ["counter"]);
+        };
         await readOnlyWrite.Should().ThrowAsync<RespireServerException>();
         (await client.GetAsync<long>("counter")).Should().Be(24);
         // Restart loses non-persisted libraries; a missing-function reply triggers the same bounded reload.

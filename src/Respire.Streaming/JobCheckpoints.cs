@@ -9,11 +9,22 @@ public sealed class RespireJobCheckpoint
         => (Cursor, State, Percent) = (cursor, state, percent);
 
     /// <summary>The application cursor saved by the handler.</summary>
-    public string Cursor { get; }
+    public string Cursor
+    {
+        get;
+    }
+
     /// <summary>Owned application state bytes.</summary>
-    public ReadOnlyMemory<byte> State { get; }
+    public ReadOnlyMemory<byte> State
+    {
+        get;
+    }
+
     /// <summary>Optional progress from zero through 100.</summary>
-    public int? Percent { get; }
+    public int? Percent
+    {
+        get;
+    }
 }
 
 /// <summary>Reads checkpoint progress for retained job entries, without deserializing their payloads.</summary>
@@ -36,7 +47,12 @@ public static class RespireJobCheckpoints
         ArgumentException.ThrowIfNullOrWhiteSpace(stream);
         // Return only the identity: dashboard inspection must not transfer job payloads.
         using var identity = await client.Scripts.ExecuteAsync(Locate, [stream], [entryId.Value], cancellationToken).ConfigureAwait(false);
-        if (JobCheckpoints.Key(stream, identity.AsString()) is not { } key) return null;
+
+        if (JobCheckpoints.Key(stream, identity.AsString()) is not { } key)
+        {
+            return null;
+        }
+
         JobQueueScheduling.ValidateKeys(client, [stream, key]);
         return await JobCheckpoints.ReadAsync(client, key, cancellationToken).ConfigureAwait(false);
     }
@@ -79,7 +95,12 @@ internal static class JobCheckpoints
     internal static async ValueTask<RespireJobCheckpoint?> ReadAsync(IRespireClient client, string key, CancellationToken token)
     {
         using var result = await client.Scripts.ExecuteAsync(Read, [key], [], token).ConfigureAwait(false);
-        if (result.Count == 0) return null;
+
+        if (result.Count == 0)
+        {
+            return null;
+        }
+
         var percent = (int)result[2].AsInteger();
         return new(result[0].AsString(), result[1].AsBytes(), percent < 0 ? null : percent);
     }

@@ -14,7 +14,11 @@ internal sealed class ImmediateRetryState
     private readonly WriteBuffer _buffer = new(256);
     private int? _slot;
 
-    internal RespireCommandRetryCategory Category { get; private set; }
+    internal RespireCommandRetryCategory Category
+    {
+        get; private set;
+    }
+
     internal ReadOnlyMemory<byte> Frame => _buffer.WrittenMemory;
     internal bool IsRetry;
     internal bool AcceptedAttempt;
@@ -23,6 +27,7 @@ internal sealed class ImmediateRetryState
     internal static ImmediateRetryState Rent<TCommand>(in TCommand command) where TCommand : struct, IRespCommand
     {
         var state = Pool.Rent();
+
         try
         {
             state.Category = command.RetryCategory;
@@ -48,7 +53,11 @@ internal sealed class ImmediateRetryState
     internal void Accepted()
     {
         AcceptedAttempt = true;
-        if (IsRetry) Retries++;
+
+        if (IsRetry)
+        {
+            Retries++;
+        }
     }
 
     internal void Return()
@@ -69,6 +78,7 @@ internal sealed class ImmediateRetryState
     private readonly struct PoolPolicy : IPooledObjectPolicy<ImmediateRetryState>
     {
         public ImmediateRetryState Create() => new();
+
         public bool TryReset(ImmediateRetryState state) => true;
     }
 }

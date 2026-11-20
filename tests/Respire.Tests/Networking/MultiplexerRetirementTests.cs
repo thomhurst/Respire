@@ -41,13 +41,18 @@ public class MultiplexerRetirementTests
             TestingStreamFactory = async (host, port, token) =>
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, token);
                     var index = Interlocked.Increment(ref created);
                     Exception? failure = null;
+
                     if (index <= failures)
+                    {
                         failure = distinct ? new InvalidOperationException("Injected distinct disconnect failure.") : sharedFailure;
+                    }
+
                     var stream = new FailingDisposeStream(socket, failure, injectedFailures);
                     streams.Add(stream);
                     return stream;
@@ -58,6 +63,7 @@ public class MultiplexerRetirementTests
         var node = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port,
             connectionCount: 3, options: connectionOptions);
         var connections = Enumerable.Range(0, 3).Select(node.GetConnection).ToArray();
+
         try
         {
             var retirement = node.RetireAsync();
@@ -65,29 +71,43 @@ public class MultiplexerRetirementTests
             await Assert.That(streams.Count).IsEqualTo(3);
             await Assert.That(streams.All(stream => stream.DisposeCalls > 0)).IsTrue();
             await Assert.That(injectedFailures.Count).IsEqualTo(failures);
+
             if (distinct)
             {
                 await Assert.That(error).IsTypeOf<AggregateException>();
                 var aggregate = (AggregateException)error!;
                 await Assert.That(aggregate.InnerExceptions.Count).IsEqualTo(failures);
+
                 foreach (var failure in injectedFailures)
+                {
                     await Assert.That(aggregate.InnerExceptions.Contains(failure)).IsTrue();
+                }
             }
-            else await Assert.That(ReferenceEquals(error, sharedFailure)).IsTrue();
+            else
+            {
+                await Assert.That(ReferenceEquals(error, sharedFailure)).IsTrue();
+            }
 
             await Assert.That(ReferenceEquals(retirement, node.RetireAsync())).IsTrue();
+
             foreach (var connection in connections)
             {
                 await Assert.That(connection.IsAcceptingCommands).IsFalse();
                 await Assert.That(connection.IsConnected).IsFalse();
             }
+
             if (maintenance)
+            {
                 await Assert.That(server.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(3);
+            }
         }
         finally
         {
             // Disposal re-observes the same failed connection cleanup tasks.
-            try { await node.DisposeAsync().AsTask().WaitAsync(Limit); }
+            try
+            {
+                await node.DisposeAsync().AsTask().WaitAsync(Limit);
+            }
             catch (InvalidOperationException error) when (ReferenceEquals(error, sharedFailure)) { }
             catch (AggregateException error) when (error.InnerExceptions.All(injectedFailures.Contains)) { }
         }
@@ -97,13 +117,27 @@ public class MultiplexerRetirementTests
         : NetworkStream(socket, ownsSocket: true)
     {
         internal int DisposeCalls;
+
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
-            if (!disposing) return;
+
+            if (!disposing)
+            {
+                return;
+            }
+
             var call = Interlocked.Increment(ref DisposeCalls);
-            if (failure is null) return;
-            if (call == 1) failures.Add(failure);
+
+            if (failure is null)
+            {
+                return;
+            }
+
+            if (call == 1)
+            {
+                failures.Add(failure);
+            }
             // Abort may suppress the first disposal failure. Final cleanup must observe
             // the same failure again, while each physical stream is counted only once.
             throw failure;

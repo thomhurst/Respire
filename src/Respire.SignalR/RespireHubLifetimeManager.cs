@@ -8,9 +8,9 @@ using System.Linq;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR.Internal;
 using Microsoft.AspNetCore.SignalR.Protocol;
-using Respire.SignalR.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Respire.SignalR.Internal;
 
 namespace Respire.SignalR;
 
@@ -58,9 +58,13 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         _hubProtocolResolver = hubProtocolResolver;
         _logger = logger;
         var configured = options.Value;
+
         if (configured.RemoteClientResultTimeout <= TimeSpan.Zero
             || configured.RemoteClientResultTimeout.TotalMilliseconds > uint.MaxValue - 1)
+        {
             throw new ArgumentOutOfRangeException(nameof(options), "Remote client result timeout must be positive and within the timer limit.");
+        }
+
         _options = new RespireSignalROptions
         {
             ChannelPrefix = configured.ChannelPrefix,
@@ -73,6 +77,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         _clientResultHeartbeats = new(_bus, _clientResultsManager, logger);
         _ackHandler = new AckHandler();
         _channels = new RedisChannels(typeof(THub).FullName!, _serverName);
+
         if (globalHubOptions != null && hubOptions != null)
         {
             _protocol = new RedisProtocol(new DefaultHubMessageSerializer(hubProtocolResolver, globalHubOptions.Value.SupportedProtocols, hubOptions.Value.SupportedProtocols));
@@ -104,7 +109,10 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
             userTask = SubscribeToUser(connection);
         }
 
-        try { await Task.WhenAll(connectionTask, userTask).ConfigureAwait(false); }
+        try
+        {
+            await Task.WhenAll(connectionTask, userTask).ConfigureAwait(false);
+        }
         catch { await OnDisconnectedAsync(connection).ConfigureAwait(false); throw; }
     }
 
@@ -129,8 +137,13 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         var groupNames = feature.Groups;
         string[] groups;
         await feature.GroupLock.WaitAsync().ConfigureAwait(false);
-        try { groups = groupNames.ToArray(); }
+
+        try
+        {
+            groups = groupNames.ToArray();
+        }
         finally { feature.GroupLock.Release(); }
+
         foreach (var group in groups)
         {
             tasks.Add(RemoveGroupAsyncCore(connection, group));
@@ -166,6 +179,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         // If the connection is local we can skip sending the message through the bus since we require sticky connections.
         // This also saves serializing and deserializing the message!
         var connection = _connections[connectionId];
+
         if (connection != null)
         {
             return connection.WriteAsync(new InvocationMessage(methodName, args), cancellationToken).AsTask();
@@ -208,6 +222,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
 
         cancellationToken.ThrowIfCancellationRequested();
         var connection = _connections[connectionId];
+
         if (connection != null)
         {
             // short circuit if connection is on this server
@@ -225,6 +240,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
 
         cancellationToken.ThrowIfCancellationRequested();
         var connection = _connections[connectionId];
+
         if (connection != null)
         {
             // short circuit if connection is on this server
@@ -275,6 +291,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         {
             var payload = _protocol.WriteInvocation(methodName, args);
             var publishTasks = new List<Task>(userIds.Count);
+
             foreach (var userId in userIds)
             {
                 if (!string.IsNullOrEmpty(userId))
@@ -303,15 +320,26 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         var groupNames = feature.Groups;
 
         await feature.GroupLock.WaitAsync().ConfigureAwait(false);
+
         try
         {
-            if (groupNames.Contains(groupName) || connection.ConnectionAborted.IsCancellationRequested) return;
+            if (groupNames.Contains(groupName) || connection.ConnectionAborted.IsCancellationRequested)
+            {
+                return;
+            }
+
             var groupChannel = _channels.Group(groupName);
             await _groups.AddSubscriptionAsync(groupChannel, connection, SubscribeToGroupAsync).ConfigureAwait(false);
+
             if (connection.ConnectionAborted.IsCancellationRequested)
+            {
                 await _groups.RemoveSubscriptionAsync(groupChannel, connection, _bus,
                     static (state, name) => ((RespirePubSub)state).UnsubscribeAsync(name)).ConfigureAwait(false);
-            else groupNames.Add(groupName);
+            }
+            else
+            {
+                groupNames.Add(groupName);
+            }
         }
         finally { feature.GroupLock.Release(); }
     }
@@ -325,6 +353,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         var groupChannel = _channels.Group(groupName);
         var feature = connection.Features.GetRequiredFeature<IRedisFeature>();
         await feature.GroupLock.WaitAsync().ConfigureAwait(false);
+
         try
         {
             await _groups.RemoveSubscriptionAsync(groupChannel, connection, this, static (state, channelName) =>
@@ -345,6 +374,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         var ack = _ackHandler.CreateAck(id);
         // Send Add/Remove Group to other servers and wait for an ack or timeout
         var message = RedisProtocol.WriteGroupCommand(new RedisGroupCommand(id, _serverName, action, groupName, connectionId));
+
         try
         {
             await PublishAsync(_channels.GroupManagement, message, cancellationToken).ConfigureAwait(false);
@@ -374,8 +404,16 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
     /// <summary>Stops and joins this manager's subscription consumers without disposing the shared client.</summary>
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        foreach (var connection in _connections) _connections.Remove(connection);
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        foreach (var connection in _connections)
+        {
+            _connections.Remove(connection);
+        }
+
         _ackHandler.Dispose();
         await _bus.DisposeAsync().ConfigureAwait(false);
         await _heartbeatTask.ConfigureAwait(false);
@@ -408,6 +446,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                 var messageBytes = _protocol.WriteInvocation(methodName, args, invocationId,
                     returnChannel: _channels.ReturnResults, requestHeartbeat: true);
                 var received = await PublishAsync(_channels.Connection(connectionId), messageBytes, linkedToken).ConfigureAwait(false);
+
                 if (received < 1 && _bus.ReceiverCountIsGlobal)
                 {
                     throw new IOException($"Connection '{connectionId}' does not exist.");
@@ -425,14 +464,22 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         catch (Exception error)
         {
             _clientResultsManager.RemoveInvocation(invocationId);
+
             if (error is OperationCanceledException)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
                 if (_bus.Stopping.IsCancellationRequested)
+                {
                     throw new HubException("SignalR backplane disposed.");
+                }
+
                 if (connection?.ConnectionAborted.IsCancellationRequested == true)
+                {
                     throw new IOException($"Connection '{connectionId}' disconnected.");
+                }
             }
+
             throw;
         }
 
@@ -456,6 +503,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
             {
                 throw new IOException($"Connection '{connectionId}' disconnected.");
             }
+
             throw;
         }
     }
@@ -513,6 +561,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                 var groupMessage = RedisProtocol.ReadGroupCommand(channelMessage.Message);
 
                 var connection = _connections[groupMessage.ConnectionId];
+
                 if (connection == null)
                 {
                     // user not on this server
@@ -570,6 +619,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                     connection.ConnectionAborted, _options.RemoteClientResultTimeout, async completionMessage =>
                 {
                     heartbeat?.Dispose();
+
                     try
                     {
                         var memoryBufferWriter = new ArrayBufferWriter<byte>();
@@ -582,6 +632,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                         RedisLog.ErrorForwardingResult(_logger, completionMessage.InvocationId!, ex);
                     }
                 }, _logger);
+
                 try
                 {
                     _clientResultsManager.AddInvocation(invocation.InvocationId,
@@ -589,6 +640,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                             static (state, completion) => ((RemoteInvocationLifetime)state).CompleteAsync(completion)));
                 }
                 catch { heartbeat?.Dispose(); lifetime.DisposeBeforeStart(); throw; }
+
                 lifetime.Start();
                 // The heartbeat loop publishes independently; Redis acknowledgements must
                 // not delay this invocation or subsequent messages on the connection.
@@ -615,6 +667,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                     var invocation = RedisProtocol.ReadInvocation(channelMessage.Message);
 
                     var tasks = new List<Task>(subscriptions.Count);
+
                     foreach (var userConnection in subscriptions)
                     {
                         tasks.Add(userConnection.WriteAsync(invocation.Message, channelMessage.Stopping).AsTask());
@@ -641,6 +694,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                 var invocation = RedisProtocol.ReadInvocation(channelMessage.Message);
 
                 var tasks = new List<Task>(groupConnections.Count);
+
                 foreach (var groupConnection in groupConnections)
                 {
                     if (invocation.ExcludedConnectionIds?.Contains(groupConnection.ConnectionId) == true)
@@ -667,6 +721,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         {
             var completion = RedisProtocol.ReadCompletion(channelMessage.Message);
             IHubProtocol? protocol = null;
+
             foreach (var hubProtocol in _hubProtocolResolver.AllProtocols)
             {
                 if (hubProtocol.Name.Equals(completion.ProtocolName))
@@ -686,6 +741,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
             var ros = completion.CompletionMessage;
             HubMessage? hubMessage = null;
             bool retryForError = false;
+
             try
             {
                 var parseSuccess = protocol.TryParseMessage(ref ros, _clientResultsManager, out hubMessage);
@@ -726,7 +782,9 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
             }
 
             if (invocationInfo is { } pending)
+            {
                 await pending.Completion(pending.Tcs, (CompletionMessage)hubMessage!).ConfigureAwait(false);
+            }
         });
     }
 
@@ -734,7 +792,9 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
     {
         public static readonly FakeInvocationBinder Instance = new FakeInvocationBinder();
 
-        private FakeInvocationBinder() { }
+        private FakeInvocationBinder()
+        {
+        }
 
         public IReadOnlyList<Type> GetParameterTypes(string methodName)
         {
@@ -755,9 +815,11 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
     private async Task EnsureRedisServerConnection()
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
         if (!Volatile.Read(ref _initialized))
         {
             await _connectionLock.WaitAsync(_bus.Stopping).ConfigureAwait(false);
+
             try
             {
                 if (!_initialized)
@@ -776,7 +838,11 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                     catch
                     {
                         // A partial initialization must not leave duplicate consumers on retry.
-                        if (!_bus.Stopping.IsCancellationRequested) await _bus.ResetAsync().ConfigureAwait(false);
+                        if (!_bus.Stopping.IsCancellationRequested)
+                        {
+                            await _bus.ResetAsync().ConfigureAwait(false);
+                        }
+
                         throw;
                     }
                 }
@@ -816,13 +882,27 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
 
     private interface IRedisFeature
     {
-        HashSet<string> Groups { get; }
-        SemaphoreSlim GroupLock { get; }
+        HashSet<string> Groups
+        {
+            get;
+        }
+
+        SemaphoreSlim GroupLock
+        {
+            get;
+        }
     }
 
     private sealed class RedisFeature : IRedisFeature
     {
-        public HashSet<string> Groups { get; } = new HashSet<string>(StringComparer.Ordinal);
-        public SemaphoreSlim GroupLock { get; } = new(1, 1);
+        public HashSet<string> Groups
+        {
+            get;
+        } = new HashSet<string>(StringComparer.Ordinal);
+
+        public SemaphoreSlim GroupLock
+        {
+            get;
+        } = new(1, 1);
     }
 }

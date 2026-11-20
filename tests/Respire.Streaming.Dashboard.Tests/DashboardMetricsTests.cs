@@ -43,8 +43,11 @@ public class DashboardMetricsTests(RedisTestContainer redis)
         await Assert.That(html).Contains("</td><td>7</td><td>2</td>");
         await Assert.That(html).DoesNotContain("must-not-read");
         await Assert.That(html).DoesNotContain("Metrics history unavailable");
+
         if (Environment.GetEnvironmentVariable("RESPIRE_DASHBOARD_PREVIEW") is { Length: > 0 } preview)
+        {
             await File.WriteAllTextAsync(preview, html);
+        }
     }
 
     [Test]

@@ -17,7 +17,8 @@ public class ClientCacheHitAllocationTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new() { MaxSizeBytes = 200 },
+            Endpoints = [new("127.0.0.1", 1)],
+            ClientSideCache = new() { MaxSizeBytes = 200 },
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -58,8 +59,14 @@ public class ClientCacheHitAllocationTests
             for (var index = 0; index < 1000; index++)
             {
                 if (!cache.TryGetString(in key, out var value) || value != "é😀")
+                {
                     throw new InvalidOperationException("Lost a cached value.");
-                if (cache.TryGet(in missing, out _)) throw new InvalidOperationException("Unexpected cache hit.");
+                }
+
+                if (cache.TryGet(in missing, out _))
+                {
+                    throw new InvalidOperationException("Unexpected cache hit.");
+                }
             }
         })));
         var statistics = cache.GetStatistics();
@@ -78,7 +85,8 @@ public class ClientCacheHitAllocationTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", 1)],
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -90,6 +98,7 @@ public class ClientCacheHitAllocationTests
         var second = await client.GetStringAsync("key");
         await Assert.That(second).IsSameReferenceAs(first);
         await Assert.That(first).IsEqualTo(isNull ? null : "�\0A");
+
         if (!isNull)
         {
             var bytes = (await client.GetBytesAsync("key"))!;
@@ -97,6 +106,7 @@ public class ClientCacheHitAllocationTests
             await Assert.That((await client.GetBytesAsync("key"))![0]).IsEqualTo((byte)0xff);
             await Assert.That(await client.GetStringAsync("key")).IsEqualTo("�\0A");
         }
+
         cache.Invalidate(in key);
         token = cache.BeginRead(in key);
         response = RespValue.BulkString("new"u8.ToArray());
@@ -113,7 +123,8 @@ public class ClientCacheHitAllocationTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", 1)],
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -121,11 +132,13 @@ public class ClientCacheHitAllocationTests
         var token = cache.BeginRead(in key);
         var response = RespValue.BulkString(Encoding.UTF8.GetBytes(text));
         cache.CompleteRead(in token, in response, allowInsert: true);
+
         for (var index = 0; index < 32; index++)
         {
             Measure(client, false);
             Measure(client, true);
         }
+
         var measured = AllocationMeasurement.WithoutConcurrentGc(() => (
             Actual: Measure(client, false), Control: Measure(client, true)));
         await Assert.That(measured.Actual).IsEqualTo(0);
@@ -142,16 +155,19 @@ public class ClientCacheHitAllocationTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", 1)],
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         PublishHashField(cache, RespValue.BulkString(Encoding.UTF8.GetBytes(text)));
+
         for (var index = 0; index < 32; index++)
         {
             MeasureHash(client, false);
             MeasureHash(client, true);
         }
+
         var measured = AllocationMeasurement.WithoutConcurrentGc(() => (
             Actual: MeasureHash(client, false), Control: MeasureHash(client, true)));
         await Assert.That(measured.Actual).IsEqualTo(0);
@@ -168,7 +184,8 @@ public class ClientCacheHitAllocationTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", 1)],
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -179,8 +196,15 @@ public class ClientCacheHitAllocationTests
         await Assert.That(first).IsEqualTo(isNull ? null : "é😀");
         await Assert.That(second).IsSameReferenceAs(first);
         // A decoded value counts against the limit once; a null reply has no text to retain.
-        if (isNull) await Assert.That(cache.SizeBytes).IsEqualTo(binarySize);
-        else await Assert.That(cache.SizeBytes).IsGreaterThan(binarySize);
+        if (isNull)
+        {
+            await Assert.That(cache.SizeBytes).IsEqualTo(binarySize);
+        }
+        else
+        {
+            await Assert.That(cache.SizeBytes).IsGreaterThan(binarySize);
+        }
+
         var statistics = cache.GetStatistics();
         await Assert.That(statistics.Hits).IsEqualTo(2);
         await Assert.That(statistics.Misses).IsEqualTo(0);
@@ -195,7 +219,8 @@ public class ClientCacheHitAllocationTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new() { MaxSizeBytes = 400 },
+            Endpoints = [new("127.0.0.1", 1)],
+            ClientSideCache = new() { MaxSizeBytes = 400 },
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -230,7 +255,8 @@ public class ClientCacheHitAllocationTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", 1)],
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -252,7 +278,8 @@ public class ClientCacheHitAllocationTests
     {
         var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", 1)],
+            ClientSideCache = new(),
         });
         var cache = client.Core.ClientCache!;
         PublishHashField(cache, RespValue.BulkString("value"u8.ToArray()));
@@ -279,15 +306,26 @@ public class ClientCacheHitAllocationTests
     private static long MeasureHash(RespireClient client, bool control)
     {
         var start = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
             var operation = client.Hashes.GetStringAsync("hash", "field");
-            if (!operation.IsCompletedSuccessfully) throw new InvalidOperationException("Expected a synchronous cache hit.");
+
+            if (!operation.IsCompletedSuccessfully)
+            {
+                throw new InvalidOperationException("Expected a synchronous cache hit.");
+            }
+
 #pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             GC.KeepAlive(operation.Result);
+
 #pragma warning restore RESP009
-            if (control) GC.KeepAlive(new byte[37]);
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - start;
     }
 
@@ -295,15 +333,26 @@ public class ClientCacheHitAllocationTests
     private static long Measure(RespireClient client, bool control)
     {
         var start = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
             var operation = client.GetStringAsync("key");
-            if (!operation.IsCompletedSuccessfully) throw new InvalidOperationException("Expected a synchronous cache hit.");
+
+            if (!operation.IsCompletedSuccessfully)
+            {
+                throw new InvalidOperationException("Expected a synchronous cache hit.");
+            }
+
 #pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             GC.KeepAlive(operation.Result);
+
 #pragma warning restore RESP009
-            if (control) GC.KeepAlive(new byte[37]);
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - start;
     }
 }

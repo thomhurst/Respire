@@ -23,7 +23,11 @@ public class TransportRetirementTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         var reply = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
@@ -73,29 +77,45 @@ public class TransportRetirementTests
             {
                 using var value = firstAwaiter.GetResult();
                 entered.TrySetResult();
-                if (!proceed.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Producer did not finish.");
+
+                if (!proceed.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    throw new TimeoutException("Producer did not finish.");
+                }
+
                 scheduler.ReleaseCurrentRunner();
                 scheduler.ReleaseCurrentRunner(); // Repeated retirement must not hand off twice.
                 // The callback must block on scheduler drain to verify reentrant runner handoff.
 #pragma warning disable RESP009
                 scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+
 #pragma warning restore RESP009
                 if (!secondTask.IsCompletedSuccessfully || !thirdTask.IsCompletedSuccessfully)
+                {
                     throw new InvalidOperationException("Retirement skipped queued completions.");
+                }
+
                 completed.TrySetResult();
             }
             catch (Exception error) { completed.TrySetException(error); }
         });
         scheduler.Add(first, RespValue.Integer(1));
         scheduler.Add(second, RespValue.Integer(2));
-        if (!queuedBatch) scheduler.Add(third, RespValue.Integer(3));
+
+        if (!queuedBatch)
+        {
+            scheduler.Add(third, RespValue.Integer(3));
+        }
+
         scheduler.Flush();
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (queuedBatch)
         {
             scheduler.Add(third, RespValue.Integer(3));
             scheduler.Flush();
         }
+
         proceed.Set();
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Task.WhenAll(secondTask, thirdTask);
@@ -120,12 +140,21 @@ public class TransportRetirementTests
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port);
         await multiplexer.GetConnection().DisposeAsync();
-        if (state == RespireConnectionState.Disconnected) await server.DisposeAsync();
+
+        if (state == RespireConnectionState.Disconnected)
+        {
+            await server.DisposeAsync();
+        }
+
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var handled = 0;
         multiplexer.StateChanged += change =>
         {
-            if (change.State != state || Interlocked.Exchange(ref handled, 1) != 0) return;
+            if (change.State != state || Interlocked.Exchange(ref handled, 1) != 0)
+            {
+                return;
+            }
+
             try
             {
                 var cleanup = dispose ? multiplexer.DisposeAsync().AsTask() : multiplexer.RetireAsync();
@@ -136,10 +165,15 @@ public class TransportRetirementTests
             }
             catch (Exception error) { completed.TrySetException(error); }
         };
-        try { _ = multiplexer.GetConnection(); }
+
+        try
+        {
+            _ = multiplexer.GetConnection();
+        }
         catch (RespireConnectionRetiredException) { }
         catch (RespireConnectionException) { }
         catch (ObjectDisposedException) when (dispose) { }
+
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(multiplexer.IsConnected).IsFalse();
     }
@@ -154,7 +188,11 @@ public class TransportRetirementTests
         {
             SuppressReply = command =>
             {
-                if (command != "PING") return false;
+                if (command != "PING")
+                {
+                    return false;
+                }
+
                 pingSeen.TrySetResult();
                 return true;
             },
@@ -167,6 +205,7 @@ public class TransportRetirementTests
         await gate.WaitAsync();
         Task? disposal = null;
         Task? retirement = null;
+
         try
         {
             // Model the bootstrap's exact publication boundary without starving the global thread pool:
@@ -175,19 +214,30 @@ public class TransportRetirementTests
             var id = identity.AsInteger();
             var accepted = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
             await pingSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            if (disposeBeforeRetire) disposal = multiplexer.DisposeAsync().AsTask();
+
+            if (disposeBeforeRetire)
+            {
+                disposal = multiplexer.DisposeAsync().AsTask();
+            }
+
             retirement = multiplexer.RetireAsync();
             await connection.DisposeAsync();
             await connection.RetireAsync();
             await Assert.That(async () => await accepted).ThrowsExactly<RespireConnectionException>();
             await Task.WhenAny(retirement, Task.Delay(100));
             await Assert.That(retirement.IsCompleted).IsFalse();
-            if (disposal is not null) await Assert.That(disposal.IsCompleted).IsFalse();
+
+            if (disposal is not null)
+            {
+                await Assert.That(disposal.IsCompleted).IsFalse();
+            }
+
             typeof(RespireConnection)
                 .GetField("_serverClientId", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                 .SetValue(connection, id);
         }
         finally { gate.Release(); }
+
         if (disposeBeforeRetire)
         {
             await disposal!.WaitAsync(TimeSpan.FromSeconds(5));
@@ -213,14 +263,23 @@ public class TransportRetirementTests
         {
             SuppressReply = command =>
             {
-                if (command != "PING") return false;
+                if (command != "PING")
+                {
+                    return false;
+                }
+
                 seen.TrySetResult();
                 return true;
             },
         };
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port);
         var connection = multiplexer.GetConnection();
-        if (tracked) await connection.EnsureServerClientIdAsync();
+
+        if (tracked)
+        {
+            await connection.EnsureServerClientIdAsync();
+        }
+
         var accepted = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await seen.Task.WaitAsync(TimeSpan.FromSeconds(5));
         using var abort = new CancellationTokenSource();
@@ -255,7 +314,11 @@ public class TransportRetirementTests
         var seen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
         {
-            SuppressReply = _ => { seen.TrySetResult(); return true; }
+            SuppressReply = _ =>
+            {
+                seen.TrySetResult();
+                return true;
+            }
         };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new RespireConnectionOptions { MaxInflightCommands = 1 });
@@ -285,7 +348,11 @@ public class TransportRetirementTests
         var seen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
         {
-            SuppressReply = _ => { seen.TrySetResult(); return true; }
+            SuppressReply = _ =>
+            {
+                seen.TrySetResult();
+                return true;
+            }
         };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         var accepted = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
@@ -306,7 +373,11 @@ public class TransportRetirementTests
         var seen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
         {
-            SuppressReply = _ => { seen.TrySetResult(); return true; }
+            SuppressReply = _ =>
+            {
+                seen.TrySetResult();
+                return true;
+            }
         };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new RespireConnectionOptions { CommandTimeout = TimeSpan.FromMilliseconds(150) });
@@ -317,8 +388,16 @@ public class TransportRetirementTests
         // A timeout abandons the caller's wait, not the FIFO slot or server-side operation.
         await Assert.That(retirement.IsCompleted).IsFalse();
         await Assert.That(connection.IsConnected).IsTrue();
-        if (abort) await connection.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-        else await server.SendRawAsync(FakeRespServer.PongReply);
+
+        if (abort)
+        {
+            await connection.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        else
+        {
+            await server.SendRawAsync(FakeRespServer.PongReply);
+        }
+
         await retirement.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(connection.DrainedSuccessfully).IsEqualTo(!abort);
         await Assert.That(connection.IsConnected).IsFalse();
@@ -330,7 +409,11 @@ public class TransportRetirementTests
         var seen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
         {
-            SuppressReply = _ => { seen.TrySetResult(); return true; }
+            SuppressReply = _ =>
+            {
+                seen.TrySetResult();
+                return true;
+            }
         };
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port);
         var heldConnection = multiplexer.GetConnection();
@@ -356,7 +439,11 @@ public class TransportRetirementTests
         var seen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
         {
-            SuppressReply = _ => { seen.TrySetResult(); return true; }
+            SuppressReply = _ =>
+            {
+                seen.TrySetResult();
+                return true;
+            }
         };
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port);
         var accepted = multiplexer.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
@@ -380,8 +467,16 @@ public class TransportRetirementTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("CLIENT SETNAME ", StringComparison.Ordinal)) return false;
-                if (Interlocked.Increment(ref handshakes) == 1 && reconnect) return false;
+                if (!command.StartsWith("CLIENT SETNAME ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                if (Interlocked.Increment(ref handshakes) == 1 && reconnect)
+                {
+                    return false;
+                }
+
                 blockedHandshake.TrySetResult();
                 return true;
             }
@@ -389,20 +484,35 @@ public class TransportRetirementTests
         await using var multiplexer = RespireConnectionMultiplexer.Create("127.0.0.1", server.Port,
             options: new RespireConnectionOptions { ClientName = "retirement-test" });
         Task? initialization = null;
+
         if (reconnect)
         {
             await multiplexer.EnsureConnectedAsync();
             await multiplexer.GetConnection().DisposeAsync();
             await Assert.That(() => multiplexer.GetConnection()).ThrowsExactly<RespireConnectionException>();
         }
-        else initialization = multiplexer.EnsureConnectedAsync().AsTask();
+        else
+        {
+            initialization = multiplexer.EnsureConnectedAsync().AsTask();
+        }
+
         await blockedHandshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var retirement = multiplexer.RetireAsync();
-        if (dispose) await multiplexer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        if (dispose)
+        {
+            await multiplexer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
         await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (initialization is not null)
+        {
             await Assert.That(async () => await initialization).Throws<OperationCanceledException>();
+        }
+
         await Assert.That(multiplexer.IsConnected).IsFalse();
+
         if (dispose)
         {
             await Assert.That(() => multiplexer.GetConnection()).ThrowsExactly<ObjectDisposedException>();
@@ -413,6 +523,7 @@ public class TransportRetirementTests
             await Assert.That(() => multiplexer.GetConnection()).ThrowsExactly<RespireConnectionRetiredException>();
             await Assert.That(async () => await multiplexer.EnsureConnectedAsync()).ThrowsExactly<RespireConnectionRetiredException>();
         }
+
         await Assert.That(handshakes).IsEqualTo(reconnect ? 2 : 1);
     }
 
@@ -457,7 +568,11 @@ public class TransportRetirementTests
         {
             SuppressReply = command =>
             {
-                if (command != "CLIENT KILL ID 42") return false;
+                if (command != "CLIENT KILL ID 42")
+                {
+                    return false;
+                }
+
                 fenceSeen.TrySetResult();
                 return true;
             }
@@ -483,7 +598,11 @@ public class TransportRetirementTests
         {
             SuppressReply = command =>
             {
-                if (command != "PING") return false;
+                if (command != "PING")
+                {
+                    return false;
+                }
+
                 commandSeen.TrySetResult();
                 return true;
             }
@@ -493,7 +612,12 @@ public class TransportRetirementTests
         var accepted = multiplexer.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await commandSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var retirement = retireAfterDisposal ? null : multiplexer.RetireAsync();
-        if (retirement is not null) await Assert.That(retirement.IsCompleted).IsFalse();
+
+        if (retirement is not null)
+        {
+            await Assert.That(retirement.IsCompleted).IsFalse();
+        }
+
         await multiplexer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         retirement ??= multiplexer.RetireAsync();
         await Assert.That(async () => await retirement.WaitAsync(TimeSpan.FromSeconds(5)))
@@ -513,7 +637,10 @@ public class TransportRetirementTests
         Task? retirement = null;
         multiplexer.StateChanged += change =>
         {
-            if (change.State == RespireConnectionState.Reconnecting) retirement = multiplexer.RetireAsync();
+            if (change.State == RespireConnectionState.Reconnecting)
+            {
+                retirement = multiplexer.RetireAsync();
+            }
         };
         await multiplexer.GetConnection().DisposeAsync();
         await Assert.That(() => multiplexer.GetConnection()).ThrowsExactly<RespireConnectionRetiredException>();
@@ -528,7 +655,11 @@ public class TransportRetirementTests
         var seen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
         {
-            SuppressReply = _ => { seen.TrySetResult(); return true; }
+            SuppressReply = _ =>
+            {
+                seen.TrySetResult();
+                return true;
+            }
         };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         using var caller = new CancellationTokenSource();
@@ -555,6 +686,7 @@ public class TransportRetirementTests
             .GetField("_retiredFenceGate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .GetValue(multiplexer)!;
         await gate.WaitAsync();
+
         try
         {
             // Hold the fence entry boundary. Retirement without IDs must finish without it,
@@ -599,12 +731,19 @@ public class TransportRetirementTests
         var received = new byte[frame.Length];
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var count = 0;
+
         while (count < received.Length)
         {
             var read = await peer.ReceiveAsync(received.AsMemory(count), SocketFlags.None, deadline.Token);
-            if (read == 0) throw new InvalidOperationException("Retirement truncated the accepted frame.");
+
+            if (read == 0)
+            {
+                throw new InvalidOperationException("Retirement truncated the accepted frame.");
+            }
+
             count += read;
         }
+
         await Assert.That(received.AsSpan().SequenceEqual(frame)).IsTrue();
         await Assert.That(retirement.IsCompleted).IsFalse();
         await peer.SendAsync(FakeRespServer.OkReply, SocketFlags.None, deadline.Token);

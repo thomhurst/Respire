@@ -92,6 +92,7 @@ public class NotificationWaitConfigurationTests
     private static async Task AcquireAsync(IRespireClient client, string operation)
     {
         var coordination = new RespireCoordination(client);
+
         if (operation == "fair")
         {
             await using var lease = await coordination.CreateFairLock("lease", "counter", "queue")
@@ -111,23 +112,36 @@ public class NotificationWaitConfigurationTests
 
     private static IRespireClient Wrap(IRespireClient client, string wrapper)
     {
-        if (wrapper == "none") return client;
+        if (wrapper == "none")
+        {
+            return client;
+        }
+
         var proxy = DispatchProxy.Create<IRespireClient, ForwardingClient>();
         var forwarding = (ForwardingClient)proxy;
         forwarding.Inner = client;
+
         if (wrapper == "client-and-cache")
         {
             var cache = DispatchProxy.Create<IRespireClientSideCache, ForwardingCache>();
             ((ForwardingCache)cache).Inner = client.ClientSideCache!;
             forwarding.Cache = cache;
         }
+
         return proxy;
     }
 
     public class ForwardingClient : DispatchProxy, IRespireNameResolver
     {
-        public IRespireClient Inner { get; set; } = null!;
-        public IRespireClientSideCache? Cache { get; set; }
+        public IRespireClient Inner
+        {
+            get; set;
+        } = null!;
+
+        public IRespireClientSideCache? Cache
+        {
+            get; set;
+        }
 
         public RespireKey ResolveKey(RespireKey key) => ((IRespireNameResolver)Inner).ResolveKey(key);
 
@@ -140,7 +154,10 @@ public class NotificationWaitConfigurationTests
 
     public class ForwardingCache : DispatchProxy
     {
-        public IRespireClientSideCache Inner { get; set; } = null!;
+        public IRespireClientSideCache Inner
+        {
+            get; set;
+        } = null!;
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
             => targetMethod!.Invoke(Inner, args);

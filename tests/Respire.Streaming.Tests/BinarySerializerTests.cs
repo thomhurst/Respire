@@ -119,21 +119,31 @@ public class BinarySerializerTests
         var initialize = Task.Factory.StartNew(() =>
         {
             if (!start.SignalAndWait(TimeSpan.FromSeconds(30)))
+            {
                 throw new TimeoutException("Model initializer did not reach the start barrier.");
+            }
+
             RuntimeHelpers.RunClassConstructor(typeof(MemoryPackFirstUsePayload<TScenario>).TypeHandle);
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         var callers = Enumerable.Range(0, 8).Select(_ => Task.Factory.StartNew(() =>
         {
             if (!start.SignalAndWait(TimeSpan.FromSeconds(30)))
+            {
                 throw new TimeoutException("First-use callers did not reach the start barrier.");
+            }
 
             if (writeNull)
             {
                 var writer = new ArrayBufferWriter<byte>();
+
                 if (runtimeType)
+                {
                     serializer.Serialize(writer, typeof(MemoryPackFirstUsePayload<TScenario>), null);
+                }
                 else
+                {
                     serializer.Serialize<MemoryPackFirstUsePayload<TScenario>?>(writer, null);
+                }
 
                 // MemoryPack's null-object header; reading it here would warm another API.
                 return writer.WrittenSpan.SequenceEqual(new byte[] { 255 });
@@ -154,8 +164,11 @@ public class BinarySerializerTests
     }
 
     public sealed class FirstGenericRead;
+
     public sealed class FirstRuntimeRead;
+
     public sealed class FirstGenericNullWrite;
+
     public sealed class FirstRuntimeNullWrite;
 
     [Test]
@@ -189,12 +202,20 @@ public class BinarySerializerTests
     public async Task DependencyInjectionResolvesSingletonAndConfiguresClient(string format)
     {
         var services = new ServiceCollection();
+
         switch (format)
         {
-            case "MessagePack": services.AddRespireMessagePackSerializer(); break;
-            case "MemoryPack": services.AddRespireMemoryPackSerializer(); break;
-            default: services.AddRespireProtobufSerializer(); break;
+            case "MessagePack":
+                services.AddRespireMessagePackSerializer();
+                break;
+            case "MemoryPack":
+                services.AddRespireMemoryPackSerializer();
+                break;
+            default:
+                services.AddRespireProtobufSerializer();
+                break;
         }
+
         IRespireSerializer? configured = null;
         services.AddRespire(provider => RespireOptions.Parse("localhost:6379") with
         {
@@ -248,13 +269,33 @@ public class BinarySerializerTests
         await Assert.That(restored.Extra).IsEqualTo(42);
     }
 
-    public class CustomProtobufPayload { public string Name { get; set; } = ""; }
+    public class CustomProtobufPayload
+    {
+        public string Name
+        {
+            get; set;
+        } = "";
+    }
 
     [ProtoContract, ProtoInclude(10, typeof(ProtobufDerived))]
-    public class ProtobufBase { [ProtoMember(1)] public string Name { get; set; } = ""; }
+    public class ProtobufBase
+    {
+        [ProtoMember(1)]
+        public string Name
+        {
+            get; set;
+        } = "";
+    }
 
     [ProtoContract]
-    public class ProtobufDerived : ProtobufBase { [ProtoMember(1)] public int Extra { get; set; } }
+    public class ProtobufDerived : ProtobufBase
+    {
+        [ProtoMember(1)]
+        public int Extra
+        {
+            get; set;
+        }
+    }
 
     internal static async Task Verify(SerializerPayload? actual, SerializerPayload expected)
     {
@@ -274,12 +315,24 @@ public class BinarySerializerTests
 [MessagePackObject, MemoryPackable, ProtoContract]
 public partial class SerializerPayload
 {
-    [Key(0), ProtoMember(1)] public string Name { get; set; } = "";
-    [Key(1), ProtoMember(2)] public int Age { get; set; }
+    [Key(0), ProtoMember(1)]
+    public string Name
+    {
+        get; set;
+    } = "";
+
+    [Key(1), ProtoMember(2)]
+    public int Age
+    {
+        get; set;
+    }
 }
 
 [MemoryPackable]
 public partial class MemoryPackFirstUsePayload<TScenario>
 {
-    public int Value { get; set; }
+    public int Value
+    {
+        get; set;
+    }
 }

@@ -39,11 +39,15 @@ public static class RespireStreamWorkerServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(deserialize);
         options ??= new RespireStreamWorkerOptions();
         options.Validate();
+
         if (services.Any(service => service.ServiceType == typeof(TelemetryRegistration)
             && service.ImplementationInstance is TelemetryRegistration registration
             && string.Equals(registration.Name, options.TelemetryName, StringComparison.Ordinal)))
+        {
             throw new ArgumentException("Each stream worker must have a unique telemetry name within the service collection.",
                 nameof(RespireStreamWorkerOptions.TelemetryName));
+        }
+
         services.AddSingleton(new TelemetryRegistration(options.TelemetryName));
         services.TryAddScoped<THandler>();
         services.AddSingleton<IHostedService>(provider => new RespireStreamWorker<THandler, TMessage>(

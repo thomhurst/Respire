@@ -37,8 +37,17 @@ public class CacheAsideTests
         await Assert.That(Serialization.ByteMemorySerializationTests.ToMemory(created).Span.SequenceEqual(expected)).IsTrue();
         var existing = await client.GetOrSetAsync<T>(key, _ => throw new Exception("Factory must not run on a hit."), Ttl);
         await Assert.That(Serialization.ByteMemorySerializationTests.ToMemory(existing).Span.SequenceEqual(expected)).IsTrue();
-        if (created is Memory<byte> mutable && mutable.Length > 0) mutable.Span[0] = 42;
-        if (created is ArraySegment<byte> segment && segment.Count > 0) segment[0] = 42;
+
+        if (created is Memory<byte> mutable && mutable.Length > 0)
+        {
+            mutable.Span[0] = 42;
+        }
+
+        if (created is ArraySegment<byte> segment && segment.Count > 0)
+        {
+            segment[0] = 42;
+        }
+
         await Assert.That(Serialization.ByteMemorySerializationTests.ToMemory(existing).Span.SequenceEqual(expected)).IsTrue();
         await Assert.That((await client.GetBytesAsync(key))!.AsSpan().SequenceEqual(expected)).IsTrue();
     }
@@ -78,20 +87,31 @@ public class CacheAsideTests
         var entered = NewSignal();
         var release = NewSignal();
         var calls = 0;
+
         async ValueTask<string?> Factory(CancellationToken token)
         {
-            if (Interlocked.Increment(ref calls) == 2) entered.TrySetResult();
+            if (Interlocked.Increment(ref calls) == 2)
+            {
+                entered.TrySetResult();
+            }
+
             await release.Task.WaitAsync(token);
             return "value";
         }
+
         var firstExpiry = RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(milliseconds));
         RespireExpiry secondExpiry = differentDeadline
             ? DateTimeOffset.FromUnixTimeMilliseconds(milliseconds + 1)
             : TimeSpan.FromMilliseconds(milliseconds);
         var first = client.GetOrSetAsync("key", Factory, firstExpiry).AsTask();
         var second = client.GetOrSetAsync("key", Factory, secondExpiry).AsTask();
-        try { await entered.Task.WaitAsync(Limit); }
+
+        try
+        {
+            await entered.Task.WaitAsync(Limit);
+        }
         finally { release.TrySetResult(); }
+
         await Task.WhenAll(first, second).WaitAsync(Limit);
         await Assert.That(calls).IsEqualTo(2);
         await Assert.That(server.SuccessfulSets).IsEqualTo(1);
@@ -106,6 +126,7 @@ public class CacheAsideTests
         var entered = NewSignal();
         var release = NewSignal();
         var calls = 0;
+
         async ValueTask<string?> Factory(CancellationToken token)
         {
             Interlocked.Increment(ref calls);
@@ -113,14 +134,17 @@ public class CacheAsideTests
             await release.Task.WaitAsync(token);
             return "value";
         }
+
         var first = client.GetOrSetAsync("key", Factory, expiry).AsTask();
         Task<string?>? second = null;
+
         try
         {
             await entered.Task.WaitAsync(Limit);
             second = client.GetOrSetAsync("key", Factory, expiry).AsTask();
         }
         finally { release.TrySetResult(); }
+
         await Task.WhenAll(first, second!).WaitAsync(Limit);
         await Assert.That(calls).IsEqualTo(1);
     }
@@ -136,12 +160,14 @@ public class CacheAsideTests
         RespireExpiry[] invalid = [RespireExpiry.None, RespireExpiry.Keep, RespireExpiry.Persist,
             TimeSpan.Zero, TimeSpan.FromTicks(1), TimeSpan.FromMilliseconds(-1),
             DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddMilliseconds(-1)];
+
         foreach (var expiry in invalid)
         {
             var error = await Assert.That(async () => await client.GetOrSetAsync<string>("key",
                 _ => throw new Exception("factory"), expiry)).ThrowsExactly<ArgumentOutOfRangeException>();
             await Assert.That(error!.ParamName).IsEqualTo("expiry");
         }
+
         await Assert.That(server.Commands.Count(command => command.StartsWith("GET "))).IsEqualTo(reads);
         await Assert.That(server.SuccessfulSets).IsEqualTo(0);
     }
@@ -163,19 +189,31 @@ public class CacheAsideTests
     }
 
     private static object? _escape;
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static long MeasureHot(RespireClient client, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
             var pending = client.GetOrSetAsync<int>("zero", static _ => throw new Exception("factory"), Ttl);
-            if (!pending.IsCompletedSuccessfully) throw new InvalidOperationException("Expected a local hit.");
+
+            if (!pending.IsCompletedSuccessfully)
+            {
+                throw new InvalidOperationException("Expected a local hit.");
+            }
+
 #pragma warning disable RESP009 // IsCompletedSuccessfully above guarantees the allocation probe cannot block or leave the measuring thread.
             _ = pending.Result;
+
 #pragma warning restore RESP009
-            if (allocate) Volatile.Write(ref _escape, new byte[37]);
+            if (allocate)
+            {
+                Volatile.Write(ref _escape, new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -189,23 +227,39 @@ public class CacheAsideTests
         var entered = NewSignal();
         var release = NewSignal();
         var calls = 0;
+
         async ValueTask<string?> Factory(CancellationToken token)
         {
-            if (Interlocked.Increment(ref calls) == 2) entered.TrySetResult();
+            if (Interlocked.Increment(ref calls) == 2)
+            {
+                entered.TrySetResult();
+            }
+
             await release.Task.WaitAsync(token);
             return "value";
         }
+
         async Task<string?> ReadSecondAsync()
         {
-            if (!differentType) return await client.GetOrSetAsync("key", Factory, Ttl + TimeSpan.FromMilliseconds(1));
+            if (!differentType)
+            {
+                return await client.GetOrSetAsync("key", Factory, Ttl + TimeSpan.FromMilliseconds(1));
+            }
+
             var bytes = await client.GetOrSetAsync<byte[]>("key", async token =>
                 Encoding.UTF8.GetBytes((await Factory(token))!), Ttl);
             return Encoding.UTF8.GetString(bytes!);
         }
+
         var first = client.GetOrSetAsync("key", Factory, Ttl).AsTask();
         var second = ReadSecondAsync();
-        try { await entered.Task.WaitAsync(Limit); }
+
+        try
+        {
+            await entered.Task.WaitAsync(Limit);
+        }
         finally { release.TrySetResult(); }
+
         await Task.WhenAll(first, second).WaitAsync(Limit);
         await Assert.That(calls).IsEqualTo(2);
         await Assert.That(server.SuccessfulSets).IsEqualTo(1);
@@ -264,7 +318,13 @@ public class CacheAsideTests
         await using var server = new CacheServer();
         await using var client = await server.ConnectAsync();
         var calls = 0;
-        ValueTask<string?> Factory(CancellationToken _) { calls++; return ValueTask.FromResult<string?>(null); }
+
+        ValueTask<string?> Factory(CancellationToken _)
+        {
+            calls++;
+            return ValueTask.FromResult<string?>(null);
+        }
+
         await Assert.That(await client.GetOrSetAsync("key", Factory, Ttl)).IsNull();
         await Assert.That(await client.GetOrSetAsync("key", Factory, Ttl)).IsNull();
         await Assert.That(calls).IsEqualTo(2);
@@ -284,15 +344,26 @@ public class CacheAsideTests
         var release = NewSignal();
         var calls = 0;
         var expected = coalesce ? 1 : 16;
+
         async ValueTask<byte[]?> Factory(CancellationToken token)
         {
-            if (Interlocked.Increment(ref calls) == expected) entered.TrySetResult();
+            if (Interlocked.Increment(ref calls) == expected)
+            {
+                entered.TrySetResult();
+            }
+
             await release.Task.WaitAsync(token);
             return "value"u8.ToArray();
         }
+
         var reads = Enumerable.Range(0, 16).Select(_ => client.GetOrSetAsync("key", Factory, Ttl).AsTask()).ToArray();
-        try { await entered.Task.WaitAsync(Limit); }
+
+        try
+        {
+            await entered.Task.WaitAsync(Limit);
+        }
         finally { release.TrySetResult(); }
+
         var values = await Task.WhenAll(reads).WaitAsync(Limit);
         await Assert.That(calls).IsEqualTo(expected);
         await Assert.That(server.Commands.Count(command => command == "SET key value PX 12000 NX GET")).IsEqualTo(expected);
@@ -322,12 +393,14 @@ public class CacheAsideTests
             await release.Task.WaitAsync(token);
             return "loser";
         }, Ttl).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
             server.Set("key", "winner");
         }
         finally { release.TrySetResult(); }
+
         await Assert.That(await read.WaitAsync(Limit)).IsEqualTo("winner");
         await Assert.That(server.SuccessfulSets).IsEqualTo(0);
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("winner");
@@ -344,7 +417,10 @@ public class CacheAsideTests
         var invalidated = new TaskCompletionSource<RespireClientCacheInvalidation>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var observer = view.ClientSideCache!.SubscribeInvalidations(physicalKey, change =>
         {
-            if (change.Reasons.HasFlag(RespireClientCacheInvalidationReason.LocalMutation)) invalidated.TrySetResult(change);
+            if (change.Reasons.HasFlag(RespireClientCacheInvalidationReason.LocalMutation))
+            {
+                invalidated.TrySetResult(change);
+            }
         });
         var entered = NewSignal();
         var release = NewSignal();
@@ -354,12 +430,14 @@ public class CacheAsideTests
             await release.Task.WaitAsync(token);
             return "value";
         }, Ttl).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
             Array.Fill(bytes, (byte)42);
         }
         finally { release.TrySetResult(); }
+
         await Assert.That(await read.WaitAsync(Limit)).IsEqualTo("value");
         var change = await invalidated.Task.WaitAsync(Limit);
         await Assert.That(change.Key).IsEqualTo((RespireKey)physicalKey);
@@ -374,16 +452,23 @@ public class CacheAsideTests
         await using var client = await server.ConnectAsync();
         var entered = NewSignal();
         var release = NewSignal();
+
         async ValueTask<string?> Factory(CancellationToken token)
         {
             entered.TrySetResult();
             await release.Task.WaitAsync(token);
             throw new InvalidOperationException("factory failed");
         }
+
         var first = client.GetOrSetAsync("key", Factory, Ttl).AsTask();
         var second = client.GetOrSetAsync("key", Factory, Ttl).AsTask();
-        try { await entered.Task.WaitAsync(Limit); }
+
+        try
+        {
+            await entered.Task.WaitAsync(Limit);
+        }
         finally { release.TrySetResult(); }
+
         await Assert.That(async () => await first.WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
         await Assert.That(async () => await second.WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
         await Assert.That(server.SuccessfulSets).IsEqualTo(0);
@@ -399,6 +484,7 @@ public class CacheAsideTests
         var entered = NewSignal();
         var release = NewSignal();
         CancellationToken factoryToken = default;
+
         async ValueTask<string?> Factory(CancellationToken token)
         {
             factoryToken = token;
@@ -406,8 +492,10 @@ public class CacheAsideTests
             await release.Task.WaitAsync(token);
             return "value";
         }
+
         var first = client.GetOrSetAsync("key", Factory, Ttl, canceled.Token).AsTask();
         var second = client.GetOrSetAsync("key", Factory, Ttl).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -416,6 +504,7 @@ public class CacheAsideTests
             await Assert.That(factoryToken.IsCancellationRequested).IsFalse();
         }
         finally { release.TrySetResult(); }
+
         await Assert.That(await second.WaitAsync(Limit)).IsEqualTo("value");
     }
 
@@ -435,6 +524,7 @@ public class CacheAsideTests
             await release.Task;
             return "late";
         }, Ttl, canceled.Token).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -443,6 +533,7 @@ public class CacheAsideTests
             await factoryCanceled.Task.WaitAsync(Limit);
         }
         finally { release.TrySetResult(); }
+
         await WaitUntilAsync(() => client.Core.ClientCache!.ActiveSharedReadCount == 0);
         await Assert.That(server.Commands.Any(command => command.StartsWith("SET "))).IsFalse();
     }
@@ -458,22 +549,28 @@ public class CacheAsideTests
         var secondRelease = NewSignal();
         var first = client.GetOrSetAsync<string>("key", async token =>
         {
-            firstEntered.TrySetResult(); await firstRelease.Task.WaitAsync(token); return "first";
+            firstEntered.TrySetResult();
+            await firstRelease.Task.WaitAsync(token);
+            return "first";
         }, Ttl).AsTask();
         Task<string?>? second = null;
+
         try
         {
             await firstEntered.Task.WaitAsync(Limit);
             client.ClientSideCache!.Clear();
             second = client.GetOrSetAsync<string>("key", async token =>
             {
-                secondEntered.TrySetResult(); await secondRelease.Task.WaitAsync(token); return "second";
+                secondEntered.TrySetResult();
+                await secondRelease.Task.WaitAsync(token);
+                return "second";
             }, Ttl).AsTask();
             await secondEntered.Task.WaitAsync(Limit);
             secondRelease.TrySetResult();
             await Assert.That(await second.WaitAsync(Limit)).IsEqualTo("second");
         }
         finally { firstRelease.TrySetResult(); secondRelease.TrySetResult(); }
+
         await Assert.That(await first.WaitAsync(Limit)).IsEqualTo("second");
         await Assert.That(server.SuccessfulSets).IsEqualTo(1);
     }
@@ -513,9 +610,11 @@ public class CacheAsideTests
             await release.Task;
             return "late";
         }, Ttl, canceled.Token).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
+
             if (disposeClient)
             {
                 await client.DisposeAsync();
@@ -528,6 +627,7 @@ public class CacheAsideTests
             }
         }
         finally { release.TrySetResult(); }
+
         await WaitUntilAsync(() => client.Core.ClientCache!.ActiveSharedReadCount == 0);
         await Assert.That(server.SuccessfulSets).IsEqualTo(0);
     }
@@ -545,21 +645,38 @@ public class CacheAsideTests
         await Assert.That(server.Commands.Any(command => command.StartsWith("GET ") || command.StartsWith("SET "))).IsFalse();
     }
 
-    public sealed class Payload { public string? Name { get; set; } }
+    public sealed class Payload
+    {
+        public string? Name
+        {
+            get; set;
+        }
+    }
 
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(Limit);
-        while (!condition()) await Task.Delay(10, timeout.Token);
+
+        while (!condition())
+        {
+            await Task.Delay(10, timeout.Token);
+        }
     }
 
     private sealed class CacheServer : IAsyncDisposable
     {
         private readonly ConcurrentDictionary<string, byte[]> _values = new();
         private int _successfulSets;
-        internal FakeRespServer Server { get; }
+
+        internal FakeRespServer Server
+        {
+            get;
+        }
+
         internal IReadOnlyList<string> Commands => Server.ReceivedCommands;
+
         internal int SuccessfulSets => Volatile.Read(ref _successfulSets);
 
         internal CacheServer()
@@ -567,31 +684,61 @@ public class CacheAsideTests
             Server = new FakeRespServer(FakeRespServer.OkReply);
             Server.ReplyOverride = (_, command) =>
             {
-                if (command == "HELLO 3") return "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
-                if (command == "CLIENT ID") return ":1\r\n"u8.ToArray();
-                if (command.StartsWith("CLIENT KILL")) return ":0\r\n"u8.ToArray();
-                if (command == "PING") return FakeRespServer.PongReply;
-                if (!command.StartsWith("GET ") && !command.StartsWith("SET ")) return FakeRespServer.OkReply;
+                if (command == "HELLO 3")
+                {
+                    return "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
+                }
+
+                if (command == "CLIENT ID")
+                {
+                    return ":1\r\n"u8.ToArray();
+                }
+
+                if (command.StartsWith("CLIENT KILL"))
+                {
+                    return ":0\r\n"u8.ToArray();
+                }
+
+                if (command == "PING")
+                {
+                    return FakeRespServer.PongReply;
+                }
+
+                if (!command.StartsWith("GET ") && !command.StartsWith("SET "))
+                {
+                    return FakeRespServer.OkReply;
+                }
+
                 var arguments = Server.ReceivedArguments[^1];
                 var key = Convert.ToHexString(arguments[1]);
-                if (command.StartsWith("GET ")) return Bulk(_values.GetValueOrDefault(key));
+
+                if (command.StartsWith("GET "))
+                {
+                    return Bulk(_values.GetValueOrDefault(key));
+                }
+
                 if (_values.TryAdd(key, arguments[2].ToArray()))
                 {
                     Interlocked.Increment(ref _successfulSets);
                     return Bulk(null);
                 }
+
                 return Bulk(_values[key]);
             };
         }
 
         internal void Set(string key, string value) => _values[Convert.ToHexString(Encoding.UTF8.GetBytes(key))] = Encoding.UTF8.GetBytes(value);
+
         internal ValueTask<RespireClient> ConnectAsync(bool coalesce = true, bool enableCache = true) => RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", Server.Port)], Connections = 1,
+            Endpoints = [new("127.0.0.1", Server.Port)],
+            Connections = 1,
             ClientSideCache = enableCache ? new() { CoalesceConcurrentMisses = coalesce } : null,
         });
+
         private static byte[] Bulk(byte[]? value) => value is null ? "$-1\r\n"u8.ToArray()
             : [.. Encoding.ASCII.GetBytes($"${value.Length}\r\n"), .. value, 13, 10];
+
         public ValueTask DisposeAsync() => Server.DisposeAsync();
     }
 }

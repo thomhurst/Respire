@@ -17,19 +17,38 @@ public class ReconnectRegistrationTests
     {
         var services = new ServiceCollection();
         var policy = configured ? new RespireReconnectPolicy { MaxAttempts = 3 } : null;
+
         void Configure(RespireOptionsBuilder options)
         {
             options.Endpoints.Add(new RespireEndpoint("127.0.0.1", 1));
-            if (configured) options.ReconnectPolicy = policy;
+
+            if (configured)
+            {
+                options.ReconnectPolicy = policy;
+            }
         }
-        if (keyed) services.AddKeyedRespire("recovery", Configure);
-        else services.AddRespire(Configure);
+
+        if (keyed)
+        {
+            services.AddKeyedRespire("recovery", Configure);
+        }
+        else
+        {
+            services.AddRespire(Configure);
+        }
+
         await using var provider = services.BuildServiceProvider();
         var client = keyed ? provider.GetRequiredKeyedService<RespireClient>("recovery")
             : provider.GetRequiredService<RespireClient>();
 
         // Lazy construction never connects; the immutable policy reaches the client unchanged.
-        if (configured) await Assert.That(client.Core.Options.ReconnectPolicy).IsSameReferenceAs(policy);
-        else await Assert.That(client.Core.Options.ReconnectPolicy).IsNull();
+        if (configured)
+        {
+            await Assert.That(client.Core.Options.ReconnectPolicy).IsSameReferenceAs(policy);
+        }
+        else
+        {
+            await Assert.That(client.Core.Options.ReconnectPolicy).IsNull();
+        }
     }
 }

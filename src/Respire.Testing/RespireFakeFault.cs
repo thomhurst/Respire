@@ -5,7 +5,9 @@ namespace Respire.Testing;
 public sealed class RespireFakeGate
 {
     private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     internal Task Released => _released.Task;
+
     /// <summary>Allows all current and future waiters to proceed.</summary>
     public void Release() => _released.TrySetResult();
 }
@@ -13,12 +15,38 @@ public sealed class RespireFakeGate
 /// <summary>An immutable fault action for a complete RESP command.</summary>
 public sealed class RespireFakeFault
 {
-    internal enum ActionKind { Delay, Pause, Disconnect, Error }
-    internal ActionKind Kind { get; }
-    internal bool AfterExecution { get; }
-    internal TimeSpan Duration { get; }
-    internal RespireFakeGate? Gate { get; }
-    internal string? Error { get; }
+    internal enum ActionKind
+    {
+        Delay,
+        Pause,
+        Disconnect,
+        Error
+    }
+
+    internal ActionKind Kind
+    {
+        get;
+    }
+
+    internal bool AfterExecution
+    {
+        get;
+    }
+
+    internal TimeSpan Duration
+    {
+        get;
+    }
+
+    internal RespireFakeGate? Gate
+    {
+        get;
+    }
+
+    internal string? Error
+    {
+        get;
+    }
 
     private RespireFakeFault(ActionKind kind, bool afterExecution = false, TimeSpan duration = default,
         RespireFakeGate? gate = null, string? error = null)
@@ -28,7 +56,10 @@ public sealed class RespireFakeFault
     public static RespireFakeFault Delay(TimeSpan duration, bool afterExecution = false)
     {
         if (duration < TimeSpan.Zero || duration.TotalMilliseconds > uint.MaxValue - 1)
+        {
             throw new ArgumentOutOfRangeException(nameof(duration));
+        }
+
         return new(ActionKind.Delay, afterExecution, duration);
     }
 
@@ -48,10 +79,17 @@ public sealed class RespireFakeFault
     /// <summary>Rejects the command with MOVED. The fake does not provide Cluster topology or route to the destination.</summary>
     public static RespireFakeFault Moved(int slot, RespireEndpoint destination)
     {
-        if ((uint)slot >= 16384) throw new ArgumentOutOfRangeException(nameof(slot));
+        if ((uint)slot >= 16384)
+        {
+            throw new ArgumentOutOfRangeException(nameof(slot));
+        }
+
         if (string.IsNullOrWhiteSpace(destination.Host) || destination.Host.Any(char.IsWhiteSpace) || destination.Host.Any(char.IsControl)
             || destination.Port is < 1 or > 65535)
+        {
             throw new ArgumentException("A valid redirect endpoint is required.", nameof(destination));
+        }
+
         return new(ActionKind.Error, error: $"MOVED {slot} {destination}");
     }
 }

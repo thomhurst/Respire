@@ -30,13 +30,22 @@ public readonly record struct RespireClientCacheInvalidation(
 public interface IRespireClientCacheInvalidationSubscription : IDisposable
 {
     /// <summary>The owned physical key supplied at registration.</summary>
-    RespireKey Key { get; }
+    RespireKey Key
+    {
+        get;
+    }
 
     /// <summary>Whether cancellation, subscription disposal, or client disposal stopped observation.</summary>
-    bool IsDisposed { get; }
+    bool IsDisposed
+    {
+        get;
+    }
 
     /// <summary>The most recent callback failure, or null if no callback has thrown.</summary>
-    Exception? LastObserverException { get; }
+    Exception? LastObserverException
+    {
+        get;
+    }
 
     /// <summary>Is canceled when the observer or its owning cache stops the subscription.</summary>
     /// <remarks>Cancellation is signaled after cleanup. Exceptions from callbacks registered on this
@@ -65,7 +74,10 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
     }
 
     /// <summary>The owned physical key supplied at registration.</summary>
-    public RespireKey Key { get; }
+    public RespireKey Key
+    {
+        get;
+    }
 
     /// <summary>Whether cancellation, subscription disposal, or client disposal stopped observation.</summary>
     public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
@@ -88,6 +100,7 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
                 return;
             }
         }
+
         registration.Unregister();
     }
 
@@ -95,9 +108,18 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
     {
         lock (_gate)
         {
-            if (IsDisposed) return;
+            if (IsDisposed)
+            {
+                return;
+            }
+
             _pending |= reason;
-            if (_dispatching) return;
+
+            if (_dispatching)
+            {
+                return;
+            }
+
             _dispatching = true;
             ThreadPool.UnsafeQueueUserWorkItem(static subscription => subscription.Dispatch(), this, preferLocal: false);
         }
@@ -108,6 +130,7 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
         while (true)
         {
             RespireClientCacheInvalidationReason reasons;
+
             lock (_gate)
             {
                 if (IsDisposed || _pending == RespireClientCacheInvalidationReason.None)
@@ -116,10 +139,15 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
                     _dispatching = false;
                     return;
                 }
+
                 reasons = _pending;
                 _pending = RespireClientCacheInvalidationReason.None;
             }
-            try { _observer(new(Key, reasons)); }
+
+            try
+            {
+                _observer(new(Key, reasons));
+            }
             catch (Exception error) { Volatile.Write(ref _lastObserverException, error); }
         }
     }
@@ -132,18 +160,31 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
 
     private void DisposeCore(bool removeFromOwner)
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        if (removeFromOwner) _owner.RemoveInvalidationObserver(this);
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        if (removeFromOwner)
+        {
+            _owner.RemoveInvalidationObserver(this);
+        }
+
         CancellationTokenRegistration registration;
+
         lock (_gate)
         {
             registration = _cancellation;
             _cancellation = default;
             _pending = RespireClientCacheInvalidationReason.None;
         }
+
         registration.Unregister();
         // Signal last so a throwing Stopped callback cannot skip cleanup or abort owner shutdown.
-        try { _stopped.Cancel(); }
+        try
+        {
+            _stopped.Cancel();
+        }
         catch (Exception error) { Volatile.Write(ref _lastObserverException, error); }
     }
 }

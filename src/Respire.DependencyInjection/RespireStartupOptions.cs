@@ -12,9 +12,18 @@ public sealed class RespireStartupOptions
     /// for application traffic. Failed attempts retry with backoff until the first connection
     /// succeeds or the host stops. Host startup never waits for Redis. Defaults to <see langword="true"/>.
     /// </summary>
-    public bool ConnectOnStart { get; set; } = true;
+    public bool ConnectOnStart
+    {
+        get; set;
+    } = true;
 
-    internal TimeSpan InitialRetryDelay { get; set; } = TimeSpan.FromSeconds(1);
+    internal TimeSpan InitialRetryDelay
+    {
+        get; set;
+    } = TimeSpan.FromSeconds(1);
 
-    internal TimeSpan MaxRetryDelay { get; set; } = TimeSpan.FromSeconds(30);
+    internal TimeSpan MaxRetryDelay
+    {
+        get; set;
+    } = TimeSpan.FromSeconds(30);
 }

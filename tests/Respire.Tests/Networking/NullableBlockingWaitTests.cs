@@ -84,7 +84,10 @@ public class NullableBlockingWaitTests
         await using var server = new FakeRespServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         // A void delegate observes only errors thrown before the command returns its task.
-        await Assert.That(() => { _ = Invoke(client, operation, TimeSpan.FromTicks(-1), default); })
+        await Assert.That(() =>
+            {
+                _ = Invoke(client, operation, TimeSpan.FromTicks(-1), default);
+            })
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
@@ -111,7 +114,11 @@ public class NullableBlockingWaitTests
         {
             SuppressReply = command =>
             {
-                if (command == "PING") return false;
+                if (command == "PING")
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -154,12 +161,14 @@ public class NullableBlockingWaitTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
+
         foreach (var queue in new IRespireCommandQueue[] { batch, transaction })
         {
             var options = new RespireStreamReadOptions { WaitFor = null };
             await Assert.That(() => queue.Streams.Read(options, "key")).Throws<ArgumentException>();
             await Assert.That(() => queue.Streams.ReadGroup("key", "group", "consumer", options)).Throws<ArgumentException>();
         }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
@@ -172,7 +181,11 @@ public class NullableBlockingWaitTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, "*-1\r\n"u8.ToArray())
         {
-            SuppressReply = _ => { received.TrySetResult(); return mode != "pending"; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return mode != "pending";
+            },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -183,8 +196,11 @@ public class NullableBlockingWaitTests
         var next = reader.MoveNextAsync().AsTask();
         await received.Task.WaitAsync(cancellation.Token);
         await Assert.That(server.ReceivedCommands.Single()).IsEqualTo(expected);
+
         if (mode == "pending")
+        {
             await Assert.That(await next.WaitAsync(cancellation.Token)).IsFalse();
+        }
         else
         {
             cancellation.Cancel();
@@ -193,23 +209,22 @@ public class NullableBlockingWaitTests
     }
 
     // Keep this helper synchronous so it cannot turn immediate validation errors into failed tasks.
-    private static Task Invoke(IRespireClient client, string operation, TimeSpan? waitFor, CancellationToken cancellationToken)
-        => operation switch
-        {
-            "left" => client.Lists.LeftPopAsync("key", waitFor, cancellationToken).AsTask(),
-            "right-typed" => client.Lists.RightPopAsync<string>("key", waitFor, cancellationToken).AsTask(),
-            "move" => client.Lists.MoveAsync("key", "destination", waitFor, cancellationToken: cancellationToken).AsTask(),
-            "move-many" => client.Lists.MoveManyAsync("key", "destination", waitFor, cancellationToken: cancellationToken).AsTask(),
-            "list-one" => client.Lists.PopAsync("key", waitFor, cancellationToken: cancellationToken).AsTask(),
-            "list-many" => client.Lists.PopManyAsync("key", waitFor, cancellationToken: cancellationToken).AsTask(),
-            "sorted-one" => client.SortedSets.PopAsync("key", waitFor, false, cancellationToken).AsTask(),
-            "sorted-one-typed" => client.SortedSets.PopAsync<string>("key", waitFor, false, cancellationToken).AsTask(),
-            "sorted-many" => client.SortedSets.PopManyAsync("key", 1, false, waitFor, cancellationToken).AsTask(),
-            "sorted-many-typed" => client.SortedSets.PopManyAsync<string>(["key"], waitFor, cancellationToken: cancellationToken).AsTask(),
-            "stream" => client.Streams.ReadAsync("key", waitFor, cancellationToken: cancellationToken).AsTask(),
-            "streams" => client.Streams.ReadAsync([("key", RespireStreamId.Beginning)], waitFor, cancellationToken: cancellationToken).AsTask(),
-            "stream-options" => client.Streams.ReadAsync(new RespireStreamReadOptions { WaitFor = waitFor }, "key", cancellationToken: cancellationToken).AsTask(),
-            "group" => client.Streams.ReadGroupOnceAsync("key", "group", "consumer", new RespireStreamReadOptions { WaitFor = waitFor }, cancellationToken: cancellationToken).AsTask(),
-            _ => throw new ArgumentException("Unknown operation", nameof(operation)),
-        };
+    private static Task Invoke(IRespireClient client, string operation, TimeSpan? waitFor, CancellationToken cancellationToken) => operation switch
+    {
+        "left" => client.Lists.LeftPopAsync("key", waitFor, cancellationToken).AsTask(),
+        "right-typed" => client.Lists.RightPopAsync<string>("key", waitFor, cancellationToken).AsTask(),
+        "move" => client.Lists.MoveAsync("key", "destination", waitFor, cancellationToken: cancellationToken).AsTask(),
+        "move-many" => client.Lists.MoveManyAsync("key", "destination", waitFor, cancellationToken: cancellationToken).AsTask(),
+        "list-one" => client.Lists.PopAsync("key", waitFor, cancellationToken: cancellationToken).AsTask(),
+        "list-many" => client.Lists.PopManyAsync("key", waitFor, cancellationToken: cancellationToken).AsTask(),
+        "sorted-one" => client.SortedSets.PopAsync("key", waitFor, false, cancellationToken).AsTask(),
+        "sorted-one-typed" => client.SortedSets.PopAsync<string>("key", waitFor, false, cancellationToken).AsTask(),
+        "sorted-many" => client.SortedSets.PopManyAsync("key", 1, false, waitFor, cancellationToken).AsTask(),
+        "sorted-many-typed" => client.SortedSets.PopManyAsync<string>(["key"], waitFor, cancellationToken: cancellationToken).AsTask(),
+        "stream" => client.Streams.ReadAsync("key", waitFor, cancellationToken: cancellationToken).AsTask(),
+        "streams" => client.Streams.ReadAsync([("key", RespireStreamId.Beginning)], waitFor, cancellationToken: cancellationToken).AsTask(),
+        "stream-options" => client.Streams.ReadAsync(new RespireStreamReadOptions { WaitFor = waitFor }, "key", cancellationToken: cancellationToken).AsTask(),
+        "group" => client.Streams.ReadGroupOnceAsync("key", "group", "consumer", new RespireStreamReadOptions { WaitFor = waitFor }, cancellationToken: cancellationToken).AsTask(),
+        _ => throw new ArgumentException("Unknown operation", nameof(operation)),
+    };
 }

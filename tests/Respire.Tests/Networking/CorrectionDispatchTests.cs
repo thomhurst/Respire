@@ -14,11 +14,13 @@ public class CorrectionDispatchTests
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 6379)] });
 #pragma warning restore RESP010
         var execution = new Execution { Response = ValueTask.FromResult(true) };
+
         for (var i = 0; i < 20; i++)
         {
             Measure(client, execution, false);
             Measure(client, execution, true);
         }
+
         var measured = AllocationMeasurement.WithoutConcurrentGc(() => (
             Dispatch: Measure(client, execution, false), Closures: Measure(client, execution, true)));
         await Assert.That(measured.Dispatch).IsEqualTo(0L);
@@ -29,19 +31,34 @@ public class CorrectionDispatchTests
     private static long Measure(RespireClient client, Execution execution, bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1_000; i++)
         {
             var response = client.ExecuteWithCorrectionAsync(execution, RespireClient.CorrectionOrdering.FenceFirst);
+
 #pragma warning disable RESP009 // Short-circuit completion checks prove these synthetic responses cannot block the allocation probe.
-            if (!response.IsCompletedSuccessfully || !response.Result) throw new InvalidOperationException();
+            if (!response.IsCompletedSuccessfully || !response.Result)
+            {
+                throw new InvalidOperationException();
+            }
+
 #pragma warning restore RESP009
             var withState = client.ExecuteWithCorrectionAsync(execution, RespireClient.CorrectionOrdering.OrderedCorrection,
                 state: (Client: client, Key: "key"), correct: static (_, _) => throw new InvalidOperationException());
+
 #pragma warning disable RESP009 // Preserve the synchronous fast-path probe; Result is read only after successful completion.
-            if (!withState.IsCompletedSuccessfully || !withState.Result) throw new InvalidOperationException();
+            if (!withState.IsCompletedSuccessfully || !withState.Result)
+            {
+                throw new InvalidOperationException();
+            }
+
 #pragma warning restore RESP009
-            if (control) GC.KeepAlive(CreateIdentityAccessor(execution));
+            if (control)
+            {
+                GC.KeepAlive(CreateIdentityAccessor(execution));
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -64,9 +81,21 @@ public class CorrectionDispatchTests
         var corrected = false;
         var notified = false;
         var response = client.ExecuteWithCorrectionAsync(execution, RespireClient.CorrectionOrdering.OrderedCorrection,
-            state: 0, correct: (_, _) => { corrected = true; return default; }, () => notified = true);
-        if (serverError) await Assert.That(async () => await response).Throws<RespireServerException>();
-        else await Assert.That(await response).IsTrue();
+            state: 0, correct: (_, _) =>
+            {
+                corrected = true;
+                return default;
+            }, () => notified = true);
+
+        if (serverError)
+        {
+            await Assert.That(async () => await response).Throws<RespireServerException>();
+        }
+        else
+        {
+            await Assert.That(await response).IsTrue();
+        }
+
         await Assert.That(corrected || notified).IsFalse();
     }
 
@@ -89,7 +118,11 @@ public class CorrectionDispatchTests
         var notified = false;
         await Assert.That(async () => await client.ExecuteWithCorrectionAsync(execution,
             RespireClient.CorrectionOrdering.OrderedCorrection,
-            state: 0, correct: (_, _) => { corrected = true; return default; }, () => notified = true)).Throws<OperationCanceledException>();
+            state: 0, correct: (_, _) =>
+            {
+                corrected = true;
+                return default;
+            }, () => notified = true)).Throws<OperationCanceledException>();
         await Assert.That(corrected || notified).IsFalse();
     }
 
@@ -116,6 +149,7 @@ public class CorrectionDispatchTests
         execution.ConnectionIdentity = new(new("replacement", 2), 2);
         var failure = new IOException("lost reply");
         completion.SetException(failure);
+
         try
         {
             await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -123,6 +157,7 @@ public class CorrectionDispatchTests
             await Assert.That(response.IsCompleted).IsFalse();
         }
         finally { release.TrySetResult(); }
+
         var observed = await Assert.That(async () => await response).Throws<IOException>();
         await Assert.That(ReferenceEquals(observed, failure)).IsTrue();
     }
@@ -136,7 +171,11 @@ public class CorrectionDispatchTests
         var execution = new Execution { Response = ValueTask.FromException<bool>(new IOException("lost reply")) };
         var corrected = false;
         await Assert.That(async () => await client.ExecuteWithCorrectionAsync(execution,
-            RespireClient.CorrectionOrdering.FenceFirst, state: 0, correct: (_, _) => { corrected = true; return default; }))
+            RespireClient.CorrectionOrdering.FenceFirst, state: 0, correct: (_, _) =>
+            {
+                corrected = true;
+                return default;
+            }))
             .Throws<InvalidOperationException>();
         await Assert.That(corrected).IsFalse();
     }
@@ -151,7 +190,8 @@ public class CorrectionDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates the rejected fence from dependent correction dispatch.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var execution = new Execution
@@ -161,15 +201,30 @@ public class CorrectionDispatchTests
         };
         var corrected = false;
         await Assert.That(async () => await client.ExecuteWithCorrectionAsync(execution,
-            RespireClient.CorrectionOrdering.FenceFirst, state: 0, correct: (_, _) => { corrected = true; return default; }))
+            RespireClient.CorrectionOrdering.FenceFirst, state: 0, correct: (_, _) =>
+            {
+                corrected = true;
+                return default;
+            }))
             .Throws<RespireServerException>();
         await Assert.That(corrected).IsFalse();
     }
 
     private sealed class Execution : RespireClient.ITrackedCorrectionExecution<bool>
     {
-        public ValueTask<bool> Response { get; init; }
-        public RespireClient.TrackedConnectionIdentity ConnectionIdentity { get; set; }
-        public bool CommandMayBeOutstanding { get; init; } = true;
+        public ValueTask<bool> Response
+        {
+            get; init;
+        }
+
+        public RespireClient.TrackedConnectionIdentity ConnectionIdentity
+        {
+            get; set;
+        }
+
+        public bool CommandMayBeOutstanding
+        {
+            get; init;
+        } = true;
     }
 }

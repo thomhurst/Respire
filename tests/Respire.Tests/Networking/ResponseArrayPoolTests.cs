@@ -35,16 +35,26 @@ public class ResponseArrayPoolTests
     private static long Measure<T>(ArrayPool<T> pool, T[][] burst, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var iteration = 0; iteration < 32; iteration++)
         {
-            for (var index = 0; index < burst.Length; index++) burst[index] = pool.Rent(16);
+            for (var index = 0; index < burst.Length; index++)
+            {
+                burst[index] = pool.Rent(16);
+            }
+
             for (var index = 0; index < burst.Length; index++)
             {
                 pool.Return(burst[index]);
                 burst[index] = null!;
             }
-            if (allocate) GC.KeepAlive(new byte[37]);
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -65,22 +75,37 @@ public class ResponseArrayPoolTests
     private static async Task CheckRetention<T>(ArrayPool<T> pool, int length, int capacity)
     {
         var original = new T[capacity + 2][];
-        for (var index = 0; index < original.Length; index++) original[index] = pool.Rent(length);
-        foreach (var array in original) pool.Return(array);
+
+        for (var index = 0; index < original.Length; index++)
+        {
+            original[index] = pool.Rent(length);
+        }
+
+        foreach (var array in original)
+        {
+            pool.Return(array);
+        }
+
         var identities = new HashSet<T[]>(original, ReferenceEqualityComparer.Instance);
         var next = new T[original.Length][];
         var reused = 0;
+
         try
         {
             for (var index = 0; index < next.Length; index++)
             {
                 next[index] = pool.Rent(length);
-                if (identities.Contains(next[index])) reused++;
+
+                if (identities.Contains(next[index]))
+                {
+                    reused++;
+                }
             }
+
             await Assert.That(reused).IsEqualTo(capacity);
             await Assert.That(next.Distinct(ReferenceEqualityComparer.Instance).Count()).IsEqualTo(next.Length);
         }
-        finally { foreach (var array in next) if (array is not null) pool.Return(array); }
+        finally { foreach (var array in next) { if (array is not null) { pool.Return(array); } } }
     }
 
     [Test]
@@ -99,6 +124,7 @@ public class ResponseArrayPoolTests
         pool.Return(first, clearArray: true);
         await Assert.That(first.All(value => value is null)).IsTrue();
         var next = pool.Rent(requested);
+
         try
         {
             await Assert.That(ReferenceEquals(first, next)).IsEqualTo(requested <= 256);
@@ -116,7 +142,11 @@ public class ResponseArrayPoolTests
         await Assert.That(first.Length).IsEqualTo(length);
         pool.Return(first);
         var next = pool.Rent(length);
-        try { await Assert.That(next).IsNotSameReferenceAs(first); }
+
+        try
+        {
+            await Assert.That(next).IsNotSameReferenceAs(first);
+        }
         finally { pool.Return(next); }
     }
 
@@ -125,12 +155,14 @@ public class ResponseArrayPoolTests
     {
         var pool = new BoundedResponseArrayPool<object>(64, 128, 256);
         var arrays = Enumerable.Range(0, 3).Select(_ => pool.Rent(256)).ToArray();
+
         foreach (var array in arrays)
         {
             Array.Fill(array, new object());
             pool.Return(array, clearArray: true);
             await Assert.That(array.All(value => value is null)).IsTrue();
         }
+
         await CheckRetention(new BoundedResponseArrayPool<object>(64, 128, 256), 256, 1);
     }
 
@@ -145,10 +177,24 @@ public class ResponseArrayPoolTests
             {
                 var length = 16 << ((worker + iteration) % 5);
                 var array = pool.Rent(length);
-                if (!owners.TryAdd(array, 0)) throw new InvalidOperationException("A response array has two live owners.");
-                if (array.Any(value => value is not null)) throw new InvalidOperationException("A returned reference was not cleared.");
+
+                if (!owners.TryAdd(array, 0))
+                {
+                    throw new InvalidOperationException("A response array has two live owners.");
+                }
+
+                if (array.Any(value => value is not null))
+                {
+                    throw new InvalidOperationException("A returned reference was not cleared.");
+                }
+
                 array[0] = new object();
-                if (!owners.TryRemove(array, out _)) throw new InvalidOperationException("A response owner was lost.");
+
+                if (!owners.TryRemove(array, out _))
+                {
+                    throw new InvalidOperationException("A response owner was lost.");
+                }
+
                 pool.Return(array, clearArray: true);
             }
         });
@@ -160,20 +206,36 @@ public class ResponseArrayPoolTests
         Exception? failure = null;
         var returner = new Thread(() =>
         {
-            try { foreach (var array in held) pool.Return(array, clearArray: true); }
+            try
+            {
+                foreach (var array in held)
+                {
+                    pool.Return(array, clearArray: true);
+                }
+            }
             catch (Exception error) { failure = error; }
         });
         returner.Start();
         await Assert.That(returner.Join(TimeSpan.FromSeconds(5))).IsTrue();
-        if (failure is not null) throw failure;
+
+        if (failure is not null)
+        {
+            throw failure;
+        }
+
         var rented = new object[256][];
+
         try
         {
-            for (var index = 0; index < rented.Length; index++) rented[index] = pool.Rent(16);
+            for (var index = 0; index < rented.Length; index++)
+            {
+                rented[index] = pool.Rent(16);
+            }
+
             await Assert.That(rented.All(identities.Contains)).IsTrue();
             await Assert.That(rented.Distinct(ReferenceEqualityComparer.Instance).Count()).IsEqualTo(256);
         }
-        finally { foreach (var array in rented) if (array is not null) pool.Return(array, clearArray: true); }
+        finally { foreach (var array in rented) { if (array is not null) { pool.Return(array, clearArray: true); } } }
     }
 
     [Test]

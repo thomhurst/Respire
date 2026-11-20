@@ -19,16 +19,28 @@ public sealed partial class RespireJobQueue<T>
         using var trace = new JobEnqueueTrace();
         var arguments = new List<RespireValue> { key, trace.Parent, trace.State };
         long inputBytes = 0;
+
         foreach (var callback in new[] { options?.OnSuccess, options?.OnFailure, options?.OnComplete })
         {
-            if (callback is null) { arguments.Add(""); arguments.Add(""); continue; }
+            if (callback is null)
+            {
+                arguments.Add("");
+                arguments.Add("");
+                continue;
+            }
+
             var payload = SerializeBatchJob(callback.Id, callback.Payload, out var size);
             inputBytes += size;
+
             if (inputBytes > JobQueueBatches.MaximumInputBytes)
+            {
                 throw new ArgumentException("Batch IDs and payloads must not exceed 256 KiB.", nameof(options));
+            }
+
             arguments.Add(callback.Id);
             arguments.Add(payload);
         }
+
         await _client.Scripts.ExecuteIntegerAsync(JobQueueBatches.Create, [key], [.. arguments], cancellationToken).ConfigureAwait(false);
         trace.Succeeded = true;
         return batchId;
@@ -98,8 +110,12 @@ public sealed partial class RespireJobQueue<T>
         var idBytes = StrictUtf8.GetByteCount(jobId);
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");
         size = (long)idBytes + bytes.Length;
+
         if (size > JobQueueBatches.MaximumInputBytes)
+        {
             throw new ArgumentException("Batch IDs and payloads must not exceed 256 KiB.", nameof(payload));
+        }
+
         return bytes;
     }
 }

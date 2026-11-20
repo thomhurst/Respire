@@ -24,17 +24,28 @@ public class ClientCacheEmptyInvalidationTests
         var token = cache.BeginRead(in key);
         using var value = RespValue.BulkString("old"u8.ToArray());
         cache.CompleteRead(in token, in value, allowInsert: true);
+
         using (var completed = await cache.CoalesceReadAsync(new ClientCacheCommandKey("GET", key.AsValue()), 0,
             static (_, _) => ValueTask.FromResult(RespValue.BulkString("primed"u8.ToArray())), default))
+        {
             await Assert.That(completed.AsString()).IsEqualTo("primed");
+        }
+
         await using var gate = await HeldGate.AcquireAsync(cache);
         Task invalidating = Task.CompletedTask;
+
         try
         {
             invalidating = Task.Run(() =>
             {
-                if (flush) cache.FlushForContinuityLoss();
-                else cache.Invalidate(in key);
+                if (flush)
+                {
+                    cache.FlushForContinuityLoss();
+                }
+                else
+                {
+                    cache.Invalidate(in key);
+                }
             });
             // Gate release happens only after completion, so the write cannot pass by acquiring it.
             await invalidating.WaitAsync(TimeSpan.FromSeconds(5));
@@ -60,6 +71,7 @@ public class ClientCacheEmptyInvalidationTests
         var reply = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
         Task<RespValue>? reading = null;
         Task invalidating = Task.CompletedTask;
+
         try
         {
             reading = Task.Run(async () => await cache.CoalesceReadAsync(
@@ -87,9 +99,13 @@ public class ClientCacheEmptyInvalidationTests
             reply.TrySetCanceled();
             await invalidating.WaitAsync(Limit);
             cache.StopSharedReads();
+
             if (reading is not null)
             {
-                try { (await reading.WaitAsync(Limit)).Dispose(); }
+                try
+                {
+                    (await reading.WaitAsync(Limit)).Dispose();
+                }
                 catch (OperationCanceledException) { }
             }
         }
@@ -106,19 +122,27 @@ public class ClientCacheEmptyInvalidationTests
         var reading = cache.CoalesceReadAsync(new ClientCacheCommandKey("GET", key.AsValue()), reply,
             static (pending, cancellation) => new ValueTask<RespValue>(pending.Task.WaitAsync(cancellation)), default).AsTask();
         Task invalidating = Task.CompletedTask;
+
         try
         {
             cache.Invalidate(in key);
             await Assert.That(cache.ActiveSharedReadCount).IsEqualTo(1);
             await Assert.That(ReadCounter(cache, "_joinableSharedReadCount")).IsEqualTo(0);
+
             await using (var gate = await HeldGate.AcquireAsync(cache))
             {
                 try
                 {
                     invalidating = Task.Run(() =>
                     {
-                        if (flush) cache.FlushForContinuityLoss();
-                        else cache.Invalidate(in key);
+                        if (flush)
+                        {
+                            cache.FlushForContinuityLoss();
+                        }
+                        else
+                        {
+                            cache.Invalidate(in key);
+                        }
                     });
                     await invalidating.WaitAsync(TimeSpan.FromSeconds(5));
                     await Assert.That(reading.IsCompleted).IsFalse();
@@ -129,6 +153,7 @@ public class ClientCacheEmptyInvalidationTests
                     await invalidating.WaitAsync(Limit);
                 }
             }
+
             reply.SetResult(RespValue.BulkString("value"u8.ToArray()));
             using var result = await reading.WaitAsync(Limit);
             await Assert.That(result.AsString()).IsEqualTo("value");
@@ -138,7 +163,11 @@ public class ClientCacheEmptyInvalidationTests
         {
             reply.TrySetCanceled();
             cache.StopSharedReads();
-            try { (await reading.WaitAsync(Limit)).Dispose(); }
+
+            try
+            {
+                (await reading.WaitAsync(Limit)).Dispose();
+            }
             catch (OperationCanceledException) { }
         }
     }
@@ -152,6 +181,7 @@ public class ClientCacheEmptyInvalidationTests
         var reads = new List<Task<RespValue>>();
         var calls = 0;
         var barriers = 0;
+
         try
         {
             reads.Add(Read());
@@ -171,11 +201,13 @@ public class ClientCacheEmptyInvalidationTests
             await Assert.That(calls).IsEqualTo(5);
             await Assert.That(ReadCounter(cache, "_joinableSharedReadCount")).IsEqualTo(1);
             reply.SetResult(RespValue.BulkString("value"u8.ToArray()));
+
             foreach (var read in reads)
             {
                 using var result = await read.WaitAsync(Limit);
                 await Assert.That(result.AsString()).IsEqualTo("value");
             }
+
             reads.Clear();
             await Assert.That(cache.ActiveSharedReadCount).IsEqualTo(0);
             await Assert.That(ReadCounter(cache, "_joinableSharedReadCount")).IsEqualTo(0);
@@ -183,12 +215,20 @@ public class ClientCacheEmptyInvalidationTests
         }
         finally
         {
-            while (barriers != 0) End();
+            while (barriers != 0)
+            {
+                End();
+            }
+
             reply.TrySetCanceled();
             cache.StopSharedReads();
+
             foreach (var read in reads)
             {
-                try { (await read.WaitAsync(Limit)).Dispose(); }
+                try
+                {
+                    (await read.WaitAsync(Limit)).Dispose();
+                }
                 catch (OperationCanceledException) { }
             }
         }
@@ -199,8 +239,17 @@ public class ClientCacheEmptyInvalidationTests
             return new ValueTask<RespValue>(reply.Task.WaitAsync(cancellation));
         }, default).AsTask();
 
-        void Begin() { InvokeBarrier(cache, "BeginSharedReadInvalidation"); barriers++; }
-        void End() { InvokeBarrier(cache, "EndSharedReadInvalidation"); barriers--; }
+        void Begin()
+        {
+            InvokeBarrier(cache, "BeginSharedReadInvalidation");
+            barriers++;
+        }
+
+        void End()
+        {
+            InvokeBarrier(cache, "EndSharedReadInvalidation");
+            barriers--;
+        }
     }
 
     private sealed class HeldGate : IAsyncDisposable
@@ -225,6 +274,7 @@ public class ClientCacheEmptyInvalidationTests
         {
             var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var gate = new HeldGate(cache, held);
+
             try
             {
                 await held.Task.WaitAsync(Limit);
@@ -257,9 +307,14 @@ public class ClientCacheEmptyInvalidationTests
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         var started = Stopwatch.GetTimestamp();
+
         while (!condition())
         {
-            if (Stopwatch.GetElapsedTime(started) > Limit) throw new TimeoutException("Cache barrier was not reached.");
+            if (Stopwatch.GetElapsedTime(started) > Limit)
+            {
+                throw new TimeoutException("Cache barrier was not reached.");
+            }
+
             await Task.Yield();
         }
     }

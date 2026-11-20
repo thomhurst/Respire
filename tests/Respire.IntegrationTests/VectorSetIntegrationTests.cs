@@ -11,10 +11,16 @@ namespace Respire.IntegrationTests;
 public class VectorSetIntegrationTests(VersionedServerFixture servers)
 {
     [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
-    public required ModernRedisTestContainer Redis8 { get; init; }
+    public required ModernRedisTestContainer Redis8
+    {
+        get; init;
+    }
 
     [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
-    public required ModernRedisTestContainer CacheServer { get; init; }
+    public required ModernRedisTestContainer CacheServer
+    {
+        get; init;
+    }
 
     [Test]
     [Arguments(2)]
@@ -32,6 +38,7 @@ public class VectorSetIntegrationTests(VersionedServerFixture servers)
             Quantization = RespireVectorQuantization.None,
             AttributesJson = "{\"category\":\"old\",\"removed\":true}",
         };
+
         try
         {
             (await client.VectorSets.AddAsync(key, new float[] { 0, 1, 0 }, "same", options)).Should().BeTrue();
@@ -68,8 +75,12 @@ public class VectorSetIntegrationTests(VersionedServerFixture servers)
             (await client.VectorSets.CountAsync(key)).Should().Be(3);
             (await client.VectorSets.EmbeddingAsync(key, "same")).Should().Equal(1f, 0f, 0f);
             (await client.VectorSets.GetAttributesJsonAsync(key, "same")).Should().Equal(attributes!);
+
             foreach (var member in new[] { "same", "orthogonal", "opposite" })
+            {
                 (await client.VectorSets.RemoveAsync(key, member)).Should().BeTrue();
+            }
+
             (await client.Keys.ExistsAsync(key)).Should().BeFalse();
             (await client.VectorSets.SearchAsync(key, new float[] { 1, 0, 0 }, search)).Should().BeEmpty();
         }
@@ -95,12 +106,15 @@ public class VectorSetIntegrationTests(VersionedServerFixture servers)
         var redis = client.WithKeyPrefix(prefix);
         byte[] member = [0, 255, 128];
         float[] vector = [1, 0, 0];
+
         foreach (var quantization in Enum.GetValues<RespireVectorQuantization>())
         {
             var key = "index:" + quantization;
             (await redis.VectorSets.AddAsync(key, vector, member, new()
             {
-                Quantization = quantization, Links = 4, ExplorationFactor = 50,
+                Quantization = quantization,
+                Links = 4,
+                ExplorationFactor = 50,
                 AttributesJson = "{\"category\":\"yes\"}",
             })).Should().BeTrue();
             Func<Task> mismatchedDefaults = async () => await redis.VectorSets.AddAsync(key, new[] { 0f, 1, 0 }, "b");
@@ -121,31 +135,57 @@ public class VectorSetIntegrationTests(VersionedServerFixture servers)
 
             foreach (var details in Enumerable.Range(0, 4))
             {
-                var options = new RespireVectorSearchOptions { Count = 2, Exact = true, NoThread = true,
-                    IncludeScores = (details & 1) != 0, IncludeAttributes = (details & 2) != 0 };
+                var options = new RespireVectorSearchOptions
+                {
+                    Count = 2,
+                    Exact = true,
+                    NoThread = true,
+                    IncludeScores = (details & 1) != 0,
+                    IncludeAttributes = (details & 2) != 0
+                };
                 var results = await redis.VectorSets.SearchAsync(key, vector, options);
                 results.Should().HaveCount(2);
                 results[0].Member.Should().Equal(member);
-                if (options.IncludeScores) results[0].Score.Should().BeApproximately(1, 0.01);
-                else results[0].Score.Should().BeNull();
+
+                if (options.IncludeScores)
+                {
+                    results[0].Score.Should().BeApproximately(1, 0.01);
+                }
+                else
+                {
+                    results[0].Score.Should().BeNull();
+                }
+
                 if (options.IncludeAttributes)
                 {
                     results[0].AttributesJson.Should().NotBeNull();
                     results[1].AttributesJson.Should().BeNull();
                 }
-                else results[0].AttributesJson.Should().BeNull();
+                else
+                {
+                    results[0].AttributesJson.Should().BeNull();
+                }
             }
+
             var filtered = await redis.VectorSets.SearchAsync(key, vector, new()
             {
-                IncludeScores = true, IncludeAttributes = true, Count = 2, Epsilon = 0.1,
-                ExplorationFactor = 30, Filter = ".category == \"yes\"", FilterExplorationFactor = 200,
-                Exact = true, NoThread = true,
+                IncludeScores = true,
+                IncludeAttributes = true,
+                Count = 2,
+                Epsilon = 0.1,
+                ExplorationFactor = 30,
+                Filter = ".category == \"yes\"",
+                FilterExplorationFactor = 200,
+                Exact = true,
+                NoThread = true,
             }, RespireVectorEncoding.Values);
             filtered.Should().ContainSingle();
             filtered[0].Member.Should().Equal(member);
             (await redis.VectorSets.SearchByMemberAsync(key, member, new() { Count = 1, Exact = true, NoThread = true }))[0].Member.Should().Equal(member);
             var info = (await redis.VectorSets.InfoAsync(key))!;
-            info.Dimensions.Should().Be(3); info.Size.Should().Be(2); info.Links.Should().Be(4);
+            info.Dimensions.Should().Be(3);
+            info.Size.Should().Be(2);
+            info.Links.Should().Be(4);
             info.AttributesCount.Should().Be(1);
             (await redis.VectorSets.LinksAsync(key, member, true)).Should().NotBeNull();
             (await redis.VectorSets.LinksAsync(key, member)).Should().NotBeNull();
@@ -180,10 +220,22 @@ public class VectorSetIntegrationTests(VersionedServerFixture servers)
             var set = queue.VectorSets.SetAttributes(key, "m", attributes);
             var get = queue.VectorSets.GetAttributes<Attributes>(key, "m");
             var found = queue.VectorSets.Search(key, borrowed, new() { IncludeScores = true, Exact = true, NoThread = true });
-            borrowed[0] = 0; borrowed[1] = 1; attributes.Category = "changed";
-            if (batch is not null) await batch.ExecuteAsync();
-            if (transaction is not null) await transaction.CommitAsync();
-            added.Result.Should().BeTrue(); set.Result.Should().BeTrue();
+            borrowed[0] = 0;
+            borrowed[1] = 1;
+            attributes.Category = "changed";
+
+            if (batch is not null)
+            {
+                await batch.ExecuteAsync();
+            }
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+
+            added.Result.Should().BeTrue();
+            set.Result.Should().BeTrue();
             get.Result!.Category.Should().Be("snapshot");
             found.Result.Single().Score.Should().BeApproximately(1, 0.0001);
             (await redis.VectorSets.EmbeddingAsync(key, "m"))![0].Should().BeApproximately(1, 0.0001f);
@@ -242,5 +294,11 @@ public class VectorSetIntegrationTests(VersionedServerFixture servers)
         Encoding.UTF8.GetString((await client.VectorSets.GetAttributesJsonAsync("cached", "m"))!).Should().Be("{\"n\":3}");
     }
 
-    public sealed class Attributes { public string Category { get; set; } = ""; }
+    public sealed class Attributes
+    {
+        public string Category
+        {
+            get; set;
+        } = "";
+    }
 }

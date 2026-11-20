@@ -13,7 +13,11 @@ internal readonly struct ReceiveBuffer
         _pinned = pinned;
     }
 
-    public byte[] Array { get; }
+    public byte[] Array
+    {
+        get;
+    }
+
     // A pinned array alone is insufficient: ordinary AsMemory still allocates a native
     // GCHandle in Memory.Pin. The pre-pinned flag survives every Memory.Slice operation.
     public Memory<byte> Memory => _pinned
@@ -33,6 +37,9 @@ internal readonly struct ReceiveBuffer
     {
         // Only the receive loop releases storage, after the last read using it has ended.
         // GC-owned pinned arrays must never enter the unpinned response-payload pool.
-        if (!_pinned) RespirePools.ResponsePayloads.Return(Array);
+        if (!_pinned)
+        {
+            RespirePools.ResponsePayloads.Return(Array);
+        }
     }
 }

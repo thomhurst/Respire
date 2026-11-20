@@ -42,6 +42,7 @@ public class JsonSchemaPathTests
 }
 
 public sealed record NestedMultiVectorRecord(string Id, NestedMultiVectorValues Values);
+
 public sealed record NestedMultiVectorValues([property: JsonPropertyName("renamed_first")] float[]? First, float[]? Second);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
@@ -51,11 +52,16 @@ public partial class NestedMultiVectorContext : JsonSerializerContext;
 internal sealed class NestedMultiVectorMapper(string vectorPath = "$.values.renamed_first", string scalarPath = "$.id")
     : RespireVectorDataJsonMapper<NestedMultiVectorRecord>(NestedMultiVectorContext.Default.NestedMultiVectorRecord)
 {
-    public override IReadOnlyList<RespireVectorDataVectorField> VectorFields { get; } =
+    public override IReadOnlyList<RespireVectorDataVectorField> VectorFields
+    {
+        get;
+    } =
     [
         new("Values.First", "first", 2) { JsonPath = vectorPath, Algorithm = RespireSearchVectorAlgorithm.Flat, DistanceMetric = RespireSearchDistanceMetric.L2 },
         new("Values.Second", "second", 2) { JsonPath = "$.values.second", Algorithm = RespireSearchVectorAlgorithm.Flat, DistanceMetric = RespireSearchDistanceMetric.L2 },
     ];
+
     public override IReadOnlyList<RespireSearchField> DataFields => [new(scalarPath, RespireSearchFieldType.Tag, Alias: "id")];
+
     public override string GetKey(NestedMultiVectorRecord record) => record.Id;
 }

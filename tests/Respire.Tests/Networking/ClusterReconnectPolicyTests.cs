@@ -23,14 +23,21 @@ public class ClusterReconnectPolicyTests
             "-ERR topology unavailable\r\n"u8.ToArray(), FakeRespServer.PongReply);
         var options = new RespireOptions
         {
-            UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Password = "test",
+            UseCluster = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Password = "test",
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port), new("127.0.0.1", last.Port)],
-            ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = null,
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+            CommandTimeout = null,
             ReconnectPolicy = configured ? new()
             {
-                InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1,
+                InitialDelay = TimeSpan.Zero,
+                JitterRatio = 0,
+                MaxAttempts = 1,
             } : null,
         };
+
         if (configured)
         {
             await Assert.That(async () =>
@@ -49,6 +56,7 @@ public class ClusterReconnectPolicyTests
             await client.PingAsync();
             await Assert.That(last.ReceivedCommands).IsEquivalentTo(["AUTH test", "CLUSTER SLOTS", "PING"]);
         }
+
         await Assert.That(first.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
         await Assert.That(second.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
     }
@@ -65,10 +73,19 @@ public class ClusterReconnectPolicyTests
 #pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Password = "test", CommandTimeout = null,
+            UseCluster = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Password = "test",
+            CommandTimeout = null,
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
-            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
-                JitterRatio = 0, MaxAttempts = 1 },
+            ReconnectPolicy = new()
+            {
+                InitialDelay = TimeSpan.FromSeconds(30),
+                MaxDelay = TimeSpan.FromSeconds(30),
+                JitterRatio = 0,
+                MaxAttempts = 1
+            },
             ClusterDiscoveryClock = clock,
         });
 #pragma warning restore RESP010
@@ -77,19 +94,40 @@ public class ClusterReconnectPolicyTests
         var ended = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
-            if (change.NextReconnectDelay is not null) scheduled.TrySetResult(change);
-            if (change.SourceState == RespireConnectionState.Disconnected) ended.TrySetResult(change);
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery)
+            {
+                return;
+            }
+
+            if (change.NextReconnectDelay is not null)
+            {
+                scheduled.TrySetResult(change);
+            }
+
+            if (change.SourceState == RespireConnectionState.Disconnected)
+            {
+                ended.TrySetResult(change);
+            }
         };
         var command = client.PingAsync(caller.Token).AsTask();
+
         try
         {
             await scheduled.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await clock.Created.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            if (disposeClient) await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-            else caller.Cancel();
+
+            if (disposeClient)
+            {
+                await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            else
+            {
+                caller.Cancel();
+            }
+
             var error = await Assert.That(async () => await command.WaitAsync(TimeSpan.FromSeconds(5)))
                 .Throws<OperationCanceledException>();
+
             if (!disposeClient)
             {
                 await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
@@ -99,12 +137,17 @@ public class ClusterReconnectPolicyTests
                 await Assert.That(terminal.ReconnectAttempt).IsEqualTo(1);
                 await Assert.That(terminal.ReconnectExhausted).IsFalse();
             }
+
             await Assert.That(second.CommandsSeen).IsEqualTo(0);
         }
         finally
         {
             caller.Cancel();
-            try { await command.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+            try
+            {
+                await command.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             catch (OperationCanceledException) { }
         }
     }
@@ -129,13 +172,26 @@ public class ClusterReconnectPolicyTests
         {
             switch (path)
             {
-                case "command": await router.GetConnectionAsync(42, default, discovery: null, observation: default); break;
-                case "tracked": await router.GetTrackedConnectionAsync(42, true, default, discovery: null, observation: default); break;
-                case "dedicated": await router.GetDedicatedPoolAsync(42, default, discovery: null, observation: default); break;
-                case "masters": await router.GetMasterConnectionsAsync(default, discovery: null, observation: default); break;
-                case "known-masters": await router.GetKnownMastersAsync(default, discovery: null); break;
-                case "pubsub": await router.GetPubSubEndpointAsync(default); break;
-                default: throw new ArgumentOutOfRangeException(nameof(path));
+                case "command":
+                    await router.GetConnectionAsync(42, default, discovery: null, observation: default);
+                    break;
+                case "tracked":
+                    await router.GetTrackedConnectionAsync(42, true, default, discovery: null, observation: default);
+                    break;
+                case "dedicated":
+                    await router.GetDedicatedPoolAsync(42, default, discovery: null, observation: default);
+                    break;
+                case "masters":
+                    await router.GetMasterConnectionsAsync(default, discovery: null, observation: default);
+                    break;
+                case "known-masters":
+                    await router.GetKnownMastersAsync(default, discovery: null);
+                    break;
+                case "pubsub":
+                    await router.GetPubSubEndpointAsync(default);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(path));
             }
         }).ThrowsExactly<RespireReconnectLimitException>();
         await Assert.That(first.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
@@ -149,7 +205,11 @@ public class ClusterReconnectPolicyTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var first = new FakeRespServer(FakeRespServer.OkReply)
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var second = new FakeRespServer(FakeRespServer.OkReply, "-ERR unsupported topology\r\n"u8.ToArray());
 #pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
@@ -159,9 +219,17 @@ public class ClusterReconnectPolicyTests
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery)
+            {
+                return;
+            }
+
             changes.Enqueue(change);
-            if (change.SourceState == RespireConnectionState.Connected) recovered.TrySetResult();
+
+            if (change.SourceState == RespireConnectionState.Connected)
+            {
+                recovered.TrySetResult();
+            }
         };
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var callers = Enumerable.Range(0, 8).Select(_ => client.Core.Cluster!.EnsureConnectedAsync(timeout.Token, discovery: null, observation: default).AsTask()).ToArray();
@@ -203,10 +271,17 @@ public class ClusterReconnectPolicyTests
         {
             switch (path)
             {
-                case "command": await router.GetRedirectConnectionAsync(original, source, default, 42, discovery: null, observation: default); break;
-                case "tracked": await router.GetTrackedRedirectConnectionAsync(original, source, true, default, 42, discovery: null, observation: default); break;
-                case "dedicated": await router.GetRedirectDedicatedPoolAsync(original, source, default, 42, discovery: null, observation: default); break;
-                default: throw new ArgumentOutOfRangeException(nameof(path));
+                case "command":
+                    await router.GetRedirectConnectionAsync(original, source, default, 42, discovery: null, observation: default);
+                    break;
+                case "tracked":
+                    await router.GetTrackedRedirectConnectionAsync(original, source, true, default, 42, discovery: null, observation: default);
+                    break;
+                case "dedicated":
+                    await router.GetRedirectDedicatedPoolAsync(original, source, default, 42, discovery: null, observation: default);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(path));
             }
         }).ThrowsExactly<RespireServerException>();
         await Assert.That(ReferenceEquals(original, failure)).IsTrue();
@@ -250,11 +325,20 @@ public class ClusterReconnectPolicyTests
         {
             switch (path)
             {
-                case "command": await router.GetConnectionAsync(42, default, discovery: null, observation: default); break;
-                case "tracked": await router.GetTrackedConnectionAsync(42, true, default, discovery: null, observation: default); break;
-                case "dedicated": await router.GetDedicatedPoolAsync(42, default, discovery: null, observation: default); break;
-                case "pubsub": await router.GetPubSubEndpointAsync(default); break;
-                default: throw new ArgumentOutOfRangeException(nameof(path));
+                case "command":
+                    await router.GetConnectionAsync(42, default, discovery: null, observation: default);
+                    break;
+                case "tracked":
+                    await router.GetTrackedConnectionAsync(42, true, default, discovery: null, observation: default);
+                    break;
+                case "dedicated":
+                    await router.GetDedicatedPoolAsync(42, default, discovery: null, observation: default);
+                    break;
+                case "pubsub":
+                    await router.GetPubSubEndpointAsync(default);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(path));
             }
         }).ThrowsExactly<RespireReconnectLimitException>();
         await Assert.That(first.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
@@ -274,16 +358,28 @@ public class ClusterReconnectPolicyTests
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var endpoint = new RespireEndpoint("127.0.0.1", seed.Port);
+
         if (failedPhysicalSlot)
+        {
             client.Core.NotifyCommandStateChanged(router.GetMultiplexer(endpoint), 0,
                 new(endpoint, RespireConnectionState.Disconnected, new RespireConnectionException("physical failure")));
+        }
+
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery)
+            {
+                return;
+            }
+
             changes.Enqueue(change);
-            if (change.SourceState == RespireConnectionState.Connected) recovered.TrySetResult();
+
+            if (change.SourceState == RespireConnectionState.Connected)
+            {
+                recovered.TrySetResult();
+            }
         };
         router.SetSlotOwner(42, router.GetMultiplexer(new("127.0.0.1", unavailable.Port)));
         var connection = await router.GetConnectionAsync(42, default, discovery: null, observation: default);
@@ -291,6 +387,7 @@ public class ClusterReconnectPolicyTests
         await Assert.That(connection.Port).IsEqualTo(seed.Port);
         var events = changes.ToArray();
         await Assert.That(events.Length).IsEqualTo(2);
+
         foreach (var change in events)
         {
             await Assert.That(change.Endpoint).IsEqualTo(endpoint);
@@ -301,6 +398,7 @@ public class ClusterReconnectPolicyTests
             await Assert.That(change.ReconnectEpisodeId).IsEqualTo(events[0].ReconnectEpisodeId);
             await Assert.That(change.ReconnectExhausted).IsFalse();
         }
+
         await Assert.That(events[0].SourceState).IsEqualTo(RespireConnectionState.Reconnecting);
         await Assert.That(events[1].SourceState).IsEqualTo(RespireConnectionState.Connected);
     }
@@ -315,8 +413,13 @@ public class ClusterReconnectPolicyTests
         using var lastMetrics = new DiscoveryMetrics(last.Port);
         var options = Options(first.Port, second.Port, last.Port) with
         {
-            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), BackoffMultiplier = 3,
-                JitterRatio = 0, MaxAttempts = 2 },
+            ReconnectPolicy = new()
+            {
+                InitialDelay = TimeSpan.FromMilliseconds(10),
+                BackoffMultiplier = 3,
+                JitterRatio = 0,
+                MaxAttempts = 2
+            },
         };
 #pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(options);
@@ -325,9 +428,17 @@ public class ClusterReconnectPolicyTests
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery)
+            {
+                return;
+            }
+
             changes.Enqueue(change);
-            if (change.SourceState == RespireConnectionState.Connected) recovered.TrySetResult();
+
+            if (change.SourceState == RespireConnectionState.Connected)
+            {
+                recovered.TrySetResult();
+            }
         };
         await client.Core.Cluster!.EnsureConnectedAsync(default, discovery: null, observation: default);
         await recovered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -352,7 +463,11 @@ public class ClusterReconnectPolicyTests
         var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var second = new FakeRespServer(FakeRespServer.OkReply)
         {
-            SuppressReply = _ => { connecting.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                connecting.TrySetResult();
+                return true;
+            },
         };
 #pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(first.Port, second.Port) with
@@ -365,16 +480,29 @@ public class ClusterReconnectPolicyTests
         client.ConnectionStateChanged += change =>
         {
             if (change.ReconnectSource == RespireReconnectSource.ClusterDiscovery
-                && change.SourceState == RespireConnectionState.Disconnected) ended.TrySetResult(change);
+                && change.SourceState == RespireConnectionState.Disconnected)
+            {
+                ended.TrySetResult(change);
+            }
         };
         var command = client.Core.Cluster!.EnsureConnectedAsync(caller.Token, discovery: null, observation: default).AsTask();
+
         try
         {
             await connecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            if (disposeClient) await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-            else caller.Cancel();
+
+            if (disposeClient)
+            {
+                await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            else
+            {
+                caller.Cancel();
+            }
+
             var error = await Assert.That(async () => await command.WaitAsync(TimeSpan.FromSeconds(5))).Throws<Exception>();
             await Assert.That(error is TimeoutException).IsFalse();
+
             if (!disposeClient)
             {
                 await Assert.That(error is OperationCanceledException).IsTrue();
@@ -384,13 +512,18 @@ public class ClusterReconnectPolicyTests
                 await Assert.That(terminal.ReconnectAttempt).IsEqualTo(1);
                 await Assert.That(terminal.ReconnectExhausted).IsFalse();
             }
+
             await second.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(second.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
         }
         finally
         {
             caller.Cancel();
-            try { await command.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+            try
+            {
+                await command.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             catch (Exception) when (command.IsCompleted) { }
         }
     }
@@ -417,13 +550,22 @@ public class ClusterReconnectPolicyTests
 #pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
-            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
-                MaxAttempts = 1, JitterRatio = 0 },
+            ReconnectPolicy = new()
+            {
+                InitialDelay = TimeSpan.FromSeconds(30),
+                MaxDelay = TimeSpan.FromSeconds(30),
+                MaxAttempts = 1,
+                JitterRatio = 0
+            },
             ClusterDiscoveryClock = clock,
         });
+
 #pragma warning restore RESP010
         if (connectedTarget)
+        {
             await client.Core.Cluster!.GetMultiplexer(new("127.0.0.1", target.Port)).EnsureConnectedAsync();
+        }
+
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("value");
         await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("value");
@@ -448,8 +590,13 @@ public class ClusterReconnectPolicyTests
 #pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
-            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
-                MaxAttempts = 1, JitterRatio = 0 },
+            ReconnectPolicy = new()
+            {
+                InitialDelay = TimeSpan.FromSeconds(30),
+                MaxDelay = TimeSpan.FromSeconds(30),
+                MaxAttempts = 1,
+                JitterRatio = 0
+            },
             ClusterDiscoveryClock = clock,
         });
 #pragma warning restore RESP010
@@ -461,18 +608,30 @@ public class ClusterReconnectPolicyTests
         router.DiscoveryStateChanged += change =>
         {
             changes.Enqueue(change);
+
             if (change.Endpoint == barrierEndpoint && change.SourceState == RespireConnectionState.Connected)
+            {
                 barrier.TrySetResult();
+            }
         };
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var original = new RespireServerException($"{code} 42 127.0.0.1:{target.Port}");
+
         switch (path)
         {
-            case "command": await router.GetRedirectConnectionAsync(original, source, deadline.Token, 42, discovery: null, observation: default); break;
-            case "tracked": await router.GetTrackedRedirectConnectionAsync(original, source, true, deadline.Token, 42, discovery: null, observation: default); break;
-            case "dedicated": await router.GetRedirectDedicatedPoolAsync(original, source, deadline.Token, 42, discovery: null, observation: default); break;
-            default: throw new ArgumentOutOfRangeException(nameof(path));
+            case "command":
+                await router.GetRedirectConnectionAsync(original, source, deadline.Token, 42, discovery: null, observation: default);
+                break;
+            case "tracked":
+                await router.GetTrackedRedirectConnectionAsync(original, source, true, deadline.Token, 42, discovery: null, observation: default);
+                break;
+            case "dedicated":
+                await router.GetRedirectDedicatedPoolAsync(original, source, deadline.Token, 42, discovery: null, observation: default);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(path));
         }
+
         await Assert.That(clock.Created.Task.IsCompleted).IsFalse();
         // Discovery notifications are asynchronous. A later episode supplies a FIFO barrier.
         var next = new ClusterRouter.DiscoveryRound(router, new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 });
@@ -498,8 +657,13 @@ public class ClusterReconnectPolicyTests
 #pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
-            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
-                MaxAttempts = 1, JitterRatio = 0 },
+            ReconnectPolicy = new()
+            {
+                InitialDelay = TimeSpan.FromSeconds(30),
+                MaxDelay = TimeSpan.FromSeconds(30),
+                MaxAttempts = 1,
+                JitterRatio = 0
+            },
         });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
@@ -508,7 +672,9 @@ public class ClusterReconnectPolicyTests
         router.DiscoveryStateChanged += change =>
         {
             if (change.Endpoint == endpoint && change.SourceState == RespireConnectionState.Disconnected)
+            {
                 terminal.TrySetResult(change);
+            }
         };
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var original = new RespireServerException($"ASK 42 {endpoint.Host}:{endpoint.Port}");
@@ -516,10 +682,17 @@ public class ClusterReconnectPolicyTests
         {
             switch (path)
             {
-                case "command": await router.GetRedirectConnectionAsync(original, source, deadline.Token, 42, discovery: null, observation: default); break;
-                case "tracked": await router.GetTrackedRedirectConnectionAsync(original, source, true, deadline.Token, 42, discovery: null, observation: default); break;
-                case "dedicated": await router.GetRedirectDedicatedPoolAsync(original, source, deadline.Token, 42, discovery: null, observation: default); break;
-                default: throw new ArgumentOutOfRangeException(nameof(path));
+                case "command":
+                    await router.GetRedirectConnectionAsync(original, source, deadline.Token, 42, discovery: null, observation: default);
+                    break;
+                case "tracked":
+                    await router.GetTrackedRedirectConnectionAsync(original, source, true, deadline.Token, 42, discovery: null, observation: default);
+                    break;
+                case "dedicated":
+                    await router.GetRedirectDedicatedPoolAsync(original, source, deadline.Token, 42, discovery: null, observation: default);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(path));
             }
         }).ThrowsExactly<RespireServerException>();
         await Assert.That(error).IsSameReferenceAs(original);
@@ -548,23 +721,40 @@ public class ClusterReconnectPolicyTests
         var endpoint = new RespireEndpoint("unused.invalid");
         var round = new ClusterRouter.DiscoveryRound(router, new()
         {
-            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
-            MaxAttempts = 2, JitterRatio = 0,
+            InitialDelay = TimeSpan.FromSeconds(30),
+            MaxDelay = TimeSpan.FromSeconds(30),
+            MaxAttempts = 2,
+            JitterRatio = 0,
         });
         var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         router.DiscoveryStateChanged += change =>
         {
-            if (change.NextReconnectDelay is not null) scheduled.TrySetResult(change);
+            if (change.NextReconnectDelay is not null)
+            {
+                scheduled.TrySetResult(change);
+            }
         };
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         try
         {
             round.Rejected(endpoint, new RespireServerException($"{code} 42 target.invalid:6379"));
             await round.BeforeCandidateAsync(endpoint, deadline.Token);
             await Assert.That(clock.Created.Task.IsCompleted).IsFalse();
-            if (recovery == "redirect") round.Rejected(endpoint, new RespireServerException($"{code} 42 target.invalid:6380"));
-            else if (recovery == "failure") round.Failed(endpoint, new IOException("target unavailable"));
-            else round.Failed(new RespireConnectionRetiredException(endpoint.Host, endpoint.Port));
+
+            if (recovery == "redirect")
+            {
+                round.Rejected(endpoint, new RespireServerException($"{code} 42 target.invalid:6380"));
+            }
+            else if (recovery == "failure")
+            {
+                round.Failed(endpoint, new IOException("target unavailable"));
+            }
+            else
+            {
+                round.Failed(new RespireConnectionRetiredException(endpoint.Host, endpoint.Port));
+            }
+
             var pending = round.BeforeCandidateAsync(endpoint, deadline.Token).AsTask();
             var timer = await clock.Created.Task.WaitAsync(deadline.Token);
             var change = await scheduled.Task.WaitAsync(deadline.Token);
@@ -597,6 +787,7 @@ public class ClusterReconnectPolicyTests
         var round = new ClusterRouter.DiscoveryRound(client.Core.Cluster!, new() { MaxAttempts = 1 });
         var endpoint = new RespireEndpoint("unused.invalid");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         try
         {
             var redirect = new RespireServerException($"{code} 42 target.invalid:6379");
@@ -659,6 +850,7 @@ public class ClusterReconnectPolicyTests
         // Commands record the rejection in their round before following it.
         ClusterRouter.DiscoveryRound? discovery = null;
         router.RecordRejection(ref discovery, source, redirect);
+
         try
         {
             Task followed = path switch
@@ -671,12 +863,15 @@ public class ClusterReconnectPolicyTests
             await followed.WaitAsync(TimeSpan.FromSeconds(5));
         }
         finally { discovery?.Finish(); }
+
         await Assert.That(target.ReceivedCommands).Contains("AUTH test");
     }
 
     private static readonly RespireReconnectPolicy SlowPolicy = new()
     {
-        InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+        InitialDelay = TimeSpan.FromSeconds(30),
+        MaxDelay = TimeSpan.FromSeconds(30),
+        JitterRatio = 0,
     };
 
     [Test]
@@ -688,8 +883,13 @@ public class ClusterReconnectPolicyTests
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port, target.Port) with
         {
             ConnectTimeout = TimeSpan.FromMilliseconds(500),
-            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
-                MaxAttempts = 1, JitterRatio = 0 },
+            ReconnectPolicy = new()
+            {
+                InitialDelay = TimeSpan.FromSeconds(30),
+                MaxDelay = TimeSpan.FromSeconds(30),
+                MaxAttempts = 1,
+                JitterRatio = 0
+            },
         });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
@@ -720,16 +920,26 @@ public class ClusterReconnectPolicyTests
         client.ConnectionStateChanged += change =>
         {
             if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery
-                || change.SourceState != RespireConnectionState.Disconnected) return;
+                || change.SourceState != RespireConnectionState.Disconnected)
+            {
+                return;
+            }
+
             episodes.Enqueue(change.ReconnectEpisodeId);
-            if (Interlocked.Increment(ref ended) == 2) terminal.TrySetResult();
+
+            if (Interlocked.Increment(ref ended) == 2)
+            {
+                terminal.TrySetResult();
+            }
         };
+
         for (var round = 0; round < 2; round++)
         {
             var error = await Assert.That(async () => await client.Core.Cluster!.EnsureConnectedAsync(default, discovery: null, observation: default))
                 .Throws<RespireConnectionException>();
             await Assert.That(error is RespireReconnectLimitException).IsEqualTo(remainingCandidate);
         }
+
         await terminal.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(first.CommandsSeen).IsEqualTo(2);
         await Assert.That(second.CommandsSeen).IsEqualTo(2);
@@ -750,7 +960,11 @@ public class ClusterReconnectPolicyTests
         var seedQueries = 0;
         seed.ReplyOverride = (_, command) =>
         {
-            if (command != "CLUSTER SLOTS") return null;
+            if (command != "CLUSTER SLOTS")
+            {
+                return null;
+            }
+
             return Interlocked.Increment(ref seedQueries) == 1 ? topology : "-ERR seed topology unavailable\r\n"u8.ToArray();
         };
         healthy.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
@@ -797,11 +1011,16 @@ public class ClusterReconnectPolicyTests
         router.SetSlotOwner(43, failedOwner); // Clearing slot 42 must leave this owner in the master list.
         router.SetSlotOwner(44, router.GetMultiplexer(new("127.0.0.1", healthy.Port)));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         if (path == "dedicated")
         {
             var pool = await router.GetDedicatedPoolAsync(42, timeout.Token, discovery: null, observation: default);
             var connection = await pool.RentAsync(timeout.Token);
-            try { await Assert.That(connection.Port).IsEqualTo(healthy.Port); }
+
+            try
+            {
+                await Assert.That(connection.Port).IsEqualTo(healthy.Port);
+            }
             finally { pool.Return(connection); }
         }
         else
@@ -811,6 +1030,7 @@ public class ClusterReconnectPolicyTests
                 : await router.GetConnectionAsync(42, timeout.Token, discovery: null, observation: default);
             await Assert.That(connection.Port).IsEqualTo(healthy.Port);
         }
+
         await Assert.That(failed.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
         await Assert.That(healthy.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(1);
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["AUTH test", "CLUSTER SLOTS"]);
@@ -852,30 +1072,54 @@ public class ClusterReconnectPolicyTests
         var router = client.Core.Cluster!;
         router.SetSlotOwner(42, router.GetMultiplexer(new("127.0.0.1", first.Port)));
         router.SetSlotOwner(43, router.GetMultiplexer(new("127.0.0.1", first.Port)));
-        if (failedCount == 2) router.SetSlotOwner(44, router.GetMultiplexer(new("127.0.0.1", second.Port)));
+
+        if (failedCount == 2)
+        {
+            router.SetSlotOwner(44, router.GetMultiplexer(new("127.0.0.1", second.Port)));
+        }
+
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         router.DiscoveryStateChanged += change =>
         {
             changes.Enqueue(change);
-            if (change.SourceState == RespireConnectionState.Connected) recovered.TrySetResult();
+
+            if (change.SourceState == RespireConnectionState.Connected)
+            {
+                recovered.TrySetResult();
+            }
         };
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         int port;
+
         switch (path)
         {
-            case "tracked": port = (await router.GetTrackedConnectionAsync(42, true, timeout.Token, discovery: null, observation: default)).Port; break;
+            case "tracked":
+                port = (await router.GetTrackedConnectionAsync(42, true, timeout.Token, discovery: null, observation: default)).Port;
+                break;
             case "dedicated":
                 var pool = await router.GetDedicatedPoolAsync(42, timeout.Token, discovery: null, observation: default);
                 var connection = await pool.RentAsync(timeout.Token);
-                try { port = connection.Port; }
+                try
+                {
+                    port = connection.Port;
+                }
                 finally { pool.Return(connection); }
                 break;
-            case "pubsub": port = (await router.GetPubSubEndpointAsync(timeout.Token)).Port; break;
-            case "masters": port = (await router.GetMasterConnectionsAsync(timeout.Token, discovery: null, observation: default)).Single().Port; break;
-            case "known-masters": port = (await router.GetKnownMastersAsync(timeout.Token, discovery: null)).Single().Port; break;
-            default: port = (await router.GetConnectionAsync(path == "unkeyed" ? null : 42, timeout.Token, discovery: null, observation: default)).Port; break;
+            case "pubsub":
+                port = (await router.GetPubSubEndpointAsync(timeout.Token)).Port;
+                break;
+            case "masters":
+                port = (await router.GetMasterConnectionsAsync(timeout.Token, discovery: null, observation: default)).Single().Port;
+                break;
+            case "known-masters":
+                port = (await router.GetKnownMastersAsync(timeout.Token, discovery: null)).Single().Port;
+                break;
+            default:
+                port = (await router.GetConnectionAsync(path == "unkeyed" ? null : 42, timeout.Token, discovery: null, observation: default)).Port;
+                break;
         }
+
         await Assert.That(port).IsEqualTo(healthy.Port);
         await recovered.Task.WaitAsync(timeout.Token);
         await Assert.That(first.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
@@ -926,7 +1170,9 @@ public class ClusterReconnectPolicyTests
         router.SetSlotOwner(3, router.GetMultiplexer(new("127.0.0.1", healthy.Port)));
         var round = new ClusterRouter.DiscoveryRound(router, new()
         {
-            InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 2,
+            InitialDelay = TimeSpan.Zero,
+            JitterRatio = 0,
+            MaxAttempts = 2,
         });
         round.FailedNode(rejectedNode, new IOException("first master failed"));
         await retiredNode.RetireAsync();
@@ -972,7 +1218,11 @@ public class ClusterReconnectPolicyTests
         router.DiscoveryStateChanged += change =>
         {
             changes.Enqueue(change);
-            if (change.NextReconnectDelay is null) completed.TrySetResult(change);
+
+            if (change.NextReconnectDelay is null)
+            {
+                completed.TrySetResult(change);
+            }
         };
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var recovered = await router.GetRedirectConnectionAsync(new("READONLY demoted"), source, timeout.Token, 42, discovery: null, observation: default);
@@ -981,6 +1231,7 @@ public class ClusterReconnectPolicyTests
         await Assert.That(nextOwner.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
         await Assert.That(probe.ReceivedCommands).IsEquivalentTo(["AUTH test", "CLUSTER SLOTS"]);
         await Assert.That(healthy.ReceivedCommands).IsEquivalentTo(["AUTH test", "CLUSTER SLOTS"]);
+
         if (configured)
         {
             var terminal = await completed.Task.WaitAsync(timeout.Token);
@@ -1029,8 +1280,16 @@ public class ClusterReconnectPolicyTests
         var round = new ClusterRouter.DiscoveryRound(client.Core.Cluster!, new());
         var error = new RespireServerException(code + " rejected");
         round.RecordCommandFailure(error, discoveryPending: false, slot, noRedirect);
-        if (failed) await Assert.That(round.TerminalError).IsSameReferenceAs(error);
-        else await Assert.That(round.TerminalError).IsNull();
+
+        if (failed)
+        {
+            await Assert.That(round.TerminalError).IsSameReferenceAs(error);
+        }
+        else
+        {
+            await Assert.That(round.TerminalError).IsNull();
+        }
+
         round.Finish();
     }
 
@@ -1044,7 +1303,9 @@ public class ClusterReconnectPolicyTests
         var router = await Assert.That(client.Core.Cluster).IsNotNull();
         var round = new ClusterRouter.DiscoveryRound(router, new()
         {
-            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+            InitialDelay = TimeSpan.FromSeconds(30),
+            MaxDelay = TimeSpan.FromSeconds(30),
+            JitterRatio = 0,
         });
         var endpoint = new RespireEndpoint("unused.invalid");
         // Even with a long configured delay, the initial candidate completes synchronously.
@@ -1054,6 +1315,7 @@ public class ClusterReconnectPolicyTests
         round.Failed(endpoint, new IOException("first candidate failed"));
         using var cancellation = new CancellationTokenSource();
         var pending = round.BeforeCandidateAsync(endpoint, cancellation.Token).AsTask();
+
         try
         {
             await Assert.That(pending.IsCompleted).IsFalse();
@@ -1072,7 +1334,11 @@ public class ClusterReconnectPolicyTests
         finally
         {
             cancellation.Cancel();
-            try { await pending.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+            try
+            {
+                await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             catch (OperationCanceledException) { }
         }
         // Cancellation releases the guard, allowing the owner to report its terminal outcome.
@@ -1097,8 +1363,13 @@ public class ClusterReconnectPolicyTests
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port, target.Port) with
         {
             ConnectTimeout = TimeSpan.FromSeconds(4),
-            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
-                JitterRatio = 0, MaxAttempts = 2 },
+            ReconnectPolicy = new()
+            {
+                InitialDelay = TimeSpan.FromSeconds(30),
+                MaxDelay = TimeSpan.FromSeconds(30),
+                JitterRatio = 0,
+                MaxAttempts = 2
+            },
             ClusterDiscoveryClock = clock,
         });
 #pragma warning restore RESP010
@@ -1110,7 +1381,11 @@ public class ClusterReconnectPolicyTests
         router.DiscoveryStateChanged += change =>
         {
             changes.Enqueue(change);
-            if (change.NextReconnectDelay is null) terminal.TrySetResult(change);
+
+            if (change.NextReconnectDelay is null)
+            {
+                terminal.TrySetResult(change);
+            }
         };
         // The first backoff remains gated until the primary phase expires. Later backoffs
         // complete immediately, leaving the reserved seed phase free to recover.
@@ -1163,14 +1438,23 @@ public class ClusterReconnectPolicyTests
 #pragma warning disable RESP010 // Test-owned client isolates discovery retry budgets, backoff, and observer state for this scenario.
         await using var client = RespireClient.Create(Options(first.Port, second.Port) with
         {
-            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
-                JitterRatio = 0, MaxAttempts = 1 },
+            ReconnectPolicy = new()
+            {
+                InitialDelay = TimeSpan.FromSeconds(30),
+                MaxDelay = TimeSpan.FromSeconds(30),
+                JitterRatio = 0,
+                MaxAttempts = 1
+            },
         });
 #pragma warning restore RESP010
         var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery || change.NextReconnectDelay is null) return;
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery || change.NextReconnectDelay is null)
+            {
+                return;
+            }
+
             try
             {
 #pragma warning disable RESP009 // Deliberately dispose synchronously inside the discovery observer to exercise reentrant disposal without deadlock.
@@ -1201,22 +1485,38 @@ public class ClusterReconnectPolicyTests
         listener.InstrumentPublished = (instrument, meter) =>
         {
             if (throwFromMeter && instrument.Name == "respire.connection.reconnect.attempt")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
-            if (DiscoveryMetrics.Matches(tags, second.Port)) throw new InvalidOperationException("Test meter failure.");
+            if (DiscoveryMetrics.Matches(tags, second.Port))
+            {
+                throw new InvalidOperationException("Test meter failure.");
+            }
         });
         listener.Start();
         var terminal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var events = 0;
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery)
+            {
+                return;
+            }
+
             Interlocked.Increment(ref events);
+
             if (change.NextReconnectDelay is not null && !throwFromMeter)
+            {
                 throw new InvalidOperationException("Test observer failure.");
-            if (change.SourceState == RespireConnectionState.Connected) terminal.TrySetResult();
+            }
+
+            if (change.SourceState == RespireConnectionState.Connected)
+            {
+                terminal.TrySetResult();
+            }
         };
         await client.Core.Cluster!.EnsureConnectedAsync(default, discovery: null, observation: default);
         await terminal.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -1238,9 +1538,17 @@ public class ClusterReconnectPolicyTests
         var exhausted = 0;
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery)
+            {
+                return;
+            }
+
             changes.Enqueue(change);
-            if (change.ReconnectExhausted && Interlocked.Increment(ref exhausted) == 4) complete.TrySetResult();
+
+            if (change.ReconnectExhausted && Interlocked.Increment(ref exhausted) == 4)
+            {
+                complete.TrySetResult();
+            }
         };
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await Task.WhenAll(Enumerable.Range(0, 4).Select(async _ =>
@@ -1274,17 +1582,24 @@ public class ClusterReconnectPolicyTests
         router.DiscoveryStateChanged += change =>
         {
             if (change.NextReconnectDelay is not null)
+            {
                 Interlocked.CompareExchange(ref firstEpisode, change.ReconnectEpisodeId!.Value, 0);
+            }
             else if (change.ReconnectEpisodeId == Volatile.Read(ref firstEpisode))
             {
                 Interlocked.Increment(ref terminalCount);
                 terminal.TrySetResult(change);
             }
-            else barrier.TrySetResult();
+            else
+            {
+                barrier.TrySetResult();
+            }
         };
         var round = new ClusterRouter.DiscoveryRound(router, new()
         {
-            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+            InitialDelay = TimeSpan.FromSeconds(30),
+            MaxDelay = TimeSpan.FromSeconds(30),
+            JitterRatio = 0,
         });
         round.Failed(endpoint, new IOException("initial failure"));
         using var cancellation = new CancellationTokenSource();
@@ -1293,11 +1608,15 @@ public class ClusterReconnectPolicyTests
         var original = new IOException("original exception must survive finally");
         var propagated = await Assert.That(() =>
         {
-            try { throw original; }
+            try
+            {
+                throw original;
+            }
             finally { round.Finish(); round.Finish(); }
         }).ThrowsExactly<IOException>();
         await Assert.That(propagated).IsSameReferenceAs(original);
         OperationCanceledException? failure = null;
+
         if (cancel)
         {
             cancellation.Cancel();
@@ -1309,6 +1628,7 @@ public class ClusterReconnectPolicyTests
             timer.Fire();
             await pending.WaitAsync(TimeSpan.FromSeconds(5));
         }
+
         var ended = await terminal.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(ended.SourceState).IsEqualTo(cancel ? RespireConnectionState.Disconnected : RespireConnectionState.Connected);
         await Assert.That(ended.Error).IsSameReferenceAs(failure);
@@ -1330,12 +1650,20 @@ public class ClusterReconnectPolicyTests
 
     private sealed class GatedDiscoveryClock(bool autoCompleteLaterDelays = false) : TimeProvider
     {
-        internal TaskCompletionSource<GatedTimer> Created { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource<GatedTimer> Created
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = new GatedTimer(callback, state);
+
             if (!Created.TrySetResult(timer) && autoCompleteLaterDelays)
+            {
                 return TimeProvider.System.CreateTimer(callback, state, TimeSpan.Zero, Timeout.InfiniteTimeSpan);
+            }
+
             return timer;
         }
     }
@@ -1343,27 +1671,52 @@ public class ClusterReconnectPolicyTests
     private sealed class GatedTimer(TimerCallback callback, object? state) : ITimer
     {
         private int _finished;
+
         internal void Fire()
         {
-            if (Interlocked.Exchange(ref _finished, 1) == 0) callback(state);
+            if (Interlocked.Exchange(ref _finished, 1) == 0)
+            {
+                callback(state);
+            }
         }
+
         public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _finished) == 0;
+
         public void Dispose() => Interlocked.Exchange(ref _finished, 1);
-        public ValueTask DisposeAsync() { Dispose(); return default; }
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return default;
+        }
     }
 
     private sealed class ThrowingWarningLogger : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger
     {
         internal int Warnings;
+
         public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel level) => level == Microsoft.Extensions.Logging.LogLevel.Warning;
+
         public void Log<TState>(Microsoft.Extensions.Logging.LogLevel level, Microsoft.Extensions.Logging.EventId eventId,
             TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            if (level != Microsoft.Extensions.Logging.LogLevel.Warning) return;
+            if (level != Microsoft.Extensions.Logging.LogLevel.Warning)
+            {
+                return;
+            }
+
             Interlocked.Increment(ref Warnings);
             throw new InvalidOperationException("Test logger failure.");
         }
@@ -1373,45 +1726,79 @@ public class ClusterReconnectPolicyTests
     {
         private readonly MeterListener _listener = new();
         private long _exhaustions;
-        internal ConcurrentQueue<long> Attempts { get; } = new();
-        internal ConcurrentQueue<double> Delays { get; } = new();
+
+        internal ConcurrentQueue<long> Attempts
+        {
+            get;
+        } = new();
+
+        internal ConcurrentQueue<double> Delays
+        {
+            get;
+        } = new();
+
         internal long Exhaustions => Interlocked.Read(ref _exhaustions);
+
         internal DiscoveryMetrics(int port)
         {
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name.StartsWith("respire.connection.reconnect."))
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
             {
-                if (!Matches(tags, port)) return;
-                if (instrument.Name.EndsWith(".attempt")) Attempts.Enqueue(value);
-                if (instrument.Name.EndsWith(".exhausted")) Interlocked.Add(ref _exhaustions, value);
+                if (!Matches(tags, port))
+                {
+                    return;
+                }
+
+                if (instrument.Name.EndsWith(".attempt"))
+                {
+                    Attempts.Enqueue(value);
+                }
+
+                if (instrument.Name.EndsWith(".exhausted"))
+                {
+                    Interlocked.Add(ref _exhaustions, value);
+                }
             });
             _listener.SetMeasurementEventCallback<double>((_, value, tags, _) =>
             {
-                if (Matches(tags, port)) Delays.Enqueue(value);
+                if (Matches(tags, port))
+                {
+                    Delays.Enqueue(value);
+                }
             });
             _listener.Start();
         }
+
         internal static bool Matches(ReadOnlySpan<KeyValuePair<string, object?>> tags, int port)
         {
             var endpoint = false;
             var scope = false;
+
             foreach (var tag in tags)
             {
                 endpoint |= tag.Key == "server.port" && tag.Value is int value && value == port;
                 scope |= tag.Key == "respire.reconnect.scope" && Equals(tag.Value, "cluster-discovery");
             }
+
             return endpoint && scope;
         }
+
         public void Dispose() => _listener.Dispose();
     }
 
     private static RespireOptions Options(params int[] ports) => new()
     {
-        UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Password = "test", CommandTimeout = null,
+        UseCluster = true,
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        Password = "test",
+        CommandTimeout = null,
         ConnectTimeout = TimeSpan.FromSeconds(5),
         Endpoints = ports.Select(port => new RespireEndpoint("127.0.0.1", port)).ToArray(),
         ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },

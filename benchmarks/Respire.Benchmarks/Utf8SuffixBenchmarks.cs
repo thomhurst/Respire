@@ -13,7 +13,10 @@ namespace Respire.Benchmarks;
 public class Utf8SuffixBenchmarks
 {
     [Params("ASCII", "Mixed", "Unicode")]
-    public string Shape { get; set; } = "ASCII";
+    public string Shape
+    {
+        get; set;
+    } = "ASCII";
 
     private IContainer? _container;
     private RespireClient _client = null!;
@@ -44,6 +47,7 @@ public class Utf8SuffixBenchmarks
 
         var host = Environment.GetEnvironmentVariable("REDIS_HOST");
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort) ? configuredPort : 6379;
+
         if (string.IsNullOrEmpty(host))
         {
             _container = new RedisBuilder("redis:8.10").Build();
@@ -51,16 +55,22 @@ public class Utf8SuffixBenchmarks
             host = _container.Hostname;
             port = _container.GetMappedPublicPort(6379);
         }
+
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new RespireEndpoint(host, port) }, Protocol = RespireProtocol.Resp2, Connections = 1,
+            Endpoints = { new RespireEndpoint(host, port) },
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         _view = (RespireClient)_client.WithKeyPrefix("tenant:");
+
         if (await Single() != expected.Length || await SinglePrefixed() != expected.Length
             || await Pipeline() != expected.Length * 8 || await PipelinePrefixed() != expected.Length * 8
             || await _client.GetAsync<string>(_key) != _text || await _view.GetAsync<string>(_key) != _text)
+        {
             throw new InvalidOperationException("UTF-8 fixture did not preserve lengths, values and every reply.");
+        }
     }
 
     [Benchmark]
@@ -87,8 +97,11 @@ public class Utf8SuffixBenchmarks
         return _buffer.WrittenMemory;
     }
 
-    [Benchmark] public ValueTask<long> Single() => _client.Strings.SetRangeAsync(_key, _offset, _value);
-    [Benchmark] public ValueTask<long> SinglePrefixed() => _view.Strings.SetRangeAsync(_key, _offset, _value);
+    [Benchmark]
+    public ValueTask<long> Single() => _client.Strings.SetRangeAsync(_key, _offset, _value);
+
+    [Benchmark]
+    public ValueTask<long> SinglePrefixed() => _view.Strings.SetRangeAsync(_key, _offset, _value);
 
     [Benchmark(OperationsPerInvoke = 8)]
     public ValueTask<long> Pipeline() => SendPipeline(_client);
@@ -113,14 +126,26 @@ public class Utf8SuffixBenchmarks
     private static void ValidateFrame(ReadOnlyMemory<byte> frame, byte[] payload)
     {
         byte[] expected = [.. Encoding.ASCII.GetBytes($"${payload.Length}\r\n"), .. payload, 13, 10];
-        if (!frame.Span.SequenceEqual(expected)) throw new InvalidOperationException("Incorrect serialization fixture.");
+
+        if (!frame.Span.SequenceEqual(expected))
+        {
+            throw new InvalidOperationException("Incorrect serialization fixture.");
+        }
     }
 
     [GlobalCleanup]
     public async Task Cleanup()
     {
         _buffer?.Release();
-        if (_client is not null) await _client.DisposeAsync();
-        if (_container is not null) await _container.DisposeAsync();
+
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+        }
+
+        if (_container is not null)
+        {
+            await _container.DisposeAsync();
+        }
     }
 }

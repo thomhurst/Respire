@@ -1,13 +1,13 @@
-using Respire.Aspire;
+using global::Respire;
+using global::Respire.DependencyInjection;
+using global::Respire.HealthChecks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
-using global::Respire;
-using global::Respire.DependencyInjection;
-using global::Respire.HealthChecks;
+using Respire.Aspire;
 
 namespace Microsoft.Extensions.Hosting;
 
@@ -50,8 +50,12 @@ public static class AspireRespireExtensions
         var settings = new RespireClientSettings();
         root.Bind(settings);
         named.Bind(settings);
+
         if (builder.Configuration.GetConnectionString(connectionName) is { } connectionString)
+        {
             settings.ConnectionString = connectionString;
+        }
+
         configureSettings?.Invoke(settings);
 
         var options = string.IsNullOrWhiteSpace(settings.ConnectionString)
@@ -59,7 +63,11 @@ public static class AspireRespireExtensions
         options = RespireConfiguration.Apply(root.GetSection("Options"), options);
         options = RespireConfiguration.Apply(named.GetSection("Options"), options);
         var disableLogging = settings.DisableLogging;
-        if (configureOptions is null) ValidateEndpoints(options, connectionName);
+
+        if (configureOptions is null)
+        {
+            ValidateEndpoints(options, connectionName);
+        }
 
         RespireOptions ResolveOptions(IServiceProvider provider)
         {
@@ -69,14 +77,28 @@ public static class AspireRespireExtensions
             return disableLogging ? resolved with { LoggerFactory = NullLoggerFactory.Instance } : resolved;
         }
 
-        if (serviceKey is null) builder.Services.AddRespire(ResolveOptions);
-        else builder.Services.AddKeyedRespire(serviceKey, ResolveOptions);
+        if (serviceKey is null)
+        {
+            builder.Services.AddRespire(ResolveOptions);
+        }
+        else
+        {
+            builder.Services.AddKeyedRespire(serviceKey, ResolveOptions);
+        }
+
         var clientBuilder = new AspireRespireClientBuilder(builder, settings, serviceKey);
+
         if (!settings.DisableHealthChecks)
+        {
             builder.Services.AddHealthChecks().AddRespire(name: $"respire_{(serviceKey is null ? "default" : "keyed")}_{connectionName}", tags: ["ready"],
                 clientFactory: clientBuilder.GetClient);
+        }
+
         if (!settings.DisableTracing || !settings.DisableMetrics)
+        {
             AddTelemetry(builder.Services, settings);
+        }
+
         return clientBuilder;
     }
 
@@ -85,16 +107,19 @@ public static class AspireRespireExtensions
     {
         var registration = services.FirstOrDefault(static descriptor => descriptor.ServiceType == typeof(TelemetryRegistration))
             ?.ImplementationInstance as TelemetryRegistration;
+
         if (registration is null)
         {
             registration = new TelemetryRegistration(services.AddOpenTelemetry());
             services.AddSingleton(registration);
         }
+
         if (!settings.DisableTracing && !registration.Tracing)
         {
             registration.Builder.WithTracing(tracing => tracing.AddSource("Respire"));
             registration.Tracing = true;
         }
+
         if (!settings.DisableMetrics && !registration.Metrics)
         {
             registration.Builder.WithMetrics(metrics => metrics.AddMeter("Respire"));
@@ -105,16 +130,29 @@ public static class AspireRespireExtensions
     /// <summary>Retains registration-time telemetry state in the host's own service collection.</summary>
     private sealed class TelemetryRegistration(OpenTelemetryBuilder builder)
     {
-        internal OpenTelemetryBuilder Builder { get; } = builder;
-        internal bool Tracing { get; set; }
-        internal bool Metrics { get; set; }
+        internal OpenTelemetryBuilder Builder
+        {
+            get;
+        } = builder;
+
+        internal bool Tracing
+        {
+            get; set;
+        }
+
+        internal bool Metrics
+        {
+            get; set;
+        }
     }
 
     /// <summary>Reports missing endpoints without opening a connection or invoking a deferred callback.</summary>
     private static void ValidateEndpoints(RespireOptions options, string connectionName)
     {
         if (options.Endpoints.Count == 0)
+        {
             throw new InvalidOperationException($"No endpoints are configured for Respire connection '{connectionName}'. " +
                 $"Set ConnectionStrings:{connectionName}, Aspire:Respire:Options:Endpoints, or configureOptions.");
+        }
     }
 }

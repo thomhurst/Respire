@@ -17,9 +17,21 @@ public partial class TopologyCommandRetryTests
         await using var replacement = Primary(command => command == "GET key" ? Value : null);
         await using var former = Primary(command =>
         {
-            if (command == "ROLE") return RoleReply(Volatile.Read(ref demoted) == 0 ? "master" : "slave");
-            if (command == "GET key") return "$3\r\nold\r\n"u8.ToArray();
-            if (command != "SET key value") return null;
+            if (command == "ROLE")
+            {
+                return RoleReply(Volatile.Read(ref demoted) == 0 ? "master" : "slave");
+            }
+
+            if (command == "GET key")
+            {
+                return "$3\r\nold\r\n"u8.ToArray();
+            }
+
+            if (command != "SET key value")
+            {
+                return null;
+            }
+
             Volatile.Write(ref demoted, 1);
             return "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
         });
@@ -55,9 +67,21 @@ public partial class TopologyCommandRetryTests
             // A demoted primary reports itself as a replica. The startup monitor's validation
             // discovery can read Sentinel before the failure and connect after it; ROLE must
             // reject that stale candidate, as it would for a real failover.
-            if (command == "ROLE") return RoleReply(Volatile.Read(ref failed) == 0 ? "master" : "slave");
-            if (command == "GET first") return "$3\r\nold\r\n"u8.ToArray();
-            if (command != "GET second") return null;
+            if (command == "ROLE")
+            {
+                return RoleReply(Volatile.Read(ref failed) == 0 ? "master" : "slave");
+            }
+
+            if (command == "GET first")
+            {
+                return "$3\r\nold\r\n"u8.ToArray();
+            }
+
+            if (command != "GET second")
+            {
+                return null;
+            }
+
             Volatile.Write(ref failed, 1);
             formerServer!.CloseConnections();
             return null;

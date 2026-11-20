@@ -154,6 +154,7 @@ public class BitmapCommandTests
     private static async Task AssertCommands(IReadOnlyList<string> actual, params string[] expected)
     {
         await Assert.That(actual.Count).IsEqualTo(expected.Length);
+
         for (var i = 0; i < expected.Length; i++)
         {
             await Assert.That(actual[i]).IsEqualTo(expected[i]);

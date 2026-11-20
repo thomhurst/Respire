@@ -23,14 +23,19 @@ public class FakeTransactionPubSubParityTests(ModernRedisTestContainer fixture)
         await using var subscriber = await TestRespSession.ConnectAsync(options);
         await using var transaction = await TestRespSession.ConnectAsync(options);
         await using var publisher = await RespireClient.ConnectAsync(options);
+
         using (var subscribed = await subscriber.CommandAsync("SUBSCRIBE", channel))
+        {
             subscribed.AsArray()[0].AsString().Should().Be("subscribe");
+        }
+
         await Text(transaction, "OK", "WATCH", channel);
         await Text(transaction, "OK", "MULTI");
         await Text(transaction, "QUEUED", "PUBLISH", channel, "first");
         await Text(transaction, "QUEUED", "PUBLISH", channel, "second");
         (await publisher.PublishAsync(channel, "before exec")).Should().Be(1);
         await Message(subscriber, channel, "before exec");
+
         using (var executed = await transaction.CommandAsync("EXEC"))
         {
             executed.Type.Should().Be(RespireDataType.Array);
@@ -38,6 +43,7 @@ public class FakeTransactionPubSubParityTests(ModernRedisTestContainer fixture)
             executed.AsArray()[0].AsInteger().Should().Be(1);
             executed.AsArray()[1].AsInteger().Should().Be(1);
         }
+
         await Message(subscriber, channel, "first");
         await Message(subscriber, channel, "second");
         await Text(transaction, "PONG", "PING");
@@ -51,17 +57,23 @@ public class FakeTransactionPubSubParityTests(ModernRedisTestContainer fixture)
         await using var fake = useFake ? new RespireFakeServer() : null;
         await using var session = await TestRespSession.ConnectAsync(Options(fake, 3));
         var channel = $"self:{Guid.NewGuid():N}";
+
         using (var subscribed = await session.CommandAsync("SUBSCRIBE", channel))
+        {
             subscribed.Type.Should().Be(RespireDataType.Push);
+        }
+
         await Text(session, "OK", "MULTI");
         await Text(session, "QUEUED", "PUBLISH", channel, "payload");
         await Text(session, "QUEUED", "PING");
+
         using (var executed = await session.CommandAsync("EXEC"))
         {
             executed.Type.Should().Be(RespireDataType.Array);
             executed.AsArray()[0].AsInteger().Should().Be(1);
             executed.AsArray()[1].AsString().Should().Be("PONG");
         }
+
         await Message(session, channel, "payload");
     }
 
@@ -73,9 +85,16 @@ public class FakeTransactionPubSubParityTests(ModernRedisTestContainer fixture)
         await using var fake = useFake ? new RespireFakeServer() : null;
         await using var session = await TestRespSession.ConnectAsync(Options(fake, 3));
         var channel = $"self:{Guid.NewGuid():N}";
-        using (var subscribed = await session.CommandAsync("SUBSCRIBE", channel)) { }
+
+        using (var subscribed = await session.CommandAsync("SUBSCRIBE", channel))
+        {
+        }
+
         using (var published = await session.CommandAsync("PUBLISH", channel, "payload"))
+        {
             published.AsInteger().Should().Be(1);
+        }
+
         await Message(session, channel, "payload");
         await Text(session, "PONG", "PING");
     }
@@ -88,10 +107,20 @@ public class FakeTransactionPubSubParityTests(ModernRedisTestContainer fixture)
         await using var fake = useFake ? new RespireFakeServer() : null;
         await using var session = await TestRespSession.ConnectAsync(Options(fake, 2));
         var channel = $"mode:{Guid.NewGuid():N}";
-        using (var subscribed = await session.CommandAsync("SUBSCRIBE", channel)) { }
+
+        using (var subscribed = await session.CommandAsync("SUBSCRIBE", channel))
+        {
+        }
+
         using (var rejected = await session.CommandAsync("MULTI"))
+        {
             rejected.GetErrorMessage().Should().Contain("Can't execute 'multi'");
-        using (var unsubscribed = await session.CommandAsync("UNSUBSCRIBE", channel)) { }
+        }
+
+        using (var unsubscribed = await session.CommandAsync("UNSUBSCRIBE", channel))
+        {
+        }
+
         await Text(session, "OK", "MULTI");
         await Text(session, "QUEUED", "PING");
         using var executed = await session.CommandAsync("EXEC");

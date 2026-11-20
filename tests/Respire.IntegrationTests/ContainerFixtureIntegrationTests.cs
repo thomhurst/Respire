@@ -2,8 +2,8 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using Docker.DotNet;
-using DotNet.Testcontainers.Containers;
 using DotNet.Testcontainers.Configurations;
+using DotNet.Testcontainers.Containers;
 using FluentAssertions;
 using Respire.Testing.Containers;
 using TUnit.Core;
@@ -37,6 +37,7 @@ public class ContainerFixtureIntegrationTests
         });
         fixture.SentinelEndpoints.Should().HaveCount(topology == RespireContainerTopology.Sentinel ? 3 : 0);
         fixture.ContainerId.Should().NotBeNullOrWhiteSpace();
+
         using (var docker = TestcontainersSettings.OS.DockerEndpointAuthConfig
             .GetDockerClientBuilder(Guid.NewGuid()).WithTimeout(TimeSpan.FromSeconds(5)).Build())
         {
@@ -45,8 +46,12 @@ public class ContainerFixtureIntegrationTests
             IEnumerable<int> expectedReservedPorts = topology == RespireContainerTopology.Standalone
                 ? [6379]
                 : fixture.DataEndpoints.Concat(fixture.SentinelEndpoints).Select(endpoint => endpoint.Port);
+
             if (topology == RespireContainerTopology.Cluster)
+            {
                 expectedReservedPorts = expectedReservedPorts.Concat([16379, 16380, 16381]);
+            }
+
             container.HostConfig!.Sysctls!["net.ipv4.ip_local_reserved_ports"].Split(',')
                 .Should().BeEquivalentTo(expectedReservedPorts.Select(port => port.ToString(System.Globalization.CultureInfo.InvariantCulture)));
             // Linux Docker includes image EXPOSE ports with null bindings when unpublished.
@@ -54,12 +59,15 @@ public class ContainerFixtureIntegrationTests
             publishedPorts.Should().HaveCount(fixture.DataEndpoints.Count + fixture.SentinelEndpoints.Count);
             publishedPorts.Should().OnlyContain(binding => binding.HostIP == "127.0.0.1");
         }
+
         foreach (var endpoint in fixture.SentinelEndpoints)
         {
             // Assert readiness immediately: no test-side polling can hide early return.
             await using var sentinel = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Endpoints = [endpoint], Protocol = RespireProtocol.Resp2, AllowAdmin = true,
+                Endpoints = [endpoint],
+                Protocol = RespireProtocol.Resp2,
+                AllowAdmin = true,
             });
             using var primary = await sentinel.ExecuteAsync(RespireCommands.Sentinel.SENTINEL_GET_MASTER_ADDR_BY_NAME,
                 RespireContainerFixture.SentinelServiceName);
@@ -70,12 +78,17 @@ public class ContainerFixtureIntegrationTests
                 RespireContainerFixture.SentinelServiceName);
             replicas.Count.Should().Be(1);
             var fields = new Dictionary<string, string>();
+
             for (var index = 0; index < replicas[0].Count; index += 2)
+            {
                 fields.Add(replicas[0][index].AsString(), replicas[0][index + 1].AsString());
+            }
+
             fields["ip"].Should().Be("127.0.0.1");
             fields["port"].Should().Be(fixture.DataEndpoints[1].Port.ToString(System.Globalization.CultureInfo.InvariantCulture));
             fields["flags"].Should().Be("slave");
         }
+
         await using (var client = await RespireClient.ConnectAsync(options with { Protocol = RespireProtocol.Resp3 }))
         {
             // These hash tags cover all three primary slot ranges in the Cluster fixture.
@@ -84,14 +97,19 @@ public class ContainerFixtureIntegrationTests
                 (await client.SetAsync(key, "value")).Should().BeTrue();
                 (await client.GetStringAsync(key)).Should().Be("value");
             }
+
             if (topology == RespireContainerTopology.Sentinel)
             {
                 await using var replica = await RespireClient.ConnectAsync(new RespireOptions { Endpoints = { fixture.DataEndpoints[1] } });
                 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
                 while (await replica.GetStringAsync("{a}:fixture", deadline.Token) != "value")
+                {
                     await Task.Delay(50, deadline.Token);
+                }
             }
         }
+
         var containerId = fixture.ContainerId;
         var first = fixture.DisposeAsync().AsTask();
         var second = fixture.DisposeAsync().AsTask();
@@ -108,9 +126,11 @@ public class ContainerFixtureIntegrationTests
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
-            Server = server, Topology = RespireContainerTopology.Cluster,
+            Server = server,
+            Topology = RespireContainerTopology.Cluster,
         });
         var epochs = new List<long>();
+
         foreach (var endpoint in fixture.DataEndpoints)
         {
             await using var client = await RespireClient.ConnectAsync(new RespireOptions { Endpoints = [endpoint] });
@@ -119,6 +139,7 @@ public class ContainerFixtureIntegrationTests
                 .Single(field => field.StartsWith("cluster_my_epoch:", StringComparison.Ordinal));
             epochs.Add(long.Parse(epoch["cluster_my_epoch:".Length..], System.Globalization.CultureInfo.InvariantCulture));
         }
+
         epochs.Should().OnlyContain(epoch => epoch > 0);
         epochs.Should().OnlyHaveUniqueItems();
     }
@@ -129,8 +150,12 @@ public class ContainerFixtureIntegrationTests
         await using var first = await RespireContainerFixture.StartAsync();
         await using var second = await RespireContainerFixture.StartAsync();
         first.DataEndpoints[0].Should().NotBe(second.DataEndpoints[0]);
+
         await using (var client = await RespireClient.ConnectAsync(first.CreateOptions()))
+        {
             await client.SetAsync("isolation", "first");
+        }
+
         await first.DisposeAsync();
         await using var survivor = await RespireClient.ConnectAsync(second.CreateOptions());
         (await survivor.GetStringAsync("isolation")).Should().BeNull();
@@ -154,6 +179,7 @@ public class ContainerFixtureIntegrationTests
             Func<Task> start = async () => await RespireContainerFixture.StartAsync(options);
             await start.Should().ThrowAsync<ArgumentException>();
         }
+
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
         Func<Task> cancelledStart = async () => await RespireContainerFixture.StartAsync(cancellationToken: cancelled.Token);
@@ -176,7 +202,8 @@ public class ContainerFixtureIntegrationTests
         // Valid cached image, deliberately incompatible binary selection; no missing-image pull.
         Func<Task> start = async () => await RespireContainerFixture.StartAsync(new()
         {
-            Server = RespireContainerServer.Valkey, Image = "redis:7.2-alpine",
+            Server = RespireContainerServer.Valkey,
+            Image = "redis:7.2-alpine",
         });
         var failure = await start.Should().ThrowAsync<InvalidOperationException>().WithMessage("*valkey-server*failed*");
         failure.Which.Data["RespireFixture.StartupStep"].Should().BeOfType<string>()
@@ -217,9 +244,15 @@ public class ContainerFixtureIntegrationTests
             else
             {
                 createdIds.Should().HaveCount(selectedPorts.Count);
-                foreach (var id in createdIds) await AssertContainerRemovedAsync(id);
+
+                foreach (var id in createdIds)
+                {
+                    await AssertContainerRemovedAsync(id);
+                }
+
                 ports.Should().NotIntersectWith(selectedPorts.SelectMany(previous => previous));
             }
+
             selectedPorts.Add(ports.ToArray());
             var container = RespireContainerFixture.BuildContainer(options, ports);
             container.Created += (_, _) => createdIds.Add(container.Id);
@@ -227,12 +260,18 @@ public class ContainerFixtureIntegrationTests
         });
         selectedPorts.Count.Should().BeInRange(2, 3);
         createdIds.Should().HaveCount(selectedPorts.Count);
-        foreach (var id in createdIds.SkipLast(1)) await AssertContainerRemovedAsync(id);
+
+        foreach (var id in createdIds.SkipLast(1))
+        {
+            await AssertContainerRemovedAsync(id);
+        }
+
         await using (var client = await RespireClient.ConnectAsync(fixture.CreateOptions()))
         {
             (await client.SetAsync("{retry}:key", "ready")).Should().BeTrue();
             (await client.GetStringAsync("{retry}:key")).Should().Be("ready");
         }
+
         await fixture.DisposeAsync();
         await AssertContainerRemovedAsync(createdIds[^1]);
         using var docker = TestcontainersSettings.OS.DockerEndpointAuthConfig
@@ -258,9 +297,19 @@ public class ContainerFixtureIntegrationTests
         await using var fixture = await RespireContainerFixture.StartAsync(options, default, async (ports, _) =>
         {
             ports.Should().Equal(6379);
-            if (++attempts == 1) return failed;
+
+            if (++attempts == 1)
+            {
+                return failed;
+            }
+
             probe.DisposeCount.Should().Be(1);
-            foreach (var id in createdIds) await AssertContainerRemovedAsync(id);
+
+            foreach (var id in createdIds)
+            {
+                await AssertContainerRemovedAsync(id);
+            }
+
             var container = RespireContainerFixture.BuildContainer(options, ports);
             container.Created += (_, _) => createdIds.Add(container.Id);
             return container;
@@ -269,18 +318,25 @@ public class ContainerFixtureIntegrationTests
         // Exact retry counts are covered by StandaloneStartupRetryTests with controlled starts.
         attempts.Should().BeInRange(2, 3);
         createdIds.Should().HaveCount(attempts - 1);
+
         await using (var client = await RespireClient.ConnectAsync(fixture.CreateOptions()))
         {
             (await client.SetAsync("retry:key", "ready")).Should().BeTrue();
             (await client.GetStringAsync("retry:key")).Should().Be("ready");
         }
+
         await fixture.DisposeAsync();
-        foreach (var id in createdIds) await AssertContainerRemovedAsync(id);
+
+        foreach (var id in createdIds)
+        {
+            await AssertContainerRemovedAsync(id);
+        }
     }
 
     private static async Task<(IContainer Container, int Port)> StartCompetingOwnerAsync(RespireContainerOptions options)
     {
         using var deadline = new CancellationTokenSource(options.StartupTimeout);
+
         while (true)
         {
             deadline.Token.ThrowIfCancellationRequested();
@@ -291,6 +347,7 @@ public class ContainerFixtureIntegrationTests
             var port = ((IPEndPoint)probe.LocalEndpoint).Port;
             probe.Stop();
             var container = RespireContainerFixture.BuildContainer(options, [port]);
+
             try
             {
                 await container.StartAsync(deadline.Token);
@@ -299,7 +356,11 @@ public class ContainerFixtureIntegrationTests
             catch (Exception error)
             {
                 await container.DisposeAsync();
-                if (!ContainerPortCollision.IsMatch(error, [port])) throw;
+
+                if (!ContainerPortCollision.IsMatch(error, [port]))
+                {
+                    throw;
+                }
             }
         }
     }

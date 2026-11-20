@@ -18,7 +18,10 @@ public sealed class ShortLivedClientAnalyzer : DiagnosticAnalyzer
         description: "RespireClient multiplexes connections and should normally live for the application lifetime.",
         helpLinkUri: "https://respire.tomlonghurst.dev/docs/diagnostics/RESP010");
 
-    public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule);
+    public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics
+    {
+        get;
+    } = ImmutableArray.Create(Rule);
 
     public override void Initialize(AnalysisContext context)
     {
@@ -31,7 +34,10 @@ public sealed class ShortLivedClientAnalyzer : DiagnosticAnalyzer
             if (start.Compilation.ReferencedAssemblyNames.Any(assembly => assembly.Name is
                 "Respire.Testing" or "Respire.Testing.Containers"
                 or "TUnit.Core" or "xunit.core" or "xunit.v3.core"
-                or "nunit.framework" or "Microsoft.VisualStudio.TestPlatform.TestFramework")) return;
+                or "nunit.framework" or "Microsoft.VisualStudio.TestPlatform.TestFramework"))
+            {
+                return;
+            }
 
             start.RegisterOperationAction(Analyze, OperationKind.Invocation);
         });
@@ -40,14 +46,19 @@ public sealed class ShortLivedClientAnalyzer : DiagnosticAnalyzer
     private static void Analyze(OperationAnalysisContext context)
     {
         var call = (IInvocationOperation)context.Operation;
+
         if (!call.TargetMethod.IsStatic || call.TargetMethod.Name is not ("Create" or "ConnectAsync" or "ConnectAnyAsync")
-            || call.TargetMethod.ContainingType.ToDisplayString() != "Respire.RespireClient") return;
+            || call.TargetMethod.ContainingType.ToDisplayString() != "Respire.RespireClient")
+        {
+            return;
+        }
 
         // Limit the lifetime heuristic to explicit using ownership or repeated construction.
         // Returning a client from a factory or storing it in a field is not operation-scoped.
         SyntaxNode? scope = null;
         var inLoop = false;
         var inUsing = false;
+
         foreach (var ancestor in call.Syntax.Ancestors())
         {
             if (ancestor is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax or BaseMethodDeclarationSyntax)
@@ -55,29 +66,45 @@ public sealed class ShortLivedClientAnalyzer : DiagnosticAnalyzer
                 scope = ancestor;
                 break;
             }
+
             if (ancestor is WhileStatementSyntax or DoStatementSyntax
                 || ancestor is CommonForEachStatementSyntax each && each.Statement.Span.Contains(call.Syntax.Span)
                 || ancestor is ForStatementSyntax repeat
                     && repeat.Declaration?.Span.Contains(call.Syntax.Span) != true
                     && !repeat.Initializers.Any(initializer => initializer.Span.Contains(call.Syntax.Span)))
+            {
                 inLoop = true;
+            }
+
             if (ancestor is LocalDeclarationStatementSyntax local && local.UsingKeyword.RawKind != 0)
+            {
                 inUsing = true;
+            }
+
             if (ancestor is UsingStatementSyntax usingStatement
                 && (usingStatement.Declaration?.Span.Contains(call.Syntax.Span) == true
-                    || usingStatement.Expression?.Span.Contains(call.Syntax.Span) == true)) inUsing = true;
+                    || usingStatement.Expression?.Span.Contains(call.Syntax.Span) == true))
+            {
+                inUsing = true;
+            }
         }
 
         var entryPoint = context.Compilation.GetEntryPoint(context.CancellationToken);
         var inEntryPoint = scope is MethodDeclarationSyntax method
             && call.SemanticModel is { } model
             && SymbolEqualityComparer.Default.Equals(model.GetDeclaredSymbol(method, context.CancellationToken), entryPoint);
+
         if (!inLoop && !inUsing && !inEntryPoint
             && scope is MethodDeclarationSyntax or AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax)
+        {
             inUsing = HasSubsequentLocalOwnership(call, context.CancellationToken);
+        }
+
         if (inLoop || (inUsing && scope is MethodDeclarationSyntax or AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax
                 && !inEntryPoint))
+        {
             context.ReportDiagnostic(Diagnostic.Create(Rule, call.Syntax.GetLocation()));
+        }
     }
 
     private static bool HasSubsequentLocalOwnership(IInvocationOperation call, System.Threading.CancellationToken cancellationToken)
@@ -85,17 +112,25 @@ public sealed class ShortLivedClientAnalyzer : DiagnosticAnalyzer
         // Follow only a creation result, including awaited/configured connections, into
         // a single local initializer. Arbitrary calls and conditional values may replace it.
         IOperation value = call;
+
         while (value.Parent is IAwaitOperation or IConversionOperation or IParenthesizedOperation
             || value.Parent is IInvocationOperation configured
                 && configured.TargetMethod.Name == "ConfigureAwait" && configured.Instance == value)
+        {
             value = value.Parent;
+        }
+
         if (value.Parent is not IVariableInitializerOperation { Parent: IVariableDeclaratorOperation declarator }
             || declarator.Syntax.Parent?.Parent is not LocalDeclarationStatementSyntax declaration
             || declaration.Declaration.Variables.Count != 1
             || declaration.Parent is not BlockSyntax block
-            || call.SemanticModel is not { } model) return false;
+            || call.SemanticModel is not { } model)
+        {
+            return false;
+        }
 
         var first = block.Statements.IndexOf(declaration) + 1;
+
         for (var i = first; i < block.Statements.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -108,34 +143,59 @@ public sealed class ShortLivedClientAnalyzer : DiagnosticAnalyzer
                     => owner.Declaration.Variables.Any(variable => IsLocal(variable.Initializer?.Value)),
                 _ => false
             };
-            if (!ownsLocal) continue;
+
+            if (!ownsLocal)
+            {
+                continue;
+            }
 
             // Include nested writes and ref/out arguments. If the value might change,
             // do not attribute subsequent disposal to the original creation.
             var flow = model.AnalyzeDataFlow(block.Statements[first], statement);
+
             if (flow is { Succeeded: true }
                 && !flow.WrittenInside.Any(symbol => SymbolEqualityComparer.Default.Equals(symbol, declarator.Symbol)))
+            {
                 return true;
+            }
         }
+
         return false;
 
         bool IsLocal(ExpressionSyntax? expression)
         {
-            if (expression is null) return false;
+            if (expression is null)
+            {
+                return false;
+            }
+
             var operation = model.GetOperation(expression, cancellationToken);
+
             while (true)
             {
-                if (operation is IConversionOperation conversion) operation = conversion.Operand;
-                else if (operation is IParenthesizedOperation parentheses) operation = parentheses.Operand;
+                if (operation is IConversionOperation conversion)
+                {
+                    operation = conversion.Operand;
+                }
+                else if (operation is IParenthesizedOperation parentheses)
+                {
+                    operation = parentheses.Operand;
+                }
                 // ConfigureAwait changes disposal scheduling, not the owned resource.
                 // Match the BCL wrapper so similarly named user methods are not followed.
                 else if (operation is IInvocationOperation configured
                     && configured.TargetMethod.Name == "ConfigureAwait"
                     && configured.TargetMethod.ContainingType.ToDisplayString() == "System.Threading.Tasks.TaskAsyncEnumerableExtensions"
                     && configured.TargetMethod.ReturnType.ToDisplayString() == "System.Runtime.CompilerServices.ConfiguredAsyncDisposable")
+                {
                     operation = configured.Arguments.FirstOrDefault(argument => argument.Parameter?.Ordinal == 0)?.Value;
-                else break;
+                }
+                else
+                {
+                    break;
+                }
             }
+
             return operation is ILocalReferenceOperation reference
                 && SymbolEqualityComparer.Default.Equals(reference.Local, declarator.Symbol);
         }

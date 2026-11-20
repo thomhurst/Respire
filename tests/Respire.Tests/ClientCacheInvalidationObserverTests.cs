@@ -16,7 +16,9 @@ public class ClientCacheInvalidationObserverTests
     public async Task ExternalImplementationsCanReturnTheirOwnSubscription()
     {
         IRespireClientSideCache cache = new ExternalObservingCache();
-        using var subscription = cache.SubscribeInvalidations("key", _ => { });
+        using var subscription = cache.SubscribeInvalidations("key", _ =>
+        {
+        });
         await Assert.That(subscription.Key).IsEqualTo(new RespireKey("key"));
         await Assert.That(subscription.IsDisposed).IsFalse();
         subscription.Dispose();
@@ -26,9 +28,15 @@ public class ClientCacheInvalidationObserverTests
     private sealed class ExternalObservingCache : IRespireClientSideCache
     {
         public int Count => 0;
+
         public long SizeBytes => 0;
+
         public RespireClientSideCacheStatistics GetStatistics() => default;
-        public void Clear() { }
+
+        public void Clear()
+        {
+        }
+
         public IRespireClientCacheInvalidationSubscription SubscribeInvalidations(
             RespireKey key, Action<RespireClientCacheInvalidation> observer, CancellationToken cancellationToken = default)
             => new ExternalSubscription(key);
@@ -37,8 +45,14 @@ public class ClientCacheInvalidationObserverTests
     private sealed class ExternalSubscription(RespireKey key) : IRespireClientCacheInvalidationSubscription
     {
         public RespireKey Key => key;
-        public bool IsDisposed { get; private set; }
+
+        public bool IsDisposed
+        {
+            get; private set;
+        }
+
         public Exception? LastObserverException => null;
+
         public void Dispose() => IsDisposed = true;
     }
 
@@ -55,14 +69,25 @@ public class ClientCacheInvalidationObserverTests
         var refreshedReply = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
         var observerRead = new TaskCompletionSource<Task<RespValue>>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var subscription = cache.SubscribeInvalidations(key, _ => observerRead.TrySetResult(Read(refreshedReply)));
+
         try
         {
             var first = Read(originalReply);
             var second = Read(originalReply);
             await Assert.That(cache.ActiveSharedReadCount).IsEqualTo(1);
-            if (reason == RespireClientCacheInvalidationReason.ExplicitClear) cache.Clear();
-            else if (reason == RespireClientCacheInvalidationReason.ContinuityLost) cache.FlushForContinuityLoss();
-            else cache.Invalidate(in key, reason);
+
+            if (reason == RespireClientCacheInvalidationReason.ExplicitClear)
+            {
+                cache.Clear();
+            }
+            else if (reason == RespireClientCacheInvalidationReason.ContinuityLost)
+            {
+                cache.FlushForContinuityLoss();
+            }
+            else
+            {
+                cache.Invalidate(in key, reason);
+            }
 
             var refreshed = await observerRead.Task.WaitAsync(Limit);
             await Assert.That(cache.ActiveSharedReadCount).IsEqualTo(2);
@@ -125,6 +150,7 @@ public class ClientCacheInvalidationObserverTests
         var subscriptions = channels.Select(channel => cache.SubscribeInvalidations("key", change => channel.Writer.TryWrite(change))).ToArray();
         var other = Channel.CreateUnbounded<RespireClientCacheInvalidation>();
         using var otherSubscription = cache.SubscribeInvalidations("other", change => other.Writer.TryWrite(change));
+
         try
         {
             subscriptions[removed].Dispose();
@@ -132,12 +158,18 @@ public class ClientCacheInvalidationObserverTests
             using var added = cache.SubscribeInvalidations("key", change => replacement.Writer.TryWrite(change));
             RespireKey key = "key";
             cache.Invalidate(in key);
+
             for (var index = 0; index < channels.Length; index++)
             {
-                if (index == removed) continue;
+                if (index == removed)
+                {
+                    continue;
+                }
+
                 var change = await channels[index].Reader.ReadAsync().AsTask().WaitAsync(Limit);
                 await Assert.That(change.Reasons).IsEqualTo(RespireClientCacheInvalidationReason.LocalMutation);
             }
+
             await replacement.Reader.ReadAsync().AsTask().WaitAsync(Limit);
             cache.Clear();
             var cleared = await other.Reader.ReadAsync().AsTask().WaitAsync(Limit);
@@ -145,6 +177,7 @@ public class ClientCacheInvalidationObserverTests
             await Assert.That(channels[removed].Reader.TryRead(out _)).IsFalse();
         }
         finally { cache.StopInvalidationObservers(); }
+
         await Assert.That(subscriptions.All(subscription => subscription.IsDisposed)).IsTrue();
         await Assert.That(otherSubscription.IsDisposed).IsTrue();
     }
@@ -156,18 +189,33 @@ public class ClientCacheInvalidationObserverTests
     {
         var cache = new ClientSideCacheCoordinator(new());
         using var cancellation = new CancellationTokenSource();
-        var throwing = cache.SubscribeInvalidations("key", _ => { }, cancellation.Token);
-        var peer = cache.SubscribeInvalidations("key", _ => { });
+        var throwing = cache.SubscribeInvalidations(
+            "key",
+            _ =>
+            {
+            },
+            cancellation.Token
+        );
+        var peer = cache.SubscribeInvalidations("key", _ =>
+        {
+        });
         using var registration = throwing.Stopped.Register(static () => throw new InvalidOperationException("stopped"));
 
-        if (ownerStops) cache.StopInvalidationObservers();
-        else throwing.Dispose();
+        if (ownerStops)
+        {
+            cache.StopInvalidationObservers();
+        }
+        else
+        {
+            throwing.Dispose();
+        }
 
         await Assert.That(throwing.IsDisposed).IsTrue();
         await Assert.That(throwing.Stopped.IsCancellationRequested).IsTrue();
         await Assert.That(throwing.LastObserverException).IsNotNull();
         // Disposal already unregistered the cancellation callback, so this must not re-enter it.
         cancellation.Cancel();
+
         if (ownerStops)
         {
             await Assert.That(peer.IsDisposed).IsTrue();
@@ -197,25 +245,32 @@ public class ClientCacheInvalidationObserverTests
                 entered.TrySetResult();
                 release.Task.GetAwaiter().GetResult();
             }
-            else pending.TrySetResult(change);
+            else
+            {
+                pending.TrySetResult(change);
+            }
         });
         using var other = cache.SubscribeInvalidations(key, _ => fast.TrySetResult());
+
         try
         {
             cache.Invalidate(in key);
             await entered.Task.WaitAsync(Limit);
             await fast.Task.WaitAsync(Limit);
+
             for (var index = 0; index < 1_000; index++)
             {
                 Insert(cache, key);
                 cache.Invalidate(in key, RespireClientCacheInvalidationReason.ServerInvalidation);
             }
+
             cache.Clear();
             cache.FlushForContinuityLoss();
             await Assert.That(cache.Count).IsEqualTo(0);
             await Assert.That(calls).IsEqualTo(1);
         }
         finally { release.TrySetResult(); }
+
         var coalesced = await pending.Task.WaitAsync(Limit);
         await Assert.That(coalesced.Reasons).IsEqualTo(RespireClientCacheInvalidationReason.ServerInvalidation
             | RespireClientCacheInvalidationReason.ExplicitClear | RespireClientCacheInvalidationReason.ContinuityLost);
@@ -238,6 +293,7 @@ public class ClientCacheInvalidationObserverTests
                 first.TrySetResult();
                 throw failure;
             }
+
             second.TrySetResult();
         });
         Insert(cache, key);
@@ -268,17 +324,27 @@ public class ClientCacheInvalidationObserverTests
             release.Task.GetAwaiter().GetResult();
             returned.TrySetResult();
         }, cancellation.Token);
+
         try
         {
             cache.Invalidate(in key);
             await entered.Task.WaitAsync(Limit);
             cache.Invalidate(in key);
-            if (cancel) cancellation.Cancel();
-            else subscription.Dispose();
+
+            if (cancel)
+            {
+                cancellation.Cancel();
+            }
+            else
+            {
+                subscription.Dispose();
+            }
+
             await Assert.That(subscription.IsDisposed).IsTrue();
             cache.Clear();
         }
         finally { release.TrySetResult(); }
+
         await returned.Task.WaitAsync(Limit);
         await Assert.That(calls).IsEqualTo(1);
     }
@@ -296,15 +362,26 @@ public class ClientCacheInvalidationObserverTests
         using var subscription = cache.SubscribeInvalidations(key, change => received.TrySetResult(change));
         Insert(cache, key);
         var token = cache.BeginRead(in key);
+
         switch (reason)
         {
-            case RespireClientCacheInvalidationReason.ContinuityLost: cache.FlushForContinuityLossWithoutMetrics(); break;
-            case RespireClientCacheInvalidationReason.ExplicitClear: cache.Clear(); break;
-            case RespireClientCacheInvalidationReason.LocalMutation: cache.FlushForUnknownCommand(); break;
+            case RespireClientCacheInvalidationReason.ContinuityLost:
+                cache.FlushForContinuityLossWithoutMetrics();
+                break;
+            case RespireClientCacheInvalidationReason.ExplicitClear:
+                cache.Clear();
+                break;
+            case RespireClientCacheInvalidationReason.LocalMutation:
+                cache.FlushForUnknownCommand();
+                break;
             default:
-                using (var push = Push(RespValue.Null)) cache.HandlePush(in push);
+                using (var push = Push(RespValue.Null))
+                {
+                    cache.HandlePush(in push);
+                }
                 break;
         }
+
         var value = RespValue.BulkString("old"u8.ToArray());
         cache.CompleteRead(in token, in value, allowInsert: true);
         var change = await received.Task.WaitAsync(Limit);
@@ -325,6 +402,7 @@ public class ClientCacheInvalidationObserverTests
             subscription!.Dispose();
             completed.TrySetResult(change);
         });
+
         using (subscription)
         {
             Insert(cache, key);
@@ -341,17 +419,32 @@ public class ClientCacheInvalidationObserverTests
     {
         var cache = new ClientSideCacheCoordinator(new()
         {
-            TrackingMode = RespireClientTrackingMode.Broadcast, KeyPrefixes = ["tenant:"],
+            TrackingMode = RespireClientTrackingMode.Broadcast,
+            KeyPrefixes = ["tenant:"],
         });
-        await Assert.That(() => cache.SubscribeInvalidations("other:key", _ => { })).ThrowsExactly<ArgumentException>();
+        await Assert.That(() => cache.SubscribeInvalidations("other:key", _ =>
+        {
+        })).ThrowsExactly<ArgumentException>();
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        await Assert.That(() => cache.SubscribeInvalidations("tenant:key", _ => { }, cancellation.Token))
+        await Assert.That(
+                () => cache.SubscribeInvalidations(
+                    "tenant:key",
+                    _ =>
+                    {
+                    },
+                    cancellation.Token
+                )
+            )
             .ThrowsExactly<OperationCanceledException>();
-        using var subscription = cache.SubscribeInvalidations("tenant:key", _ => { });
+        using var subscription = cache.SubscribeInvalidations("tenant:key", _ =>
+        {
+        });
         cache.StopInvalidationObservers();
         await Assert.That(subscription.IsDisposed).IsTrue();
-        await Assert.That(() => cache.SubscribeInvalidations("tenant:key", _ => { })).ThrowsExactly<ObjectDisposedException>();
+        await Assert.That(() => cache.SubscribeInvalidations("tenant:key", _ =>
+        {
+        })).ThrowsExactly<ObjectDisposedException>();
     }
 
     [Test]
@@ -361,9 +454,17 @@ public class ClientCacheInvalidationObserverTests
         var cache = new ClientSideCacheCoordinator(new());
         _ = Measure(cache, allocate: false);
         var disabled = AllocationMeasurement.WithoutConcurrentGc(() => Measure(cache, allocate: false));
-        using (cache.SubscribeInvalidations("key", _ => { })) { }
+
+        using (cache.SubscribeInvalidations("key", _ =>
+        {
+        }))
+        {
+        }
+
         var removed = AllocationMeasurement.WithoutConcurrentGc(() => Measure(cache, allocate: false));
-        using var unrelated = cache.SubscribeInvalidations("unrelated", _ => { });
+        using var unrelated = cache.SubscribeInvalidations("unrelated", _ =>
+        {
+        });
         _ = Measure(cache, allocate: false);
         var unmatched = AllocationMeasurement.WithoutConcurrentGc(() => Measure(cache, allocate: false));
         var control = AllocationMeasurement.WithoutConcurrentGc(() => Measure(cache, allocate: true));
@@ -374,16 +475,23 @@ public class ClientCacheInvalidationObserverTests
     }
 
     private static object? _escape;
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static long Measure(ClientSideCacheCoordinator cache, bool allocate)
     {
         RespireKey key = "key";
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
             cache.Invalidate(in key);
-            if (allocate) Volatile.Write(ref _escape, new byte[37]);
+
+            if (allocate)
+            {
+                Volatile.Write(ref _escape, new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 

@@ -39,22 +39,37 @@ public class StreamTrimmingIntegrationTests(RedisTestContainer fixture)
         var prefix = $"trim:{Guid.NewGuid():N}:";
         var view = client.WithKeyPrefix(prefix);
         var key = $"events:{minId}:{approximate}";
+
         try
         {
             // More than one macro node makes approximate eviction observable without depending on its exact size.
             using (var seed = view.CreateBatch())
             {
                 for (var id = 1; id <= 300; id++)
+                {
                     _ = seed.Streams.Add(key, new RespireStreamAddOptions { Id = $"{id}-0" }, ("value", id));
+                }
+
                 await seed.ExecuteAsync();
             }
-            var trim = new RespireStreamTrimOptions { MaxLength = minId ? null : 150,
-                MinId = minId ? new RespireStreamId("151-0") : (RespireStreamId?)null, Approximate = approximate,
-                Limit = approximate ? 0 : null };
-            var add = new RespireStreamAddOptions { Id = "301-0", MaxLength = minId ? null : 200,
-                MinId = minId ? new RespireStreamId("101-0") : (RespireStreamId?)null, ApproximateTrim = approximate,
-                Limit = approximate ? 1000 : null };
+
+            var trim = new RespireStreamTrimOptions
+            {
+                MaxLength = minId ? null : 150,
+                MinId = minId ? new RespireStreamId("151-0") : (RespireStreamId?)null,
+                Approximate = approximate,
+                Limit = approximate ? 0 : null
+            };
+            var add = new RespireStreamAddOptions
+            {
+                Id = "301-0",
+                MaxLength = minId ? null : 200,
+                MinId = minId ? new RespireStreamId("101-0") : (RespireStreamId?)null,
+                ApproximateTrim = approximate,
+                Limit = approximate ? 1000 : null
+            };
             long removed, countBeforeTrim;
+
             if (surface == 0)
             {
                 (await view.Streams.AddAsync(key, add, ("value", 301))).Should().Be((RespireStreamId)"301-0");
@@ -69,14 +84,24 @@ public class StreamTrimmingIntegrationTests(RedisTestContainer fixture)
                 var added = queue.Streams.Add(key, add, ("value", 301));
                 var count = queue.Streams.Count(key);
                 var trimmed = queue.Streams.Trim(key, trim);
-                if (transaction is not null) await transaction.CommitAsync();
-                else await batch!.ExecuteAsync();
+
+                if (transaction is not null)
+                {
+                    await transaction.CommitAsync();
+                }
+                else
+                {
+                    await batch!.ExecuteAsync();
+                }
+
                 added.Result.Should().Be((RespireStreamId)"301-0");
                 removed = trimmed.Result;
                 countBeforeTrim = count.Result;
             }
+
             var entries = await view.Streams.RangeAsync(key);
             removed.Should().Be(countBeforeTrim - entries.Length);
+
             if (approximate)
             {
                 entries.Length.Should().BeInRange(minId ? 151 : 150, 301);
@@ -89,6 +114,7 @@ public class StreamTrimmingIntegrationTests(RedisTestContainer fixture)
                 entries[0].Id.Should().Be((RespireStreamId)(minId ? "151-0" : "152-0"));
                 removed.Should().Be(50);
             }
+
             entries[^1].Id.Should().Be((RespireStreamId)"301-0");
             (await client.Keys.ExistsAsync(prefix + key)).Should().BeTrue();
             (await client.Keys.ExistsAsync(prefix + prefix + key)).Should().BeFalse();

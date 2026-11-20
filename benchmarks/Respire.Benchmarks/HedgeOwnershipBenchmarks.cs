@@ -20,7 +20,10 @@ public class HedgeOwnershipBenchmarks
     private Func<ValueTask<(RespValue Response, Task<RespValue> Winner)>> _hedgeWins = null!;
 
     [Params(0, 3)]
-    public int Attempts { get; set; }
+    public int Attempts
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public async Task Setup()
@@ -29,7 +32,9 @@ public class HedgeOwnershipBenchmarks
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var value) ? value : 6379;
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             Endpoints = [new(host, port)],
         });
         _caller = DispatchResponseSource<int>.Start();
@@ -43,12 +48,16 @@ public class HedgeOwnershipBenchmarks
         _single = Bind(completed, null, alternative);
         _originalWins = Bind(completed, pending, alternative);
         _hedgeWins = Bind(pending, completed, alternative);
+
         foreach (var resolve in new[] { _single, _originalWins, _hedgeWins })
         {
             _caller.Observation.SetAttempts(0);
             _ = await resolve();
+
             if (_caller.Observation.Attempts != Attempts * 2)
+            {
                 throw new InvalidOperationException("Hedge handoff lost the caller or result-leg retry count.");
+            }
         }
     }
 

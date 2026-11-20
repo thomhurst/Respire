@@ -9,7 +9,10 @@ namespace Respire.IntegrationTests;
 public class SearchSynonymIntegrationTests(ModernRedisTestContainer fixture)
 {
     [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
-    public required ModernRedisTestContainer CacheServer { get; init; }
+    public required ModernRedisTestContainer CacheServer
+    {
+        get; init;
+    }
 
     [Test]
     [Arguments(2)]
@@ -19,6 +22,7 @@ public class SearchSynonymIntegrationTests(ModernRedisTestContainer fixture)
         await using var client = await ConnectAsync(protocol);
         var search = client.Search;
         var index = await CreateIndexAsync(search);
+
         try
         {
             (await search.GetSynonymsAsync(index)).Should().BeEmpty();
@@ -67,10 +71,12 @@ public class SearchSynonymIntegrationTests(ModernRedisTestContainer fixture)
             (s, name, token) => s.UpdateSynonymsAsync(name, "g", ["car", "auto"], cancellationToken: token).AsTask(),
             (s, name, token) => s.GetSynonymsAsync(name, token).AsTask(),
             (s, name, token) => s.GetTagValuesAsync(name, "tags", token).AsTask()];
+
         try
         {
             using var canceled = new CancellationTokenSource();
             canceled.Cancel();
+
             foreach (var call in calls)
             {
                 Func<Task> prefix = () => call(prefixed.Search, index, default);
@@ -81,6 +87,7 @@ public class SearchSynonymIntegrationTests(ModernRedisTestContainer fixture)
                 Func<Task> missing = () => call(search, index + ":missing", default);
                 await missing.Should().ThrowAsync<RespireServerException>();
             }
+
             await search.Awaiting(s => s.GetTagValuesAsync(index, "title").AsTask()).Should().ThrowAsync<RespireServerException>();
             (await search.GetSynonymsAsync(index)).Should().BeEmpty();
         }
@@ -94,10 +101,12 @@ public class SearchSynonymIntegrationTests(ModernRedisTestContainer fixture)
         var search = client.Search;
         var index = await CreateIndexAsync(search);
         var cached = index + ":cached";
+
         try
         {
             await client.SetAsync(cached, "cached");
             Func<Task>[] reads = [() => search.GetSynonymsAsync(index).AsTask(), () => search.GetTagValuesAsync(index, "tags").AsTask()];
+
             foreach (var read in reads)
             {
                 await client.GetStringAsync(cached);
@@ -106,6 +115,7 @@ public class SearchSynonymIntegrationTests(ModernRedisTestContainer fixture)
                 (await client.GetStringAsync(cached)).Should().Be("cached");
                 client.ClientSideCache.GetStatistics().Hits.Should().Be(hits + 1);
             }
+
             var beforeMutation = client.ClientSideCache!.GetStatistics().Hits;
             await search.UpdateSynonymsAsync(index, "g", ["car", "auto"]);
             (await client.GetStringAsync(cached)).Should().Be("cached");
@@ -113,7 +123,10 @@ public class SearchSynonymIntegrationTests(ModernRedisTestContainer fixture)
         }
         finally
         {
-            try { await search.DropIndexAsync(index, deleteDocuments: true); }
+            try
+            {
+                await search.DropIndexAsync(index, deleteDocuments: true);
+            }
             finally { await client.Keys.DeleteAsync(cached); }
         }
     }
@@ -132,9 +145,12 @@ public class SearchSynonymIntegrationTests(ModernRedisTestContainer fixture)
     private static async Task WaitForCountAsync(RespireSearchClient search, string index, string query, long expected)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         while ((await search.SearchAsync(index, new(RespireSearchExpression.FromRaw(query)), timeout.Token)).Total != expected
             || (await search.GetIndexInfoAsync(index, timeout.Token)).Properties["indexing"].Scalar != "0")
+        {
             await Task.Delay(20, timeout.Token);
+        }
     }
 
     private ValueTask<RespireClient> ConnectAsync(int protocol, bool cache = false, StandaloneRedisTestContainer? server = null)

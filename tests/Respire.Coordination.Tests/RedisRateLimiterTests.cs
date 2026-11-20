@@ -12,13 +12,22 @@ namespace Respire.Coordination.Tests;
 public class RedisRateLimiterTests
 {
     [ClassDataSource<SharedRedis74>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis74 Redis74 { get; init; }
+    public required SharedRedis74 Redis74
+    {
+        get; init;
+    }
 
     [ClassDataSource<SharedRedis810>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis810 Redis810 { get; init; }
+    public required SharedRedis810 Redis810
+    {
+        get; init;
+    }
 
     [ClassDataSource<SharedRedis74Cluster>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis74Cluster Cluster { get; init; }
+    public required SharedRedis74Cluster Cluster
+    {
+        get; init;
+    }
 
     [Test]
     public async Task FixedWindowUsesIncrexOnRedis88AndLimitsPermits()
@@ -183,11 +192,16 @@ public class RedisRateLimiterTests
 
         using (var replicated = await client.Core.Sentinel!.Current!.Multiplexer.GetConnection().SendAsync(
                    new Cmd2(new Verb(-1, "WAIT"), 1, 5000), default))
+        {
             await Assert.That(replicated.AsInteger()).IsEqualTo(1);
+        }
 
         using (var failover = await sentinel.ExecuteAsync(
             RespireCommands.Sentinel.SENTINEL_FAILOVER, RespireContainerFixture.SentinelServiceName))
+        {
             await Assert.That(failover.AsString()).IsEqualTo("OK");
+        }
+
         var oldPort = fixture.DataEndpoints[0].Port;
         var newPort = oldPort;
         // Under load a forced failover can time out once (10 s) and retry; allow for that retry.
@@ -199,6 +213,7 @@ public class RedisRateLimiterTests
                 RespireContainerFixture.SentinelServiceName);
             newPort = int.Parse(response[1].AsString(), System.Globalization.CultureInfo.InvariantCulture);
         }
+
         await Assert.That(newPort != oldPort).IsTrue();
 
         await using var afterFailover = await RespireClient.ConnectAsync(fixture.CreateOptions());
@@ -237,10 +252,14 @@ public class RedisRateLimiterTests
         using var cancellation = new CancellationTokenSource();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var queued = limiter.AcquireAsync(1, cancellation.Token).AsTask();
+
         try
         {
             while (limiter.GetStatistics()!.CurrentQueuedCount != 1)
+            {
                 await Task.Delay(1, deadline.Token);
+            }
+
             cancellation.Cancel();
             var error = await Assert.That(async () => await queued.WaitAsync(deadline.Token))
                 .Throws<OperationCanceledException>();
@@ -250,7 +269,11 @@ public class RedisRateLimiterTests
         finally
         {
             cancellation.Cancel();
-            try { using var lease = await queued.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+            try
+            {
+                using var lease = await queued.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             catch (OperationCanceledException) { }
         }
     }
@@ -406,13 +429,19 @@ public class RedisRateLimiterTests
         RespireClient client, int segmentMs, bool segmentChanged, long previousSegment)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(6));
+
         while (true)
         {
             var now = await client.Server.TimeAsync(timeout.Token);
             var milliseconds = now.ToUnixTimeMilliseconds();
             var segment = milliseconds / segmentMs;
             var phase = milliseconds % segmentMs;
-            if ((!segmentChanged || segment != previousSegment) && phase is >= 100 and <= 500) return;
+
+            if ((!segmentChanged || segment != previousSegment) && phase is >= 100 and <= 500)
+            {
+                return;
+            }
+
             await Task.Delay(10, timeout.Token);
         }
     }
@@ -430,6 +459,7 @@ public class RedisRateLimiterTests
 
         using var initial = await limiter.AcquireAsync(int.MaxValue);
         var first = limiter.AcquireAsync(int.MaxValue).AsTask();
+
         if (order == QueueProcessingOrder.OldestFirst)
         {
             using var rejected = await limiter.AcquireAsync(10);
@@ -444,6 +474,7 @@ public class RedisRateLimiterTests
             await Assert.That(async () => await replacement).Throws<ObjectDisposedException>();
             return;
         }
+
         limiter.Dispose();
         await Assert.That(async () => await first).Throws<ObjectDisposedException>();
     }
@@ -501,6 +532,7 @@ public class RedisRateLimiterTests
     private static async Task WaitForRedisWindowPhaseAsync(RespireClient client, int widthMs, int minimum, int maximum)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (true)
         {
             using var response = await client.ExecuteAsync("TIME", [], cancellationToken: timeout.Token);
@@ -508,7 +540,12 @@ public class RedisRateLimiterTests
             var microseconds = long.Parse(response[1].AsString(), System.Globalization.CultureInfo.InvariantCulture);
             var milliseconds = seconds * 1000 + microseconds / 1000;
             var phase = (int)(milliseconds % widthMs);
-            if (phase >= minimum && phase <= maximum) return;
+
+            if (phase >= minimum && phase <= maximum)
+            {
+                return;
+            }
+
             await Task.Delay(5, timeout.Token);
         }
     }

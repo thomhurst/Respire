@@ -16,7 +16,9 @@ public class SentinelMonitoringTests
         using var lifetime = new CancellationTokenSource();
         var gate = new Lock();
         var monitor = new SentinelMonitoring(new() { SentinelPrimaryName = "service" }, null,
-            gate, new([]), lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { });
+            gate, new([]), lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) =>
+            {
+            });
         var reply = new TaskCompletionSource<System.Net.IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         var queries = new List<string>();
         var startedUnderGate = false;
@@ -50,15 +52,21 @@ public class SentinelMonitoringTests
         using var blocker = lifetime.Token.Register(() =>
         {
             entered.TrySetResult();
-            if (!release.Wait(Limit)) throw new TimeoutException("Cancellation callback was not released.");
+
+            if (!release.Wait(Limit))
+            {
+                throw new TimeoutException("Cancellation callback was not released.");
+            }
         });
         var cancellation = lifetime.CancelAsync();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
             await subscription.DisposeAsync();
         }
         finally { release.Set(); }
+
         await cancellation.WaitAsync(Limit);
         await Assert.That(probe.SubscriptionToken.IsCancellationRequested).IsTrue();
         await Assert.That(probe.Cancelled.Task.IsCompleted).IsFalse();
@@ -81,10 +89,16 @@ public class SentinelMonitoringTests
     public async Task StopRejectsLateDnsEvidenceBeforeCancellationCallbacksRun()
     {
         using var lifetime = new CancellationTokenSource();
-        var monitor = Create(lifetime, (_, _) => { });
+        var monitor = Create(lifetime, (_, _) =>
+        {
+        });
         var reply = new TaskCompletionSource<System.Net.IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         var queries = new List<string>();
-        monitor.HostResolver = (host, _) => { queries.Add(host); return reply.Task; };
+        monitor.HostResolver = (host, _) =>
+        {
+            queries.Add(host);
+            return reply.Task;
+        };
         var resolution = monitor.ResolveAddressesAsync("old.alias", default).AsTask();
         monitor.Stop();
         // Stop closes ownership synchronously; linked cancellation callbacks may still
@@ -110,8 +124,12 @@ public class SentinelMonitoringTests
         using var cleanup = lifetime.Token.Register(() =>
         {
             var disposal = subscription.DisposeAsync();
+
             if (!disposal.IsCompleted)
+            {
                 throw new InvalidOperationException("Probe cleanup must complete synchronously for this ordering test.");
+            }
+
             disposal.GetAwaiter().GetResult();
         });
         await lifetime.CancelAsync();
@@ -188,10 +206,15 @@ public class SentinelMonitoringTests
         var monitor = Create(lifetime, (_, _) =>
         {
             started.TrySetResult();
-            if (!release.Wait(Limit)) throw new TimeoutException("Gap callback was not released.");
+
+            if (!release.Wait(Limit))
+            {
+                throw new TimeoutException("Gap callback was not released.");
+            }
         });
         var subscription = Task.Run(() => monitor.SubscriptionEstablished(new("sentinel", 26379), true));
         Task? stopped = null;
+
         try
         {
             await started.Task.WaitAsync(Limit);
@@ -203,7 +226,11 @@ public class SentinelMonitoringTests
         {
             release.Set();
             await subscription.WaitAsync(Limit);
-            if (stopped is not null) await stopped.WaitAsync(Limit);
+
+            if (stopped is not null)
+            {
+                await stopped.WaitAsync(Limit);
+            }
         }
     }
 
@@ -241,12 +268,29 @@ public class SentinelMonitoringTests
         var count = 0;
         var options = new RespireOptions
         {
-            SentinelPrimaryName = "service", ConnectTimeout = Limit,
+            SentinelPrimaryName = "service",
+            ConnectTimeout = Limit,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0 },
         };
         var monitor = new SentinelMonitoring(options, null, new Lock(), new([endpoint]), lifetime,
-            (_, parsed, _, _) => { Interlocked.Increment(ref count); received.TrySetResult(parsed); return ValueTask.CompletedTask; },
-            (_, version, _) => { if (version > 0) startup.TrySetResult(); else gap.TrySetResult(); });
+            (_, parsed, _, _) =>
+            {
+                Interlocked.Increment(ref count);
+                received.TrySetResult(parsed);
+                return ValueTask.CompletedTask;
+            },
+            (_, version, _) =>
+            {
+                if (version > 0)
+                {
+                    startup.TrySetResult();
+                }
+                else
+                {
+                    gap.TrySetResult();
+                }
+            });
+
         try
         {
             monitor.Published();
@@ -288,7 +332,13 @@ public class SentinelMonitoringTests
     {
         using var lifetime = new CancellationTokenSource();
         var fail = true;
-        var monitor = Create(lifetime, (_, _) => { if (fail) throw new IOException("queue failed"); });
+        var monitor = Create(lifetime, (_, _) =>
+        {
+            if (fail)
+            {
+                throw new IOException("queue failed");
+            }
+        });
         using var deadline = new CancellationTokenSource(Limit);
         var ready = monitor.WaitForSubscriptionsAsync(2, deadline.Token);
         await Assert.That(() => monitor.SubscriptionEstablished(new("first", 26379), true)).ThrowsExactly<IOException>();
@@ -322,7 +372,10 @@ public class SentinelMonitoringTests
         };
         var monitor = new SentinelMonitoring(new() { SentinelPrimaryName = "service" }, null,
             new Lock(), new([new RespireEndpoint("seed", 26379)]), lifetime,
-            (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { }) { ClientFactory = _ => probe.Client };
+            (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) =>
+            {
+            })
+        { ClientFactory = _ => probe.Client };
         monitor.Published();
         using var deadline = new CancellationTokenSource(Limit);
         await monitor.WaitForSubscriptionsAsync(1, deadline.Token);
@@ -360,6 +413,7 @@ public class SentinelMonitoringTests
             ClientFactory = options => options.Endpoints[0] == seed ? first.Client
                 : Interlocked.Increment(ref starts) == 1 ? removed.Client : replacement.Client,
         };
+
         try
         {
             monitor.Published();
@@ -394,15 +448,22 @@ public class SentinelMonitoringTests
         internal readonly TaskCompletionSource Waiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly ManualResetEventSlim Release = new();
         private int _waits;
+
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             if (Interlocked.Increment(ref _waits) == 1)
             {
                 Waiting.TrySetResult();
-                if (!Release.Wait(Limit)) throw new TimeoutException("Supervisor snapshot was not released.");
+
+                if (!Release.Wait(Limit))
+                {
+                    throw new TimeoutException("Supervisor snapshot was not released.");
+                }
             }
+
             return System.CreateTimer(callback, state, dueTime, period);
         }
+
         public void Dispose() => Release.Dispose();
     }
 
@@ -426,12 +487,18 @@ public class SentinelMonitoringTests
         var gaps = new System.Collections.Concurrent.ConcurrentQueue<(RespireEndpoint Endpoint, long Version)>();
         var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var monitor = new SentinelMonitoring(new() { SentinelPrimaryName = "service" }, null, gate, discovery, lifetime,
-            (_, _, _, _) => { Interlocked.Increment(ref received); observed.TrySetResult(); return ValueTask.CompletedTask; },
+            (_, _, _, _) =>
+            {
+                Interlocked.Increment(ref received);
+                observed.TrySetResult();
+                return ValueTask.CompletedTask;
+            },
             (endpoint, version, _) => gaps.Enqueue((endpoint, version)), background)
         {
             ClientFactory = options => options.Endpoints[0] == seed ? first.Client
                 : Interlocked.Increment(ref peerStarts) == 1 ? removed.Client : replacement.Client,
         };
+
         try
         {
             monitor.Published();
@@ -444,21 +511,25 @@ public class SentinelMonitoringTests
             await observed.Task.WaitAsync(Limit);
             await Assert.That(Volatile.Read(ref received)).IsEqualTo(1);
             await Assert.That(discovery.TryRemove(seed)).IsFalse();
+
             if (ageOut)
             {
                 var membership = discovery.MembershipSnapshot(out _).Single(item => item.Endpoint == peer);
                 discovery.RecordConnection(membership, succeeded: false);
+
                 for (var i = 0; i < SentinelDiscoveryState.MissedDiscoveriesBeforeRemoval; i++)
                 {
                     using var round = discovery.BeginDiscovery();
                     round.Report(seed, []);
                 }
+
                 await Assert.That(discovery.Snapshot().Contains(peer)).IsFalse();
             }
             else
             {
                 await Assert.That(discovery.TryRemove(peer)).IsTrue();
             }
+
             await removed.Cancelled.Task.WaitAsync(Limit);
             await Assert.That(monitor.SubscribedCount).IsEqualTo(1);
             await Assert.That(background.Count(SentinelWorkKind.MonitorRemoval)).IsEqualTo(1);

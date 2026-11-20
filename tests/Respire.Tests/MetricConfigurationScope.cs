@@ -19,7 +19,9 @@ internal sealed class MetricConfigurationScope : IDisposable
             // Blocking-listener tests release their callbacks before this outer scope ends.
             if (!SpinWait.SpinUntil(() => ConnectionTelemetry.PendingMeasurements == 0,
                 TimeSpan.FromSeconds(5)))
+            {
                 throw new TimeoutException("Connection metric delivery did not drain before restoring metric configuration.");
+            }
         }
         finally { RespireMetrics.Configure(_previous); }
     }

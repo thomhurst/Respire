@@ -54,7 +54,9 @@ public class ReplicaDispatchReviewTests
                 started.TrySetResult(read);
             }
             catch (Exception error) { started.TrySetException(error); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
+
         try
         {
             using (EntriesGate(router).EnterScope())
@@ -62,14 +64,19 @@ public class ReplicaDispatchReviewTests
                 // Force publication capture to pause after the initial backlog check.
                 Volatile.Write(ref ReadyPublication(router), null);
                 worker.Start();
+
                 if (!SpinWait.SpinUntil(() => (worker.ThreadState & ThreadState.WaitSleepJoin) != 0, Limit))
+                {
                     throw new TimeoutException("Ready selection did not reach the publication gate.");
+                }
+
                 head = router.EnqueueAsync(policy, async (_, token) =>
                 {
                     await resumeHead.Task.WaitAsync(token);
                     return 1;
                 }, default, default).AsTask();
             }
+
             var pending = await started.Task.WaitAsync(Limit);
             await Assert.That(router.IsBacklogDraining).IsTrue();
             await Assert.That(connection.InspectForTests().Inflight.TryPeek(out _)).IsFalse();
@@ -77,8 +84,12 @@ public class ReplicaDispatchReviewTests
             resumeHead.TrySetResult();
             await head!.WaitAsync(Limit);
             using var limit = new CancellationTokenSource(Limit);
+
             while (!replica.ReceivedCommands.Any(command => command.EndsWith(" later", StringComparison.Ordinal)))
+            {
                 await Task.Delay(1, limit.Token);
+            }
+
             await replica.SendRawAsync(surface == "typed" ? ":5\r\n"u8.ToArray() : "$5\r\nhello\r\n"u8.ToArray());
             await pending.WaitAsync(Limit);
             await Assert.That(replica.ReceivedCommands.Count(command => command.EndsWith(" later", StringComparison.Ordinal)))
@@ -87,7 +98,11 @@ public class ReplicaDispatchReviewTests
         finally
         {
             resumeHead.TrySetResult();
-            if (!worker.Join(Limit)) throw new TimeoutException("Ready selection worker did not stop.");
+
+            if (!worker.Join(Limit))
+            {
+                throw new TimeoutException("Ready selection worker did not stop.");
+            }
         }
     }
 
@@ -116,16 +131,26 @@ public class ReplicaDispatchReviewTests
         // Prepare the physical sockets without recording successful dispatch selection.
         var selected = await router.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), default, default);
         await Assert.That(router.CanQueue(RespireReadFrom.ReplicaPreferred)).IsFalse();
+
         if (previouslySelected)
+        {
             await router.GetConnectionAsync(RespireReadFrom.ReplicaPreferred, default, default);
+        }
+
         primary.SuppressReply = command => command == "GET held";
         replica.SuppressReply = command => command == "GET held";
         using var caller = new CancellationTokenSource();
         var pending = client.WithReadFrom(RespireReadFrom.ReplicaPreferred).GetStringAsync("held", caller.Token).AsTask();
+
         try
         {
             using var limit = new CancellationTokenSource(Limit);
-            while (!primary.ReceivedCommands.Contains("GET held")) await Task.Delay(1, limit.Token);
+
+            while (!primary.ReceivedCommands.Contains("GET held"))
+            {
+                await Task.Delay(1, limit.Token);
+            }
+
             await Assert.That(selected.Connection.InspectForTests().Inflight.TryPeek(out var original)).IsTrue();
             await Assert.That(client.Core.Multiplexer.GetConnection().InspectForTests().Inflight.TryPeek(out var hedge)).IsTrue();
             await Assert.That(original!.Deadline.IsSet).IsEqualTo(timeout);

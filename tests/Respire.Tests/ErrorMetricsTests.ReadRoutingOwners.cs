@@ -25,8 +25,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
-            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             ReadFrom = RespireReadFrom.Replica,
         });
 #pragma warning restore RESP010
@@ -35,8 +38,12 @@ public partial class ErrorMetricsTests
         using var capture = new Capture(throwOnMeasurement: true);
         var first = client.GetStringAsync("failed-1", deadline.Token).AsTask();
         var second = client.GetStringAsync("failed-2", deadline.Token).AsTask();
+
         while (replica.ReceivedCommands.Count(command => command.StartsWith("GET failed", StringComparison.Ordinal)) != 2)
+        {
             await Task.Delay(1, deadline.Token);
+        }
+
         await replica.DisposeAsync();
         var firstError = await Assert.That(async () => await first).Throws<RespireConnectionException>();
         var secondError = await Assert.That(async () => await second).Throws<RespireConnectionException>();
@@ -71,8 +78,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
-            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             ReadFrom = RespireReadFrom.ReplicaPreferred,
             HedgedReads = shape == "hedged" ? new() { Delay = TimeSpan.FromSeconds(1), MaximumExtraLoadPercent = 100 } : null,
             TestingStreamFactory = async (host, port, cancellationToken) =>
@@ -81,9 +91,15 @@ public partial class ErrorMetricsTests
                 {
                     attempted.TrySetResult();
                     await release.Task.WaitAsync(cancellationToken);
-                    if (!roleFailure) throw expected;
+
+                    if (!roleFailure)
+                    {
+                        throw expected;
+                    }
                 }
+
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, cancellationToken);
@@ -95,14 +111,20 @@ public partial class ErrorMetricsTests
 #pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var capture = new Capture(throwOnMeasurement: true, commandMetrics: commandMetrics);
+
         try
         {
             var read = ReadAsync();
             await attempted.Task.WaitAsync(deadline.Token);
-            if (lateActivation) RespireMetrics.Configure(new()
+
+            if (lateActivation)
             {
-                Groups = RespireMetricGroups.Resiliency | (commandMetrics ? RespireMetricGroups.Command : RespireMetricGroups.None),
-            });
+                RespireMetrics.Configure(new()
+                {
+                    Groups = RespireMetricGroups.Resiliency | (commandMetrics ? RespireMetricGroups.Command : RespireMetricGroups.None),
+                });
+            }
+
             release.TrySetResult();
             await Assert.That(async () => await read).Throws<RespireServerException>();
             var items = capture.Items.ToArray();
@@ -122,10 +144,14 @@ public partial class ErrorMetricsTests
             switch (shape)
             {
                 case "stream":
-                    await using (await client.Strings.GetStreamAsync("key", deadline.Token)) { }
+                    await using (await client.Strings.GetStreamAsync("key", deadline.Token))
+                    {
+                    }
                     break;
                 case "cursor":
-                    await foreach (var _ in client.Hashes.ScanAsync("key", cancellationToken: deadline.Token)) { }
+                    await foreach (var _ in client.Hashes.ScanAsync("key", cancellationToken: deadline.Token))
+                    {
+                    }
                     break;
                 case "blocking":
                     _ = await client.Streams.ReadAsync("key", after: "0-0",

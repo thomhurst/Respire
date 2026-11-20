@@ -38,8 +38,17 @@ public class KeyNotificationTests
             : kind == RespireKeyNotificationKind.SubKeySpaceItem ? 1 : 2;
         await Assert.That(physical.GetSubKeys().Count).IsEqualTo(expected);
         await Assert.That(physical.HasSubKey).IsEqualTo(expected != 0);
-        if (expected != 0) await Assert.That(physical.GetSubKeys().FirstOrDefault().IsEmpty).IsTrue();
-        if (expected == 2) await Assert.That(Encoding.UTF8.GetString(physical.GetSubKeys().ToArray()[1].Span)).IsEqualTo("a,b");
+
+        if (expected != 0)
+        {
+            await Assert.That(physical.GetSubKeys().FirstOrDefault().IsEmpty).IsTrue();
+        }
+
+        if (expected == 2)
+        {
+            await Assert.That(Encoding.UTF8.GetString(physical.GetSubKeys().ToArray()[1].Span)).IsEqualTo("a,b");
+        }
+
         var destination = new byte[3];
         await Assert.That(logical.TryCopyKey(destination, out var written)).IsTrue();
         await Assert.That(written).IsEqualTo(3);
@@ -69,7 +78,11 @@ public class KeyNotificationTests
     {
         foreach (var type in Enum.GetValues<RespireKeyNotificationType>())
         {
-            if (type == RespireKeyNotificationType.Unknown) continue;
+            if (type == RespireKeyNotificationType.Unknown)
+            {
+                continue;
+            }
+
             var channel = RespireChannel.KeyEvent(type, 0);
             var message = new RespireMessage(channel, null, "key"u8.ToArray(), Serializer);
             await Assert.That(message.TryParseKeyNotification(out var notification)).IsTrue();
@@ -145,6 +158,7 @@ public class KeyNotificationTests
         var eventKey = RespireChannel.SubKeySpaceEvent(RespireKeyNotificationType.HSet, key, 0);
         Array.Fill(key, (byte)'x');
         Array.Fill(field, (byte)'x');
+
         foreach (var descriptor in new[] { exact, item, eventKey })
         {
             byte[] payload = descriptor == item ? "hset"u8.ToArray()
@@ -186,11 +200,17 @@ public class KeyNotificationTests
         await Assert.That(default(RespireChannel).NotificationDatabase).IsNull();
         await Assert.That(default(RespireChannel).RoutingSlot).IsNull();
         await Assert.That(RespireChannel.KeyEvent("set"u8).NotificationDatabase).IsNull();
+
         foreach (var slot in new[] { 0, 16383 })
         {
             var index = 0;
             RespireKey key;
-            do { key = new RespireKey($"metadata:{index++}"); } while (key.ClusterSlot != slot);
+
+            do
+            {
+                key = new RespireKey($"metadata:{index++}");
+            } while (key.ClusterSlot != slot);
+
             foreach (var database in new[] { 0, int.MaxValue })
             {
                 var channel = RespireChannel.KeySpaceSingleKey(key, database);
@@ -250,11 +270,17 @@ public class KeyNotificationTests
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
         var count = 0;
+
         for (var index = 0; index < iterations; index++)
         {
             count += ParseAndCount(message);
-            if (allocate) GC.KeepAlive(AllocateParsingControl());
+
+            if (allocate)
+            {
+                GC.KeepAlive(AllocateParsingControl());
+            }
         }
+
         return (GC.GetAllocatedBytesForCurrentThread() - before, count);
     }
 
@@ -263,11 +289,21 @@ public class KeyNotificationTests
 
     private static int ParseAndCount(RespireMessage message)
     {
-        if (!message.TryParseKeyNotification("key"u8, out var notification)) return -1;
+        if (!message.TryParseKeyNotification("key"u8, out var notification))
+        {
+            return -1;
+        }
+
         var count = 0;
-        foreach (var key in notification.GetSubKeys()) count += key.Length;
+
+        foreach (var key in notification.GetSubKeys())
+        {
+            count += key.Length;
+        }
+
         return count;
     }
+
     private static RespireMessage Message(string channel, string payload)
         => new(channel, null, Encoding.UTF8.GetBytes(payload), Serializer);
 }

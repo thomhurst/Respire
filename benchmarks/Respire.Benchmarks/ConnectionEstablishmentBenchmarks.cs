@@ -15,7 +15,10 @@ public class ConnectionEstablishmentBenchmarks
     private readonly RawCommand _ping = new("*1\r\n$4\r\nPING\r\n"u8.ToArray());
 
     [Params(RespireProtocol.Resp2, RespireProtocol.Resp3)]
-    public RespireProtocol Protocol { get; set; }
+    public RespireProtocol Protocol
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public async Task Setup()
@@ -25,7 +28,11 @@ public class ConnectionEstablishmentBenchmarks
         // This fixture is copied unchanged to the control revision, before hooks exist.
         _options = new RespireConnectionOptions { Protocol = Protocol };
         _connection = await RespireConnection.ConnectAsync(_host, _port, _options);
-        if (await HealthyPing() != "PONG") throw new InvalidOperationException("Redis did not answer PING.");
+
+        if (await HealthyPing() != "PONG")
+        {
+            throw new InvalidOperationException("Redis did not answer PING.");
+        }
     }
 
     [Benchmark]
@@ -49,6 +56,9 @@ public class ConnectionEstablishmentBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_connection is not null) await _connection.DisposeAsync();
+        if (_connection is not null)
+        {
+            await _connection.DisposeAsync();
+        }
     }
 }

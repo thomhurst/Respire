@@ -23,17 +23,37 @@ public class VectorSetParserTests
         var stride = map ? 2 : 1 + (scores ? 1 : 0) + (attributes ? 1 : 0);
         var frame = map ? "%1\r\n" : $"*{stride}\r\n";
         frame += "$1\r\nm\r\n";
-        if (map && scores && attributes) frame += "*2\r\n";
-        if (scores) frame += resp3 ? ",0.75\r\n" : "$4\r\n0.75\r\n";
-        if (attributes) frame += "$2\r\n{}\r\n";
+
+        if (map && scores && attributes)
+        {
+            frame += "*2\r\n";
+        }
+
+        if (scores)
+        {
+            frame += resp3 ? ",0.75\r\n" : "$4\r\n0.75\r\n";
+        }
+
+        if (attributes)
+        {
+            frame += "$2\r\n{}\r\n";
+        }
+
         var reply = Parse(frame);
         var results = VectorSetParser.Matches(in reply, new() { IncludeScores = scores, IncludeAttributes = attributes });
         reply.Dispose();
         await Assert.That(results.Length).IsEqualTo(1);
         await Assert.That(results[0].Member).IsEquivalentTo("m"u8.ToArray());
         await Assert.That(results[0].Score).IsEqualTo(scores ? (double?)0.75 : null);
-        if (attributes) await Assert.That(results[0].AttributesJson!).IsEquivalentTo("{}"u8.ToArray());
-        else await Assert.That(results[0].AttributesJson).IsNull();
+
+        if (attributes)
+        {
+            await Assert.That(results[0].AttributesJson!).IsEquivalentTo("{}"u8.ToArray());
+        }
+        else
+        {
+            await Assert.That(results[0].AttributesJson).IsNull();
+        }
     }
 
     [Test]
@@ -72,8 +92,12 @@ public class VectorSetParserTests
     private static RespValue Parse(string wire)
     {
         var position = 0;
+
         if (RespParser.TryParseValue(Encoding.UTF8.GetBytes(wire), ref position, out var value) != RespParseStatus.Done)
+        {
             throw new InvalidOperationException("Invalid test frame.");
+        }
+
         return value;
     }
 }

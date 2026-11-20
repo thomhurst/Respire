@@ -46,6 +46,7 @@ public sealed class RespireAzureManagedRedisCredentialProvider : IRespireCredent
             .ConfigureAwait(false);
 
         var username = Volatile.Read(ref _username);
+
         if (username is null)
         {
             var resolvedUsername = ReadUsername(accessToken.Token);
@@ -58,6 +59,7 @@ public sealed class RespireAzureManagedRedisCredentialProvider : IRespireCredent
     private static string ReadUsername(string token)
     {
         var parts = token.Split('.');
+
         if (parts.Length == 3)
         {
             try
@@ -65,6 +67,7 @@ public sealed class RespireAzureManagedRedisCredentialProvider : IRespireCredent
                 var payload = parts[1].Replace('-', '+').Replace('_', '/');
                 payload = payload.PadRight((payload.Length + 3) / 4 * 4, '=');
                 using var document = JsonDocument.Parse(Convert.FromBase64String(payload));
+
                 if (document.RootElement.ValueKind == JsonValueKind.Object
                     && document.RootElement.TryGetProperty("oid", out var claim)
                     && claim.ValueKind == JsonValueKind.String

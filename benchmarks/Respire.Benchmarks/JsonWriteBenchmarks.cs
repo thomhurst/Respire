@@ -17,7 +17,10 @@ public partial class JsonWriteBenchmarks
     private Document _document = null!;
 
     [Params(64, 16384)]
-    public int Length { get; set; }
+    public int Length
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public async Task Setup()
@@ -27,17 +30,28 @@ public partial class JsonWriteBenchmarks
         _client = await RespireClient.ConnectAsync($"{_redis.Hostname}:{_redis.GetMappedPublicPort(6379)}");
         _json = new RespireJsonClient(_client);
         _commands = _json.Commands;
+
         if (!await SerializeToArrayThenSet() || !await TypedSet())
+        {
             throw new InvalidOperationException("JSON.SET did not acknowledge benchmark setup.");
+        }
+
         var restored = await _json.GetAsync("codec-benchmark", JsonContext.Default.Document);
+
         if (!restored.Found || restored.Value != _document)
+        {
             throw new InvalidOperationException("JSON.SET round trip failed.");
+        }
     }
 
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_client is not null) await _client.DisposeAsync();
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+        }
+
         await _redis.DisposeAsync();
     }
 
@@ -59,6 +73,7 @@ public partial class JsonWriteBenchmarks
     public ValueTask<bool> TypedSet() => _json.SetAsync("codec-benchmark", _document, JsonContext.Default.Document);
 
     public sealed record Document(string Text);
+
     [JsonSerializable(typeof(Document))]
     internal partial class JsonContext : JsonSerializerContext;
 }

@@ -36,6 +36,7 @@ public class TrackedReplicaRedirectTests
         var pending = write
             ? cache.SetAsync("key", [1], new() { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) })
             : cache.GetAsync("key");
+
         try
         {
             await correcting.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -45,7 +46,12 @@ public class TrackedReplicaRedirectTests
         finally { release.TrySetResult(); }
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (client.Core.OwnedPools.Count != pools) await Task.Delay(10, deadline.Token);
+
+        while (client.Core.OwnedPools.Count != pools)
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+
         await Assert.That(fixture.Source.ReceivedCommands.Any(command =>
             command.StartsWith(correctionPrefix, StringComparison.Ordinal))).IsFalse();
     }
@@ -71,8 +77,14 @@ public class TrackedReplicaRedirectTests
         await using var cache = new RespireDistributedCache(client);
         var pools = client.Core.OwnedPools.Count;
 
-        if (refresh) await cache.RefreshAsync("key");
-        else await Assert.That(await cache.GetAsync("key")).IsEquivalentTo("x"u8.ToArray());
+        if (refresh)
+        {
+            await cache.RefreshAsync("key");
+        }
+        else
+        {
+            await Assert.That(await cache.GetAsync("key")).IsEquivalentTo("x"u8.ToArray());
+        }
 
         await Assert.That(fixture.Target.ReceivedCommands.Count(command =>
             command.StartsWith(correctionPrefix, StringComparison.Ordinal))).IsGreaterThanOrEqualTo(2);
@@ -137,7 +149,11 @@ public class TrackedReplicaRedirectTests
         var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Target.SuppressReply = command =>
         {
-            if (!command.StartsWith("EVAL ") || command.Contains("redis.call('TIME')")) return false;
+            if (!command.StartsWith("EVAL ") || command.Contains("redis.call('TIME')"))
+            {
+                return false;
+            }
+
             submitted.TrySetResult();
             return true;
         };

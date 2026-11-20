@@ -11,19 +11,41 @@ internal sealed partial class RespireConnectionMultiplexer
     private void ReleaseShutdownCompletionRunners()
     {
         RespireConnection[]? draining;
-        lock (_lifecycleGate) draining = _lifetimeDrains?.ToArray();
+
+        lock (_lifecycleGate)
+        {
+            draining = _lifetimeDrains?.ToArray();
+        }
         // Publication is closed. Release the caller's runner whichever side of publication
         // its socket ended up on, before joining workers or sending maintenance barriers.
-        foreach (var connection in _connections) connection?.ReleaseCompletionRunner();
+        foreach (var connection in _connections)
+        {
+            connection?.ReleaseCompletionRunner();
+        }
+
         if (draining is not null)
-            foreach (var connection in draining) connection.ReleaseCompletionRunner();
+        {
+            foreach (var connection in draining)
+            {
+                connection.ReleaseCompletionRunner();
+            }
+        }
     }
 
     private async Task DrainLifetimeConnectionsBeforeRetirementAsync()
     {
         RespireConnection[]? draining;
-        lock (_lifecycleGate) draining = _lifetimeDrains?.ToArray();
-        if (draining is null) return;
+
+        lock (_lifecycleGate)
+        {
+            draining = _lifetimeDrains?.ToArray();
+        }
+
+        if (draining is null)
+        {
+            return;
+        }
+
         await CleanupTasks.WhenAllAsync(draining.Select(DrainLifetimeConnectionBeforeRetirementAsync)).ConfigureAwait(false);
     }
 
@@ -31,9 +53,13 @@ internal sealed partial class RespireConnectionMultiplexer
     {
         var drain = connection.RetireAsync();
         var timeout = _options.CommandTimeout ?? _options.RetirementDrainFallbackTimeout;
+
         if (_options.MaintenanceNotifications != RespireMaintenanceNotificationMode.Disabled
             && _options.MaintenanceRelaxedTimeout > timeout)
+        {
             timeout = _options.MaintenanceRelaxedTimeout;
+        }
+
         try
         {
             await drain.WaitAsync(timeout, _options.MaintenanceDrainTimeProvider, _abortCancellation.Token).ConfigureAwait(false);
@@ -51,15 +77,23 @@ internal sealed partial class RespireConnectionMultiplexer
         }
         catch (OperationCanceledException) when (_abortCancellation.IsCancellationRequested) { }
         finally { await connection.DisposeAsync().ConfigureAwait(false); }
+
         await drain.ConfigureAwait(false);
     }
 
     private void ScheduleConnectionLifetime(int slot, RespireConnection connection)
     {
-        if (connection.LifetimeExpiresAt is null) return;
+        if (connection.LifetimeExpiresAt is null)
+        {
+            return;
+        }
+
         lock (_lifecycleGate)
         {
-            if (!IsOperational || !ReferenceEquals(connection, _connections[slot])) return;
+            if (!IsOperational || !ReferenceEquals(connection, _connections[slot]))
+            {
+                return;
+            }
             // Share reconnect ownership so retirement/disposal also joins unpublished sockets
             // and old lifetime sockets that are no longer in the slot array.
             _activeReconnects++;
@@ -75,19 +109,27 @@ internal sealed partial class RespireConnectionMultiplexer
         Task? drain = null;
         // A newly published connection gets a new worker and starts at this cap again.
         var retryCap = TimeSpan.FromSeconds(1);
+
         try
         {
             while (IsOperational && original.IsAcceptingCommands
                 && ReferenceEquals(original, Volatile.Read(ref _connections[slot])))
             {
                 var remaining = original.RemainingConnectionLifetime!.Value;
+
                 if (remaining > TimeSpan.Zero)
                 {
                     if (!await WaitForLifetimeDelayAsync(original,
-                        remaining > TimeSpan.FromDays(1) ? TimeSpan.FromDays(1) : remaining).ConfigureAwait(false)) return;
+                        remaining > TimeSpan.FromDays(1) ? TimeSpan.FromDays(1) : remaining).ConfigureAwait(false))
+                    {
+                        return;
+                    }
+
                     continue;
                 }
+
                 var endpoint = Volatile.Read(ref _activeEndpoint);
+
                 try
                 {
                     // Fresh ConnectAsync resolves DNS and repeats TLS, credentials, generation
@@ -101,12 +143,18 @@ internal sealed partial class RespireConnectionMultiplexer
                     retryCap = await DelayLifetimeRetryAsync(original, retryCap).ConfigureAwait(false);
                     continue;
                 }
+
                 int? cacheEvictions = null;
+
                 lock (_lifecycleGate)
                 {
                     if (!IsOperational || !original.IsAcceptingCommands
                         || !ReferenceEquals(original, _connections[slot])
-                        || !ReferenceEquals(endpoint, _activeEndpoint)) return;
+                        || !ReferenceEquals(endpoint, _activeEndpoint))
+                    {
+                        return;
+                    }
+
                     if (replacement.IsAcceptingCommands)
                     {
                         lock (_moving.Gate)
@@ -121,6 +169,7 @@ internal sealed partial class RespireConnectionMultiplexer
                         }
                     }
                 }
+
                 if (!published)
                 {
                     // Setup can succeed just before the peer closes. Preserve the healthy
@@ -138,8 +187,12 @@ internal sealed partial class RespireConnectionMultiplexer
                 replacement = null;
                 // Fence cache fills that overlapped publication, as with maintenance handoffs.
                 _options.CredentialCacheRetirementFence?.Invoke();
+
                 if (cacheEvictions is { } removed)
+                {
                     ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed);
+                }
+
                 return;
             }
         }
@@ -154,7 +207,10 @@ internal sealed partial class RespireConnectionMultiplexer
             try
             {
                 if (!published && replacement is not null)
+                {
                     await replacement.DisposeAsync().ConfigureAwait(false);
+                }
+
                 if (published)
                 {
                     await DrainRecycledConnectionAsync(original, drain ?? original.RetireAsync()).ConfigureAwait(false);
@@ -169,7 +225,11 @@ internal sealed partial class RespireConnectionMultiplexer
                 lock (_lifecycleGate)
                 {
                     _lifetimeDrains?.Remove(original);
-                    if (--_activeReconnects == 0) _reconnectsDrained?.TrySetResult();
+
+                    if (--_activeReconnects == 0)
+                    {
+                        _reconnectsDrained?.TrySetResult();
+                    }
                 }
             }
         }
@@ -185,11 +245,16 @@ internal sealed partial class RespireConnectionMultiplexer
     private async Task<bool> WaitForLifetimeDelayAsync(RespireConnection connection, TimeSpan duration)
     {
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopConnecting.Token);
+
         try
         {
             var delay = Task.Delay(duration, _options.ConnectionLifetimeTimeProvider, cancellation.Token);
             // A closed or superseded socket must not retain a deadline or backoff timer.
-            if (await Task.WhenAny(delay, connection.Closed).ConfigureAwait(false) == connection.Closed) return false;
+            if (await Task.WhenAny(delay, connection.Closed).ConfigureAwait(false) == connection.Closed)
+            {
+                return false;
+            }
+
             await delay.ConfigureAwait(false);
             return true;
         }
@@ -201,14 +266,21 @@ internal sealed partial class RespireConnectionMultiplexer
         try
         {
             // No lifetime deadline aborts accepted work. Explicit disposal can.
-            try { await drain.WaitAsync(_abortCancellation.Token).ConfigureAwait(false); }
+            try
+            {
+                await drain.WaitAsync(_abortCancellation.Token).ConfigureAwait(false);
+            }
             catch (OperationCanceledException) when (_abortCancellation.IsCancellationRequested) { }
         }
         finally
         {
-            try { await connection.DisposeAsync().ConfigureAwait(false); }
+            try
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
             finally { RecordRetiredConnectionIdentity(connection); }
         }
+
         await drain.ConfigureAwait(false);
     }
 }

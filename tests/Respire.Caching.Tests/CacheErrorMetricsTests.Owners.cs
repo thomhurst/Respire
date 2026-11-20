@@ -31,6 +31,7 @@ public partial class CacheErrorMetricsTests
     {
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             await using var server = new FakeRespServer(FakeRespServer.OkReply)
@@ -44,7 +45,11 @@ public partial class CacheErrorMetricsTests
             await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
             var decorator = new RespireDistributedCacheTests.ScriptInterceptingClient(client, async (_, send) =>
             {
-                if (asynchronous) await Task.Yield();
+                if (asynchronous)
+                {
+                    await Task.Yield();
+                }
+
                 return await send().ConfigureAwait(false);
             });
             await using var cache = new RespireDistributedCache(decorator);
@@ -53,12 +58,24 @@ public partial class CacheErrorMetricsTests
             {
                 switch (route)
                 {
-                    case "get": await cache.GetAsync("key"); break;
-                    case "try-get": await cache.TryGetAsync("key", new ArrayBufferWriter<byte>()); break;
-                    case "set": await cache.SetAsync("key", new byte[] { 1 }, new()); break;
-                    case "set-buffer": await cache.SetAsync("key", new ReadOnlySequence<byte>(new byte[] { 1 }), new()); break;
-                    case "refresh": await cache.RefreshAsync("key"); break;
-                    default: await cache.RemoveAsync("key"); break;
+                    case "get":
+                        await cache.GetAsync("key");
+                        break;
+                    case "try-get":
+                        await cache.TryGetAsync("key", new ArrayBufferWriter<byte>());
+                        break;
+                    case "set":
+                        await cache.SetAsync("key", new byte[] { 1 }, new());
+                        break;
+                    case "set-buffer":
+                        await cache.SetAsync("key", new ReadOnlySequence<byte>(new byte[] { 1 }), new());
+                        break;
+                    case "refresh":
+                        await cache.RefreshAsync("key");
+                        break;
+                    default:
+                        await cache.RemoveAsync("key");
+                        break;
                 }
             }).Throws<RespireServerException>();
             await Assert.That(failure!.Code).IsEqualTo("WRONGTYPE");
@@ -83,6 +100,7 @@ public partial class CacheErrorMetricsTests
     {
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             await using var server = new FakeRespServer(FakeRespServer.OkReply)
@@ -124,6 +142,7 @@ public partial class CacheErrorMetricsTests
     {
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             await using var server = new FakeRespServer(FakeRespServer.OkReply);
@@ -134,12 +153,24 @@ public partial class CacheErrorMetricsTests
             {
                 switch (route)
                 {
-                    case "get": await cache.GetAsync(null!); break;
-                    case "try-get": await cache.TryGetAsync("key", null!); break;
-                    case "set": await cache.SetAsync("key", null!, new()); break;
-                    case "set-buffer": await cache.SetAsync("key", ReadOnlySequence<byte>.Empty, null!); break;
-                    case "refresh": await cache.RefreshAsync(null!); break;
-                    case "remove": await cache.RemoveAsync(null!); break;
+                    case "get":
+                        await cache.GetAsync(null!);
+                        break;
+                    case "try-get":
+                        await cache.TryGetAsync("key", null!);
+                        break;
+                    case "set":
+                        await cache.SetAsync("key", null!, new());
+                        break;
+                    case "set-buffer":
+                        await cache.SetAsync("key", ReadOnlySequence<byte>.Empty, null!);
+                        break;
+                    case "refresh":
+                        await cache.RefreshAsync(null!);
+                        break;
+                    case "remove":
+                        await cache.RemoveAsync(null!);
+                        break;
                 }
             }).Throws<ArgumentNullException>();
             await Assert.That(errors.Items.Count).IsEqualTo(1);
@@ -158,6 +189,7 @@ public partial class CacheErrorMetricsTests
     {
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             await using var server = new FakeRespServer(FakeRespServer.OkReply)
@@ -177,8 +209,14 @@ public partial class CacheErrorMetricsTests
             using var errors = new CacheErrorCapture();
             var failure = await Assert.That(async () =>
             {
-                if (buffer) await cache.TryGetAsync("key", new ArrayBufferWriter<byte>());
-                else await cache.GetAsync("key");
+                if (buffer)
+                {
+                    await cache.TryGetAsync("key", new ArrayBufferWriter<byte>());
+                }
+                else
+                {
+                    await cache.GetAsync("key");
+                }
             }).Throws<InvalidOperationException>();
             await Assert.That(failure).IsSameReferenceAs(expected);
             await Assert.That(errors.Items.Count).IsEqualTo(1);
@@ -191,6 +229,7 @@ public partial class CacheErrorMetricsTests
     private sealed class FailingCacheCodec(Exception error) : IRespireValueCodec
     {
         public byte[] Encode(ReadOnlySpan<byte> payload) => throw error;
+
         public byte[] Decode(ReadOnlySpan<byte> payload) => throw error;
     }
 
@@ -199,22 +238,34 @@ public partial class CacheErrorMetricsTests
         private readonly MeterListener _listener = new();
         // Set on the constructing test's execution context; detached work from an earlier test does not carry it.
         private readonly AsyncLocal<bool> _scope = new() { Value = true };
-        internal ConcurrentQueue<Dictionary<string, object?>> Items { get; } = new();
+
+        internal ConcurrentQueue<Dictionary<string, object?>> Items
+        {
+            get;
+        } = new();
+
         internal CacheErrorCapture()
         {
             _listener.InstrumentPublished = (instrument, observer) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     observer.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
-                if (!_scope.Value) return;
+                if (!_scope.Value)
+                {
+                    return;
+                }
+
                 Items.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
                 throw new InvalidOperationException("Listener must not replace the caller failure.");
             });
             _listener.Start();
         }
+
         public void Dispose() => _listener.Dispose();
     }
 }

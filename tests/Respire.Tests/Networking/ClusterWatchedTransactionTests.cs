@@ -31,7 +31,9 @@ public class ClusterWatchedTransactionTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = cluster, Connections = 1, ClientSideCache = new(),
+            UseCluster = cluster,
+            Connections = 1,
+            ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", cluster ? seed.Port : owner.Port)],
         });
 #pragma warning restore RESP010
@@ -86,6 +88,7 @@ public class ClusterWatchedTransactionTests
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
+
         for (var attempt = 0; attempt < 3; attempt++)
         {
             await using var transaction = await view.CreateTransactionAsync(["{a}:watched", "{a}:other"]);
@@ -97,6 +100,7 @@ public class ClusterWatchedTransactionTests
             await Assert.That(await transaction.CommitAsync()).IsEqualTo(attempt != 1);
             await Assert.That(pending.Status).IsEqualTo(attempt == 1 ? RespirePendingStatus.Aborted : RespirePendingStatus.Succeeded);
         }
+
         await Assert.That(owner.ReceivedCommands).IsEquivalentTo(Enumerable.Range(0, 3).SelectMany(_ => new[]
         {
             "WATCH tenant:{a}:watched tenant:{a}:other", "MULTI", "SET tenant:{a}:watched value", "EXEC",
@@ -112,7 +116,11 @@ public class ClusterWatchedTransactionTests
         var discovering = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var seed = new FakeRespServer(Topology(owner.Port))
         {
-            SuppressReply = _ => { discovering.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                discovering.TrySetResult();
+                return true;
+            },
         };
 #pragma warning disable RESP010 // Test-owned client isolates WATCH leases, cache fences, and slot ownership for this scenario.
         await using var client = RespireClient.Create(Options(seed.Port));
@@ -168,9 +176,15 @@ public class ClusterWatchedTransactionTests
         await Assert.That(logger.Failed).IsEqualTo(failCleanup);
         await Assert.That(error!.ServerError.Code).IsEqualTo(code);
         await Assert.That(error.InnerException).IsSameReferenceAs(error.ServerError);
-        if (pending is not null) await Assert.That(pending.Error).IsSameReferenceAs(error);
+
+        if (pending is not null)
+        {
+            await Assert.That(pending.Error).IsSameReferenceAs(error);
+        }
+
         await Assert.That(replacement.ReceivedCommands).IsEmpty();
         await Assert.That(owner.ReceivedCommands.Count(command => command == "WATCH {a}:watched")).IsEqualTo(1);
+
         if (code == "MOVED")
         {
             // The route is learned, but a new attempt must establish its own WATCH before writing.
@@ -205,6 +219,7 @@ public class ClusterWatchedTransactionTests
                 router.SetSlotOwner(ClusterHash.GetSlot("{a}:watched"),
                     router.GetMultiplexer(new RespireEndpoint("127.0.0.1", replacement.Port)));
             }
+
             return false;
         };
         var error = await Assert.That(async () =>
@@ -251,7 +266,11 @@ public class ClusterWatchedTransactionTests
         {
             SuppressReply = command =>
             {
-                if (command != "WATCH {a}:watched") return false;
+                if (command != "WATCH {a}:watched")
+                {
+                    return false;
+                }
+
                 watching.TrySetResult();
                 return cancelWatch;
             },
@@ -263,12 +282,17 @@ public class ClusterWatchedTransactionTests
         using var cancellation = new CancellationTokenSource();
         var creating = client.CreateTransactionAsync(["{a}:watched"], cancellation.Token).AsTask();
         await watching.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (cancelWatch)
         {
             cancellation.Cancel();
             await Assert.That(async () => await creating).Throws<OperationCanceledException>();
         }
-        else await (await creating).DisposeAsync();
+        else
+        {
+            await (await creating).DisposeAsync();
+        }
+
         owner.SuppressReply = null;
         await using var fresh = await client.CreateTransactionAsync(["{a}:watched"]);
         await Assert.That(owner.ReceivedCommands.Count(command => command == "WATCH {a}:watched")).IsEqualTo(2);
@@ -279,17 +303,31 @@ public class ClusterWatchedTransactionTests
     {
         internal bool Armed;
         internal bool Failed;
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
             Exception? exception, Func<TState, Exception?, string> formatter)
         {
             // Fail once, after physical socket cleanup, without disrupting client disposal.
             if (!Armed || logLevel != LogLevel.Debug
-                || !formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal)) return;
+                || !formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
+            {
+                return;
+            }
+
             Armed = false;
             Failed = true;
             throw new InvalidOperationException("Injected cleanup failure.");
@@ -299,7 +337,9 @@ public class ClusterWatchedTransactionTests
     private static RespireOptions Options(int seedPort) => new()
     {
         Protocol = RespireProtocol.Resp2,
-        UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seedPort)],
+        UseCluster = true,
+        Connections = 1,
+        Endpoints = [new("127.0.0.1", seedPort)],
     };
 
     private static byte[] Topology(int port) => Encoding.ASCII.GetBytes(

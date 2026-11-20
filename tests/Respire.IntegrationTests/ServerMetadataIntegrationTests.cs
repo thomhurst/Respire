@@ -23,8 +23,10 @@ public class ServerMetadataIntegrationTests(VersionedServerFixture servers)
             .Build(), [6379]);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))], Connections = 1,
-            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3, AllowAdmin = true,
+            Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
+            Connections = 1,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
+            AllowAdmin = true,
         });
         var server = client.WithKeyPrefix("ignored:").Server;
         var info = await server.CommandInfoAsync(["GET", "NOTAREDISCOMMAND"]);
@@ -34,6 +36,7 @@ public class ServerMetadataIntegrationTests(VersionedServerFixture servers)
         info[0]!.Flags.Should().Contain("readonly");
         info[0]!.FirstKey.Should().Be(1);
         info[1].Should().BeNull();
+
         if (modern)
         {
             var docs = await server.CommandDocsAsync(["GET", "CONFIG GET", "NOTAREDISCOMMAND"]);
@@ -53,6 +56,7 @@ public class ServerMetadataIntegrationTests(VersionedServerFixture servers)
             (await server.CommandDocsOnAllNodesAsync(["GET"]))[0].Error.Should().BeOfType<RespireServerException>();
             info[0]!.KeySpecifications.Should().BeEmpty();
         }
+
         byte[] key = [255, 0, 32, 128];
         (await server.CommandGetKeysAsync("MSET", [key, "value", "other", "value2"]))[0].Should().Equal(key);
         (await server.CommandGetKeysAsync("XGROUP CREATE", [key, "group", "0"]))[0].Should().Equal(key);
@@ -103,11 +107,17 @@ public class ServerMetadataIntegrationTests(VersionedServerFixture servers)
     private static async Task WaitForPersistence(IRespireServerCommands server)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         while (true)
         {
             var report = await server.InfoAsync("persistence", timeout.Token);
+
             if (report.Contains("rdb_bgsave_in_progress:0") && report.Contains("aof_rewrite_in_progress:0")
-                && report.Contains("aof_rewrite_scheduled:0")) return;
+                && report.Contains("aof_rewrite_scheduled:0"))
+            {
+                return;
+            }
+
             await Task.Delay(20, timeout.Token);
         }
     }

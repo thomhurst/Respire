@@ -20,18 +20,24 @@ internal sealed partial class DedicatedConnectionPool
         // then owns topology reselection without resetting the caller's acquisition deadline.
         var attempt = 0;
         var episode = 0L;
+
         try
         {
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 Exception failure;
+
                 try
                 {
                     var connection = await RespireConnection.ConnectAsync(
                         host, port, connectionOptions, logger, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
+
                     if (attempt != 0)
+                    {
                         QueueRecovery(RespireConnectionState.Connected, null, attempt, episode);
+                    }
+
                     return connection;
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && IsRetryableAcquisitionFailure(error))
@@ -47,8 +53,16 @@ internal sealed partial class DedicatedConnectionPool
                     { Endpoint = new(host, port) };
                 }
 
-                if (episode == 0) episode = Interlocked.Increment(ref _nextRecoveryEpisode);
-                if (attempt < int.MaxValue) attempt++;
+                if (episode == 0)
+                {
+                    episode = Interlocked.Increment(ref _nextRecoveryEpisode);
+                }
+
+                if (attempt < int.MaxValue)
+                {
+                    attempt++;
+                }
+
                 var delay = policy.GetDelay(attempt);
                 QueueRecovery(RespireConnectionState.Reconnecting, failure, attempt, episode, delay);
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
@@ -88,10 +102,16 @@ internal sealed partial class DedicatedConnectionPool
             NextReconnectDelay = delay,
             ReconnectExhausted = exhausted,
         };
+
         lock (_gate)
         {
             (_recoveryNotifications ??= new()).Enqueue(change);
-            if (_publishingRecovery) return;
+
+            if (_publishingRecovery)
+            {
+                return;
+            }
+
             _publishingRecovery = true;
             // Observers can synchronously dispose the client. They must never block the
             // acquisition whose reservation disposal is waiting to drain. One worker
@@ -106,6 +126,7 @@ internal sealed partial class DedicatedConnectionPool
         {
             RespireConnectionStateChange change;
             bool publishState;
+
             lock (_gate)
             {
                 if (!_recoveryNotifications!.TryDequeue(out change))
@@ -113,18 +134,28 @@ internal sealed partial class DedicatedConnectionPool
                     _publishingRecovery = false;
                     return;
                 }
+
                 publishState = !_stopping;
             }
+
             try
             {
                 if (change.NextReconnectDelay is { } delay)
+                {
                     RespireTelemetry.RecordReconnectAttempt(host, port, change.ReconnectAttempt, delay, change.ReconnectSource);
+                }
+
                 if (change.ReconnectExhausted)
+                {
                     RespireTelemetry.RecordReconnectExhaustion(host, port, change.ReconnectSource);
+                }
                 // Measurements describe already scheduled work and may finish after Stop.
                 // Skip queued lifecycle callbacks once stopping is observed; callbacks already
                 // in flight are deliberately not joined because they can dispose this pool.
-                if (publishState) stateChanged?.Invoke(change);
+                if (publishState)
+                {
+                    stateChanged?.Invoke(change);
+                }
             }
             catch (Exception error)
             {

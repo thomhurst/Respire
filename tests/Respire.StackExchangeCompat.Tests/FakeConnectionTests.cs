@@ -83,6 +83,7 @@ public class FakeConnectionTests
         using var fault = fixture.Server.InjectFault("HSET", RespireFakeFault.Pause(gate, afterExecution: true));
         var pending = fixture.Database.HashSetAsync("key", "field", "value");
         Task? disposal = null;
+
         try
         {
             await fault.Matched.WaitAsync(TimeSpan.FromSeconds(10));
@@ -98,8 +99,13 @@ public class FakeConnectionTests
         {
             gate.Release();
             await pending.WaitAsync(TimeSpan.FromSeconds(10));
-            if (disposal is not null) await disposal.WaitAsync(TimeSpan.FromSeconds(10));
+
+            if (disposal is not null)
+            {
+                await disposal.WaitAsync(TimeSpan.FromSeconds(10));
+            }
         }
+
         Assert.True(await pending);
         Assert.Throws<ObjectDisposedException>(() => fixture.Server.CreateOptions());
     }
@@ -111,8 +117,12 @@ public class FakeConnectionTests
         await fixture.Database.HashSetAsync("key", "field", "value");
         fixture.Connection.Dispose();
         Assert.Throws<ObjectDisposedException>(() => fixture.Database);
+
         await using (var observer = new RespireFakeConnection(fixture.Server))
+        {
             Assert.Equal("value", (string?)await observer.Database.HashGetAsync("key", "field"));
+        }
+
         await fixture.DisposeAsync();
         Assert.Throws<ObjectDisposedException>(() => fixture.Server.CreateOptions());
     }
@@ -125,7 +135,10 @@ public class FakeConnectionTests
         Assert.Throws<NotSupportedException>(() => fixture.Connection.GetDatabase(1));
         Assert.Throws<ArgumentOutOfRangeException>(() => fixture.Connection.GetDatabase(-2));
         Assert.Throws<NotSupportedException>(() => fixture.Database.StringGetLease("key"));
-        Assert.Throws<NotSupportedException>(() => { _ = fixture.Database.StringSetAsync("key", "value"); });
+        Assert.Throws<NotSupportedException>(() =>
+        {
+            _ = fixture.Database.StringSetAsync("key", "value");
+        });
         var error = await Assert.ThrowsAsync<RespireServerException>(
             () => fixture.Database.ScriptEvaluateAsync("return 1"));
         Assert.Contains("unsupported script", error.Message);

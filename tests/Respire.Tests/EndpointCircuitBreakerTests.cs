@@ -1,5 +1,5 @@
-using Respire.Internal;
 using System.Runtime.CompilerServices;
+using Respire.Internal;
 
 namespace Respire.Tests;
 
@@ -10,7 +10,8 @@ public sealed class EndpointCircuitBreakerTests
     {
         var breaker = new EndpointCircuitBreaker(new("redis.test"), new()
         {
-            MinimumFailureCount = 2, FailureRateThreshold = 0.5
+            MinimumFailureCount = 2,
+            FailureRateThreshold = 0.5
         }, new Clock());
         Finish(breaker, CircuitOutcome.Success);
         Finish(breaker, CircuitOutcome.Success);
@@ -36,7 +37,12 @@ public sealed class EndpointCircuitBreakerTests
     public async Task CountLimitEvictsOldestOutcomesAndKeepsExactRate()
     {
         var breaker = New(new Clock(), new() { MaximumSampleCount = 4, MinimumFailureCount = 2 });
-        for (var i = 0; i < 10000; i++) Finish(breaker, CircuitOutcome.Success);
+
+        for (var i = 0; i < 10000; i++)
+        {
+            Finish(breaker, CircuitOutcome.Success);
+        }
+
         await Assert.That(breaker.Snapshot().SampleCount).IsEqualTo(4);
         Finish(breaker, CircuitOutcome.Failure);
         await Assert.That(breaker.Snapshot().FailureCount).IsEqualTo(1);
@@ -49,7 +55,12 @@ public sealed class EndpointCircuitBreakerTests
     {
         var breaker = New(new Clock(), new() { MaximumSampleCount = 3, MinimumFailureCount = 2, FailureRateThreshold = 1 });
         Finish(breaker, CircuitOutcome.Failure);
-        for (var i = 0; i < 3; i++) Finish(breaker, CircuitOutcome.Success);
+
+        for (var i = 0; i < 3; i++)
+        {
+            Finish(breaker, CircuitOutcome.Success);
+        }
+
         await Assert.That(breaker.Snapshot()).IsEqualTo(new CircuitSnapshot(EndpointCircuitState.Closed, 3, 0, 0, 0));
     }
 
@@ -77,15 +88,27 @@ public sealed class EndpointCircuitBreakerTests
         var clock = new Clock();
         var breaker = New(clock, new()
         {
-            MinimumFailureCount = 2, FailureRateThreshold = 0.75, SamplingWindow = TimeSpan.FromSeconds(10)
+            MinimumFailureCount = 2,
+            FailureRateThreshold = 0.75,
+            SamplingWindow = TimeSpan.FromSeconds(10)
         });
-        for (var i = 0; i < 3; i++) Finish(breaker, CircuitOutcome.Success);
+
+        for (var i = 0; i < 3; i++)
+        {
+            Finish(breaker, CircuitOutcome.Success);
+        }
+
         clock.Advance(TimeSpan.FromSeconds(5));
         Finish(breaker, CircuitOutcome.Failure);
         Finish(breaker, CircuitOutcome.Failure);
         var pending = Acquire(breaker);
         clock.Advance(TimeSpan.FromSeconds(5));
-        if (inspectBeforeAdmission) await Assert.That(breaker.Snapshot().SampleCount).IsEqualTo(2);
+
+        if (inspectBeforeAdmission)
+        {
+            await Assert.That(breaker.Snapshot().SampleCount).IsEqualTo(2);
+        }
+
         await Assert.That(breaker.TryAcquire(out _, out var remaining)).IsFalse();
         await Assert.That(remaining).IsEqualTo(TimeSpan.FromSeconds(5));
         breaker.Complete(ref pending, CircuitOutcome.Success);
@@ -98,9 +121,16 @@ public sealed class EndpointCircuitBreakerTests
         var clock = new Clock();
         var breaker = New(clock, new()
         {
-            MinimumFailureCount = 2, FailureRateThreshold = 0.75, SamplingWindow = TimeSpan.FromSeconds(10)
+            MinimumFailureCount = 2,
+            FailureRateThreshold = 0.75,
+            SamplingWindow = TimeSpan.FromSeconds(10)
         });
-        for (var i = 0; i < 3; i++) Finish(breaker, CircuitOutcome.Success);
+
+        for (var i = 0; i < 3; i++)
+        {
+            Finish(breaker, CircuitOutcome.Success);
+        }
+
         clock.Advance(TimeSpan.FromSeconds(5));
         Finish(breaker, CircuitOutcome.Failure);
         clock.Advance(TimeSpan.FromSeconds(5));
@@ -247,6 +277,7 @@ public sealed class EndpointCircuitBreakerTests
         clock.Advance(TimeSpan.FromSeconds(5));
         var probes = Enumerable.Range(0, 65536).Select(_ => Acquire(breaker)).ToArray();
         await Assert.That(breaker.TryAcquire(out _, out _)).IsFalse();
+
         for (var i = 0; i < probes.Length; i += 2)
         {
             var copy = probes[i];
@@ -254,16 +285,24 @@ public sealed class EndpointCircuitBreakerTests
             probes[i] = Acquire(breaker);
             breaker.Complete(ref copy, CircuitOutcome.Failure);
         }
+
         await Assert.That(breaker.Snapshot().ActiveProbes).IsEqualTo(65536);
         breaker.Complete(ref probes[0], CircuitOutcome.Failure);
         clock.Advance(TimeSpan.FromSeconds(5));
+
         for (var i = 0; i < probes.Length; i++)
         {
             breaker.Complete(ref probes[i], CircuitOutcome.Success);
             probes[i] = Acquire(breaker);
         }
+
         await Assert.That(breaker.Snapshot().ActiveProbes).IsEqualTo(65536);
-        for (var i = probes.Length - 1; i >= 0; i--) breaker.Complete(ref probes[i], CircuitOutcome.Success);
+
+        for (var i = probes.Length - 1; i >= 0; i--)
+        {
+            breaker.Complete(ref probes[i], CircuitOutcome.Success);
+        }
+
         await Assert.That(breaker.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
     }
 
@@ -324,7 +363,10 @@ public sealed class EndpointCircuitBreakerTests
         var admitted = 0;
         Parallel.For(0, permits.Length, i =>
         {
-            if (breaker.TryAcquire(out permits[i], out _)) Interlocked.Increment(ref admitted);
+            if (breaker.TryAcquire(out permits[i], out _))
+            {
+                Interlocked.Increment(ref admitted);
+            }
         });
         await Assert.That(admitted).IsEqualTo(4);
         await Assert.That(breaker.Snapshot().ActiveProbes).IsEqualTo(4);
@@ -419,13 +461,23 @@ public sealed class EndpointCircuitBreakerTests
     private static long MeasureRecovery(EndpointCircuitBreaker breaker, Clock clock, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1000; i++)
         {
             Finish(breaker, CircuitOutcome.Failure);
             clock.Advance(TimeSpan.FromSeconds(5));
-            for (var probe = 0; probe < 4; probe++) Finish(breaker, CircuitOutcome.Success);
-            if (allocate) GC.KeepAlive(new byte[128]);
+
+            for (var probe = 0; probe < 4; probe++)
+            {
+                Finish(breaker, CircuitOutcome.Success);
+            }
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[128]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -446,11 +498,17 @@ public sealed class EndpointCircuitBreakerTests
     private static long Measure(EndpointCircuitBreaker breaker, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1000; i++)
         {
             Finish(breaker, CircuitOutcome.Success);
-            if (allocate) GC.KeepAlive(new byte[128]);
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[128]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -469,17 +527,29 @@ public sealed class EndpointCircuitBreakerTests
 
     private static void Finish(EndpointCircuitBreaker breaker, CircuitOutcome outcome)
     {
-        if (!breaker.TryAcquire(out var permit, out _)) throw new InvalidOperationException("Expected admission.");
+        if (!breaker.TryAcquire(out var permit, out _))
+        {
+            throw new InvalidOperationException("Expected admission.");
+        }
+
         breaker.Complete(ref permit, outcome);
     }
 
     private sealed class Clock : TimeProvider
     {
         private long _timestamp;
-        public DateTimeOffset WallClock { get; set; } = DateTimeOffset.UnixEpoch;
+
+        public DateTimeOffset WallClock
+        {
+            get; set;
+        } = DateTimeOffset.UnixEpoch;
+
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
         public override long GetTimestamp() => Interlocked.Read(ref _timestamp);
+
         public override DateTimeOffset GetUtcNow() => WallClock;
+
         public void Advance(TimeSpan duration) => Interlocked.Add(ref _timestamp, duration.Ticks);
     }
 }

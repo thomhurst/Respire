@@ -19,9 +19,11 @@ public class SortedSetAddOptionsIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"zadd:{Guid.NewGuid():N}:");
+
         async Task<bool> Add(O options, double score, string member = "a")
             => await Run(view, mode, s => s.AddAsync("key", options, (RespireValue)member, score),
                 s => s.Add("key", options, (RespireValue)member, score));
+
         async Task<double?> Increment(O options, double by, string member = "a")
             => await Run(view, mode, s => s.IncrementAsync("key", options, member, by),
                 s => s.Increment("key", options, member, by));
@@ -77,7 +79,11 @@ public class SortedSetAddOptionsIntegrationTests(RedisTestContainer fixture)
     private static async Task<T> Run<T>(IRespireClient client, string mode,
         Func<IRespireSortedSetCommands, ValueTask<T>> immediate, Func<IRespireBatchSortedSetCommands, RespirePending<T>> deferred)
     {
-        if (mode == "immediate") return await immediate(client.SortedSets);
+        if (mode == "immediate")
+        {
+            return await immediate(client.SortedSets);
+        }
+
         if (mode == "batch")
         {
             using var batch = client.CreateBatch();
@@ -85,6 +91,7 @@ public class SortedSetAddOptionsIntegrationTests(RedisTestContainer fixture)
             await batch.ExecuteAsync();
             return pending.Result;
         }
+
         await using var transaction = client.CreateTransaction();
         var result = deferred(transaction.SortedSets);
         await transaction.CommitAsync();

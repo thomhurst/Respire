@@ -21,30 +21,49 @@ internal sealed class DedicatedPoolLedger(Lock gate)
 
     internal int Count
     {
-        get { lock (gate) return _pools.Count; }
+        get
+        {
+            lock (gate)
+            {
+                return _pools.Count;
+            }
+        }
     }
 
     internal void Add(DedicatedConnectionPool pool)
     {
-        lock (gate) _pools.Add(pool);
+        lock (gate)
+        {
+            _pools.Add(pool);
+        }
     }
 
     private DedicatedConnectionPool[] Snapshot()
     {
-        lock (gate) return _pools.ToArray();
+        lock (gate)
+        {
+            return _pools.ToArray();
+        }
     }
 
     internal async Task RetireAsync(DedicatedConnectionPool pool, bool moving = false)
     {
         await pool.RetireAsync(moving).ConfigureAwait(false);
         // Failed retirement stays owned so explicit disposal can still abort it.
-        lock (gate) _pools.Remove(pool);
+        lock (gate)
+        {
+            _pools.Remove(pool);
+        }
     }
 
     internal async Task ReleaseAsync(DedicatedConnectionPool pool)
     {
         await pool.DisposeAsync().ConfigureAwait(false);
-        lock (gate) _pools.Remove(pool);
+
+        lock (gate)
+        {
+            _pools.Remove(pool);
+        }
     }
 
     internal Task RetireAllAsync()

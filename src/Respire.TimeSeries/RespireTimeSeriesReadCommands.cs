@@ -45,12 +45,22 @@ public sealed partial class RespireTimeSeriesClient
         bool reverse, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(keys);
-        if (keys.Count == 0) throw new ArgumentException("At least one series key is required.", nameof(keys));
+
+        if (keys.Count == 0)
+        {
+            throw new ArgumentException("At least one series key is required.", nameof(keys));
+        }
+
         var (from, to) = range.ToTokens(nameof(range));
         var (extra, width) = options?.ToArguments(keys.Count) ?? (Array.Empty<RespireValue>(), keys.Count);
         var arguments = new RespireValue[checked(keys.Count + 3 + extra.Length)];
         arguments[0] = keys.Count;
-        for (var index = 0; index < keys.Count; index++) arguments[index + 1] = keys[index];
+
+        for (var index = 0; index < keys.Count; index++)
+        {
+            arguments[index + 1] = keys[index];
+        }
+
         arguments[keys.Count + 1] = from;
         arguments[keys.Count + 2] = to;
         extra.CopyTo(arguments, keys.Count + 3);
@@ -90,8 +100,17 @@ public sealed partial class RespireTimeSeriesClient
     private async ValueTask<string[]> QueryLabelTokensUnhookedAsync(string? label, IReadOnlyList<string>? filters, CancellationToken cancellationToken)
     {
         var arguments = new List<RespireValue> { label is null ? "LABELS" : "VALUES" };
-        if (label is not null) arguments.Add(label);
-        if (filters is not null) RespireTimeSeriesRangeOptions.AppendFilters(arguments, filters, nameof(filters));
+
+        if (label is not null)
+        {
+            arguments.Add(label);
+        }
+
+        if (filters is not null)
+        {
+            RespireTimeSeriesRangeOptions.AppendFilters(arguments, filters, nameof(filters));
+        }
+
         using var result = await DispatchAsync(QueryLabelsCommand, [.. arguments], cancellationToken).ConfigureAwait(false);
         return TimeSeriesReplyParser.ParseLabelTokens(result);
     }
@@ -144,49 +163,80 @@ public sealed partial class RespireTimeSeriesClient
         int batchSize, int? maximumConsecutiveEmptyReads, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
+
         if (maximumConsecutiveEmptyReads is <= 0)
+        {
             throw new ArgumentOutOfRangeException(nameof(maximumConsecutiveEmptyReads));
+        }
+
         timestamp.RequireRead(nameof(timestamp));
         // New already enters a TS.READ owner below. Only an explicit first read needs
         // to defer cancellation to admission; cancellation between pages stays local.
         var admitFirstRead = timestamp != RespireTimeSeriesTimestamp.New
             && _client is RespireClient client && client.Core.Options.CommandHook is not null;
+
         if (timestamp == RespireTimeSeriesTimestamp.New)
         {
             var latest = await ReadAsync(key, RespireTimeSeriesTimestamp.Maximum,
                 new RespireTimeSeriesReadOptions { MaximumCount = 1 }, cancellationToken).ConfigureAwait(false);
-            if (latest.Samples.Count == 0) timestamp = 0;
+
+            if (latest.Samples.Count == 0)
+            {
+                timestamp = 0;
+            }
             else
             {
                 var last = latest.Samples[^1].Timestamp;
-                if (last == long.MaxValue) yield break;
+
+                if (last == long.MaxValue)
+                {
+                    yield break;
+                }
+
                 timestamp = last + 1;
             }
         }
+
         var options = new RespireTimeSeriesReadOptions { BlockMilliseconds = 0, MaximumCount = batchSize };
         var emptyDelayMilliseconds = 100;
         var emptyReads = 0;
+
         while (true)
         {
-            if (!admitFirstRead) cancellationToken.ThrowIfCancellationRequested();
+            if (!admitFirstRead)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             admitFirstRead = false;
             var result = await ReadAsync(key, timestamp, options, cancellationToken).ConfigureAwait(false);
+
             if (result.Samples.Count == 0)
             {
-                if (maximumConsecutiveEmptyReads is { } maximum && ++emptyReads >= maximum) yield break;
+                if (maximumConsecutiveEmptyReads is { } maximum && ++emptyReads >= maximum)
+                {
+                    yield break;
+                }
                 // Deletion can unblock an indefinite read without samples. Bound retries even if
                 // a server returns empty immediately, and keep cancellation responsive while waiting.
                 await Task.Delay(emptyDelayMilliseconds, cancellationToken).ConfigureAwait(false);
                 emptyDelayMilliseconds = Math.Min(emptyDelayMilliseconds * 2, 1000);
                 continue;
             }
+
             emptyDelayMilliseconds = 100;
             emptyReads = 0;
+
             foreach (var sample in result.Samples)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 yield return sample;
-                if (sample.Timestamp == long.MaxValue) yield break;
+
+                if (sample.Timestamp == long.MaxValue)
+                {
+                    yield break;
+                }
+
                 timestamp = sample.Timestamp + 1;
             }
         }

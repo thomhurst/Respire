@@ -1,6 +1,6 @@
-using Respire.Protocol;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -279,32 +279,35 @@ public class ClientSideCacheCoordinatorTests
             [0], [1], [1, "a"], [1, "a", "v"], [2, "a", "v"], [2, "a", "v", "b", "v"], [2, "a", "v", "b", "v", "PX", 10],
             [3, "a", "v", "b", "v"], [-1, "a", "v"], [long.MaxValue, "a", "v"], ["x", "a", "v"],
         ];
-        foreach (var operation in operations)
-        foreach (var input in inputs)
-        {
-            RawCommandKeyLayouts.KeyLayout? expected;
-            try
-            {
-                expected = RawCommandKeyLayouts.TryGetLayout(operation, input, out var routing) ? routing : null;
-            }
-            catch (ArgumentException)
-            {
-                expected = null;
-            }
 
-            var key = new ClientCacheCommandKey(operation, input);
-            RawCommandKeyLayouts.KeyLayout? actual =
-                RawCommandKeyLayouts.TryGetMutationLayout(operation, in key, out var mutation) ? mutation : null;
-            await Assert.That(actual).IsEqualTo(expected)
-                .Because($"{operation} [{string.Join(", ", input.Select(value => value.ToString()))}]");
+        foreach (var operation in operations)
+        {
+            foreach (var input in inputs)
+            {
+                RawCommandKeyLayouts.KeyLayout? expected;
+
+                try
+                {
+                    expected = RawCommandKeyLayouts.TryGetLayout(operation, input, out var routing) ? routing : null;
+                }
+                catch (ArgumentException)
+                {
+                    expected = null;
+                }
+
+                var key = new ClientCacheCommandKey(operation, input);
+                RawCommandKeyLayouts.KeyLayout? actual =
+                    RawCommandKeyLayouts.TryGetMutationLayout(operation, in key, out var mutation) ? mutation : null;
+                await Assert.That(actual).IsEqualTo(expected)
+                    .Because($"{operation} [{string.Join(", ", input.Select(value => value.ToString()))}]");
+            }
         }
     }
 
     [Test]
     public async Task DestinationOnlyMutationLayoutsInvalidateDestinationAndRetainSources()
     {
-        var cases = new (string Operation, RespireCommand Descriptor, RespireValue[] Arguments,
-            string Destination, string[] Sources)[]
+        var cases = new (string Operation, RespireCommand Descriptor, RespireValue[] Arguments, string Destination, string[] Sources)[]
         {
             ("COPY", RespireCommands.Key.COPY, ["copy-source", "copy-destination"],
                 "copy-destination", ["copy-source"]),
@@ -333,7 +336,12 @@ public class ClientSideCacheCoordinatorTests
         {
             var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
             Insert(cache, item.Destination, "old-destination");
-            foreach (var source in item.Sources) Insert(cache, source, "cached-source");
+
+            foreach (var source in item.Sources)
+            {
+                Insert(cache, source, "cached-source");
+            }
+
             Insert(cache, "unrelated", "retained");
             var command = new CatalogCommand(item.Descriptor, item.Arguments);
 
@@ -341,9 +349,13 @@ public class ClientSideCacheCoordinatorTests
 
             await Assert.That(cache.TryGet(new RespireKey(item.Destination), out _)).IsFalse()
                 .Because($"{item.Operation} must fence its destination before execution");
+
             foreach (var source in item.Sources)
+            {
                 await Assert.That(Read(cache, source)).IsEqualTo("cached-source")
                     .Because($"{item.Operation} reads source {source}");
+            }
+
             await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
 
             Insert(cache, item.Destination, "racing-read");
@@ -351,8 +363,12 @@ public class ClientSideCacheCoordinatorTests
 
             await Assert.That(cache.TryGet(new RespireKey(item.Destination), out _)).IsFalse()
                 .Because($"{item.Operation} must fence a racing destination read after execution");
+
             foreach (var source in item.Sources)
+            {
                 await Assert.That(Read(cache, source)).IsEqualTo("cached-source");
+            }
+
             await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
         }
     }
@@ -362,11 +378,15 @@ public class ClientSideCacheCoordinatorTests
     {
         var classifications = RawCommandKeyLayouts.MutationClassifications.ToArray();
         await Assert.That(classifications.Length).IsGreaterThan(200);
+
         foreach (var (operation, mutation) in classifications)
         {
             await Assert.That(Enum.IsDefined(mutation)).IsTrue().Because(operation);
+
             if (RespireCommands.GetCacheMutation(operation) == RespireCacheMutation.ReadOnly)
+            {
                 await Assert.That(mutation).IsEqualTo(RawCommandKeyLayouts.MutationKind.ReadOnly).Because(operation);
+            }
         }
         // These layouts do not establish a bounded cache mutation. Any new unknown entry requires review.
         // MIGRATE has optional KEYS and COPY forms; its mutation shape is not projected here.
@@ -422,6 +442,7 @@ public class ClientSideCacheCoordinatorTests
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
         Insert(cache, "vectors", "old");
         Insert(cache, "unrelated", "retained");
+
         foreach (var operation in new[] { "VCARD", "VDIM", "VEMB", "VGETATTR", "VINFO", "VISMEMBER", "VLINKS", "VRANDMEMBER", "VRANGE", "VSIM" })
         {
             var read = new Cmd1(new Verb(operation), "vectors");
@@ -429,6 +450,7 @@ public class ClientSideCacheCoordinatorTests
             await Assert.That(fence.IsRequired).IsFalse();
             await Assert.That(cache.Count).IsEqualTo(2);
         }
+
         foreach (var operation in new[] { "VADD", "VREM", "VSETATTR" })
         {
             Insert(cache, "vectors", "old");
@@ -447,6 +469,7 @@ public class ClientSideCacheCoordinatorTests
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
         Insert(cache, "unrelated", "retained");
+
         foreach (var operation in new[]
         {
             "BF.RESERVE", "BF.ADD", "BF.MADD", "BF.INSERT", "BF.LOADCHUNK",
@@ -502,6 +525,7 @@ public class ClientSideCacheCoordinatorTests
     public async Task TimeSeriesMutationsFenceTheirKeyOrFlushWhenTheyWriteSeveralKeys()
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+
         foreach (var operation in new[] { "TS.CREATE", "TS.ALTER" })
         {
             Insert(cache, "unrelated", "retained");
@@ -919,6 +943,7 @@ public class ClientSideCacheCoordinatorTests
         RespValue response)
     {
         var command = new Cmd1(Verbs.StrLen, key);
+
         if (!ClientSideCacheCoordinator.TryCreateQuery("STRLEN", in command, out var request))
         {
             throw new InvalidOperationException("Expected a cacheable query.");
@@ -932,7 +957,9 @@ public class ClientSideCacheCoordinatorTests
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
 
-        public void Write(ref RespWriter writer) { }
+        public void Write(ref RespWriter writer)
+        {
+        }
 
         public RespireCacheMutation GetCacheMutation(string operation) => RespireCacheMutation.MultiKey;
 

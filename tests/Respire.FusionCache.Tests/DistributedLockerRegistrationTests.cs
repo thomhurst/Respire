@@ -21,7 +21,9 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
         {
-            Protocol = (RespireProtocol)protocol, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         var services = new ServiceCollection();
         services.AddSingleton<IRespireClient>(client);
@@ -45,36 +47,55 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
             return 42;
         }, failSafeDefaultValue: -1, options: new FusionCacheEntryOptions
         {
-            IsFailSafeEnabled = true, FactorySoftTimeout = TimeSpan.FromMilliseconds(50),
-            FactoryHardTimeout = TimeSpan.FromMilliseconds(50), AllowTimedOutFactoryBackgroundCompletion = true,
-            AllowBackgroundDistributedCacheOperations = false, ReThrowDistributedLockerExceptions = true,
+            IsFailSafeEnabled = true,
+            FactorySoftTimeout = TimeSpan.FromMilliseconds(50),
+            FactoryHardTimeout = TimeSpan.FromMilliseconds(50),
+            AllowTimedOutFactoryBackgroundCompletion = true,
+            AllowBackgroundDistributedCacheOperations = false,
+            ReThrowDistributedLockerExceptions = true,
         }, token: caller.Token).AsTask();
+
         try
         {
             await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(await foreground.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(-1);
             var leases = new List<RespireKey>();
-            await foreach (var key in client.Keys.ScanAsync("respire:fusioncache:lock:*:lease")) leases.Add(key);
+
+            await foreach (var key in client.Keys.ScanAsync("respire:fusioncache:lock:*:lease"))
+            {
+                leases.Add(key);
+            }
+
             await Assert.That(leases.Count).IsEqualTo(1);
             await caller.CancelAsync();
             await Assert.That(factoryToken.IsCancellationRequested).IsTrue();
             await Assert.That(finish.Task.IsCompleted).IsFalse();
+
             if (releaseOnCancellation)
             {
                 using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                while (await client.GetBytesAsync(leases[0], limit.Token) is not null) await Task.Delay(10, limit.Token);
+
+                while (await client.GetBytesAsync(leases[0], limit.Token) is not null)
+                {
+                    await Task.Delay(10, limit.Token);
+                }
             }
             else
             {
                 await DistributedLockerTests.WaitPastLeaseExpiryAsync(TimeSpan.FromSeconds(2));
                 await Assert.That(await client.GetBytesAsync(leases[0])).IsNotNull();
             }
+
             finish.TrySetResult();
             await backgroundFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(await cache.GetOrDefaultAsync<int>("product")).IsEqualTo(42);
             // FusionCache announces factory success before its finally releases the handle.
             using var released = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (await client.GetBytesAsync(leases[0], released.Token) is not null) await Task.Delay(10, released.Token);
+
+            while (await client.GetBytesAsync(leases[0], released.Token) is not null)
+            {
+                await Task.Delay(10, released.Token);
+            }
         }
         finally
         {
@@ -112,7 +133,9 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
     {
         var options = RespireOptions.Parse(fixture.ConnectionString) with
         {
-            Protocol = (RespireProtocol)protocol, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         };
         await using var firstClient = await RespireClient.ConnectAsync(options);
         await using var secondClient = await RespireClient.ConnectAsync(options);
@@ -128,6 +151,7 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         Task<int> Execute(IFusionCache cache, string key = "product") => synchronous
             ? Task.Run(() => cache.GetOrSet<int>(key, _ =>
             {
@@ -147,6 +171,7 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
         var producing = Execute(first);
         await entered.Task.WaitAsync(timeout.Token);
         var contending = Execute(second);
+
         try
         {
             await Task.Delay(150, timeout.Token);
@@ -154,6 +179,7 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
             await Assert.That(contending.IsCompleted).IsFalse();
         }
         finally { release.TrySetResult(); }
+
         await Assert.That(await producing.WaitAsync(timeout.Token)).IsEqualTo(42);
         await Assert.That(await contending.WaitAsync(timeout.Token)).IsEqualTo(42);
         await Assert.That(calls).IsEqualTo(1);
@@ -170,6 +196,7 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
             Interlocked.Increment(ref calls);
             return Task.FromResult(-1);
         }, token: cancelled.Token).AsTask();
+
         try
         {
             await Task.Delay(100, timeout.Token);
@@ -179,6 +206,7 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
             await Assert.That(calls).IsEqualTo(2);
         }
         finally { release.TrySetResult(); }
+
         await producing.WaitAsync(timeout.Token);
 
         var locker = (RespireFusionCacheDistributedLocker)firstBuilder.DistributedLockerFactory!(firstProvider);
@@ -241,8 +269,10 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
             options.WaitForInitialBackplaneSubscribe = true;
             options.DefaultEntryOptions = new()
             {
-                Duration = TimeSpan.FromMinutes(1), DistributedLockTimeout = TimeSpan.FromSeconds(5),
-                AllowBackgroundDistributedCacheOperations = false, AllowBackgroundBackplaneOperations = false,
+                Duration = TimeSpan.FromMinutes(1),
+                DistributedLockTimeout = TimeSpan.FromSeconds(5),
+                AllowBackgroundDistributedCacheOperations = false,
+                AllowBackgroundBackplaneOperations = false,
                 ReThrowDistributedLockerExceptions = true,
             };
         }).WithSerializer(new FusionCacheSystemTextJsonSerializer()).WithRegisteredDistributedCache()

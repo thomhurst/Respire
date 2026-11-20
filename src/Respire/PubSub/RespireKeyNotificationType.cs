@@ -160,107 +160,327 @@ internal static class KeyNotificationTypes
         switch (value.Length)
         {
             case 3:
-                if (value.SequenceEqual("del"u8)) return RespireKeyNotificationType.Del;
-                if (value.SequenceEqual("new"u8)) return RespireKeyNotificationType.New;
-                if (value.SequenceEqual("set"u8)) return RespireKeyNotificationType.Set;
+                if (value.SequenceEqual("del"u8))
+                {
+                    return RespireKeyNotificationType.Del;
+                }
+                if (value.SequenceEqual("new"u8))
+                {
+                    return RespireKeyNotificationType.New;
+                }
+                if (value.SequenceEqual("set"u8))
+                {
+                    return RespireKeyNotificationType.Set;
+                }
                 break;
             case 4:
-                if (value.SequenceEqual("hdel"u8)) return RespireKeyNotificationType.HDel;
-                if (value.SequenceEqual("hset"u8)) return RespireKeyNotificationType.HSet;
-                if (value.SequenceEqual("lpop"u8)) return RespireKeyNotificationType.LPop;
-                if (value.SequenceEqual("lrem"u8)) return RespireKeyNotificationType.LRem;
-                if (value.SequenceEqual("lset"u8)) return RespireKeyNotificationType.LSet;
-                if (value.SequenceEqual("rpop"u8)) return RespireKeyNotificationType.RPop;
-                if (value.SequenceEqual("sadd"u8)) return RespireKeyNotificationType.SAdd;
-                if (value.SequenceEqual("spop"u8)) return RespireKeyNotificationType.SPop;
-                if (value.SequenceEqual("srem"u8)) return RespireKeyNotificationType.SRem;
-                if (value.SequenceEqual("xadd"u8)) return RespireKeyNotificationType.XAdd;
-                if (value.SequenceEqual("xdel"u8)) return RespireKeyNotificationType.XDel;
-                if (value.SequenceEqual("zadd"u8)) return RespireKeyNotificationType.ZAdd;
-                if (value.SequenceEqual("zrem"u8)) return RespireKeyNotificationType.ZRem;
+                if (value.SequenceEqual("hdel"u8))
+                {
+                    return RespireKeyNotificationType.HDel;
+                }
+                if (value.SequenceEqual("hset"u8))
+                {
+                    return RespireKeyNotificationType.HSet;
+                }
+                if (value.SequenceEqual("lpop"u8))
+                {
+                    return RespireKeyNotificationType.LPop;
+                }
+                if (value.SequenceEqual("lrem"u8))
+                {
+                    return RespireKeyNotificationType.LRem;
+                }
+                if (value.SequenceEqual("lset"u8))
+                {
+                    return RespireKeyNotificationType.LSet;
+                }
+                if (value.SequenceEqual("rpop"u8))
+                {
+                    return RespireKeyNotificationType.RPop;
+                }
+                if (value.SequenceEqual("sadd"u8))
+                {
+                    return RespireKeyNotificationType.SAdd;
+                }
+                if (value.SequenceEqual("spop"u8))
+                {
+                    return RespireKeyNotificationType.SPop;
+                }
+                if (value.SequenceEqual("srem"u8))
+                {
+                    return RespireKeyNotificationType.SRem;
+                }
+                if (value.SequenceEqual("xadd"u8))
+                {
+                    return RespireKeyNotificationType.XAdd;
+                }
+                if (value.SequenceEqual("xdel"u8))
+                {
+                    return RespireKeyNotificationType.XDel;
+                }
+                if (value.SequenceEqual("zadd"u8))
+                {
+                    return RespireKeyNotificationType.ZAdd;
+                }
+                if (value.SequenceEqual("zrem"u8))
+                {
+                    return RespireKeyNotificationType.ZRem;
+                }
                 break;
             case 5:
-                if (value.SequenceEqual("ardel"u8)) return RespireKeyNotificationType.ArDel;
-                if (value.SequenceEqual("arset"u8)) return RespireKeyNotificationType.ArSet;
-                if (value.SequenceEqual("lpush"u8)) return RespireKeyNotificationType.LPush;
-                if (value.SequenceEqual("ltrim"u8)) return RespireKeyNotificationType.LTrim;
-                if (value.SequenceEqual("pfadd"u8)) return RespireKeyNotificationType.PfAdd;
-                if (value.SequenceEqual("rpush"u8)) return RespireKeyNotificationType.RPush;
-                if (value.SequenceEqual("xtrim"u8)) return RespireKeyNotificationType.XTrim;
-                if (value.SequenceEqual("zincr"u8)) return RespireKeyNotificationType.ZIncr;
+                if (value.SequenceEqual("ardel"u8))
+                {
+                    return RespireKeyNotificationType.ArDel;
+                }
+                if (value.SequenceEqual("arset"u8))
+                {
+                    return RespireKeyNotificationType.ArSet;
+                }
+                if (value.SequenceEqual("lpush"u8))
+                {
+                    return RespireKeyNotificationType.LPush;
+                }
+                if (value.SequenceEqual("ltrim"u8))
+                {
+                    return RespireKeyNotificationType.LTrim;
+                }
+                if (value.SequenceEqual("pfadd"u8))
+                {
+                    return RespireKeyNotificationType.PfAdd;
+                }
+                if (value.SequenceEqual("rpush"u8))
+                {
+                    return RespireKeyNotificationType.RPush;
+                }
+                if (value.SequenceEqual("xtrim"u8))
+                {
+                    return RespireKeyNotificationType.XTrim;
+                }
+                if (value.SequenceEqual("zincr"u8))
+                {
+                    return RespireKeyNotificationType.ZIncr;
+                }
                 break;
             case 6:
-                if (value.SequenceEqual("append"u8)) return RespireKeyNotificationType.Append;
-                if (value.SequenceEqual("armset"u8)) return RespireKeyNotificationType.ArMSet;
-                if (value.SequenceEqual("arring"u8)) return RespireKeyNotificationType.ArRing;
-                if (value.SequenceEqual("arseek"u8)) return RespireKeyNotificationType.ArSeek;
-                if (value.SequenceEqual("expire"u8)) return RespireKeyNotificationType.Expire;
-                if (value.SequenceEqual("incrby"u8)) return RespireKeyNotificationType.IncrBy;
-                if (value.SequenceEqual("setbit"u8)) return RespireKeyNotificationType.SetBit;
-                if (value.SequenceEqual("xsetid"u8)) return RespireKeyNotificationType.XSetId;
+                if (value.SequenceEqual("append"u8))
+                {
+                    return RespireKeyNotificationType.Append;
+                }
+                if (value.SequenceEqual("armset"u8))
+                {
+                    return RespireKeyNotificationType.ArMSet;
+                }
+                if (value.SequenceEqual("arring"u8))
+                {
+                    return RespireKeyNotificationType.ArRing;
+                }
+                if (value.SequenceEqual("arseek"u8))
+                {
+                    return RespireKeyNotificationType.ArSeek;
+                }
+                if (value.SequenceEqual("expire"u8))
+                {
+                    return RespireKeyNotificationType.Expire;
+                }
+                if (value.SequenceEqual("incrby"u8))
+                {
+                    return RespireKeyNotificationType.IncrBy;
+                }
+                if (value.SequenceEqual("setbit"u8))
+                {
+                    return RespireKeyNotificationType.SetBit;
+                }
+                if (value.SequenceEqual("xsetid"u8))
+                {
+                    return RespireKeyNotificationType.XSetId;
+                }
                 break;
             case 7:
-                if (value.SequenceEqual("copy_to"u8)) return RespireKeyNotificationType.CopyTo;
-                if (value.SequenceEqual("evicted"u8)) return RespireKeyNotificationType.Evicted;
-                if (value.SequenceEqual("expired"u8)) return RespireKeyNotificationType.Expired;
-                if (value.SequenceEqual("hexpire"u8)) return RespireKeyNotificationType.HExpire;
-                if (value.SequenceEqual("hincrby"u8)) return RespireKeyNotificationType.HIncrBy;
-                if (value.SequenceEqual("keymiss"u8)) return RespireKeyNotificationType.KeyMiss;
-                if (value.SequenceEqual("linsert"u8)) return RespireKeyNotificationType.LInsert;
-                if (value.SequenceEqual("move_to"u8)) return RespireKeyNotificationType.MoveTo;
-                if (value.SequenceEqual("persist"u8)) return RespireKeyNotificationType.Persist;
-                if (value.SequenceEqual("pfmerge"u8)) return RespireKeyNotificationType.PfMerge;
-                if (value.SequenceEqual("restore"u8)) return RespireKeyNotificationType.Restore;
-                if (value.SequenceEqual("zpopmax"u8)) return RespireKeyNotificationType.ZPopMax;
-                if (value.SequenceEqual("zpopmin"u8)) return RespireKeyNotificationType.ZPopMin;
+                if (value.SequenceEqual("copy_to"u8))
+                {
+                    return RespireKeyNotificationType.CopyTo;
+                }
+                if (value.SequenceEqual("evicted"u8))
+                {
+                    return RespireKeyNotificationType.Evicted;
+                }
+                if (value.SequenceEqual("expired"u8))
+                {
+                    return RespireKeyNotificationType.Expired;
+                }
+                if (value.SequenceEqual("hexpire"u8))
+                {
+                    return RespireKeyNotificationType.HExpire;
+                }
+                if (value.SequenceEqual("hincrby"u8))
+                {
+                    return RespireKeyNotificationType.HIncrBy;
+                }
+                if (value.SequenceEqual("keymiss"u8))
+                {
+                    return RespireKeyNotificationType.KeyMiss;
+                }
+                if (value.SequenceEqual("linsert"u8))
+                {
+                    return RespireKeyNotificationType.LInsert;
+                }
+                if (value.SequenceEqual("move_to"u8))
+                {
+                    return RespireKeyNotificationType.MoveTo;
+                }
+                if (value.SequenceEqual("persist"u8))
+                {
+                    return RespireKeyNotificationType.Persist;
+                }
+                if (value.SequenceEqual("pfmerge"u8))
+                {
+                    return RespireKeyNotificationType.PfMerge;
+                }
+                if (value.SequenceEqual("restore"u8))
+                {
+                    return RespireKeyNotificationType.Restore;
+                }
+                if (value.SequenceEqual("zpopmax"u8))
+                {
+                    return RespireKeyNotificationType.ZPopMax;
+                }
+                if (value.SequenceEqual("zpopmin"u8))
+                {
+                    return RespireKeyNotificationType.ZPopMin;
+                }
                 break;
             case 8:
-                if (value.SequenceEqual("arinsert"u8)) return RespireKeyNotificationType.ArInsert;
-                if (value.SequenceEqual("hexpired"u8)) return RespireKeyNotificationType.HExpired;
-                if (value.SequenceEqual("hpersist"u8)) return RespireKeyNotificationType.HPersist;
-                if (value.SequenceEqual("setrange"u8)) return RespireKeyNotificationType.SetRange;
+                if (value.SequenceEqual("arinsert"u8))
+                {
+                    return RespireKeyNotificationType.ArInsert;
+                }
+                if (value.SequenceEqual("hexpired"u8))
+                {
+                    return RespireKeyNotificationType.HExpired;
+                }
+                if (value.SequenceEqual("hpersist"u8))
+                {
+                    return RespireKeyNotificationType.HPersist;
+                }
+                if (value.SequenceEqual("setrange"u8))
+                {
+                    return RespireKeyNotificationType.SetRange;
+                }
                 break;
             case 9:
-                if (value.SequenceEqual("move_from"u8)) return RespireKeyNotificationType.MoveFrom;
-                if (value.SequenceEqual("rename_to"u8)) return RespireKeyNotificationType.RenameTo;
-                if (value.SequenceEqual("sortstore"u8)) return RespireKeyNotificationType.SortStore;
-                if (value.SequenceEqual("zrembylex"u8)) return RespireKeyNotificationType.ZRemByLex;
+                if (value.SequenceEqual("move_from"u8))
+                {
+                    return RespireKeyNotificationType.MoveFrom;
+                }
+                if (value.SequenceEqual("rename_to"u8))
+                {
+                    return RespireKeyNotificationType.RenameTo;
+                }
+                if (value.SequenceEqual("sortstore"u8))
+                {
+                    return RespireKeyNotificationType.SortStore;
+                }
+                if (value.SequenceEqual("zrembylex"u8))
+                {
+                    return RespireKeyNotificationType.ZRemByLex;
+                }
                 break;
             case 10:
-                if (value.SequenceEqual("ardelrange"u8)) return RespireKeyNotificationType.ArDelRange;
-                if (value.SequenceEqual("sdiffstore"u8)) return RespireKeyNotificationType.SDiffStore;
-                if (value.SequenceEqual("zdiffstore"u8)) return RespireKeyNotificationType.ZDiffStore;
-                if (value.SequenceEqual("zrembyrank"u8)) return RespireKeyNotificationType.ZRemByRank;
+                if (value.SequenceEqual("ardelrange"u8))
+                {
+                    return RespireKeyNotificationType.ArDelRange;
+                }
+                if (value.SequenceEqual("sdiffstore"u8))
+                {
+                    return RespireKeyNotificationType.SDiffStore;
+                }
+                if (value.SequenceEqual("zdiffstore"u8))
+                {
+                    return RespireKeyNotificationType.ZDiffStore;
+                }
+                if (value.SequenceEqual("zrembyrank"u8))
+                {
+                    return RespireKeyNotificationType.ZRemByRank;
+                }
                 break;
             case 11:
-                if (value.SequenceEqual("incrbyfloat"u8)) return RespireKeyNotificationType.IncrByFloat;
-                if (value.SequenceEqual("overwritten"u8)) return RespireKeyNotificationType.Overwritten;
-                if (value.SequenceEqual("rename_from"u8)) return RespireKeyNotificationType.RenameFrom;
-                if (value.SequenceEqual("sinterstore"u8)) return RespireKeyNotificationType.SInterStore;
-                if (value.SequenceEqual("sunionstore"u8)) return RespireKeyNotificationType.SUnionStore;
-                if (value.SequenceEqual("zinterstore"u8)) return RespireKeyNotificationType.ZInterStore;
-                if (value.SequenceEqual("zrangestore"u8)) return RespireKeyNotificationType.ZRangeStore;
-                if (value.SequenceEqual("zrembyscore"u8)) return RespireKeyNotificationType.ZRemByScore;
-                if (value.SequenceEqual("zunionstore"u8)) return RespireKeyNotificationType.ZUnionStore;
+                if (value.SequenceEqual("incrbyfloat"u8))
+                {
+                    return RespireKeyNotificationType.IncrByFloat;
+                }
+                if (value.SequenceEqual("overwritten"u8))
+                {
+                    return RespireKeyNotificationType.Overwritten;
+                }
+                if (value.SequenceEqual("rename_from"u8))
+                {
+                    return RespireKeyNotificationType.RenameFrom;
+                }
+                if (value.SequenceEqual("sinterstore"u8))
+                {
+                    return RespireKeyNotificationType.SInterStore;
+                }
+                if (value.SequenceEqual("sunionstore"u8))
+                {
+                    return RespireKeyNotificationType.SUnionStore;
+                }
+                if (value.SequenceEqual("zinterstore"u8))
+                {
+                    return RespireKeyNotificationType.ZInterStore;
+                }
+                if (value.SequenceEqual("zrangestore"u8))
+                {
+                    return RespireKeyNotificationType.ZRangeStore;
+                }
+                if (value.SequenceEqual("zrembyscore"u8))
+                {
+                    return RespireKeyNotificationType.ZRemByScore;
+                }
+                if (value.SequenceEqual("zunionstore"u8))
+                {
+                    return RespireKeyNotificationType.ZUnionStore;
+                }
                 break;
             case 12:
-                if (value.SequenceEqual("hincrbyfloat"u8)) return RespireKeyNotificationType.HIncrByFloat;
-                if (value.SequenceEqual("type_changed"u8)) return RespireKeyNotificationType.TypeChanged;
-                if (value.SequenceEqual("xgroup-setid"u8)) return RespireKeyNotificationType.XGroupSetId;
+                if (value.SequenceEqual("hincrbyfloat"u8))
+                {
+                    return RespireKeyNotificationType.HIncrByFloat;
+                }
+                if (value.SequenceEqual("type_changed"u8))
+                {
+                    return RespireKeyNotificationType.TypeChanged;
+                }
+                if (value.SequenceEqual("xgroup-setid"u8))
+                {
+                    return RespireKeyNotificationType.XGroupSetId;
+                }
                 break;
             case 13:
-                if (value.SequenceEqual("xgroup-create"u8)) return RespireKeyNotificationType.XGroupCreate;
+                if (value.SequenceEqual("xgroup-create"u8))
+                {
+                    return RespireKeyNotificationType.XGroupCreate;
+                }
                 break;
             case 14:
-                if (value.SequenceEqual("xgroup-destroy"u8)) return RespireKeyNotificationType.XGroupDestroy;
+                if (value.SequenceEqual("xgroup-destroy"u8))
+                {
+                    return RespireKeyNotificationType.XGroupDestroy;
+                }
                 break;
             case 18:
-                if (value.SequenceEqual("xgroup-delconsumer"u8)) return RespireKeyNotificationType.XGroupDelConsumer;
+                if (value.SequenceEqual("xgroup-delconsumer"u8))
+                {
+                    return RespireKeyNotificationType.XGroupDelConsumer;
+                }
                 break;
             case 21:
-                if (value.SequenceEqual("xgroup-createconsumer"u8)) return RespireKeyNotificationType.XGroupCreateConsumer;
+                if (value.SequenceEqual("xgroup-createconsumer"u8))
+                {
+                    return RespireKeyNotificationType.XGroupCreateConsumer;
+                }
                 break;
         }
+
         return RespireKeyNotificationType.Unknown;
     }
 

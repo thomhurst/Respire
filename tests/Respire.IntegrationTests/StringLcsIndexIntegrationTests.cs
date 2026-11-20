@@ -17,7 +17,8 @@ public class StringLcsIndexIntegrationTests(ModernRedisTestContainer fixture)
     public async Task RangesFilteringAndTotalLength_AgreeAcrossExecutionModes(string mode, int protocol)
     {
         await using var root = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespireProtocol)protocol });
+            with
+        { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix($"lcs:{Guid.NewGuid():N}:");
         await client.SetAsync("first", "ohmytext");
         await client.SetAsync("second", "mynewtext");
@@ -46,7 +47,11 @@ public class StringLcsIndexIntegrationTests(ModernRedisTestContainer fixture)
     private static async Task<RespireLcsIndexResult> Index(IRespireClient client, string mode,
         RespireKey first, RespireKey second, RespireLcsOptions? options = null)
     {
-        if (mode == "immediate") return await client.Strings.LcsIndexAsync(first, second, options);
+        if (mode == "immediate")
+        {
+            return await client.Strings.LcsIndexAsync(first, second, options);
+        }
+
         if (mode == "batch")
         {
             using var batch = client.CreateBatch();
@@ -54,6 +59,7 @@ public class StringLcsIndexIntegrationTests(ModernRedisTestContainer fixture)
             await batch.ExecuteAsync();
             return pending.Result;
         }
+
         await using var transaction = client.CreateTransaction();
         var result = transaction.Strings.LcsIndex(first, second, options);
         await transaction.CommitAsync();

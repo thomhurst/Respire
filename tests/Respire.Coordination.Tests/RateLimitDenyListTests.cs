@@ -8,7 +8,10 @@ namespace Respire.Coordination.Tests;
 public class RateLimitDenyListTests
 {
     [ClassDataSource<SharedRedis74>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis74 Redis { get; init; }
+    public required SharedRedis74 Redis
+    {
+        get; init;
+    }
 
     [Test]
     [Arguments(0)]
@@ -40,8 +43,12 @@ public class RateLimitDenyListTests
         await Assert.That(denied.TryGetMetadata(MetadataName.ReasonPhrase, out string? reason)).IsTrue();
         await Assert.That(reason).IsEqualTo("deny_list");
         await Assert.That(denied.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan _)).IsFalse();
+
         using (var exists = await prefixed.ExecuteAsync("EXISTS", ["limit"]))
+        {
             await Assert.That(exists.AsInteger()).IsEqualTo(0);
+        }
+
         await list.SetDeniedAsync("alice\0é", false);
         await Assert.That(await remote.IsDeniedAsync("alice\0é")).IsFalse();
         using var allowed = await limiter.AcquireAsync();
@@ -67,13 +74,18 @@ public class RateLimitDenyListTests
         await Assert.That(initial.IsAcquired).IsTrue();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pending = limiter.AcquireAsync(3, timeout.Token).AsTask();
+
         while (limiter.GetStatistics()!.CurrentQueuedCount != 3)
         {
             timeout.Token.ThrowIfCancellationRequested();
             await Task.Yield();
         }
 
-        if (denyIdentity) await list.SetDeniedAsync("alice", true);
+        if (denyIdentity)
+        {
+            await list.SetDeniedAsync("alice", true);
+        }
+
         await factory.UpdateAsync(limiter, RespireRateLimit.FixedWindow(denyIdentity ? 6 : 2, TimeSpan.FromHours(1)));
         using var rejected = await pending.WaitAsync(timeout.Token);
         await Assert.That(rejected.IsAcquired).IsFalse();

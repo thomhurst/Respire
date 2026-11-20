@@ -16,11 +16,26 @@ public sealed class RespireReadRoutingSnapshot
     }
 
     /// <summary>UTC time at which this band observation was captured. Unchanged bands retain this time.</summary>
-    public DateTimeOffset CapturedAt { get; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset CapturedAt
+    {
+        get;
+    } = DateTimeOffset.UtcNow;
+
     /// <summary>Policy used for this selection.</summary>
-    public RespireReadFrom ReadFrom { get; }
+    public RespireReadFrom ReadFrom
+    {
+        get;
+    }
+
     /// <summary>Selected Cluster slot, or null for standalone/Sentinel routing.</summary>
-    public int? ClusterSlot { get; }
+    public int? ClusterSlot
+    {
+        get;
+    }
+
     /// <summary>Endpoints in the best eligible tier and latency band, in topology order.</summary>
-    public IReadOnlyList<RespireEndpoint> EligibleEndpoints { get; }
+    public IReadOnlyList<RespireEndpoint> EligibleEndpoints
+    {
+        get;
+    }
 }

@@ -19,8 +19,12 @@ public class ReliableTopicIntegrationTests(RedisTestContainer redis)
     public async Task OfflineSubscriptionsReceiveEveryPublicationAndShareWorkWithinGroup(int protocol)
     {
         await using var producer = await Connect(protocol);
+
         await using (var offline = await Connect(protocol))
+        {
             _ = await Topic(offline).SubscribeAsync("offline", RespireStreamId.New);
+        }
+
         var topic = Topic(producer);
         var first = await topic.PublishAsync("first");
         var second = await topic.PublishAsync("second");
@@ -29,8 +33,12 @@ public class ReliableTopicIntegrationTests(RedisTestContainer redis)
         var competitor = await topic.SubscribeAsync("offline");
         var deliveries = await Task.WhenAll(subscription.ReceiveAsync(Visibility).AsTask(), competitor.ReceiveAsync(Visibility).AsTask());
         await Assert.That(deliveries.SelectMany(x => x).Select(x => x.Id).Distinct().Count()).IsEqualTo(2);
+
         foreach (var message in deliveries.SelectMany(x => x))
+        {
             await Assert.That(await subscription.AckAsync(message)).IsTrue();
+        }
+
         var independent = await topic.SubscribeAsync("independent");
         var copies = await independent.ReceiveAsync(Visibility, 10);
         await Assert.That(copies.Select(x => x.Id).ToArray()).IsEquivalentTo(new[] { first, second });
@@ -105,13 +113,25 @@ public class ReliableTopicIntegrationTests(RedisTestContainer redis)
     {
         await using var client = await Connect(protocol);
         var topic = Topic(client);
-        using (var old = await client.ExecuteAsync("XADD", [topic.StreamKey, "1000-0", "payload", "old"])) { }
-        using (var next = await client.ExecuteAsync("XADD", [topic.StreamKey, "2000-0", "payload", "next"])) { }
+
+        using (var old = await client.ExecuteAsync("XADD", [topic.StreamKey, "1000-0", "payload", "old"]))
+        {
+        }
+
+        using (var next = await client.ExecuteAsync("XADD", [topic.StreamKey, "2000-0", "payload", "next"]))
+        {
+        }
+
         var subscription = await topic.SubscribeAsync("replay");
         var other = await topic.SubscribeAsync("other");
         var messages = await subscription.ReceiveAsync(Visibility, 10);
         await Assert.That(async () => await subscription.SeekAsync(RespireStreamId.Beginning)).Throws<RespireServerException>();
-        foreach (var message in messages) await subscription.AckAsync(message);
+
+        foreach (var message in messages)
+        {
+            await subscription.AckAsync(message);
+        }
+
         await subscription.SeekAsync(new RespireStreamId("1000-0"));
         var afterId = (await subscription.ReceiveAsync(Visibility)).Single();
         await Assert.That(afterId.Payload).IsEqualTo("next");
@@ -159,7 +179,11 @@ public class ReliableTopicIntegrationTests(RedisTestContainer redis)
         await using var client = await Connect(protocol);
         var topic = new RespireReliableTopic<string>(client, "age", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
             maximumAge: TimeSpan.FromMinutes(1));
-        using (var old = await client.ExecuteAsync("XADD", [topic.StreamKey, "1-0", "payload", "old"])) { }
+
+        using (var old = await client.ExecuteAsync("XADD", [topic.StreamKey, "1-0", "payload", "old"]))
+        {
+        }
+
         var subscription = await topic.SubscribeAsync("future", RespireStreamId.New);
         await Assert.That((await subscription.ReceiveAsync(Visibility)).Length).IsEqualTo(0);
         await topic.PublishAsync("current");
@@ -193,15 +217,21 @@ public class ReliableTopicIntegrationTests(RedisTestContainer redis)
     {
         await using var client = await Connect(protocol);
         var key = RandomNumberGenerator.GetBytes(32);
+
         byte[] Serialize(string value)
         {
             using var output = new MemoryStream();
+
             using (var compressor = new BrotliStream(output, CompressionLevel.Fastest, leaveOpen: true))
+            {
                 compressor.Write(Encoding.UTF8.GetBytes(value));
+            }
+
             using var cipher = Aes.Create();
             cipher.Key = key;
             return [.. cipher.IV, .. cipher.EncryptCbc(output.ToArray(), cipher.IV)];
         }
+
         string Deserialize(byte[] bytes)
         {
             using var cipher = Aes.Create();
@@ -211,6 +241,7 @@ public class ReliableTopicIntegrationTests(RedisTestContainer redis)
             using var reader = new StreamReader(decompressor, Encoding.UTF8);
             return reader.ReadToEnd();
         }
+
         var topic = new RespireReliableTopic<string>(client, "binary", Serialize, Deserialize, deliveryLimit: 1);
         var queue = new RespireReliableQueue<string>(client, "binary", Serialize, Deserialize);
         var jobs = new RespireJobQueue<string>(client, "binary", Serialize);
@@ -253,16 +284,19 @@ public class ReliableTopicIntegrationTests(RedisTestContainer redis)
     public async Task DeniedAckPermissionPreventsDeadLetterAndInitialReadMutations(int protocol)
     {
         await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-            with { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
+            with
+        { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
         var topic = Topic(admin, deliveryLimit: 1);
         var subscription = await topic.SubscribeAsync("permissions");
         await topic.PublishAsync("safe");
         var username = "topic-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">topic-password", "~*", "+@all", "-xack"]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Protocol = (RespireProtocol)protocol, Username = username, Password = "topic-password" });
+                with
+            { Protocol = (RespireProtocol)protocol, Username = username, Password = "topic-password" });
             var other = await Topic(restricted, deliveryLimit: 1).SubscribeAsync("permissions");
             await Assert.That(async () => await other.ReceiveAsync(Visibility)).Throws<RespireServerException>();
             var message = (await subscription.ReceiveAsync(Visibility)).Single();

@@ -1,7 +1,7 @@
-using Respire;
-using Respire.Streaming;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Respire;
+using Respire.Streaming;
 
 namespace Respire.Samples.Recipes;
 
@@ -36,11 +36,13 @@ public sealed class Outbox(IRespireClient client)
         var entries = await client.Streams.ReadGroupOnceAsync(StreamKey, Group, consumer,
             new RespireStreamReadOptions { Count = 10, ClaimMinIdle = claimMinIdle },
             cancellationToken: cancellationToken).ConfigureAwait(false);
+
         foreach (var entry in entries)
         {
             await publish(entry, cancellationToken).ConfigureAwait(false);
             await entry.AckAsync(cancellationToken).ConfigureAwait(false); // Only acknowledge confirmed publication.
         }
+
         return entries.Length;
     }
 }

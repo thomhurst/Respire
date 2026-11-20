@@ -11,51 +11,50 @@ using Moq;
 using TUnit.Core;
 using Assert = Xunit.Assert;
 
-namespace Hangfire.Redis.Tests
+namespace Hangfire.Redis.Tests;
+
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+[NotInParallel]
+public class FailedStateHandlerFacts : UpstreamRedisTest
 {
-    [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-    [NotInParallel]
-    public class FailedStateHandlerFacts : UpstreamRedisTest
+    private const string JobId = "1";
+
+    private readonly ApplyStateContextMock _context;
+    private readonly Mock<IWriteOnlyTransaction> _transaction;
+
+    public FailedStateHandlerFacts(RedisTestContainer fixture) : base(fixture)
     {
-        private const string JobId = "1";
-
-        private readonly ApplyStateContextMock _context;
-        private readonly Mock<IWriteOnlyTransaction> _transaction;
-
-        public FailedStateHandlerFacts(RedisTestContainer fixture) : base(fixture)
+        _context = new ApplyStateContextMock(JobId)
         {
-            _context = new ApplyStateContextMock(JobId)
-            {
-                NewStateValue = new FailedState(new InvalidOperationException())
-            };
+            NewStateValue = new FailedState(new InvalidOperationException())
+        };
 
-            _transaction = new Mock<IWriteOnlyTransaction>();
-        }
+        _transaction = new Mock<IWriteOnlyTransaction>();
+    }
 
-        [Test]
-        public void StateName_ShouldBeEqualToFailedState()
-        {
-            var handler = new FailedStateHandler();
-            Assert.Equal(FailedState.StateName, handler.StateName);
-        }
+    [Test]
+    public void StateName_ShouldBeEqualToFailedState()
+    {
+        var handler = new FailedStateHandler();
+        Assert.Equal(FailedState.StateName, handler.StateName);
+    }
 
-        [Test]
-        public void Apply_ShouldAddTheJob_ToTheFailedSet()
-        {
-            var handler = new FailedStateHandler();
-            handler.Apply(_context.Object, _transaction.Object);
+    [Test]
+    public void Apply_ShouldAddTheJob_ToTheFailedSet()
+    {
+        var handler = new FailedStateHandler();
+        handler.Apply(_context.Object, _transaction.Object);
 
-            _transaction.Verify(x => x.AddToSet(
-                "failed", JobId, It.IsAny<double>()));
-        }
+        _transaction.Verify(x => x.AddToSet(
+            "failed", JobId, It.IsAny<double>()));
+    }
 
-        [Test]
-        public void Unapply_ShouldRemoveTheJob_FromTheFailedSet()
-        {
-            var handler = new FailedStateHandler();
-            handler.Unapply(_context.Object, _transaction.Object);
+    [Test]
+    public void Unapply_ShouldRemoveTheJob_FromTheFailedSet()
+    {
+        var handler = new FailedStateHandler();
+        handler.Unapply(_context.Object, _transaction.Object);
 
-            _transaction.Verify(x => x.RemoveFromSet("failed", JobId));
-        }
+        _transaction.Verify(x => x.RemoveFromSet("failed", JobId));
     }
 }

@@ -103,19 +103,48 @@ internal enum SentinelNotificationPhase
 /// </remarks>
 internal readonly partial record struct SentinelNotificationState
 {
-    internal SentinelHint? Active { get; init; }
-    internal SentinelHint? Pending { get; init; }
-    internal int RetryAttempts { get; init; }
-    internal int ConsecutiveFailures { get; init; }
-    internal long DiscoveryNotBefore { get; init; }
-    internal bool IsDisposed { get; init; }
+    internal SentinelHint? Active
+    {
+        get; init;
+    }
+
+    internal SentinelHint? Pending
+    {
+        get; init;
+    }
+
+    internal int RetryAttempts
+    {
+        get; init;
+    }
+
+    internal int ConsecutiveFailures
+    {
+        get; init;
+    }
+
+    internal long DiscoveryNotBefore
+    {
+        get; init;
+    }
+
+    internal bool IsDisposed
+    {
+        get; init;
+    }
     private readonly ImmutableDictionary<long, SentinelHint>? _sourceResolutions;
+
     internal ImmutableDictionary<long, SentinelHint> SourceResolutions
     {
         get => _sourceResolutions ?? ImmutableDictionary<long, SentinelHint>.Empty;
         init => _sourceResolutions = value;
     }
-    internal long LastResolutionId { get; init; }
+
+    internal long LastResolutionId
+    {
+        get; init;
+    }
+
     internal SentinelNotificationPhase Phase => Active is null ? SentinelNotificationPhase.Idle
         : Pending is null ? SentinelNotificationPhase.Active : SentinelNotificationPhase.ActivePending;
 
@@ -131,20 +160,31 @@ internal readonly partial record struct SentinelNotificationState
     internal SentinelNotificationState Offer(in SentinelHint hint, bool targetIsCurrent, out bool startWorker)
     {
         var state = this;
+
         foreach (var resolution in SourceResolutions)
+        {
             state = state with
             {
                 SourceResolutions = state.SourceResolutions.SetItem(resolution.Key, Merge(resolution.Value, in hint)),
             };
+        }
+
         startWorker = false;
+
         if (Active is null)
         {
-            if (!hint.MustRediscover && targetIsCurrent) return state;
+            if (!hint.MustRediscover && targetIsCurrent)
+            {
+                return state;
+            }
+
             startWorker = true;
             return state with { Pending = null, Active = hint };
         }
+
         var activeDuplicate = Active.Value.Key == hint.Key || SameSwitch(Active.Value, in hint);
         var duplicate = activeDuplicate || Pending?.Key == hint.Key;
+
         if (activeDuplicate && hint.Sources.Length > 0
             && Pending is { Sources.Length: > 0 } independent && independent.Key != hint.Key)
         {
@@ -162,9 +202,19 @@ internal readonly partial record struct SentinelNotificationState
         // Even confirmation of Current remains pending: in-flight discovery can publish
         // another generation before that confirmation has been reconciled.
         var needsAnotherPass = hint.MustRediscover || HasNewReporter(in hint) || HasNewObservation(in hint);
-        if (duplicate && !needsAnotherPass && (Pending is null || Pending.Value.Key == hint.Key)) return state;
+
+        if (duplicate && !needsAnotherPass && (Pending is null || Pending.Value.Key == hint.Key))
+        {
+            return state;
+        }
+
         var pending = Merge(Pending ?? (duplicate ? Active : null), in hint);
-        if (duplicate && needsAnotherPass) pending = pending with { MustRediscover = true };
+
+        if (duplicate && needsAnotherPass)
+        {
+            pending = pending with { MustRediscover = true };
+        }
+
         return state with { Pending = pending };
     }
 
@@ -177,23 +227,45 @@ internal readonly partial record struct SentinelNotificationState
     private bool HasNewReporter(in SentinelHint hint)
     {
         foreach (var reporter in hint.Reporters)
-            if (!ContainsReporter(Active, reporter) && !ContainsReporter(Pending, reporter)) return true;
+        {
+            if (!ContainsReporter(Active, reporter) && !ContainsReporter(Pending, reporter))
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 
     private bool HasNewObservation(in SentinelHint hint)
     {
         foreach (var observation in hint.Ledger.Observations)
+        {
             if (Active?.Ledger.ContainsObservation(observation) != true
-                && Pending?.Ledger.ContainsObservation(observation) != true) return true;
+                && Pending?.Ledger.ContainsObservation(observation) != true)
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 
     private static bool ContainsReporter(SentinelHint? hint, RespireEndpoint reporter)
     {
-        if (hint is not { } value) return false;
+        if (hint is not { } value)
+        {
+            return false;
+        }
+
         foreach (var endpoint in value.Reporters)
-            if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(endpoint, reporter)) return true;
+        {
+            if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(endpoint, reporter))
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -207,6 +279,7 @@ internal readonly partial record struct SentinelNotificationState
                 taken = null;
                 return this;
             }
+
             next = (activeFailed ? active : ForReporterReconciliation(active, validatedPrimary, validatedPeer)) with
             {
                 MustRediscover = true,
@@ -215,22 +288,30 @@ internal readonly partial record struct SentinelNotificationState
             taken = next;
             return this with { Active = next };
         }
+
         if (Active is { } activeHint)
         {
             var sameOutage = next.DownKey is { } downKey && downKey == activeHint.DownKey;
             var freshWakeup = next.Sources.Length == 0 && next.ReconciliationPrimary is null && !sameOutage;
+
             if (!activeFailed && !freshWakeup && (sameOutage || next.Key == activeHint.Key
                 || activeHint.Sources.Length == 0
                     && next.Target is null && IsValidatedTarget(next, validatedPrimary, validatedPeer)))
+            {
                 next = ForReporterReconciliation(next, validatedPrimary, validatedPeer);
+            }
+
             if (activeFailed)
             {
                 var unqueriedReporters = next.Reporters
                     .Where(reporter => activeHint.ReportingSentinel is not { } activeReporter
                         || !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(reporter, activeReporter)).ToImmutableArray();
                 next = Merge(activeHint, in next) with { MustRediscover = true };
+
                 if (unqueriedReporters.Length > 0)
+                {
                     next = next with { Reporters = UnionEndpoints(unqueriedReporters, next.Reporters, activeHint.ReportingSentinel) };
+                }
             }
             else if (activeHint.Reporters.Length > 1)
             {
@@ -241,22 +322,43 @@ internal readonly partial record struct SentinelNotificationState
                 };
                 // A completed switch cannot fence the target of an independent failback.
                 if (next.Target is { } pendingTarget)
-                    unqueried = unqueried with { Sources = unqueried.Sources.Where(source =>
-                        !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, pendingTarget)).ToImmutableArray() };
+                {
+                    unqueried = unqueried with
+                    {
+                        Sources = unqueried.Sources.Where(source =>
+                        !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(source.Endpoint, pendingTarget)).ToImmutableArray()
+                    };
+                }
+
                 next = Merge(unqueried, in next);
                 next = next with { Reporters = UnionEndpoints(unqueriedReporters, next.Reporters) };
             }
-            if (!activeFailed && freshWakeup) next = next with { ReconciliationPrimary = null };
+
+            if (!activeFailed && freshWakeup)
+            {
+                next = next with { ReconciliationPrimary = null };
+            }
         }
+
         taken = next;
         return this with { Pending = null, Active = next };
     }
 
     private static bool IsValidatedTarget(SentinelHint hint, RespireEndpoint? primary, RespireEndpoint? peer)
     {
-        if (primary is not { } endpoint) return false;
+        if (primary is not { } endpoint)
+        {
+            return false;
+        }
+
         foreach (var target in hint.Targets)
-            if (MatchesValidatedSource(endpoint, peer, new(target, null))) return true;
+        {
+            if (MatchesValidatedSource(endpoint, peer, new(target, null)))
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -276,16 +378,26 @@ internal readonly partial record struct SentinelNotificationState
 
     private static bool MatchesValidatedSource(RespireEndpoint primary, RespireEndpoint? peer, SentinelSwitchSource source)
     {
-        if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(primary, source.Endpoint)) return true;
+        if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(primary, source.Endpoint))
+        {
+            return true;
+        }
+
         return peer is { } validated && source.Evidence.ConfirmsPeer(validated);
     }
 
     internal SentinelNotificationState SupersedeActive() => this with { Active = Pending, Pending = null };
+
     internal SentinelNotificationState Complete() => this with { Active = null, Pending = null };
+
     /// <summary>Unions event evidence without inferring chronology from targets, sources, or reporters.</summary>
     internal static SentinelHint Merge(SentinelHint? pending, in SentinelHint hint)
     {
-        if (pending is not { } previous) return hint;
+        if (pending is not { } previous)
+        {
+            return hint;
+        }
+
         var targets = UnionEndpoints(previous.Targets, hint.Targets);
         var reporters = UnionEndpoints(previous.Reporters, hint.Reporters);
         var sources = UnionSources(hint.Sources, previous.Sources);
@@ -309,24 +421,47 @@ internal readonly partial record struct SentinelNotificationState
     private static bool HasTargetSourceOverlap(ImmutableArray<RespireEndpoint> targets, ImmutableArray<SentinelSwitchSource> sources)
     {
         foreach (var target in targets)
+        {
             foreach (var source in sources)
-                if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(target, source.Endpoint)) return true;
+            {
+                if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(target, source.Endpoint))
+                {
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 
     private static ImmutableArray<SentinelSwitchSource> UnionSources(
         ImmutableArray<SentinelSwitchSource> first, ImmutableArray<SentinelSwitchSource> second)
     {
-        if (first.Length == 0) return second;
-        if (second.Length == 0 || first == second) return first;
+        if (first.Length == 0)
+        {
+            return second;
+        }
+
+        if (second.Length == 0 || first == second)
+        {
+            return first;
+        }
+
         var sources = new Dictionary<RespireEndpoint, ImmutableArray<string>>(SentinelEndpointIdentity.EndpointComparer.Instance);
+
         foreach (var source in first.Concat(second))
         {
-            if (!sources.TryGetValue(source.Endpoint, out var known)) sources.Add(source.Endpoint, source.Addresses);
+            if (!sources.TryGetValue(source.Endpoint, out var known))
+            {
+                sources.Add(source.Endpoint, source.Addresses);
+            }
             else if (!source.Addresses.IsDefault)
+            {
                 sources[source.Endpoint] = (known.IsDefault ? [] : known)
                     .Union(source.Addresses, SentinelEndpointIdentity.AddressComparer.Instance).ToImmutableArray();
+            }
         }
+
         return sources.Select(pair => SentinelSwitchSource.FromSnapshot(pair.Key, pair.Value)).ToImmutableArray();
     }
 
@@ -336,11 +471,24 @@ internal readonly partial record struct SentinelNotificationState
     {
         if (excluded is null)
         {
-            if (first.Length == 0) return second;
-            if (second.Length == 0 || ContainsAll(first, second)) return first;
+            if (first.Length == 0)
+            {
+                return second;
+            }
+
+            if (second.Length == 0 || ContainsAll(first, second))
+            {
+                return first;
+            }
         }
+
         var seen = new HashSet<RespireEndpoint>(SentinelEndpointIdentity.EndpointComparer.Instance);
-        if (excluded is { } endpoint) seen.Add(endpoint);
+
+        if (excluded is { } endpoint)
+        {
+            seen.Add(endpoint);
+        }
+
         var result = new List<RespireEndpoint>();
         Add(first);
         Add(second);
@@ -349,7 +497,12 @@ internal readonly partial record struct SentinelNotificationState
         void Add(ImmutableArray<RespireEndpoint> endpoints)
         {
             foreach (var value in endpoints)
-                if (seen.Add(value)) result.Add(value);
+            {
+                if (seen.Add(value))
+                {
+                    result.Add(value);
+                }
+            }
         }
     }
 
@@ -358,10 +511,22 @@ internal readonly partial record struct SentinelNotificationState
         foreach (var candidate in second)
         {
             var found = false;
+
             foreach (var endpoint in first)
-                if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(endpoint, candidate)) { found = true; break; }
-            if (!found) return false;
+            {
+                if (SentinelEndpointIdentity.EndpointComparer.Instance.Equals(endpoint, candidate))
+                {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found)
+            {
+                return false;
+            }
         }
+
         return true;
     }
 

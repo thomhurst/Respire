@@ -27,7 +27,11 @@ public class TimeoutDiagnosticsTests
         {
             SuppressReply = command =>
             {
-                if (command != "CLIENT SETNAME redirect-timeout") return false;
+                if (command != "CLIENT SETNAME redirect-timeout")
+                {
+                    return false;
+                }
+
                 handshake.TrySetResult();
                 return true;
             },
@@ -44,9 +48,14 @@ public class TimeoutDiagnosticsTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", seed.Port)], UseCluster = true, Connections = 1,
-            ClientName = "redirect-timeout", CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(10),
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            Connections = 1,
+            ClientName = "redirect-timeout",
+            CommandTimeout = null,
+            ConnectTimeout = TimeSpan.FromSeconds(10),
         });
+
 #pragma warning restore RESP010
         if (redirect == "READONLY")
         {
@@ -57,14 +66,17 @@ public class TimeoutDiagnosticsTests
                     var router = client.Core.Cluster!;
                     router.SetSlotOwner(slot, router.GetMultiplexer(new("127.0.0.1", replacement.Port)));
                 }
+
                 return false;
             };
         }
+
         using var caller = new CancellationTokenSource();
         using var deadline = Respire.Internal.CommandTimeoutCancellation.Create(caller.Token, TimeSpan.FromSeconds(10));
         var pending = client.SendBlockingAsync("GET", new Cmd1(Verbs.Get, "private-key"), deadline.Token,
             cancellationTimeout: TimeSpan.FromSeconds(10), callerCancellationToken: caller.Token).AsTask();
         await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (cancelCaller)
         {
             caller.Cancel();
@@ -81,6 +93,7 @@ public class TimeoutDiagnosticsTests
             await Assert.That(error.Diagnostics.Endpoint).IsNull();
             await Assert.That(error.Message).Contains("had not been enqueued");
         }
+
         await Assert.That(source.ReceivedCommands.Count(command => command == "GET private-key")).IsEqualTo(1);
         await Assert.That(replacement.ReceivedCommands.Any(command => command == "GET private-key")).IsFalse();
     }
@@ -100,8 +113,11 @@ public class TimeoutDiagnosticsTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", port)], Connections = 1, UseTls = true,
-            ConnectTimeout = TimeSpan.FromSeconds(10), CommandTimeout = null,
+            Endpoints = [new("127.0.0.1", port)],
+            Connections = 1,
+            UseTls = true,
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+            CommandTimeout = null,
         });
 #pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
@@ -110,12 +126,14 @@ public class TimeoutDiagnosticsTests
         var pending = client.SendBlockingAsync("EVAL", new RawCommand(FakeRespServer.PingFrame), deadline.Token,
             cancellationTimeout: timeout, callerCancellationToken: caller.Token).AsTask();
         using var accepted = await listener.AcceptSocketAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
         if (waitForTls)
         {
             var received = await accepted.ReceiveAsync(new byte[1].AsMemory(), SocketFlags.None)
                 .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(received).IsEqualTo(1);
         }
+
         if (cancelCaller)
         {
             caller.Cancel();
@@ -147,8 +165,15 @@ public class TimeoutDiagnosticsTests
             SuppressReply = command =>
             {
                 if (command.StartsWith("SET ", StringComparison.Ordinal))
+                {
                     Volatile.Write(ref leasePlaced, System.Diagnostics.Stopwatch.GetTimestamp());
-                if (command != "SELECT 1" || Interlocked.Increment(ref selects) != 2) return false;
+                }
+
+                if (command != "SELECT 1" || Interlocked.Increment(ref selects) != 2)
+                {
+                    return false;
+                }
+
                 handshake.TrySetResult();
                 return true;
             },
@@ -158,8 +183,11 @@ public class TimeoutDiagnosticsTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", server.Port)], Database = 1, Connections = 1,
-            ConnectTimeout = TimeSpan.FromSeconds(10), CommandTimeout = null,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Database = 1,
+            Connections = 1,
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+            CommandTimeout = null,
         });
 #pragma warning restore RESP010
         // Use the guarded removal's fallback deadline without arming a competing SELECT deadline.
@@ -167,6 +195,7 @@ public class TimeoutDiagnosticsTests
         using var caller = new CancellationTokenSource();
         var pending = client.UnlinkGuardedAsync("private-key", caller.Token).AsTask();
         await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (cancelCaller)
         {
             caller.Cancel();
@@ -181,14 +210,18 @@ public class TimeoutDiagnosticsTests
             await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
             await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", server.Port));
         }
+
         var lease = SingleCommand(server, "SET")[1];
         var revocations = CommandsNamed(server, "UNLINK");
+
         if (revocations.Length != 0)
         {
             // The fake server acknowledges revocation. The fallback timer can fire just before
             // the Stopwatch lease boundary, leaving enough time to revoke instead of outwait it.
             foreach (var revocation in revocations)
+            {
                 await Assert.That(revocation[1]).IsEquivalentTo(lease);
+            }
         }
         else
         {
@@ -197,6 +230,7 @@ public class TimeoutDiagnosticsTests
             await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(Volatile.Read(ref leasePlaced)))
                 .IsGreaterThanOrEqualTo(client.RemovalLeaseTtl);
         }
+
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVAL "))).IsFalse();
     }
 
@@ -212,7 +246,10 @@ public class TimeoutDiagnosticsTests
             SuppressReply = command =>
             {
                 if (command.StartsWith("SET ", StringComparison.Ordinal))
+                {
                     Volatile.Write(ref leasePlaced, System.Diagnostics.Stopwatch.GetTimestamp());
+                }
+
                 if (command.StartsWith("EVAL ", StringComparison.Ordinal))
                 {
                     scriptSeen.TrySetResult();
@@ -227,7 +264,9 @@ public class TimeoutDiagnosticsTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, CommandTimeout = null,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            CommandTimeout = null,
         });
 #pragma warning restore RESP010
         client.RemovalLeaseTtl = TimeSpan.FromSeconds(1);
@@ -236,6 +275,7 @@ public class TimeoutDiagnosticsTests
         var completionTimeout = client.RemovalLeaseTtl + TimeSpan.FromSeconds(4);
         var removal = client.UnlinkGuardedAsync("private-key", caller.Token).AsTask();
         await scriptSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (cancelCaller)
         {
             caller.Cancel();
@@ -298,11 +338,15 @@ public class TimeoutDiagnosticsTests
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", port) },
-            Connections = 1, UseCluster = cluster, UseTls = true,
-            CommandTimeout = TimeSpan.FromMilliseconds(200), ConnectTimeout = TimeSpan.FromSeconds(5)
+            Connections = 1,
+            UseCluster = cluster,
+            UseTls = true,
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            ConnectTimeout = TimeSpan.FromSeconds(5)
         });
 #pragma warning restore RESP010
         RespireTimeoutException? error;
+
         if (correctionSetup)
         {
             error = await Assert.That(async () => await client.EnsureReliableCorrectionOrderingAsync())
@@ -315,6 +359,7 @@ public class TimeoutDiagnosticsTests
             error = await Assert.That(async () => await transaction.CommitAsync())
                 .ThrowsExactly<RespireTimeoutException>();
         }
+
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
         await Assert.That(error.Diagnostics.ConnectionId).IsNull();
         RespireEndpoint? expectedEndpoint = cluster ? (RespireEndpoint?)null : new RespireEndpoint("127.0.0.1", port);
@@ -398,7 +443,12 @@ public class TimeoutDiagnosticsTests
         using var deadline = new CancellationTokenSource();
         using var unrelated = new CancellationTokenSource();
         using var caller = new CancellationTokenSource();
-        if (callerCancelled) caller.Cancel();
+
+        if (callerCancelled)
+        {
+            caller.Cancel();
+        }
+
         deadline.Cancel();
         unrelated.Cancel();
         var cause = new OperationCanceledException(deadlineExpired ? deadline.Token : unrelated.Token);
@@ -406,6 +456,7 @@ public class TimeoutDiagnosticsTests
         source.ConfigureTimeout(connection, TimeSpan.FromSeconds(1), caller.Token, deadline.Token);
         var reply = source.Task;
         source.TrySetException(cause);
+
         try
         {
             if (deadlineExpired && !callerCancelled)
@@ -442,6 +493,7 @@ public class TimeoutDiagnosticsTests
                 scriptSeen.TrySetResult();
                 return true;
             }
+
             if (command.StartsWith("UNLINK ", StringComparison.Ordinal))
             {
                 // Recorded command indices remain stable if another connection appends a command.
@@ -453,6 +505,7 @@ public class TimeoutDiagnosticsTests
                 revocationSeen.TrySetResult(target.ReceivedConnectionIds[index]);
                 return true;
             }
+
             return false;
         };
         var topology = System.Text.Encoding.ASCII.GetBytes(
@@ -464,14 +517,20 @@ public class TimeoutDiagnosticsTests
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", cluster ? seed.Port : target.Port) },
-            Connections = 1, UseCluster = cluster,
+            Connections = 1,
+            UseCluster = cluster,
             CommandTimeout = TimeSpan.FromSeconds(2)
         });
 #pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         var removal = client.UnlinkGuardedAsync("private-key", caller.Token).AsTask();
         await scriptSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        if (cancelCaller) caller.Cancel();
+
+        if (cancelCaller)
+        {
+            caller.Cancel();
+        }
+
         var revocationConnection = await revocationSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
         // Both cancellation paths must keep the failure hidden until the revocation reply.
         // The 30-second lease remains live throughout this controlled exchange.
@@ -480,6 +539,7 @@ public class TimeoutDiagnosticsTests
         var revoke = SingleCommand(target, "UNLINK");
         await Assert.That(revoke[1]).IsEquivalentTo(lease);
         await target.SendRawAsync(":1\r\n"u8.ToArray(), revocationConnection);
+
         if (cancelCaller)
         {
             var error = await Assert.That(async () => await removal.WaitAsync(TimeSpan.FromSeconds(5)))
@@ -539,8 +599,11 @@ public class TimeoutDiagnosticsTests
             Captured = true;
             return exception;
         }
+
         protected override void SetExceptionCore(Exception exception) => Failure.TrySetResult(exception);
+
         protected override void SetResultCore(in Respire.Protocol.RespValue result) => throw new NotSupportedException();
+
         protected override void ResetAndReturn() => throw new NotSupportedException();
     }
 
@@ -556,6 +619,7 @@ public class TimeoutDiagnosticsTests
         var reply = source.Task;
         source.TrySetCanceled(deadline.Token);
         await connection.DisposeAsync();
+
         try
         {
             var failure = await Assert.That(async () => await reply).ThrowsExactly<RespireTimeoutException>();
@@ -573,7 +637,11 @@ public class TimeoutDiagnosticsTests
         {
             SuppressReply = command =>
             {
-                if (command != "PING") return false;
+                if (command != "PING")
+                {
+                    return false;
+                }
+
                 commandSeen.TrySetResult();
                 return true;
             }
@@ -585,13 +653,20 @@ public class TimeoutDiagnosticsTests
         await commandSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         RespireTimeoutDiagnostics snapshot;
+
         do
         {
             deadline.Token.ThrowIfCancellationRequested();
             snapshot = connection.CaptureDedicatedTimeoutDiagnostics();
-            if (snapshot.InflightCount == 1 && snapshot.Stage == RespireCommandStage.AwaitingReply) break;
+
+            if (snapshot.InflightCount == 1 && snapshot.Stage == RespireCommandStage.AwaitingReply)
+            {
+                break;
+            }
+
             await Task.Delay(1, deadline.Token);
         } while (true);
+
         await Assert.That(snapshot.Stage).IsEqualTo(RespireCommandStage.AwaitingReply);
         await Assert.That(snapshot.InflightBytes).IsEqualTo((long)(FakeRespServer.PingFrame.Length + "*1\r\n$6\r\nASKING\r\n"u8.Length));
         cancellation.Cancel();
@@ -661,7 +736,11 @@ public class TimeoutDiagnosticsTests
         {
             SuppressReply = command =>
             {
-                if (command != "EXEC") return false;
+                if (command != "EXEC")
+                {
+                    return false;
+                }
+
                 written.TrySetResult();
                 return true;
             },
@@ -670,7 +749,9 @@ public class TimeoutDiagnosticsTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -686,10 +767,17 @@ public class TimeoutDiagnosticsTests
         // Keep setup outside this command-timeout test. EXEC remains suppressed while earlier
         // replies drain and the physical write completes, so the timeout captures AwaitingReply.
         while (connection.InspectForTests().Inflight.Count != 1)
+        {
             await Task.Delay(1, deadline.Token);
+        }
+
         await Assert.That(connection.InspectForTests().Inflight.TryPeek(out var source)).IsTrue();
+
         while (connection.CaptureTimeoutDiagnostics().ForCommand(source!.WriteStart, source.WriteEnd).Stage != RespireCommandStage.AwaitingReply)
+        {
             await Task.Delay(1, deadline.Token);
+        }
+
         RespireTimeoutDiagnostics? diagnostics = null;
         await Assert.That(source!.TrySetTimedOut(source.State, TimeSpan.FromMilliseconds(200), ref diagnostics, connection)).IsTrue();
         var error = await Assert.That(async () => await commit.WaitAsync(TimeSpan.FromSeconds(5)))
@@ -780,13 +868,21 @@ public class TimeoutDiagnosticsTests
     {
         var source = InflightRing.DiscardSentinel;
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 1; i <= iterations; i++)
         {
             if (!ring.HasCapacitySnapshot(1) || !ring.TryEnqueue(source, 10 + i) || !ring.TryDequeue(out var returned)
                 || !ReferenceEquals(source, returned))
+            {
                 throw new InvalidOperationException("The allocation measurement must exercise a successful ring round trip.");
-            if (allocate) GC.KeepAlive(AllocateRingControl());
+            }
+
+            if (allocate)
+            {
+                GC.KeepAlive(AllocateRingControl());
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -836,8 +932,11 @@ public class TimeoutDiagnosticsTests
         await Assert.That(firstError!.Diagnostics).IsSameReferenceAs(secondError!.Diagnostics);
         await Assert.That(firstError.CommandName).IsEqualTo("GET");
         await Assert.That(secondError.CommandName).IsEqualTo("PING");
+
         while (ring.TryDequeue(out var source))
+        {
             source.ReleaseRef();
+        }
     }
 
     [Test]
@@ -852,6 +951,7 @@ public class TimeoutDiagnosticsTests
         await Assert.That(writing.Stage).IsEqualTo(RespireCommandStage.Writing);
         await Assert.That(buffered.Stage).IsEqualTo(RespireCommandStage.Buffered);
         await Assert.That(shared.Stage).IsEqualTo(RespireCommandStage.Unknown);
+
         foreach (var snapshot in new[] { replied, writing, buffered })
         {
             await Assert.That(snapshot.InflightCount).IsEqualTo(3);
@@ -874,7 +974,9 @@ public class TimeoutDiagnosticsTests
         multiplexer.StateChanged += change =>
         {
             if (change.State == RespireConnectionState.Reconnecting)
+            {
                 observed.TrySetResult(healthy.CaptureTimeoutDiagnostics());
+            }
         };
         await failed.DisposeAsync();
         multiplexer.GetConnection();
@@ -889,6 +991,7 @@ public class TimeoutDiagnosticsTests
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", port) },
-            Connections = 1, CommandTimeout = TimeSpan.FromMilliseconds(200)
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(200)
         });
 }

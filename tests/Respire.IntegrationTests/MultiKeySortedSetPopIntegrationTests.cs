@@ -6,7 +6,13 @@ namespace Respire.IntegrationTests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
 {
-    public enum PopMode { Immediate, Batch, Transaction, Blocking }
+    public enum PopMode
+    {
+        Immediate,
+        Batch,
+        Transaction,
+        Blocking
+    }
 
     [Test]
     [Arguments(2, PopMode.Immediate, false)]
@@ -31,8 +37,12 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix("Ã§Â§Å¸Ã¦Ë†Â·:");
         RespireKey selected = new byte[] { 0xff, 0, 0x42 };
+
         for (var i = 0; i < 4; i++)
+        {
             await view.SortedSets.AddAsync(selected, ((char)('a' + i)).ToString(), i + 1);
+        }
+
         await view.SortedSets.AddAsync("later", "untouched", 9);
         var popped = await PopMany(view, mode, ["missing", selected, "later"], 2, descending);
         popped.Should().NotBeNull();
@@ -93,11 +103,18 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         await client.SetAsync("wrong", "text");
-        Func<Task> many = async () => { await PopMany(client, mode, ["missing", "wrong"], 1, descending); };
+        Func<Task> many = async () =>
+        {
+            await PopMany(client, mode, ["missing", "wrong"], 1, descending);
+        };
         await many.Should().ThrowAsync<RespireServerException>().WithMessage("*WRONGTYPE*");
+
         if (mode == PopMode.Blocking)
         {
-            Func<Task> one = async () => { await client.SortedSets.PopAsync(["missing", "wrong"], TimeSpan.FromSeconds(1), descending); };
+            Func<Task> one = async () =>
+            {
+                await client.SortedSets.PopAsync(["missing", "wrong"], TimeSpan.FromSeconds(1), descending);
+            };
             await one.Should().ThrowAsync<RespireServerException>().WithMessage("*WRONGTYPE*");
         }
     }
@@ -172,9 +189,12 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
         IRespireClient client, PopMode mode, RespireKey[] keys, bool descending)
     {
         if (mode is PopMode.Immediate or PopMode.Blocking)
+        {
             return await (mode == PopMode.Blocking
                 ? client.SortedSets.PopManyAsync<int>(keys, TimeSpan.Zero, 2, descending)
                 : client.SortedSets.PopManyAsync<int>(keys, 2, descending));
+        }
+
         if (mode == PopMode.Batch)
         {
             using var batch = client.CreateBatch();
@@ -182,6 +202,7 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
             await batch.ExecuteAsync();
             return pending.Result;
         }
+
         await using var transaction = client.CreateTransaction();
         var result = transaction.SortedSets.PopMany<int>(keys, 2, descending);
         await transaction.CommitAsync();
@@ -192,9 +213,12 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
         IRespireClient client, PopMode mode, RespireKey[] keys, long count, bool descending)
     {
         if (mode is PopMode.Immediate or PopMode.Blocking)
+        {
             return await (mode == PopMode.Blocking
                 ? client.SortedSets.PopManyAsync(keys, TimeSpan.FromMilliseconds(10), count, descending)
                 : client.SortedSets.PopManyAsync(keys, count, descending));
+        }
+
         if (mode == PopMode.Batch)
         {
             using var batch = client.CreateBatch();
@@ -202,6 +226,7 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
             await batch.TryExecuteAsync();
             return pending.Result;
         }
+
         await using var transaction = client.CreateTransaction();
         var result = transaction.SortedSets.PopMany(keys, count, descending);
         await transaction.CommitAsync();

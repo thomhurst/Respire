@@ -48,9 +48,12 @@ public class SortedSetAlgebraCommandTests
 #pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true,
-            Endpoints = [new("localhost", 1)], Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = [new("localhost", 1)],
+            Connections = 1,
         });
+
 #pragma warning restore RESP010
         foreach (var (prefix, first, second) in new[]
         {
@@ -66,6 +69,7 @@ public class SortedSetAlgebraCommandTests
             await Assert.That(error.CommandName).IsEqualTo(operation);
             await Assert.That(error.ExpectedSlot).IsEqualTo(ClusterHash.GetSlot(prefix + first));
             await Assert.That(error.ConflictingSlot).IsEqualTo(ClusterHash.GetSlot(prefix + second));
+
             if (operation.EndsWith("STORE", StringComparison.Ordinal))
             {
                 // Matching source slots must also match the destination slot.
@@ -99,16 +103,20 @@ public class SortedSetAlgebraCommandTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true,
-            Endpoints = [new("127.0.0.1", seed.Port)], Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            Connections = 1,
         });
 #pragma warning restore RESP010
         var view = prefix.Length == 0 ? client : client.WithKeyPrefix(prefix);
         string[] operations = ["ZINTER", "ZUNION", "ZDIFF", "ZINTERSTORE", "ZUNIONSTORE", "ZDIFFSTORE"];
+
         foreach (var operation in operations)
         {
             await ExecuteAlgebraAsync(view, operation, destination, [first, second]);
         }
+
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         await Assert.That(owner.ReceivedCommands.SequenceEqual(operations.Select(operation =>
             operation + (operation.EndsWith("STORE", StringComparison.Ordinal) ? $" {prefix}{destination}" : "")

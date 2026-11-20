@@ -22,11 +22,17 @@ public sealed class JsonResp3CollectionManagementTests(JsonResp3Fixture fixture)
     : CollectionManagementTests<string>(fixture), IClassFixture<JsonResp3Fixture>;
 
 public sealed class HashResp2Fixture(RedisServerFixture server) : LifecycleFixture(server, RespireProtocol.Resp2, json: false);
+
 public sealed class HashResp3Fixture(RedisServerFixture server) : LifecycleFixture(server, RespireProtocol.Resp3, json: false);
+
 public sealed class JsonResp2Fixture(RedisServerFixture server) : LifecycleFixture(server, RespireProtocol.Resp2, json: true);
+
 public sealed class JsonResp3Fixture(RedisServerFixture server) : LifecycleFixture(server, RespireProtocol.Resp3, json: true);
 
 public abstract class LifecycleFixture(RedisServerFixture server, RespireProtocol protocol, bool json) : VectorStoreFixture
 {
-    public override TestStore TestStore { get; } = new LifecycleTestStore(server, protocol, json);
+    public override TestStore TestStore
+    {
+        get;
+    } = new LifecycleTestStore(server, protocol, json);
 }

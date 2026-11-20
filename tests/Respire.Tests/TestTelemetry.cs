@@ -16,7 +16,10 @@ internal static class TestTelemetry
     {
         foreach (var tag in tags)
         {
-            if (tag.Key == "server.port" && tag.Value is int port && ports.Contains(port)) return true;
+            if (tag.Key == "server.port" && tag.Value is int port && ports.Contains(port))
+            {
+                return true;
+            }
         }
 
         return false;

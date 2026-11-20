@@ -18,8 +18,12 @@ public class IdempotencyWireTests
         var before = server.CommandsSeen;
         await Assert.That(() => new RespireIdempotency(null!)).Throws<ArgumentNullException>();
         await Assert.That(async () => await store.TryBeginAsync("", TimeSpan.FromSeconds(1))).Throws<ArgumentException>();
+
         foreach (var ttl in new[] { TimeSpan.Zero, TimeSpan.FromTicks(-1), TimeSpan.FromTicks(9999) })
+        {
             await Assert.That(async () => await store.TryBeginAsync("key", ttl)).Throws<ArgumentOutOfRangeException>();
+        }
+
         await Assert.That(async () => await store.CompleteAsync("key", "", default)).Throws<ArgumentException>();
         await Assert.That(async () => await store.AbandonAsync("key", null!)).Throws<ArgumentNullException>();
         using var canceled = new CancellationTokenSource();
@@ -73,11 +77,14 @@ public class IdempotencyWireTests
         var hook = new RecordingHook(reject);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-            CommandHook = hook, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            CommandHook = hook,
+            ThreadPoolMonitoring = false,
         });
         var before = server.CommandsSeen;
         var store = new RespireIdempotency(client);
+
         if (reject)
         {
             await Assert.That(async () => await store.TryBeginAsync("key", TimeSpan.FromSeconds(1))).Throws<InvalidOperationException>();
@@ -92,6 +99,7 @@ public class IdempotencyWireTests
             await store.AbandonAsync("key", owner.OwnerToken!);
             await Assert.That(server.CommandsSeen - before).IsEqualTo(3);
         }
+
         await Assert.That(hook.Completed.Select(x => x.Command).SequenceEqual(
             new[] { "IDEMPOTENCY BEGIN", "IDEMPOTENCY COMPLETE", "IDEMPOTENCY ABANDON" })).IsTrue();
         await Assert.That(hook.Completed.All(x => x.Outcome ==
@@ -100,9 +108,14 @@ public class IdempotencyWireTests
 
     private sealed class RecordingHook(bool reject) : RespireCommandHook
     {
-        internal ConcurrentQueue<(string Command, RespireCommandOutcome Outcome)> Completed { get; } = new();
+        internal ConcurrentQueue<(string Command, RespireCommandOutcome Outcome)> Completed
+        {
+            get;
+        } = new();
+
         public override object? OnExecuting(RespireCommandContext context)
             => reject ? throw new InvalidOperationException("Rejected") : null;
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
             => Completed.Enqueue((context.Command, outcome));
     }

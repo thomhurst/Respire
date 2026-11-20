@@ -49,7 +49,10 @@ public partial class TopologyCommandRetryTests
         await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server));
 #pragma warning restore RESP010
         await Assert.That(RespireCommand.Create("GET").RetryCategory).IsEqualTo(RespireCommandRetryCategory.Never);
-        await Assert.That(async () => { using var result = await client.ExecuteAsync(RespireCommand.Create("GET"), ["key"]); })
+        await Assert.That(async () =>
+            {
+                using var result = await client.ExecuteAsync(RespireCommand.Create("GET"), ["key"]);
+            })
             .ThrowsExactly<RespireServerException>();
         await Assert.That(sends).IsEqualTo(1);
     }
@@ -62,8 +65,17 @@ public partial class TopologyCommandRetryTests
         var effects = 0;
         await using var server = Standalone((command, current) =>
         {
-            if (command != "MY.INCR counter") return null;
-            if (Interlocked.Increment(ref effects) == 1) { current.CloseConnections(); return null; }
+            if (command != "MY.INCR counter")
+            {
+                return null;
+            }
+
+            if (Interlocked.Increment(ref effects) == 1)
+            {
+                current.CloseConnections();
+                return null;
+            }
+
             return ":2\r\n"u8.ToArray();
         });
 #pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
@@ -71,14 +83,21 @@ public partial class TopologyCommandRetryTests
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum } });
 #pragma warning restore RESP010
         var descriptor = RespireCommand.Create("MY.INCR").WithRetryCategory(RespireCommandRetryCategory.WriteAccumulating);
+
         if (expectedEffects == 1)
-            await Assert.That(async () => { using var result = await client.ExecuteAsync(descriptor, ["counter"]); })
+        {
+            await Assert.That(async () =>
+                {
+                    using var result = await client.ExecuteAsync(descriptor, ["counter"]);
+                })
                 .Throws<RespireConnectionException>();
+        }
         else
         {
             using var result = await client.ExecuteAsync(descriptor, ["counter"]);
             await Assert.That(result.AsInteger()).IsEqualTo(2);
         }
+
         await Assert.That(effects).IsEqualTo(expectedEffects);
     }
 
@@ -107,13 +126,24 @@ public partial class TopologyCommandRetryTests
         await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server));
 #pragma warning restore RESP010
         var script = RespireScript.Create("return 7", readOnly: false);
-        if (declared) script = script.WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
-        await Assert.That(RespireScript.Create("return 7", readOnly: true).RetryCategory).IsEqualTo(RespireCommandRetryCategory.Never);
+
         if (declared)
+        {
+            script = script.WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
+        }
+
+        await Assert.That(RespireScript.Create("return 7", readOnly: true).RetryCategory).IsEqualTo(RespireCommandRetryCategory.Never);
+
+        if (declared)
+        {
             await Assert.That(await client.Scripts.ExecuteIntegerAsync(script, ["key"])).IsEqualTo(7L);
+        }
         else
+        {
             await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(script, ["key"]))
                 .ThrowsExactly<RespireServerException>();
+        }
+
         await Assert.That(sends).IsEqualTo(expectedSends);
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal))).IsFalse();
     }
@@ -126,8 +156,17 @@ public partial class TopologyCommandRetryTests
         var sends = 0;
         await using var server = Standalone((command, current) =>
         {
-            if (!command.StartsWith(shape == "script" ? "EVALSHA " : "FCALL_RO ", StringComparison.Ordinal)) return null;
-            if (Interlocked.Increment(ref sends) == 1) { current.CloseConnections(); return null; }
+            if (!command.StartsWith(shape == "script" ? "EVALSHA " : "FCALL_RO ", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            if (Interlocked.Increment(ref sends) == 1)
+            {
+                current.CloseConnections();
+                return null;
+            }
+
             return ":7\r\n"u8.ToArray();
         });
 #pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
@@ -148,7 +187,11 @@ public partial class TopologyCommandRetryTests
         var sends = new ConcurrentQueue<string>();
         await using var server = Standalone((command, _) =>
         {
-            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return null;
+            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
             sends.Enqueue(command);
             return sends.Count == 1 ? TryAgain : ":1\r\n"u8.ToArray();
         });
@@ -176,12 +219,22 @@ public partial class TopologyCommandRetryTests
         await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server));
 #pragma warning restore RESP010
         var function = RespireFunction.Create("reader", readOnly: true);
-        if (declared) function = function.WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
+
         if (declared)
+        {
+            function = function.WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
+        }
+
+        if (declared)
+        {
             await Assert.That(await client.Functions.ExecuteStringAsync(function, ["key"])).IsEqualTo("value");
+        }
         else
+        {
             await Assert.That(async () => await client.Functions.ExecuteStringAsync(function, ["key"]))
                 .ThrowsExactly<RespireServerException>();
+        }
+
         await Assert.That(sends).IsEqualTo(expectedSends);
     }
 
@@ -209,7 +262,8 @@ public partial class TopologyCommandRetryTests
         {
             RetryPolicy = new()
             {
-                MaxAttempts = 3, InitialBackoff = TimeSpan.Zero,
+                MaxAttempts = 3,
+                InitialBackoff = TimeSpan.Zero,
                 MaxCommandRetryCategory = RespireCommandRetryCategory.WriteAccumulating,
             },
         });
@@ -221,10 +275,14 @@ public partial class TopologyCommandRetryTests
             switch (shape)
             {
                 case "result":
-                    using (await client.Functions.ExecuteAsync(function, ["key"])) { }
+                    using (await client.Functions.ExecuteAsync(function, ["key"]))
+                    {
+                    }
                     break;
                 case "span":
-                    using (await client.Functions.ExecuteSpanAsync(function, ["key"], [])) { }
+                    using (await client.Functions.ExecuteSpanAsync(function, ["key"], []))
+                    {
+                    }
                     break;
                 case "string":
                     await client.Functions.ExecuteStringAsync(function, ["key"]);
@@ -252,8 +310,16 @@ public partial class TopologyCommandRetryTests
         await using var replacement = Primary(_ => null);
         await using var former = Primary(command =>
         {
-            if (command == "ROLE") return RoleReply(Volatile.Read(ref demoted) == 0 ? "master" : "slave");
-            if (command != "SET key value") return null;
+            if (command == "ROLE")
+            {
+                return RoleReply(Volatile.Read(ref demoted) == 0 ? "master" : "slave");
+            }
+
+            if (command != "SET key value")
+            {
+                return null;
+            }
+
             Volatile.Write(ref demoted, 1);
             return "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
         });
@@ -261,9 +327,17 @@ public partial class TopologyCommandRetryTests
 #pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(SentinelOptions(sentinel) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum } });
+
 #pragma warning restore RESP010
-        if (retries) await Assert.That(await client.SetAsync("key", "value")).IsTrue();
-        else await Assert.That(async () => await client.SetAsync("key", "value")).ThrowsExactly<RespireServerException>();
+        if (retries)
+        {
+            await Assert.That(await client.SetAsync("key", "value")).IsTrue();
+        }
+        else
+        {
+            await Assert.That(async () => await client.SetAsync("key", "value")).ThrowsExactly<RespireServerException>();
+        }
+
         await Assert.That(former.ReceivedCommands.Count(command => command == "SET key value")).IsEqualTo(1);
         await Assert.That(replacement.ReceivedCommands.Count(command => command == "SET key value")).IsEqualTo(retries ? 1 : 0);
     }
@@ -275,22 +349,32 @@ public partial class TopologyCommandRetryTests
     {
         var demoted = 0;
         var formerAdds = 0;
+
         byte[] AppendReply(string command, bool supportsIdempotency)
             => !supportsIdempotency && command.Contains(" IDMP ", StringComparison.Ordinal)
                 ? "-ERR Invalid stream ID specified as stream command argument\r\n"u8.ToArray()
                 : "$3\r\n1-0\r\n"u8.ToArray();
+
         await using var replacement = Primary(command => command.StartsWith("XADD ", StringComparison.Ordinal)
             ? AppendReply(command, !newerFirst) : null);
         await using var former = Primary(command =>
         {
-            if (command == "ROLE") return RoleReply(Volatile.Read(ref demoted) == 0 ? "master" : "slave");
-            if (!command.StartsWith("XADD ", StringComparison.Ordinal)) return null;
+            if (command == "ROLE")
+            {
+                return RoleReply(Volatile.Read(ref demoted) == 0 ? "master" : "slave");
+            }
+
+            if (!command.StartsWith("XADD ", StringComparison.Ordinal))
+            {
+                return null;
+            }
             // An old primary receives both the unsupported attempt and its plain fallback.
             if (Interlocked.Increment(ref formerAdds) > (newerFirst ? 1 : 2))
             {
                 Volatile.Write(ref demoted, 1);
                 return "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
             }
+
             return AppendReply(command, newerFirst);
         });
         await using var sentinel = Sentinel(() => Volatile.Read(ref demoted) == 0 ? former.Port : replacement.Port);
@@ -317,7 +401,11 @@ public partial class TopologyCommandRetryTests
         FakeRespServer? formerServer = null;
         await using var former = Primary(command =>
         {
-            if (command != "GET key") return null;
+            if (command != "GET key")
+            {
+                return null;
+            }
+
             Volatile.Write(ref failed, 1);
             formerServer!.CloseConnections();
             return null;
@@ -379,7 +467,11 @@ public partial class TopologyCommandRetryTests
         var effects = 0;
         await using var server = ClusterNode((command, current) =>
         {
-            if (!command.StartsWith(name + " ", StringComparison.Ordinal)) return null;
+            if (!command.StartsWith(name + " ", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
             Interlocked.Increment(ref effects);
             current.CloseConnections();
             return null;
@@ -393,7 +485,10 @@ public partial class TopologyCommandRetryTests
         var descriptor = name == "ZADD" ? RespireCommands.SortedSet.ZADD : RespireCommands.Stream.XADD;
         RespireValue[] arguments = name == "ZADD" ? ["key", "INCR", "1", "member"] : ["key", "*", "field", "value"];
         await Assert.That(descriptor.RetryCategory).IsEqualTo(RespireCommandRetryCategory.WriteAccumulating);
-        await Assert.That(async () => { using var result = await client.ExecuteAsync(descriptor, arguments); })
+        await Assert.That(async () =>
+            {
+                using var result = await client.ExecuteAsync(descriptor, arguments);
+            })
             .Throws<RespireConnectionException>();
         await Assert.That(effects).IsEqualTo(1);
     }
@@ -413,8 +508,13 @@ public partial class TopologyCommandRetryTests
 #pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("warm")).IsEqualTo("value");
         var admission = client.Core.Circuits!.Acquire(new("127.0.0.1", server.Port), default);
-        try { admission.Failed(new RespireConnectionException("Injected node failure."), default); }
+
+        try
+        {
+            admission.Failed(new RespireConnectionException("Injected node failure."), default);
+        }
         finally { admission.Dispose(); }
+
         await Assert.That(async () => await client.GetStringAsync("rejected")).ThrowsExactly<RespireCircuitOpenException>();
         await Assert.That(server.ReceivedCommands.Contains("GET rejected")).IsFalse();
         await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(0);
@@ -429,8 +529,13 @@ public partial class TopologyCommandRetryTests
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         {
             CommandTimeout = TimeSpan.FromMilliseconds(400),
-            RetryPolicy = new() { MaxAttempts = 100, InitialBackoff = TimeSpan.FromMilliseconds(50),
-                MaxBackoff = TimeSpan.FromMilliseconds(50), Jitter = 0 },
+            RetryPolicy = new()
+            {
+                MaxAttempts = 100,
+                InitialBackoff = TimeSpan.FromMilliseconds(50),
+                MaxBackoff = TimeSpan.FromMilliseconds(50),
+                Jitter = 0
+            },
         });
 #pragma warning restore RESP010
         var elapsed = Stopwatch.StartNew();
@@ -451,7 +556,9 @@ public partial class TopologyCommandRetryTests
         Task? stopping = null;
         await using var survivor = new FakeRespServer(32, FakeRespServer.OkReply);
         await using var owner = new FakeRespServer(32, FakeRespServer.OkReply);
+
         byte[] Map() => Volatile.Read(ref failedOver) == 0 ? SplitSlots(survivor.Port, owner.Port) : Slots(survivor.Port);
+
         survivor.ReplyOverride = (_, command) => command switch
         {
             "CLUSTER SLOTS" => Map(),
@@ -460,8 +567,16 @@ public partial class TopologyCommandRetryTests
         };
         owner.ReplyOverride = (_, command) =>
         {
-            if (command == "CLUSTER SLOTS") return Map();
-            if (command != "GET key") return null;
+            if (command == "CLUSTER SLOTS")
+            {
+                return Map();
+            }
+
+            if (command != "GET key")
+            {
+                return null;
+            }
+
             Volatile.Write(ref failedOver, 1);
             // Stop listening before the connection drops, so the owner cannot reconnect.
             stopping = owner.DisposeAsync().AsTask();
@@ -478,7 +593,12 @@ public partial class TopologyCommandRetryTests
         var elapsed = Stopwatch.StartNew();
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         elapsed.Stop();
-        if (stopping is not null) await stopping;
+
+        if (stopping is not null)
+        {
+            await stopping;
+        }
+
         await Assert.That(owner.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
         await Assert.That(survivor.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
         // The retry must not hold the lost owner until the logical command deadline.
@@ -493,8 +613,16 @@ public partial class TopologyCommandRetryTests
         var reads = 0;
         await using var server = ClusterNode((command, current) =>
         {
-            if (command != "GET key") return null;
-            if (Interlocked.Increment(ref reads) > 1) return Value;
+            if (command != "GET key")
+            {
+                return null;
+            }
+
+            if (Interlocked.Increment(ref reads) > 1)
+            {
+                return Value;
+            }
+
             current.CloseConnections();
             return null;
         });
@@ -527,13 +655,19 @@ public partial class TopologyCommandRetryTests
         // Hold replacement handshakes so route selection cannot race with a ready seed.
         server.ReadGate = handshake.Task;
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         try
         {
-            if (clearSlotOwner) router.ClearSlotOwner(12539, owner);
+            if (clearSlotOwner)
+            {
+                router.ClearSlotOwner(12539, owner);
+            }
+
             await connection.DisposeAsync();
             var wait = router.WaitForRouteReplacementAsync(12539, cancellation.Token).AsTask();
             await Assert.That(wait.IsCompleted).IsFalse();
             await Assert.That(owner.IsReconnecting).IsTrue();
+
             if (cancel)
             {
                 cancellation.Cancel();
@@ -576,6 +710,7 @@ public partial class TopologyCommandRetryTests
         var result = await group.ExecuteAsync(async (client, token) =>
         {
             clients.Add(client);
+
             if (clients.Count == 1)
             {
                 // The probe opens the primary circuit while this attempt still holds its member.
@@ -583,6 +718,7 @@ public partial class TopologyCommandRetryTests
                 await group.ForTests.ProbeAsync(0, token);
                 await group.ForTests.SelectActiveAsync();
             }
+
             return await client.GetStringAsync("key", token);
         }, RespireCommandRetryCategory.ReadOnly);
         await Assert.That(result).IsEqualTo("value");
@@ -633,14 +769,30 @@ public partial class TopologyCommandRetryTests
         var events = new ConcurrentDictionary<string, long>();
         using var listener = RetryListener(events);
         FakeRespServer? endpoint = null;
+
         byte[]? Reply(string command)
         {
-            if (command == "GET counter") return Encoding.ASCII.GetBytes($"${counter.ToString().Length}\r\n{counter}\r\n");
-            if (command != "INCR counter") return null;
+            if (command == "GET counter")
+            {
+                return Encoding.ASCII.GetBytes($"${counter.ToString().Length}\r\n{counter}\r\n");
+            }
+
+            if (command != "INCR counter")
+            {
+                return null;
+            }
+
             var value = Interlocked.Increment(ref counter);
-            if (value == 1) { endpoint!.CloseConnections(); return null; }
+
+            if (value == 1)
+            {
+                endpoint!.CloseConnections();
+                return null;
+            }
+
             return Encoding.ASCII.GetBytes($":{value}\r\n");
         }
+
         await using var server = topology == "Cluster" ? ClusterNode((command, _) => Reply(command)) : Primary(command =>
             topology == "Group" && command == "PING" && Volatile.Read(ref counter) > 0 ? "-ERR down\r\n"u8.ToArray() : Reply(command));
         endpoint = server;
@@ -648,7 +800,8 @@ public partial class TopologyCommandRetryTests
         await using var sentinel = Sentinel(() => server.Port);
         var policy = new RespireRetryPolicy
         {
-            MaxAttempts = 2, InitialBackoff = TimeSpan.Zero,
+            MaxAttempts = 2,
+            InitialBackoff = TimeSpan.Zero,
             MaxCommandRetryCategory = allowDuplicate ? RespireCommandRetryCategory.WriteAccumulating : RespireCommandRetryCategory.ReadOnly,
         };
         // Group members have no policy: only the group owns these retries.
@@ -658,11 +811,15 @@ public partial class TopologyCommandRetryTests
         await using var client = group is null
             ? await RespireClient.ConnectAsync((topology == "Cluster" ? ClusterOptions(server) : SentinelOptions(sentinel)) with { RetryPolicy = policy })
             : null;
+
 #pragma warning restore RESP010
         ValueTask<long> Increment() => group is null ? client!.IncrementAsync("counter")
             : group.ExecuteAsync(async (member, token) =>
             {
-                try { return await member.IncrementAsync("counter", cancellationToken: token); }
+                try
+                {
+                    return await member.IncrementAsync("counter", cancellationToken: token);
+                }
                 catch (RespireConnectionException)
                 {
                     // Drive a probe/selection at the failed attempt boundary, without timing assumptions.
@@ -671,8 +828,15 @@ public partial class TopologyCommandRetryTests
                     throw;
                 }
             }, RespireCommandRetryCategory.WriteAccumulating);
-        if (allowDuplicate) await Assert.That(await Increment()).IsEqualTo(2L);
-        else await Assert.That(async () => await Increment()).Throws<RespireConnectionException>();
+
+        if (allowDuplicate)
+        {
+            await Assert.That(await Increment()).IsEqualTo(2L);
+        }
+        else
+        {
+            await Assert.That(async () => await Increment()).Throws<RespireConnectionException>();
+        }
         // Read through an independent public client, rather than trusting resend counts.
 #pragma warning disable RESP010 // Independent test-owned observer verifies stored effects without retrying the failed write.
         await using var observer = await RespireClient.ConnectAsync(StandaloneOptions(server) with { RetryPolicy = null });
@@ -699,16 +863,25 @@ public partial class TopologyCommandRetryTests
         using var throwing = new MeterListener();
         throwing.InstrumentPublished = static (instrument, meter) =>
         {
-            if (instrument.Name == "respire.command.retries") meter.EnableMeasurementEvents(instrument);
+            if (instrument.Name == "respire.command.retries")
+            {
+                meter.EnableMeasurementEvents(instrument);
+            }
         };
         throwing.SetMeasurementEventCallback<long>(static (_, _, _, _) => throw new InvalidOperationException("exporter failed"));
         throwing.Start();
         var calls = 0;
+
         byte[]? Reply(string command)
         {
-            if (!(command == "GET key" || command.StartsWith("EVALSHA ", StringComparison.Ordinal) || command == "FCALL_RO reader 1 key")) return null;
+            if (!(command == "GET key" || command.StartsWith("EVALSHA ", StringComparison.Ordinal) || command == "FCALL_RO reader 1 key"))
+            {
+                return null;
+            }
+
             return Interlocked.Increment(ref calls) % 2 == 1 || exhaust ? TryAgain : Value;
         }
+
         await using var server = shape == "Cluster" ? ClusterNode((command, _) => Reply(command)) : Standalone((command, _) => Reply(command));
 #pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync((shape == "Cluster" ? ClusterOptions(server) : StandaloneOptions(server)) with
@@ -716,19 +889,40 @@ public partial class TopologyCommandRetryTests
 #pragma warning restore RESP010
         var script = RespireScript.Create("return redis.call('GET', KEYS[1])").WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         var function = RespireFunction.Create("reader", readOnly: true).WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
+
         async ValueTask<string?> Read()
         {
-            if (shape == "script") return await client.Scripts.ExecuteStringAsync(script, ["key"]);
-            if (shape == "function") return await client.Functions.ExecuteStringAsync(function, ["key"]);
-            if (shape == "Cluster") return await client.GetStringAsync("key");
+            if (shape == "script")
+            {
+                return await client.Scripts.ExecuteStringAsync(script, ["key"]);
+            }
+
+            if (shape == "function")
+            {
+                return await client.Functions.ExecuteStringAsync(function, ["key"]);
+            }
+
+            if (shape == "Cluster")
+            {
+                return await client.GetStringAsync("key");
+            }
+
             using var result = await client.ExecuteAsync(RespireCommand.Create("GET").WithRetryCategory(RespireCommandRetryCategory.ReadOnly), ["key"]);
             return result.AsString();
         }
+
         for (var i = 0; i < 32; i++)
         {
-            if (exhaust) await Assert.That(async () => await Read()).ThrowsExactly<RespireServerException>();
-            else await Assert.That(await Read()).IsEqualTo("value");
+            if (exhaust)
+            {
+                await Assert.That(async () => await Read()).ThrowsExactly<RespireServerException>();
+            }
+            else
+            {
+                await Assert.That(await Read()).IsEqualTo("value");
+            }
         }
+
         await Assert.That(calls).IsEqualTo(64);
         await Assert.That(events["attempted"]).IsEqualTo(32L);
         await Assert.That(events[exhaust ? "exhausted" : "succeeded"]).IsEqualTo(32L);
@@ -744,27 +938,53 @@ public partial class TopologyCommandRetryTests
     {
         CancellationTokenSource? cancellation = null;
         var reads = 0;
+
         byte[]? Reply(string command)
         {
-            if (!(command == "GET key" || command.StartsWith("EVALSHA ", StringComparison.Ordinal) || command == "FCALL_RO reader 1 key")) return null;
+            if (!(command == "GET key" || command.StartsWith("EVALSHA ", StringComparison.Ordinal) || command == "FCALL_RO reader 1 key"))
+            {
+                return null;
+            }
+
             Interlocked.Increment(ref reads);
-            if (cancellation is not null) { cancellation.Cancel(); return TryAgain; }
+
+            if (cancellation is not null)
+            {
+                cancellation.Cancel();
+                return TryAgain;
+            }
+
             return Value;
         }
+
         await using var server = shape == "Cluster" ? ClusterNode((command, _) => Reply(command)) : Standalone((command, _) => Reply(command));
 #pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
         await using var client = await RespireClient.ConnectAsync(shape == "Cluster" ? ClusterOptions(server) : StandaloneOptions(server));
 #pragma warning restore RESP010
         var script = RespireScript.Create("return redis.call('GET', KEYS[1])").WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         var function = RespireFunction.Create("reader", readOnly: true).WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
+
         async ValueTask<string?> Read(CancellationToken token)
         {
-            if (shape == "script") return await client.Scripts.ExecuteStringAsync(script, ["key"], cancellationToken: token);
-            if (shape == "function") return await client.Functions.ExecuteStringAsync(function, ["key"], cancellationToken: token);
-            if (shape == "Cluster") return await client.GetStringAsync("key", token);
+            if (shape == "script")
+            {
+                return await client.Scripts.ExecuteStringAsync(script, ["key"], cancellationToken: token);
+            }
+
+            if (shape == "function")
+            {
+                return await client.Functions.ExecuteStringAsync(function, ["key"], cancellationToken: token);
+            }
+
+            if (shape == "Cluster")
+            {
+                return await client.GetStringAsync("key", token);
+            }
+
             using var result = await client.ExecuteAsync(RespireCommand.Create("GET").WithRetryCategory(RespireCommandRetryCategory.ReadOnly), ["key"], cancellationToken: token);
             return result.AsString();
         }
+
         for (var i = 0; i < 16; i++)
         {
             using var source = new CancellationTokenSource();
@@ -775,6 +995,7 @@ public partial class TopologyCommandRetryTests
             cancellation = null;
             await Assert.That(await Read(default)).IsEqualTo("value");
         }
+
         await Assert.That(reads).IsEqualTo(32);
     }
 
@@ -793,8 +1014,10 @@ public partial class TopologyCommandRetryTests
 
     private static RespireOptions StandaloneOptions(FakeRespServer server) => new()
     {
-        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = RespireProtocol.Resp2,
-        ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(3),
+        Endpoints = { new("127.0.0.1", server.Port) },
+        Protocol = RespireProtocol.Resp2,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromSeconds(3),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };
 
@@ -807,8 +1030,13 @@ public partial class TopologyCommandRetryTests
 
     private static RespireOptions ClusterOptions(FakeRespServer server) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], UseCluster = true, Connections = 1, Protocol = RespireProtocol.Resp2,
-        ThreadPoolMonitoring = false, ClusterTopologyRefreshInterval = null, CommandTimeout = TimeSpan.FromSeconds(5),
+        Endpoints = [new("127.0.0.1", server.Port)],
+        UseCluster = true,
+        Connections = 1,
+        Protocol = RespireProtocol.Resp2,
+        ThreadPoolMonitoring = false,
+        ClusterTopologyRefreshInterval = null,
+        CommandTimeout = TimeSpan.FromSeconds(5),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };
 
@@ -834,8 +1062,12 @@ public partial class TopologyCommandRetryTests
 
     private static RespireOptions SentinelOptions(FakeRespServer sentinel) => new()
     {
-        Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster", Connections = 1,
-        Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5),
+        Endpoints = [new("127.0.0.1", sentinel.Port)],
+        SentinelPrimaryName = "mymaster",
+        Connections = 1,
+        Protocol = RespireProtocol.Resp2,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromSeconds(5),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };
 
@@ -847,16 +1079,22 @@ public partial class TopologyCommandRetryTests
 
     private static RespireFailoverCandidate Candidate(FakeRespServer server, int priority) => new(new RespireOptions
     {
-        Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
-        ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = TimeSpan.FromSeconds(2),
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        ThreadPoolMonitoring = false,
+        ConnectTimeout = TimeSpan.FromSeconds(2),
+        CommandTimeout = TimeSpan.FromSeconds(2),
         Endpoints = [new RespireEndpoint("127.0.0.1", server.Port)],
     }, priority);
 
     // Probes run only when a test drives them, so selection changes happen at known points.
     private static RespireFailoverGroupOptions GroupOptions() => new()
     {
-        ProbeInterval = TimeSpan.FromHours(1), ProbeTimeout = TimeSpan.FromSeconds(2), FailureThreshold = 1,
-        CircuitOpenDuration = TimeSpan.FromMinutes(1), FailbackGracePeriod = TimeSpan.Zero,
+        ProbeInterval = TimeSpan.FromHours(1),
+        ProbeTimeout = TimeSpan.FromSeconds(2),
+        FailureThreshold = 1,
+        CircuitOpenDuration = TimeSpan.FromMinutes(1),
+        FailbackGracePeriod = TimeSpan.Zero,
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };
 
@@ -866,13 +1104,19 @@ public partial class TopologyCommandRetryTests
         listener.InstrumentPublished = static (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.command.retries")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
             foreach (var tag in tags)
+            {
                 if (tag.Key == "respire.command.retry.outcome")
+                {
                     events.AddOrUpdate((string)tag.Value!, value, (_, old) => old + value);
+                }
+            }
         });
         listener.Start();
         return listener;
@@ -880,8 +1124,12 @@ public partial class TopologyCommandRetryTests
 
     private static async Task<Exception> Failure(Func<Task> operation)
     {
-        try { await operation(); }
+        try
+        {
+            await operation();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure.");
     }
 }

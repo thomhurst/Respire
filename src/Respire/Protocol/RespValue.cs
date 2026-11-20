@@ -45,9 +45,12 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     private readonly int _elementCount;
 
     public RespireDataType Type => _type;
+
     public bool IsNull => _type == RespireDataType.Null;
+
     // Null needs no numeric storage. Retain framing here without growing every parsed value.
     internal RespireDataType NullWireType => _integerValue == 0 ? RespireDataType.Null : (RespireDataType)_integerValue;
+
     public bool IsError => _type is RespireDataType.Error or RespireDataType.BulkError;
 
     // Retained queue errors carry EXEC's confirmed outcome without changing payload ownership.
@@ -68,6 +71,7 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     }
 
     public static readonly RespValue Null = new(RespireDataType.Null);
+
     internal static RespValue NullFromWire(RespireDataType wireType)
         => new(RespireDataType.Null, integerValue: (long)wireType);
     public static readonly RespValue True = new(RespireDataType.Boolean, integerValue: 1);
@@ -146,9 +150,16 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     {
         Debug.Assert((_flags & ValueFlags.DeferredPayload) == 0,
             "Parser-local payload offsets must be materialized before returning a complete value.");
-        if (_elements is null) return;
+
+        if (_elements is null)
+        {
+            return;
+        }
+
         for (var i = 0; i < _elementCount; i++)
+        {
             _elements[i].AssertMaterialized();
+        }
     }
 
     /// <summary>Copies deferred aggregate payloads into shared or per-child storage.</summary>
@@ -156,7 +167,10 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     {
         // Top-level attributes can precede a scalar. Keep that scalar's ordinary payload ownership.
         if ((_flags & ValueFlags.DeferredPayload) != 0)
+        {
             return RespParser.CopyToPooled(_type, buffer.Slice((int)_integerValue, _elementCount));
+        }
+
         if (length > RespirePools.MaxPooledResponsePayloadLength
             || (length >= SparsePayloadMinimumFrameLength && (long)payloadBytes * SparsePayloadFrameRatio < length))
         {
@@ -164,6 +178,7 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
             // integer tokens or framing. Small replies retain the single-copy path.
             return CopyDeferredPayloadsIndividually(buffer);
         }
+
         var array = RespirePools.ResponsePayloads.Rent(length);
         buffer.Slice(start, length).CopyTo(array);
         var frame = new ReadOnlyMemory<byte>(array, 0, length);
@@ -175,7 +190,10 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     internal RespValue CopyDeferredPayloadsIndividually(ReadOnlySpan<byte> buffer)
     {
         if ((_flags & ValueFlags.DeferredPayload) != 0)
+        {
             return RespParser.CopyToPooled(_type, buffer.Slice((int)_integerValue, _elementCount));
+        }
+
         CopyDeferredChildren(buffer);
         return this;
     }
@@ -183,25 +201,45 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     private void CopyDeferredChildren(ReadOnlySpan<byte> buffer)
     {
         // Struct copies share _elements, so replacing children updates the original tree.
-        if (_elements is null) return;
+        if (_elements is null)
+        {
+            return;
+        }
+
         for (var i = 0; i < _elementCount; i++)
         {
             var child = _elements[i];
+
             if ((child._flags & ValueFlags.DeferredPayload) != 0)
+            {
                 _elements[i] = RespParser.CopyToPooled(child._type, buffer.Slice((int)child._integerValue, child._elementCount));
-            else child.CopyDeferredChildren(buffer);
+            }
+            else
+            {
+                child.CopyDeferredChildren(buffer);
+            }
         }
     }
 
     private void BindDeferredPayloads(ReadOnlyMemory<byte> frame, int start)
     {
-        if (_elements is null) return;
+        if (_elements is null)
+        {
+            return;
+        }
+
         for (var i = 0; i < _elementCount; i++)
         {
             var child = _elements[i];
+
             if ((child._flags & ValueFlags.DeferredPayload) != 0)
+            {
                 _elements[i] = new(child._type, payload: frame.Slice((int)child._integerValue - start, child._elementCount));
-            else child.BindDeferredPayloads(frame, start);
+            }
+            else
+            {
+                child.BindDeferredPayloads(frame, start);
+            }
         }
     }
 
@@ -211,6 +249,7 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
         if (_elements is not null)
         {
             var elements = new RespValue[_elementCount];
+
             for (var i = 0; i < _elementCount; i++)
             {
                 elements[i] = _elements[i].ToOwned();
@@ -237,6 +276,7 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 
         // ToOwned copies children, not the aggregate's shared wire frame.
         long size = 32;
+
         for (var index = 0; index < _elementCount; index++)
         {
             size += _elements[index].GetOwnedSize();
@@ -303,6 +343,7 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     private string DecodeVerbatimString()
     {
         var payload = _payload;
+
         if (payload.Length >= 4)
         {
             payload = payload[4..];
@@ -343,7 +384,10 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 #if DEBUG
             // Expose invalid borrowed-child reads during development without release-path work.
             if (_elements is not null)
+            {
                 array.AsSpan(segment.Offset, _payload.Length).Fill(0xDD);
+            }
+
 #endif
             RespirePools.ResponsePayloads.Return(array);
         }

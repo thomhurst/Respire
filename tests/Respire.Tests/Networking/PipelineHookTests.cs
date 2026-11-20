@@ -21,9 +21,17 @@ public class PipelineHookTests
         var baseline = server.CommandsSeen;
         hook.Before = context =>
         {
-            if (server.CommandsSeen != baseline) throw new InvalidOperationException("Sent before admission.");
-            if (context.Commands.Count != 1 || context.Commands[0] != "GET") throw new InvalidOperationException("Wrong snapshot.");
+            if (server.CommandsSeen != baseline)
+            {
+                throw new InvalidOperationException("Sent before admission.");
+            }
+
+            if (context.Commands.Count != 1 || context.Commands[0] != "GET")
+            {
+                throw new InvalidOperationException("Wrong snapshot.");
+            }
         };
+
         if (transaction)
         {
             await using var tx = client.CreateTransaction();
@@ -40,6 +48,7 @@ public class PipelineHookTests
             await batch.ExecuteAsync();
             await Assert.That(pending.Result).IsEqualTo("value");
         }
+
         await Assert.That(hook.PendingCompleted).IsTrue();
         await Assert.That(hook.Context!.IsTransaction).IsEqualTo(transaction);
         await Assert.That(hook.Entries).IsEqualTo(1);
@@ -62,6 +71,7 @@ public class PipelineHookTests
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
         var baseline = server.CommandsSeen;
+
         if (transaction)
         {
             await using var tx = client.CreateTransaction();
@@ -82,6 +92,7 @@ public class PipelineHookTests
             await Assert.That(ReferenceEquals(await Failure(() => Task.FromResult(second.Result)), rejected)).IsTrue();
             await Assert.That(async () => await batch.TryExecuteAsync()).Throws<InvalidOperationException>();
         }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
         await Assert.That(hook.Entries).IsEqualTo(1);
         await Assert.That(hook.Completions).IsEqualTo(1);
@@ -102,13 +113,26 @@ public class PipelineHookTests
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
         using var cts = new CancellationTokenSource();
-        if (cancel) cts.Cancel();
+
+        if (cancel)
+        {
+            cts.Cancel();
+        }
+
         if (transaction)
         {
             await using var tx = client.CreateTransaction();
             var pending = tx.GetString("key");
-            if (cancel) await Failure(async () => await tx.CommitAsync(cts.Token));
-            else await tx.CommitAsync(cts.Token); // EXEC member errors belong to their pending results.
+
+            if (cancel)
+            {
+                await Failure(async () => await tx.CommitAsync(cts.Token));
+            }
+            else
+            {
+                await tx.CommitAsync(cts.Token); // EXEC member errors belong to their pending results.
+            }
+
             await Failure(() => Task.FromResult(pending.Result));
         }
         else
@@ -119,6 +143,7 @@ public class PipelineHookTests
             await Assert.That(result.FailureCount).IsEqualTo(1);
             await Assert.That(ReferenceEquals(result.FirstError, hook.Error)).IsTrue();
         }
+
         await Assert.That(hook.Outcome).IsEqualTo(cancel ? RespirePipelineOutcome.Canceled : RespirePipelineOutcome.Failed);
         await Assert.That(cancel ? hook.Error is OperationCanceledException : hook.Error is RespireServerException).IsTrue();
         await Assert.That(hook.Context!.CancellationToken).IsEqualTo(cts.Token);
@@ -135,6 +160,7 @@ public class PipelineHookTests
 #pragma warning disable RESP010 // This pipeline hook scenario owns its client, callback state and scripted aggregate replies.
         await using var client = RespireClient.Create(new RespireOptions
         { Endpoints = [new("127.0.0.1", endpoint.Port)], PipelineHook = hook, ThreadPoolMonitoring = false });
+
 #pragma warning restore RESP010
         if (transaction)
         {
@@ -146,6 +172,7 @@ public class PipelineHookTests
             using var batch = client.CreateBatch();
             await batch.ExecuteAsync();
         }
+
         await Assert.That(hook.Context!.Commands.Count).IsEqualTo(0);
         await Assert.That(hook.Completions).IsEqualTo(1);
         await Assert.That(hook.Outcome).IsEqualTo(RespirePipelineOutcome.Succeeded);
@@ -166,8 +193,14 @@ public class PipelineHookTests
         var pending = batch.Set("key", "value");
         await Failure(async () =>
         {
-            if (aof) await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
-            else await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero);
+            if (aof)
+            {
+                await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
+            }
+            else
+            {
+                await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero);
+            }
         });
         await Assert.That(hook.Context!.Commands.SequenceEqual(new[] { "SET", aof ? "WAITAOF" : "WAIT" })).IsTrue();
         await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
@@ -187,8 +220,16 @@ public class PipelineHookTests
 #pragma warning restore RESP010
         using var batch = client.CreateBatch();
         _ = batch.Set("key", "value");
-        if (aof) await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
-        else await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero);
+
+        if (aof)
+        {
+            await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
+        }
+        else
+        {
+            await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero);
+        }
+
         await Assert.That(server.ReceivedCommands.Any(c => c.StartsWith(aof ? "WAITAOF " : "WAIT "))).IsTrue();
         await Assert.That(hook.Completions).IsEqualTo(1);
         await Assert.That(hook.Outcome).IsEqualTo(RespirePipelineOutcome.Succeeded);
@@ -236,13 +277,18 @@ public class PipelineHookTests
         await using var tx = await client.CreateTransactionAsync(["key"]);
         await Assert.That(hook.Entries).IsEqualTo(0); // WATCH setup is outside the commit.
         _ = tx.GetString("key");
+
         if (reject)
         {
             hook.Before = _ => throw new InvalidOperationException("No commit");
             await Failure(async () => await tx.CommitAsync());
             await Assert.That(server.ReceivedCommands.Contains("MULTI")).IsFalse();
         }
-        else await Assert.That(await tx.CommitAsync()).IsFalse();
+        else
+        {
+            await Assert.That(await tx.CommitAsync()).IsFalse();
+        }
+
         await Assert.That(hook.Outcome).IsEqualTo(reject ? RespirePipelineOutcome.Rejected : RespirePipelineOutcome.Aborted);
         await Assert.That(hook.Completions).IsEqualTo(1);
     }
@@ -255,14 +301,30 @@ public class PipelineHookTests
         await using var server = Server(true);
         server.ReplyOverride = (connection, command) =>
         {
-            if (command == "MULTI") { transactions[connection] = true; return FakeRespServer.OkReply; }
+            if (command == "MULTI")
+            {
+                transactions[connection] = true;
+                return FakeRespServer.OkReply;
+            }
+
             if (command == "EXEC")
             {
                 transactions[connection] = false;
-                if (Interlocked.Increment(ref execs) == 1) { server.CloseConnections(); return null; }
+
+                if (Interlocked.Increment(ref execs) == 1)
+                {
+                    server.CloseConnections();
+                    return null;
+                }
+
                 return "*1\r\n$5\r\nvalue\r\n"u8.ToArray();
             }
-            if (transactions.GetValueOrDefault(connection)) return "+QUEUED\r\n"u8.ToArray();
+
+            if (transactions.GetValueOrDefault(connection))
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
             return command == "CLIENT ID" ? ":1\r\n"u8.ToArray() : null;
         };
         var hook = new RecordingHook();
@@ -294,8 +356,14 @@ public class PipelineHookTests
         var pending = batch.Set("key", "value");
         var error = await Failure(async () =>
         {
-            if (aof) await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
-            else await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero);
+            if (aof)
+            {
+                await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
+            }
+            else
+            {
+                await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero);
+            }
         });
         await Assert.That(pending.Result).IsTrue();
         await Assert.That(ReferenceEquals(hook.Error, error)).IsTrue();
@@ -330,12 +398,27 @@ public class PipelineHookTests
         var inTransaction = false;
         server.ReplyOverride = (_, command) =>
         {
-            if (command == "MULTI") { inTransaction = true; return FakeRespServer.OkReply; }
-            if (command == "EXEC") { inTransaction = false; return "*1\r\n+OK\r\n"u8.ToArray(); }
+            if (command == "MULTI")
+            {
+                inTransaction = true;
+                return FakeRespServer.OkReply;
+            }
+
+            if (command == "EXEC")
+            {
+                inTransaction = false;
+                return "*1\r\n+OK\r\n"u8.ToArray();
+            }
+
             return inTransaction ? "+QUEUED\r\n"u8.ToArray() : null;
         };
         var hook = new RecordingHook();
-        if (reject) hook.Before = _ => throw new InvalidOperationException("Rejected import");
+
+        if (reject)
+        {
+            hook.Before = _ => throw new InvalidOperationException("Rejected import");
+        }
+
 #pragma warning disable RESP010 // This pipeline hook scenario owns its client, callback state and scripted aggregate replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
@@ -347,20 +430,36 @@ public class PipelineHookTests
             using var usage = session.EnterOperation();
             outsideGate = true;
         };
+
         if (transaction)
         {
             await using var tx = session.CreateTransaction();
             _ = tx.Hashes.Import("key", "schema", "value");
-            if (reject) await Failure(async () => await tx.CommitAsync());
-            else await tx.CommitAsync();
+
+            if (reject)
+            {
+                await Failure(async () => await tx.CommitAsync());
+            }
+            else
+            {
+                await tx.CommitAsync();
+            }
         }
         else
         {
             using var batch = session.CreateBatch();
             _ = batch.Hashes.Import("key", "schema", "value");
-            if (reject) await Failure(async () => await batch.ExecuteAsync());
-            else await batch.ExecuteAsync();
+
+            if (reject)
+            {
+                await Failure(async () => await batch.ExecuteAsync());
+            }
+            else
+            {
+                await batch.ExecuteAsync();
+            }
         }
+
         await Assert.That(outsideGate).IsTrue();
         await Assert.That(hook.Outcome).IsEqualTo(reject ? RespirePipelineOutcome.Rejected : RespirePipelineOutcome.Succeeded);
         await Assert.That(await session.SetAsync("later", "schema", "value")).IsTrue();
@@ -412,15 +511,27 @@ public class PipelineHookTests
         public override object? OnExecuting(RespirePipelineContext context)
         {
             var state = new object();
-            if (!Active.TryAdd(context, state)) Errors.Enqueue("Repeated context");
+
+            if (!Active.TryAdd(context, state))
+            {
+                Errors.Enqueue("Repeated context");
+            }
+
             return state;
         }
 
         public override void OnCompleted(RespirePipelineContext context, object? state, RespirePipelineOutcome outcome, Exception? error)
         {
             if (!Active.TryRemove(context, out var expected) || !ReferenceEquals(state, expected))
+            {
                 Errors.Enqueue("Mismatched state");
-            if (outcome != RespirePipelineOutcome.Succeeded || error is not null) Errors.Enqueue("Unexpected failure");
+            }
+
+            if (outcome != RespirePipelineOutcome.Succeeded || error is not null)
+            {
+                Errors.Enqueue("Unexpected failure");
+            }
+
             Interlocked.Increment(ref Completed);
         }
     }
@@ -431,17 +542,43 @@ public class PipelineHookTests
         var server = new FakeRespServer(32, FakeRespServer.OkReply);
         server.ReplyOverride = (connection, command) =>
         {
-            if (command == "CLIENT ID") return ":1\r\n"u8.ToArray();
-            if (transaction && command == "MULTI") { transactions[connection] = true; return FakeRespServer.OkReply; }
+            if (command == "CLIENT ID")
+            {
+                return ":1\r\n"u8.ToArray();
+            }
+
+            if (transaction && command == "MULTI")
+            {
+                transactions[connection] = true;
+                return FakeRespServer.OkReply;
+            }
+
             if (transaction && command == "EXEC")
             {
                 transactions[connection] = false;
                 return fail ? "*1\r\n-ERR failed\r\n"u8.ToArray() : "*1\r\n$5\r\nvalue\r\n"u8.ToArray();
             }
-            if (transactions.GetValueOrDefault(connection)) return "+QUEUED\r\n"u8.ToArray();
-            if (command.StartsWith("GET ")) return fail ? "-ERR failed\r\n"u8.ToArray() : "$5\r\nvalue\r\n"u8.ToArray();
-            if (command.StartsWith("WAITAOF ")) return "*2\r\n:1\r\n:1\r\n"u8.ToArray();
-            if (command.StartsWith("WAIT ")) return ":1\r\n"u8.ToArray();
+
+            if (transactions.GetValueOrDefault(connection))
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
+            if (command.StartsWith("GET "))
+            {
+                return fail ? "-ERR failed\r\n"u8.ToArray() : "$5\r\nvalue\r\n"u8.ToArray();
+            }
+
+            if (command.StartsWith("WAITAOF "))
+            {
+                return "*2\r\n:1\r\n:1\r\n"u8.ToArray();
+            }
+
+            if (command.StartsWith("WAIT "))
+            {
+                return ":1\r\n"u8.ToArray();
+            }
+
             return null;
         };
         return server;
@@ -449,14 +586,22 @@ public class PipelineHookTests
 
     private static RespireOptions Options(FakeRespServer server, RespirePipelineHook hook) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-        Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(3), PipelineHook = hook,
+        Endpoints = [new("127.0.0.1", server.Port)],
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromSeconds(3),
+        PipelineHook = hook,
     };
 
     private static async Task<Exception> Failure(Func<Task> operation)
     {
-        try { await operation(); }
+        try
+        {
+            await operation();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure.");
     }
 
@@ -472,6 +617,7 @@ public class PipelineHookTests
         internal int Entries;
         internal int Completions;
         internal bool PendingCompleted;
+
         public override object? OnExecuting(RespirePipelineContext context)
         {
             Context = context;
@@ -479,6 +625,7 @@ public class PipelineHookTests
             Before?.Invoke(context);
             return State;
         }
+
         public override void OnCompleted(RespirePipelineContext context, object? state, RespirePipelineOutcome outcome, Exception? error)
         {
             Completions++;

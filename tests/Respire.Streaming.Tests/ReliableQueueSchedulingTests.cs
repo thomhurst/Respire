@@ -43,10 +43,12 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
         var due = await Score(client, queue.StreamKey + ":scheduled-due", id);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         RespireQueueMessage<string> message;
+
         while (true)
         {
             var beforePoll = await ServerMilliseconds(client);
             var batch = await queue.ReceiveAsync(TimeSpan.FromMinutes(1), cancellationToken: timeout.Token);
+
             if (batch.Length != 0)
             {
                 message = batch.Single();
@@ -89,8 +91,12 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
         await Assert.That(await clients[0].Streams.CountAsync(queues[0].StreamKey)).IsEqualTo(40);
         await Assert.That(await first.Streams.CountAsync(queues[0].StreamKey)).IsEqualTo(0);
         await AssertPendingCount(clients[0], queues[0], 0);
+
         foreach (var message in messages)
+        {
             await Assert.That(await queues[0].AckAsync(message)).IsTrue();
+        }
+
         await Assert.That((await queues[0].ReceiveAsync(TimeSpan.FromMinutes(1))).Length).IsEqualTo(0);
     }
 
@@ -103,6 +109,7 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
         await using var second = await ConnectAsync(protocol);
         var producer = Queue(first);
         var consumer = Queue(second);
+
         for (var i = 0; i < 24; i++)
         {
             var id = await producer.ScheduleAsync("payload", TimeSpan.Zero);
@@ -111,11 +118,16 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
             await Task.WhenAll(cancel, receive);
             var messages = await receive;
             await Assert.That(messages.Length).IsEqualTo(await cancel ? 0 : 1);
+
             foreach (var message in messages)
+            {
                 await Assert.That(await consumer.AckAsync(message)).IsTrue();
+            }
+
             await Assert.That(await producer.CancelScheduledAsync(id)).IsFalse();
             await Assert.That((await consumer.ReceiveAsync(TimeSpan.FromMinutes(1))).Length).IsEqualTo(0);
         }
+
         await AssertPendingCount(first, producer, 0);
     }
 
@@ -144,12 +156,15 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
     {
         byte[] payload = [0, 255, 128, 13, 10, 0, 42];
         string scheduledId;
+
         await using (var producer = await ConnectAsync(protocol))
         {
             var queue = new RespireReliableQueue<byte[]>(producer, "binary", bytes => bytes, bytes => bytes);
             scheduledId = await queue.ScheduleAsync(payload, TimeSpan.Zero);
         }
+
         RespireQueueMessage<byte[]> original;
+
         await using (var crashedConsumer = await ConnectAsync(protocol))
         {
             var queue = new RespireReliableQueue<byte[]>(crashedConsumer, "binary", bytes => bytes, bytes => bytes);
@@ -157,16 +172,25 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
             await Assert.That(original.Payload.SequenceEqual(payload)).IsTrue();
             // Simulate processing followed by loss of the consumer without ACK.
         }
+
         await using var recoveryClient = await ConnectAsync(protocol);
         var recovery = new RespireReliableQueue<byte[]>(recoveryClient, "binary", bytes => bytes, bytes => bytes);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         RespireQueueMessage<byte[]> current;
+
         while (true)
         {
             var batch = await recovery.ReceiveAsync(TimeSpan.FromMinutes(1), cancellationToken: timeout.Token);
-            if (batch.Length != 0) { current = batch.Single(); break; }
+
+            if (batch.Length != 0)
+            {
+                current = batch.Single();
+                break;
+            }
+
             await Task.Delay(10, timeout.Token);
         }
+
         await Assert.That(current.Id).IsEqualTo(original.Id);
         await Assert.That(current.Payload.SequenceEqual(payload)).IsTrue();
         await Assert.That(current.DeliveryCount).IsEqualTo(2);
@@ -191,7 +215,10 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
         await Assert.That(await queue.CancelScheduledAsync(scheduled)).IsFalse();
         await Assert.That((await queue.ReceiveAsync(TimeSpan.FromMinutes(1))).Length).IsEqualTo(0);
         // Advance the rejection deadline without waiting five minutes.
-        using (await client.ExecuteAsync("ZADD", [queue.StreamKey + ":due", 0, first.Id.Value])) { }
+        using (await client.ExecuteAsync("ZADD", [queue.StreamKey + ":due", 0, first.Id.Value]))
+        {
+        }
+
         var second = (await queue.ReceiveAsync(TimeSpan.FromMinutes(1))).Single();
         await Assert.That(second.Id).IsEqualTo(first.Id);
         await Assert.That(second.DeliveryCount).IsEqualTo(2);
@@ -213,13 +240,21 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
         await using var client = await ConnectAsync(protocol);
         var queue = new RespireReliableQueue<string>(client, "queue",
             _ => throw new FormatException("serializer"), Encoding.UTF8.GetString);
+
         foreach (var delay in new[] { TimeSpan.FromTicks(-1), TimeSpan.FromMilliseconds((long)int.MaxValue + 1) })
+        {
             await Assert.That(async () => await queue.ScheduleAsync("payload", delay)).Throws<ArgumentOutOfRangeException>();
+        }
+
         await Assert.That(async () => await queue.ScheduleAsync("payload", TimeSpan.Zero, new(true)))
             .Throws<OperationCanceledException>();
         await Assert.That(async () => await queue.ScheduleAsync("payload", TimeSpan.Zero)).Throws<FormatException>();
+
         foreach (var id in new[] { "", " " })
+        {
             await Assert.That(async () => await queue.CancelScheduledAsync(id)).Throws<ArgumentException>();
+        }
+
         await Assert.That(async () => await queue.CancelScheduledAsync("id", new(true))).Throws<OperationCanceledException>();
         await AssertPendingCount(client, queue, 0);
     }
@@ -236,14 +271,22 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
         var id = await queue.ScheduleAsync("scheduled", TimeSpan.Zero);
         var ready = await queue.SendAsync("ready");
         var key = queue.StreamKey + suffix;
-        using (await client.ExecuteAsync("RENAME", [key, key + ":backup"])) { }
+
+        using (await client.ExecuteAsync("RENAME", [key, key + ":backup"]))
+        {
+        }
+
         await client.Strings.SetAsync(key, "wrong type");
         await Assert.That(async () => await queue.ScheduleAsync("new", TimeSpan.Zero)).Throws<RespireServerException>();
         await Assert.That(async () => await queue.CancelScheduledAsync(id)).Throws<RespireServerException>();
         await Assert.That(async () => await queue.ReceiveAsync(TimeSpan.FromMinutes(1))).Throws<RespireServerException>();
         await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(1);
         await client.Keys.DeleteAsync(key);
-        using (await client.ExecuteAsync("RENAME", [key + ":backup", key])) { }
+
+        using (await client.ExecuteAsync("RENAME", [key + ":backup", key]))
+        {
+        }
+
         var messages = await queue.ReceiveAsync(TimeSpan.FromMinutes(1), max: 2);
         await Assert.That(messages.Length).IsEqualTo(2);
         await Assert.That(messages[0].Id).IsEqualTo(ready);
@@ -261,7 +304,10 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
         await queue.ScheduleAsync("scheduled", TimeSpan.Zero);
         // Fault injection: an exhausted stream ID makes XADD fail after permission/type preflight.
         using (await client.ExecuteAsync("XADD",
-            [queue.StreamKey, "18446744073709551615-18446744073709551615", "payload", "sentinel"])) { }
+            [queue.StreamKey, "18446744073709551615-18446744073709551615", "payload", "sentinel"]))
+        {
+        }
+
         await Assert.That(async () => await queue.ReceiveAsync(TimeSpan.FromMinutes(1))).Throws<RespireServerException>();
         await AssertPendingCount(client, queue, 1);
         await client.Keys.DeleteAsync(queue.StreamKey);
@@ -281,30 +327,51 @@ public class ReliableQueueSchedulingTests(RedisTestContainer redis)
     public async Task DeniedSchedulingWriteLeavesOriginalStateRetryable(int protocol, string operation, string deniedCommand)
     {
         await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-            with { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
+            with
+        { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
         var username = "schedule-" + Guid.NewGuid().ToString("N");
         var queue = Queue(admin);
         var id = operation == "schedule" ? null : await queue.ScheduleAsync("payload", TimeSpan.Zero);
         await admin.Server.AclSetUserAsync(username, ["on", ">password", "~*", "+@all", "-" + deniedCommand]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Protocol = (RespireProtocol)protocol, Username = username, Password = "password" });
+                with
+            { Protocol = (RespireProtocol)protocol, Username = username, Password = "password" });
             var denied = Queue(restricted);
+
             if (operation == "schedule")
+            {
                 await Assert.That(async () => await denied.ScheduleAsync("payload", TimeSpan.Zero)).Throws<RespireServerException>();
+            }
             else if (operation == "cancel")
+            {
                 await Assert.That(async () => await denied.CancelScheduledAsync(id!)).Throws<RespireServerException>();
+            }
             else
+            {
                 await Assert.That(async () => await denied.ReceiveAsync(TimeSpan.FromMinutes(1))).Throws<RespireServerException>();
+            }
+
             await AssertPendingCount(admin, queue, operation == "schedule" ? 0 : 1);
             await Assert.That(await admin.Streams.CountAsync(queue.StreamKey)).IsEqualTo(0);
             await admin.Server.AclSetUserAsync(username, ["+" + deniedCommand]);
-            if (operation == "schedule") await denied.ScheduleAsync("payload", TimeSpan.Zero);
+
+            if (operation == "schedule")
+            {
+                await denied.ScheduleAsync("payload", TimeSpan.Zero);
+            }
+
             if (operation == "cancel")
+            {
                 await Assert.That(await denied.CancelScheduledAsync(id!)).IsTrue();
+            }
             else
+            {
                 await Assert.That((await denied.ReceiveAsync(TimeSpan.FromMinutes(1))).Single().Payload).IsEqualTo("payload");
+            }
+
             await AssertPendingCount(admin, queue, 0);
         }
         finally { using var deleted = await admin.ExecuteAsync("ACL DELUSER", [username]); }

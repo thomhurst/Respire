@@ -16,7 +16,12 @@ public class ClientCacheProvenanceTests
         var owner = new ClientSideCacheCoordinator.TrackingProvenance();
         var arguments = new RespireValue[ClientSideCacheCoordinator.TrackingProvenance.MaximumKeys + 2];
         arguments[0] = "cache:target";
-        for (var index = 1; index < arguments.Length; index++) arguments[index] = $"excluded:{index}";
+
+        for (var index = 1; index < arguments.Length; index++)
+        {
+            arguments[index] = $"excluded:{index}";
+        }
+
         var command = new CmdN(Verbs.MGet, arguments);
         await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("MGET", in command, out var request)).IsTrue();
         owner.Register(request, cache);
@@ -94,6 +99,7 @@ public class ClientCacheProvenanceTests
     {
         var cache = new ClientSideCacheCoordinator(new());
         var owner = new ClientSideCacheCoordinator.TrackingProvenance();
+
         if (bytes)
         {
             var command = new Cmd1(Verbs.Get, new string('x', ClientSideCacheCoordinator.TrackingProvenance.MaximumKeyBytes + 1));
@@ -104,6 +110,7 @@ public class ClientCacheProvenanceTests
             var command = new Cmd1(Verbs.Eval, "return 1");
             owner.Register("EVAL", in command);
         }
+
         Put(cache, "unrelated");
         var pending = cache.BeginRead(new RespireKey("pending"));
         owner.Fence(cache);
@@ -117,12 +124,14 @@ public class ClientCacheProvenanceTests
     {
         var cache = new ClientSideCacheCoordinator(new() { MaxEntries = 1 });
         var owner = new ClientSideCacheCoordinator.TrackingProvenance();
+
         for (var index = 0; index <= ClientSideCacheCoordinator.TrackingProvenance.MaximumKeys; index++)
         {
             var command = new Cmd1(Verbs.Get, $"key{index}");
             owner.Register("GET", in command);
             Put(cache, $"key{index}");
         }
+
         Put(cache, "unrelated");
         owner.Fence(cache);
         await Assert.That(cache.Count).IsEqualTo(0);

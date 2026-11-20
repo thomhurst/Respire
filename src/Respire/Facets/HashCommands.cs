@@ -323,7 +323,6 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<bool> SetExpireAsync(RespireKey key, RespireExpiry expiry, RespireSetWhen when, (string Field, RespireValue Value) field, CancellationToken cancellationToken)
         => SetExpireAsync(key, expiry, when, [field], cancellationToken);
 
-
     // Hot single-field commands own only their preflight and pass an empty observation, so
     // the default standalone route dispatches natively. See RespireClient.RecordPreflightFailure.
     public ValueTask<bool> SetAsync(
@@ -339,9 +338,17 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, string field, RespireValue value, RespireSetWhen when,
         CancellationToken cancellationToken = default)
     {
-        if (when == RespireSetWhen.Always) return SetAlwaysAsync(key, field, value, cancellationToken);
+        if (when == RespireSetWhen.Always)
+        {
+            return SetAlwaysAsync(key, field, value, cancellationToken);
+        }
+
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetBorrowedAsync(key, field, value, when, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetBorrowedAsync(key, field, value, when, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -357,7 +364,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetBorrowedAsync<T>(key, field, value, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetBorrowedAsync<T>(key, field, value, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -376,7 +387,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetBorrowedAsync<T>(key, field, value, when, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetBorrowedAsync<T>(key, field, value, when, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -388,8 +403,7 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         => SetCoreAsync(key, field, client.SerializeRawCompatible(value), when, cancellationToken, observation);
 
     private ValueTask<bool> SetCoreAsync(
-        RespireKey key, string field, RespireValue value, RespireSetWhen when, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => when switch
+        RespireKey key, string field, RespireValue value, RespireSetWhen when, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation) => when switch
         {
             RespireSetWhen.Always => client.FlagAsync(
                 "HSET", new Cmd3(Verbs.HSet, client.Key(in key), field, value), cancellationToken, observation: observation),
@@ -408,7 +422,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<long> SetAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(SetBorrowedAsync(key, fields, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetBorrowedAsync(key, fields, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -421,7 +439,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(SetBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetBorrowedAsync(key, fields, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -440,7 +462,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<T?> GetAsync<T>(RespireKey key, string field, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T?>.Start();
-        try { return owner.Attach(GetBorrowedAsync<T>(key, field, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetBorrowedAsync<T>(key, field, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -454,7 +480,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<RespireGetResult<T>> TryGetAsync<T>(RespireKey key, string field, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireGetResult<T>>.Start();
-        try { return owner.Attach(TryGetBorrowedAsync<T>(key, field, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(TryGetBorrowedAsync<T>(key, field, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -469,7 +499,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, RespireKey field, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<byte[]?>.Start();
-        try { return owner.Attach(GetBytesBorrowedAsync(key, field, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetBytesBorrowedAsync(key, field, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -482,7 +516,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<string?[]> GetManyAsync(RespireKey key, params ReadOnlySpan<string> fields)
     {
         var owner = DispatchResponseSource<string?[]>.Start();
-        try { return owner.Attach(GetManyBorrowedAsync(key, fields, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetManyBorrowedAsync(key, fields, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -493,7 +531,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<string?[]>.Start();
-        try { return owner.Attach(GetManyBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetManyBorrowedAsync(key, fields, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -505,7 +547,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<Dictionary<string, string>> GetAllAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<Dictionary<string, string>>.Start();
-        try { return owner.Attach(GetAllBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetAllBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -518,7 +564,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<Dictionary<string, T>>.Start();
-        try { return owner.Attach(GetAllBorrowedAsync<T>(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetAllBorrowedAsync<T>(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -539,7 +589,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<long> RemoveAsync(RespireKey key, params ReadOnlySpan<string> fields)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(RemoveBorrowedAsync(key, fields, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RemoveBorrowedAsync(key, fields, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -549,7 +603,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<long> RemoveAsync(RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(RemoveBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RemoveBorrowedAsync(key, fields, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -559,7 +617,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<bool> ExistsAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(ExistsBorrowedAsync(key, field, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExistsBorrowedAsync(key, field, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -569,7 +631,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(CountBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(CountBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -579,7 +645,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<long> IncrementAsync(RespireKey key, string field, long by = 1, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(IncrementBorrowedAsync(key, field, by, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(IncrementBorrowedAsync(key, field, by, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -589,7 +659,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<double> IncrementAsync(RespireKey key, string field, double by, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<double>.Start();
-        try { return owner.Attach(IncrementBorrowedAsync(key, field, by, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(IncrementBorrowedAsync(key, field, by, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -599,7 +673,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<string[]> FieldsAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string[]>.Start();
-        try { return owner.Attach(FieldsBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(FieldsBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -609,7 +687,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<string[]> ValuesAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string[]>.Start();
-        try { return owner.Attach(ValuesBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ValuesBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -619,7 +701,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<long> LengthAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(LengthBorrowedAsync(key, field, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(LengthBorrowedAsync(key, field, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -630,7 +716,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<string?> RandomFieldAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
-        try { return owner.Attach(RandomFieldBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RandomFieldBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -641,7 +731,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<string[]> RandomFieldsAsync(RespireKey key, long count, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string[]>.Start();
-        try { return owner.Attach(RandomFieldsBorrowedAsync(key, count, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RandomFieldsBorrowedAsync(key, count, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -653,7 +747,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, long count, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<KeyValuePair<string, string>[]>.Start();
-        try { return owner.Attach(RandomFieldsWithValuesBorrowedAsync(key, count, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RandomFieldsWithValuesBorrowedAsync(key, count, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -669,7 +767,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<RespireExpiryTimeResult[]> ExpiryTimeAsync(RespireKey key, params ReadOnlySpan<string> fields)
     {
         var owner = DispatchResponseSource<RespireExpiryTimeResult[]>.Start();
-        try { return owner.Attach(ExpiryTimeBorrowedAsync(key, fields, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpiryTimeBorrowedAsync(key, fields, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -680,7 +782,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<RespireExpiryTimeResult[]>.Start();
-        try { return owner.Attach(ExpiryTimeBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpiryTimeBorrowedAsync(key, fields, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -692,7 +798,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, RespireExpiryTimePrecision precision, params ReadOnlySpan<string> fields)
     {
         var owner = DispatchResponseSource<RespireExpiryTimeResult[]>.Start();
-        try { return owner.Attach(ExpiryTimeBorrowedAsync(key, precision, fields, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpiryTimeBorrowedAsync(key, precision, fields, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -704,7 +814,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, RespireExpiryTimePrecision precision, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<RespireExpiryTimeResult[]>.Start();
-        try { return owner.Attach(ExpiryTimeBorrowedAsync(key, precision, fields, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpiryTimeBorrowedAsync(key, precision, fields, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -717,28 +831,30 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
             static (RespireExpiryTimePrecision p, in RespValue value) => ParseExpiryTimes(in value, p), observation: observation);
     }
 
-    internal static (string Operation, Verb Verb) ExpiryTimeCommand(RespireExpiryTimePrecision precision)
-        => precision switch
-        {
-            RespireExpiryTimePrecision.Milliseconds => ("HPEXPIRETIME", RespireCommands.Hash.HPEXPIRETIME.Verb),
-            RespireExpiryTimePrecision.Seconds => ("HEXPIRETIME", RespireCommands.Hash.HEXPIRETIME.Verb),
-            _ => throw new ArgumentOutOfRangeException(nameof(precision), precision, null),
-        };
+    internal static (string Operation, Verb Verb) ExpiryTimeCommand(RespireExpiryTimePrecision precision) => precision switch
+    {
+        RespireExpiryTimePrecision.Milliseconds => ("HPEXPIRETIME", RespireCommands.Hash.HPEXPIRETIME.Verb),
+        RespireExpiryTimePrecision.Seconds => ("HEXPIRETIME", RespireCommands.Hash.HEXPIRETIME.Verb),
+        _ => throw new ArgumentOutOfRangeException(nameof(precision), precision, null),
+    };
 
     internal static RespireExpiryTimeResult[] ParseExpiryTimes(in RespValue value, RespireExpiryTimePrecision precision)
     {
         var elements = value.AsArray();
         var result = new RespireExpiryTimeResult[elements.Length];
+
         for (var i = 0; i < elements.Length; i++)
         {
             result[i] = RespireExpiryTimeResult.FromRedis(elements[i].AsInteger(), precision);
         }
+
         return result;
     }
 
     internal static KeyValuePair<string, string>[] ParseRandomPairs(in RespValue value)
     {
         var elements = value.AsArray();
+
         if (elements.Length == 0)
         {
             return [];
@@ -746,20 +862,26 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
 
         // RESP3 returns nested pairs; RESP2 returns a flat field/value array.
         var nested = elements[0].Type == RespireDataType.Array;
+
         if (!nested && elements.Length % 2 != 0)
         {
             throw new RespireProtocolException("Expected complete field/value pairs from HRANDFIELD.");
         }
+
         var result = new KeyValuePair<string, string>[nested ? elements.Length : elements.Length / 2];
+
         for (var i = 0; i < result.Length; i++)
         {
             var pair = nested ? elements[i].AsArray() : elements.Slice(i * 2, 2);
+
             if (pair.Length != 2)
             {
                 throw new RespireProtocolException("Expected two elements per HRANDFIELD pair.");
             }
+
             result[i] = new KeyValuePair<string, string>(pair[0].AsString(), pair[1].AsString());
         }
+
         return result;
     }
 
@@ -767,6 +889,7 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     {
         var elements = page.AsArray();
         var entries = new KeyValuePair<string, string>[elements.Length / 2];
+
         for (var i = 0; i < entries.Length; i++)
         {
             entries[i] = new KeyValuePair<string, string>(
@@ -779,7 +902,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<RespireTtlResult[]> ExpiryAsync(RespireKey key, params ReadOnlySpan<string> fields)
     {
         var owner = DispatchResponseSource<RespireTtlResult[]>.Start();
-        try { return owner.Attach(ExpiryBorrowedAsync(key, fields, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpiryBorrowedAsync(key, fields, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -790,7 +917,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<RespireTtlResult[]>.Start();
-        try { return owner.Attach(ExpiryBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpiryBorrowedAsync(key, fields, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -805,16 +936,29 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, ReadOnlySpan<RespireKey> fields, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<RespireTtlResult[]>.Start();
-        try { return owner.Attach(ExpiryBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpiryBorrowedAsync(key, fields, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
     private ValueTask<RespireTtlResult[]> ExpiryBorrowedAsync(
         RespireKey key, ReadOnlySpan<RespireKey> fields, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        if (fields.IsEmpty) throw new ArgumentException("At least one hash field is required.", nameof(fields));
+        if (fields.IsEmpty)
+        {
+            throw new ArgumentException("At least one hash field is required.", nameof(fields));
+        }
+
         var fieldSnapshots = new RespireKey[fields.Length];
-        for (var i = 0; i < fields.Length; i++) fieldSnapshots[i] = fields[i].Snapshot();
+
+        for (var i = 0; i < fields.Length; i++)
+        {
+            fieldSnapshots[i] = fields[i].Snapshot();
+        }
+
         return client.TtlArrayAsync(
             "HPTTL",
             new Cmd1N(RespireCommands.Hash.HPTTL.Verb, client.Key(in key), FieldsBlock(fieldSnapshots)),
@@ -825,7 +969,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, RespireKey field, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireTtlResult>.Start();
-        try { return owner.Attach(ExpiryBorrowedAsync(key, field, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpiryBorrowedAsync(key, field, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -841,7 +989,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
     {
         var owner = DispatchResponseSource<RespireHashFieldExpiryResult[]>.Start();
-        try { return owner.Attach(ExpireBorrowedAsync(key, expiry, fields, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpireBorrowedAsync(key, expiry, fields, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -853,7 +1005,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<RespireHashFieldExpiryResult[]>.Start();
-        try { return owner.Attach(ExpireBorrowedAsync(key, expiry, fields, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpireBorrowedAsync(key, expiry, fields, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -865,7 +1021,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, RespireExpiry expiry, RespireExpireWhen when, params ReadOnlySpan<string> fields)
     {
         var owner = DispatchResponseSource<RespireHashFieldExpiryResult[]>.Start();
-        try { return owner.Attach(ExpireBorrowedAsync(key, expiry, when, fields, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpireBorrowedAsync(key, expiry, when, fields, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -881,7 +1041,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<RespireHashFieldExpiryResult[]>.Start();
-        try { return owner.Attach(ExpireBorrowedAsync(key, expiry, when, fields, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpireBorrowedAsync(key, expiry, when, fields, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -937,7 +1101,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     public ValueTask<string?[]> GetAndRemoveAsync(RespireKey key, params ReadOnlySpan<string> fields)
     {
         var owner = DispatchResponseSource<string?[]>.Start();
-        try { return owner.Attach(GetAndRemoveBorrowedAsync(key, fields, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetAndRemoveBorrowedAsync(key, fields, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -948,7 +1116,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<string?[]>.Start();
-        try { return owner.Attach(GetAndRemoveBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetAndRemoveBorrowedAsync(key, fields, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -963,7 +1135,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
     {
         var owner = DispatchResponseSource<string?[]>.Start();
-        try { return owner.Attach(GetAndExpireBorrowedAsync(key, expiry, fields, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetAndExpireBorrowedAsync(key, expiry, fields, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -975,7 +1151,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<string?[]>.Start();
-        try { return owner.Attach(GetAndExpireBorrowedAsync(key, expiry, fields, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetAndExpireBorrowedAsync(key, expiry, fields, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -1005,7 +1185,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetExpireBorrowedAsync(key, expiry, fields, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetExpireBorrowedAsync(key, expiry, fields, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -1020,7 +1204,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetExpireBorrowedAsync(key, expiry, fields, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetExpireBorrowedAsync(key, expiry, fields, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -1035,7 +1223,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, RespireExpiry expiry, RespireSetWhen when, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetExpireBorrowedAsync(key, expiry, when, fields, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetExpireBorrowedAsync(key, expiry, when, fields, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -1051,7 +1243,11 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetExpireBorrowedAsync(key, expiry, when, fields, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetExpireBorrowedAsync(key, expiry, when, fields, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -1116,6 +1312,7 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     internal static RespireValue[] FieldValuePairs(ReadOnlySpan<(string Field, RespireValue Value)> fields)
     {
         var args = new RespireValue[fields.Length * 2];
+
         for (var i = 0; i < fields.Length; i++)
         {
             args[i * 2] = fields[i].Field;
@@ -1128,6 +1325,7 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     internal static RespireValue[] ToValues(ReadOnlySpan<string> items)
     {
         var values = new RespireValue[items.Length];
+
         for (var i = 0; i < items.Length; i++)
         {
             values[i] = items[i];
@@ -1142,6 +1340,7 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         var args = new RespireValue[2 + fields.Length];
         args[0] = "FIELDS";
         args[1] = fields.Length;
+
         for (var i = 0; i < fields.Length; i++)
         {
             args[2 + i] = fields[i];
@@ -1152,11 +1351,20 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
 
     internal static RespireValue[] FieldsBlock(ReadOnlySpan<RespireKey> fields)
     {
-        if (fields.IsEmpty) throw new ArgumentException("At least one hash field is required.", nameof(fields));
+        if (fields.IsEmpty)
+        {
+            throw new ArgumentException("At least one hash field is required.", nameof(fields));
+        }
+
         var args = new RespireValue[fields.Length + 2];
         args[0] = "FIELDS";
         args[1] = fields.Length;
-        for (var i = 0; i < fields.Length; i++) args[i + 2] = fields[i].Snapshot().AsValue();
+
+        for (var i = 0; i < fields.Length; i++)
+        {
+            args[i + 2] = fields[i].Snapshot().AsValue();
+        }
+
         return args;
     }
 
@@ -1168,6 +1376,7 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         var args = new RespireValue[1 + (condition is null ? 0 : 1) + 2 + fields.Length];
         var index = 0;
         args[index++] = milliseconds;
+
         if (condition is not null)
         {
             args[index++] = condition;
@@ -1175,6 +1384,7 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
 
         args[index++] = "FIELDS";
         args[index++] = fields.Length;
+
         for (var i = 0; i < fields.Length; i++)
         {
             args[index++] = fields[i];
@@ -1190,6 +1400,7 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         var args = new RespireValue[1 + (hasValue ? 1 : 0) + 2 + fields.Length];
         var index = 0;
         args[index++] = option;
+
         if (hasValue)
         {
             args[index++] = optionValue;
@@ -1197,6 +1408,7 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
 
         args[index++] = "FIELDS";
         args[index++] = fields.Length;
+
         for (var i = 0; i < fields.Length; i++)
         {
             args[index++] = fields[i];
@@ -1214,10 +1426,10 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     {
         ValidateFieldPairs(fields);
         var condition = HashSetWhenToken(when);
-        var args = new RespireValue[
-            (condition is null ? 0 : 1) + (option is null ? 0 : 1) + 2
+        var args = new RespireValue[(condition is null ? 0 : 1) + (option is null ? 0 : 1) + 2
             + (hasValue ? 1 : 0) + fields.Length * 2];
         var index = 0;
+
         if (condition is not null)
         {
             args[index++] = condition;
@@ -1227,12 +1439,15 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         {
             args[index++] = option;
         }
+
         if (hasValue)
         {
             args[index++] = optionValue;
         }
+
         args[index++] = "FIELDS";
         args[index++] = fields.Length;
+
         for (var i = 0; i < fields.Length; i++)
         {
             args[index++] = fields[i].Field;
@@ -1242,14 +1457,13 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         return args;
     }
 
-    private static string? HashSetWhenToken(RespireSetWhen when)
-        => when switch
-        {
-            RespireSetWhen.Always => null,
-            RespireSetWhen.NotExists => "FNX",
-            RespireSetWhen.Exists => "FXX",
-            _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
-        };
+    private static string? HashSetWhenToken(RespireSetWhen when) => when switch
+    {
+        RespireSetWhen.Always => null,
+        RespireSetWhen.NotExists => "FNX",
+        RespireSetWhen.Exists => "FXX",
+        _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
+    };
 
     private static void ValidateFields(ReadOnlySpan<string> fields)
     {

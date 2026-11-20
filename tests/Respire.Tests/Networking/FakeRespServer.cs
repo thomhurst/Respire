@@ -38,35 +38,56 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private int _disposed;
     private volatile Task? _readGate;
 
-    public int Port { get; }
+    public int Port
+    {
+        get;
+    }
+
     /// <summary>Completes after the first socket is recorded, even before a full command arrives.</summary>
     public Task ConnectionAccepted => _clientSocket.Task;
+
     /// <summary>Completes on peer EOF or reset, before server teardown.</summary>
     public Task PeerClosed => _peerClosed.Task;
+
     public int CommandsSeen => Volatile.Read(ref _commandsSeen);
 
     /// <summary>
     /// Holds scripted replies until this many commands have arrived. Tests use this to prove
     /// commands were pipelined instead of waiting for each preceding response.
     /// </summary>
-    public int MinimumCommandsBeforeReply { get; set; } = 1;
+    public int MinimumCommandsBeforeReply
+    {
+        get; set;
+    } = 1;
 
     /// <summary>Bounds each socket read to force command fragmentation independently of TCP coalescing.</summary>
-    public int MaximumBytesPerRead { get; init; } = int.MaxValue;
+    public int MaximumBytesPerRead
+    {
+        get; init;
+    } = int.MaxValue;
 
     /// <summary>
     /// Answers initial CLIENT SETINFO without consuming or recording scripted application commands.
     /// Disable for wire tests that explicitly script the library metadata handshake.
     /// </summary>
-    public bool HandleLibraryInfo { get; set; } = true;
+    public bool HandleLibraryInfo
+    {
+        get; set;
+    } = true;
 
     /// <summary>Closes the connection after receiving this many commands, without sending a reply.</summary>
-    public int? CloseConnectionAfterCommand { get; set; }
+    public int? CloseConnectionAfterCommand
+    {
+        get; set;
+    }
 
     /// <summary>
     /// Suppresses replies for matching commands, allowing cancellation tests to park a connection.
     /// </summary>
-    public Func<string, bool>? SuppressReply { get; set; }
+    public Func<string, bool>? SuppressReply
+    {
+        get; set;
+    }
 
     /// <summary>Pauses socket reads so tests can separate local writes from peer receipt.</summary>
     public Task? ReadGate
@@ -76,7 +97,10 @@ internal sealed class FakeRespServer : IAsyncDisposable
     }
 
     /// <summary>Overrides a command's scripted reply by accepted connection ID; null keeps the script.</summary>
-    public Func<int, string, byte[]?>? ReplyOverride { get; set; }
+    public Func<int, string, byte[]?>? ReplyOverride
+    {
+        get; set;
+    }
 
     public IReadOnlyList<string> ReceivedCommands
     {
@@ -93,7 +117,10 @@ internal sealed class FakeRespServer : IAsyncDisposable
     {
         get
         {
-            lock (_receivedCommands) return _receivedArguments.ToArray();
+            lock (_receivedCommands)
+            {
+                return _receivedArguments.ToArray();
+            }
         }
     }
 
@@ -160,14 +187,23 @@ internal sealed class FakeRespServer : IAsyncDisposable
         lock (s_portGate)
         {
             List<TcpListener>? rejected = null;
+
             try
             {
                 while (true)
                 {
                     var listener = createListener?.Invoke() ?? new TcpListener(IPAddress.Loopback, 0);
-                    try { listener.Start(); }
+
+                    try
+                    {
+                        listener.Start();
+                    }
                     catch { listener.Stop(); throw; }
-                    if (s_usedPorts.Add(((IPEndPoint)listener.LocalEndpoint).Port)) return listener;
+
+                    if (s_usedPorts.Add(((IPEndPoint)listener.LocalEndpoint).Port))
+                    {
+                        return listener;
+                    }
 
                     // Keep rejected ports bound until allocation succeeds so the OS cannot
                     // repeatedly return the same retired endpoint. Release rejected listeners
@@ -178,7 +214,12 @@ internal sealed class FakeRespServer : IAsyncDisposable
             finally
             {
                 if (rejected is not null)
-                    foreach (var listener in rejected) listener.Stop();
+                {
+                    foreach (var listener in rejected)
+                    {
+                        listener.Stop();
+                    }
+                }
             }
         }
     }
@@ -226,17 +267,30 @@ internal sealed class FakeRespServer : IAsyncDisposable
     public async Task SendRawAsync(byte[] frame, int connectionId)
     {
         Socket socket;
-        lock (_receivedCommands) socket = _clientSockets[connectionId];
+
+        lock (_receivedCommands)
+        {
+            socket = _clientSockets[connectionId];
+        }
+
         await SendAllAsync(socket, frame);
     }
 
     public void CloseConnections()
     {
         Socket[] sockets;
-        lock (_receivedCommands) sockets = _clientSockets.ToArray();
+
+        lock (_receivedCommands)
+        {
+            sockets = _clientSockets.ToArray();
+        }
+
         foreach (var socket in sockets)
         {
-            try { socket.Close(0); }
+            try
+            {
+                socket.Close(0);
+            }
             catch (SocketException) { }
             catch (ObjectDisposedException) { }
         }
@@ -247,7 +301,12 @@ internal sealed class FakeRespServer : IAsyncDisposable
         while (!frame.IsEmpty)
         {
             var sent = await socket.SendAsync(frame, SocketFlags.None, cancellationToken);
-            if (sent == 0) throw new IOException("Socket closed during raw frame send.");
+
+            if (sent == 0)
+            {
+                throw new IOException("Socket closed during raw frame send.");
+            }
+
             frame = frame[sent..];
         }
     }
@@ -255,7 +314,12 @@ internal sealed class FakeRespServer : IAsyncDisposable
     public void CloseConnection(int connectionId)
     {
         Socket socket;
-        lock (_receivedCommands) socket = _clientSockets[connectionId];
+
+        lock (_receivedCommands)
+        {
+            socket = _clientSockets[connectionId];
+        }
+
         socket.LingerState = new LingerOption(true, 0);
         socket.Close();
     }
@@ -263,12 +327,17 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private async Task RunAsync(int maxConnections)
     {
         var connections = new List<Task>(maxConnections);
+
         try
         {
             for (var i = 0; i < maxConnections;)
             {
                 Socket socket;
-                try { socket = await _listener.AcceptSocketAsync(_cts.Token); }
+
+                try
+                {
+                    socket = await _listener.AcceptSocketAsync(_cts.Token);
+                }
                 catch (SocketException error) when (!_cts.IsCancellationRequested
                     && error.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted)
                 {
@@ -277,13 +346,20 @@ internal sealed class FakeRespServer : IAsyncDisposable
                     _peerClosed.TrySetResult();
                     continue;
                 }
+
                 if (!IsLoopbackPeer(socket.RemoteEndPoint))
                 {
                     socket.Dispose();
                     continue;
                 }
+
                 socket.NoDelay = true;
-                lock (_receivedCommands) _clientSockets.Add(socket);
+
+                lock (_receivedCommands)
+                {
+                    _clientSockets.Add(socket);
+                }
+
                 _clientSocket.TrySetResult(socket);
                 connections.Add(HandleConnectionAsync(socket, i++));
             }
@@ -302,9 +378,18 @@ internal sealed class FakeRespServer : IAsyncDisposable
 
     internal static bool IsLoopbackPeer(EndPoint? endpoint)
     {
-        if (endpoint is not IPEndPoint peer) return false;
+        if (endpoint is not IPEndPoint peer)
+        {
+            return false;
+        }
+
         var address = peer.Address;
-        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+
+        if (address.IsIPv4MappedToIPv6)
+        {
+            address = address.MapToIPv4();
+        }
+
         return IPAddress.IsLoopback(address);
     }
 
@@ -321,17 +406,25 @@ internal sealed class FakeRespServer : IAsyncDisposable
             while (!_cts.IsCancellationRequested)
             {
                 int read;
+
                 try
                 {
-                    if (ReadGate is { } gate) await gate.WaitAsync(_cts.Token);
+                    if (ReadGate is { } gate)
+                    {
+                        await gate.WaitAsync(_cts.Token);
+                    }
                     // Large binary wire tests retain one complete frame for exact argument checks.
                     // Keep this fixture bounded rather than treating a full parse buffer as EOF.
                     if (end == buffer.Length)
                     {
                         if (buffer.Length == 8 * 1024 * 1024)
+                        {
                             throw new InvalidDataException("Fake RESP frame exceeds the 8 MiB fixture limit.");
+                        }
+
                         Array.Resize(ref buffer, buffer.Length * 2);
                     }
+
                     read = await socket.ReceiveAsync(
                         buffer.AsMemory(end, Math.Min(buffer.Length - end, MaximumBytesPerRead)),
                         SocketFlags.None, _cts.Token);
@@ -343,6 +436,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
                     _peerClosed.TrySetResult();
                     return;
                 }
+
                 if (read == 0)
                 {
                     _peerClosed.TrySetResult();
@@ -353,23 +447,29 @@ internal sealed class FakeRespServer : IAsyncDisposable
 
                 var pos = 0;
                 var hasLibraryInfoReply = false;
+
                 while (RespParser.TryParseValue(buffer.AsSpan(0, end), ref pos, out var command) == RespParseStatus.Done)
                 {
                     var commandText = FormatCommand(in command, out var arguments);
                     command.Dispose();
+
                     if (HandleLibraryInfo && inHandshake && commandText.StartsWith("CLIENT SETINFO LIB-", StringComparison.Ordinal))
                     {
                         pendingReplies.Add(OkReply);
                         hasLibraryInfoReply = true;
                         continue;
                     }
+
                     if (!(commandText.StartsWith("AUTH ", StringComparison.Ordinal)
                         || commandText.StartsWith("HELLO ", StringComparison.Ordinal)
                         || commandText.StartsWith("CLIENT SETNAME ", StringComparison.Ordinal)
                         || commandText.StartsWith("CLIENT TRACKING ", StringComparison.Ordinal)
                         || commandText.StartsWith("SELECT ", StringComparison.Ordinal)
                         || commandText is "READONLY" or "INFO SERVER"))
+                    {
                         inHandshake = false;
+                    }
+
                     if (SuppressReply is not null && pendingReplies.Count > 0 && MinimumCommandsBeforeReply <= 1)
                     {
                         // Tests park a suppressed command and inject its reply once it is recorded.
@@ -385,6 +485,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
 
                     RecordCommand(commandText, arguments, connectionId);
                     var commandsSeen = Interlocked.Increment(ref _commandsSeen);
+
                     if (commandsSeen == CloseConnectionAfterCommand)
                     {
                         return;
@@ -453,6 +554,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     {
         var elements = command.AsArray();
         var builder = new StringBuilder();
+
         for (var i = 0; i < elements.Length; i++)
         {
             if (i > 0)
@@ -464,7 +566,12 @@ internal sealed class FakeRespServer : IAsyncDisposable
         }
 
         arguments = new byte[elements.Length][];
-        for (var i = 0; i < elements.Length; i++) arguments[i] = elements[i].AsSpan().ToArray();
+
+        for (var i = 0; i < elements.Length; i++)
+        {
+            arguments[i] = elements[i].AsSpan().ToArray();
+        }
+
         return builder.ToString();
     }
 
@@ -487,6 +594,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
 
         _cts.Cancel();
         _listener.Stop();
+
         try
         {
             await _acceptTask;

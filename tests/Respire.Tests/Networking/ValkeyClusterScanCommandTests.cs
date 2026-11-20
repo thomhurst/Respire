@@ -28,7 +28,11 @@ public class ValkeyClusterScanCommandTests
         var view = client.WithKeyPrefix((RespireKey)prefix);
         var cursor = $"binary-{{{Tag(9000)}}}-17";
         RespireValkeyClusterScanPage page;
-        if (mode == 0) page = await view.Keys.ScanValkeyClusterPageAsync(cursor);
+
+        if (mode == 0)
+        {
+            page = await view.Keys.ScanValkeyClusterPageAsync(cursor);
+        }
         else if (mode == 1)
         {
             using var queue = view.CreateBatch();
@@ -43,6 +47,7 @@ public class ValkeyClusterScanCommandTests
             await queue.CommitAsync();
             page = pending.Result;
         }
+
         await Assert.That(page.Keys.Count).IsEqualTo(1);
         await Assert.That(page.Keys[0]).IsEqualTo(new RespireKey(suffix));
         var sent = cluster.Second.ReceivedArguments.Single(row => row[0].AsSpan().SequenceEqual("CLUSTERSCAN"u8));
@@ -70,7 +75,8 @@ public class ValkeyClusterScanCommandTests
         // The scan-routing case needs its own tracked RESP3 client and fake primary topology.
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(cluster.First.Port, 3)
-            with { ClientSideCache = new(), ClusterTopologyRefreshInterval = null });
+            with
+        { ClientSideCache = new(), ClusterTopologyRefreshInterval = null });
 #pragma warning restore RESP010
         var tag = $"{{{Tag(0)}}}:";
         await Assert.That(await client.GetStringAsync(tag + "cached")).IsEqualTo("value");
@@ -78,7 +84,12 @@ public class ValkeyClusterScanCommandTests
         using var batch = client.WithReadFrom(policy).CreateBatch();
         var scan = batch.Keys.ScanValkeyClusterPage(slot: 0);
         var read = batch.Strings.GetString(tag + "read");
-        if (includeWrite) _ = batch.Strings.Set(tag + "write", new RespireValue("value"));
+
+        if (includeWrite)
+        {
+            _ = batch.Strings.Set(tag + "write", new RespireValue("value"));
+        }
+
         await batch.ExecuteAsync();
         await Assert.That(scan.Result.IsComplete).IsTrue();
         await Assert.That(read.Result).IsEqualTo("value");
@@ -135,7 +146,8 @@ public class ValkeyClusterScanCommandTests
         await Assert.That(Encoding.UTF8.GetString(sent[3])).IsEqualTo(prefix.Replace("*", "\\*", StringComparison.Ordinal) + "*");
         var get = cluster.First.ReceivedArguments.Single(row => Encoding.UTF8.GetString(row[0]) == "GET");
         await Assert.That(get[1]).IsEquivalentTo(physical);
-        await client.DisposeAsync(); physical.AsSpan().Clear();
+        await client.DisposeAsync();
+        physical.AsSpan().Clear();
         await Assert.That(page.Cursor).IsEqualTo("opaque-{next}-17");
         await Assert.That(page.Keys[0]).IsEqualTo(new RespireKey(suffix));
     }
@@ -158,8 +170,12 @@ public class ValkeyClusterScanCommandTests
         var view = client.WithKeyPrefix(prefix);
         var page = await view.Keys.ScanValkeyClusterPageAsync();
         await Assert.That(page.Keys.Count).IsEqualTo(2);
+
         foreach (var key in page.Keys)
+        {
             await view.GetStringAsync(key);
+        }
+
         var gets = cluster.First.ReceivedArguments.Where(row => Encoding.UTF8.GetString(row[0]) == "GET").ToArray();
         await Assert.That(gets[0][1]).IsEquivalentTo(joined);
         await Assert.That(gets[1][1]).IsEquivalentTo(binary);
@@ -194,6 +210,7 @@ public class ValkeyClusterScanCommandTests
         var view = client.WithKeyPrefix(prefix).WithReadFrom(RespireReadFrom.Replica);
         var cursor = $"future-{{{Tag(9000)}}}-99";
         RespireValkeyClusterScanPage page;
+
         if (transaction)
         {
             await using var queue = view.CreateTransaction();
@@ -208,6 +225,7 @@ public class ValkeyClusterScanCommandTests
             await queue.ExecuteAsync();
             page = pending.Result;
         }
+
         await Assert.That(Scans(cluster.First)).IsEmpty();
         var match = surrogate ? "" : $" MATCH {prefix.Replace("*", "\\*", StringComparison.Ordinal)}*tail";
         await Assert.That(Scans(cluster.Second).Single()).IsEqualTo($"CLUSTERSCAN {cursor}{match} COUNT 7 TYPE string");
@@ -218,6 +236,7 @@ public class ValkeyClusterScanCommandTests
         await Assert.That(get[1]).IsEquivalentTo(physical);
         await client.DisposeAsync();
         physical.AsSpan().Clear();
+
         if (surrogate)
         {
             await Assert.That(page.Keys[0].Prepend(new KeyPrefix(prefix)).ToBytes())
@@ -225,7 +244,10 @@ public class ValkeyClusterScanCommandTests
             await Assert.That(page.Keys[0]).IsNotEqualTo(new RespireKey(suffix));
         }
         else
+        {
             await Assert.That(page.Keys[0]).IsEqualTo(new RespireKey(suffix));
+        }
+
         await Assert.That(cluster.Replica.ConnectionAccepted.IsCompleted).IsFalse();
     }
 
@@ -246,9 +268,24 @@ public class ValkeyClusterScanCommandTests
 #pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(target.Port, 2));
 #pragma warning restore RESP010
-        var cursor = shape switch { "null" => null!, "empty" => "", _ => "0" };
-        var count = shape switch { "zero-count" => 0, "negative-count" => -1, _ => 250 };
-        int? slot = shape switch { "negative-slot" => -1, "large-slot" => 16384, _ => null };
+        var cursor = shape switch
+        {
+            "null" => null!,
+            "empty" => "",
+            _ => "0"
+        };
+        var count = shape switch
+        {
+            "zero-count" => 0,
+            "negative-count" => -1,
+            _ => 250
+        };
+        int? slot = shape switch
+        {
+            "negative-slot" => -1,
+            "large-slot" => 16384,
+            _ => null
+        };
         RespireKeyType? type = shape switch
         {
             "none-type" => RespireKeyType.None,
@@ -274,7 +311,8 @@ public class ValkeyClusterScanCommandTests
 #pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(target.Port, 2));
 #pragma warning restore RESP010
-        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
         await Assert.That(async () => await client.Keys.ScanValkeyClusterPageAsync(cancellationToken: cancellation.Token))
             .Throws<OperationCanceledException>();
         await Assert.That(target.ConnectionAccepted.IsCompleted).IsFalse();
@@ -287,8 +325,13 @@ public class ValkeyClusterScanCommandTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         cluster.First.SuppressReply = command =>
         {
-            if (!command.StartsWith("CLUSTERSCAN ", StringComparison.Ordinal)) return false;
-            received.TrySetResult(); return true;
+            if (!command.StartsWith("CLUSTERSCAN ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            received.TrySetResult();
+            return true;
         };
         await using var client = await cluster.ConnectAsync(2);
         using var cancellation = new CancellationTokenSource();
@@ -320,28 +363,47 @@ public class ValkeyClusterScanCommandTests
 
     private static RespireOptions Options(int port, int protocol) => new()
     {
-        UseCluster = true, Connections = 1, Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
-        Endpoints = [new("127.0.0.1", port)], MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+        UseCluster = true,
+        Connections = 1,
+        Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
+        Endpoints = [new("127.0.0.1", port)],
+        MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
     };
+
     private static IEnumerable<string> Scans(FakeRespServer server)
         => server.ReceivedCommands.Where(command => command.StartsWith("CLUSTERSCAN ", StringComparison.Ordinal));
+
     private static string Tag(int slot) => Enumerable.Range(0, 1_000_000).Select(index => $"scan-{index}")
         .First(tag => ClusterHash.GetSlot(tag) == slot);
+
     private static byte[] Bulk(byte[] bytes) => [.. Encoding.ASCII.GetBytes($"${bytes.Length}\r\n"), .. bytes, 13, 10];
+
     private static byte[] Page(string cursor, params byte[][] keys)
         => [.. "*2\r\n"u8, .. Bulk(Encoding.UTF8.GetBytes(cursor)), .. Encoding.ASCII.GetBytes($"*{keys.Length}\r\n"), .. keys.SelectMany(Bulk)];
 
     private sealed class ScanCluster : IAsyncDisposable
     {
-        internal FakeRespServer First { get; } = new(8, FakeRespServer.OkReply);
-        internal FakeRespServer Second { get; } = new(8, FakeRespServer.OkReply);
-        internal FakeRespServer Replica { get; } = new(8, FakeRespServer.OkReply);
+        internal FakeRespServer First
+        {
+            get;
+        } = new(8, FakeRespServer.OkReply);
+
+        internal FakeRespServer Second
+        {
+            get;
+        } = new(8, FakeRespServer.OkReply);
+
+        internal FakeRespServer Replica
+        {
+            get;
+        } = new(8, FakeRespServer.OkReply);
         internal Func<FakeRespServer, byte[]> Scan = _ => Page("0");
         internal bool QueueTransaction;
 
         internal ScanCluster()
         {
             foreach (var server in new[] { First, Second, Replica })
+            {
                 server.ReplyOverride = (_, command) => command switch
                 {
                     "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
@@ -352,14 +414,20 @@ public class ValkeyClusterScanCommandTests
                     _ when command.StartsWith("GET ", StringComparison.Ordinal) => Bulk("value"u8.ToArray()),
                     _ => FakeRespServer.OkReply,
                 };
+            }
         }
 
         internal ValueTask<RespireClient> ConnectAsync(int protocol) => RespireClient.ConnectAsync(Options(First.Port, protocol));
+
         private byte[] Slots() => Encoding.ASCII.GetBytes($"*2\r\n*4\r\n:0\r\n:8191\r\n{Node(First, "first")}{Node(Replica, "replica")}*3\r\n:8192\r\n:16383\r\n{Node(Second, "second")}");
+
         private static string Node(FakeRespServer server, string id) => $"*3\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n${id.Length}\r\n{id}\r\n";
+
         public async ValueTask DisposeAsync()
         {
-            await First.DisposeAsync(); await Second.DisposeAsync(); await Replica.DisposeAsync();
+            await First.DisposeAsync();
+            await Second.DisposeAsync();
+            await Replica.DisposeAsync();
         }
     }
 }

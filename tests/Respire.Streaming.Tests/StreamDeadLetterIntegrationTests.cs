@@ -19,17 +19,23 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
     public async Task AtomicCompletionPreservesOtherGroupsAndOriginalBytes(int protocol)
     {
         await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-            with { Protocol = (RespireProtocol)protocol });
+            with
+        { Protocol = (RespireProtocol)protocol });
         await using var server = new RespireFakeServer();
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions()
-            with { Protocol = (RespireProtocol)protocol });
+            with
+        { Protocol = (RespireProtocol)protocol });
+
         foreach (var root in new[] { real, fake })
         {
             var client = root.WithKeyPrefix("{worker}tenant:");
             // Duplicate metadata names and non-UTF8 field names must survive byte-for-byte.
             using (await root.ExecuteAsync("XADD", ["{worker}tenant:s", "1-0",
                 new byte[] { 0xff, 0x00 }, new byte[] { 0x00, 0xff, 0x0d, 0x0a },
-                "_respire.source_id", "original", "payload", "body"])) { }
+                "_respire.source_id", "original", "payload", "body"]))
+            {
+            }
+
             await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
             await client.Streams.CreateGroupAsync("s", "other", RespireStreamId.Beginning);
             await client.Streams.ReadGroupOnceAsync("s", "g", "old");
@@ -57,8 +63,11 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
             await Assert.That(fields[1].AsString()).IsEqualTo("1-0");
             await Assert.That(fields[5].AsString()).IsEqualTo("3");
             await Assert.That(fields[9].AsBytes().Length).IsEqualTo(256);
+
             for (var i = 0; i < sourceEntries[0][1].Count; i++)
+            {
                 await Assert.That(fields[i + 10].AsBytes().SequenceEqual(sourceEntries[0][1][i].AsBytes())).IsTrue();
+            }
         }
     }
 
@@ -75,12 +84,14 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
         await using var real = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         await using var server = new RespireFakeServer();
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions());
+
         foreach (var client in new[] { real, fake })
         {
             var fields = Enumerable.Range(0, fieldCount).Select(index => ($"field-{index}", (RespireValue)$"value-{index}")).ToArray();
             await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, fields);
             await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
             await client.Streams.ReadGroupOnceAsync("s", "g", "owner");
+
             if (fieldCount > 1024)
             {
                 var error = await Assert.That(async () => await CompleteAsync(client, "owner", 1)).Throws<RespireServerException>();
@@ -93,10 +104,15 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
                 await Assert.That(await CompleteAsync(client, "owner", 1)).IsEqualTo(1);
                 var entry = (await client.Streams.ReadAsync("dlq")).Single();
                 await Assert.That(entry.Fields.Count).IsEqualTo(fieldCount + 5);
+
                 for (var index = 0; index < fieldCount; index++)
+                {
                     await Assert.That(entry.GetString($"field-{index}")).IsEqualTo($"value-{index}");
+                }
+
                 await Assert.That((await client.Streams.PendingSummaryAsync("s", "g")).Count).IsEqualTo(0);
             }
+
             await Assert.That(await client.Streams.CountAsync("s")).IsEqualTo(1);
         }
     }
@@ -107,12 +123,17 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
         await using var real = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         await using var server = new RespireFakeServer();
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions());
+
         foreach (var client in new[] { real, fake })
         {
             await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, ("payload", "body"));
             await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
             await client.Streams.ReadGroupOnceAsync("s", "g", "owner");
-            using (await client.ExecuteAsync("XDEL", ["s", "1-0"])) { }
+
+            using (await client.ExecuteAsync("XDEL", ["s", "1-0"]))
+            {
+            }
+
             await Assert.That(await CompleteAsync(client, "old", 1)).IsEqualTo(0);
             await Assert.That(await CompleteAsync(client, "owner", 2)).IsEqualTo(0);
             await Assert.That((await client.Streams.PendingSummaryAsync("s", "g")).Count).IsEqualTo(1);
@@ -128,10 +149,13 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
     public async Task WrongTypeDeadLetterDoesNotAcknowledgeOrMutate(int protocol)
     {
         await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-            with { Protocol = (RespireProtocol)protocol });
+            with
+        { Protocol = (RespireProtocol)protocol });
         await using var server = new RespireFakeServer();
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions()
-            with { Protocol = (RespireProtocol)protocol });
+            with
+        { Protocol = (RespireProtocol)protocol });
+
         foreach (var client in new[] { real, fake })
         {
             await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, ("payload", "body"));
@@ -155,16 +179,23 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
         await admin.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, ("payload", "body"));
         await admin.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
         await admin.Streams.ReadGroupOnceAsync("s", "g", "owner");
+
         if (deletedSource)
         {
             using var deleted = await admin.ExecuteAsync("XDEL", ["s", "1-0"]);
         }
+
         var username = "dlq-" + Guid.NewGuid().ToString("N");
-        using (await admin.ExecuteAsync("ACL SETUSER", [username, "on", ">dlq-test-password", "~*", "+@all", "-" + deniedCommand])) { }
+
+        using (await admin.ExecuteAsync("ACL SETUSER", [username, "on", ">dlq-test-password", "~*", "+@all", "-" + deniedCommand]))
+        {
+        }
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = username, Password = "dlq-test-password" });
+                with
+            { Username = username, Password = "dlq-test-password" });
             await Assert.That(async () => await CompleteAsync(restricted, "owner", 1)).Throws<RespireServerException>();
             await Assert.That((await admin.Streams.PendingSummaryAsync("s", "g")).Count).IsEqualTo(1);
             await Assert.That(await admin.Streams.CountAsync("dlq")).IsEqualTo(0);
@@ -189,6 +220,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
         var client = root.WithKeyPrefix("{worker}tenant:");
         await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("payload", new byte[] { 0xff, 0, 13, 10 }));
         var abandoned = new HandlerState { Park = true };
+
         await using (var stopped = CreateWorker(client, abandoned, "nack", 2))
         {
             var worker = stopped.GetServices<IHostedService>().Single();
@@ -197,15 +229,20 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
             await abandoned.Entered.Reader.ReadAsync(deadline.Token);
             await worker.StopAsync(new CancellationToken(canceled: true));
         }
+
         var recovered = new HandlerState();
         await using var provider = CreateWorker(client, recovered, outcome, 2);
         var recovery = provider.GetServices<IHostedService>().Single();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await recovery.StartAsync(timeout.Token);
+
         try
         {
             while (await client.Streams.CountAsync("dlq", timeout.Token) != 1)
+            {
                 await Task.Delay(10, timeout.Token);
+            }
+
             var entry = (await client.Streams.ReadAsync("dlq", cancellationToken: timeout.Token)).Single();
             await Assert.That(entry["payload"].SequenceEqual(new byte[] { 0xff, 0, 13, 10 })).IsTrue();
             await Assert.That(entry.GetString("_respire.source_id")).IsEqualTo("1-0");
@@ -232,10 +269,14 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
         var worker = provider.GetServices<IHostedService>().Single();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await worker.StartAsync(timeout.Token);
+
         try
         {
             while (await client.Streams.CountAsync("dlq", timeout.Token) != 1)
+            {
                 await Task.Delay(10, timeout.Token);
+            }
+
             await Assert.That(state.Attempts).IsEqualTo(0);
             var entry = (await client.Streams.ReadAsync("dlq")).Single();
             await Assert.That(entry.GetString("_respire.reason")).IsEqualTo("delivery-limit");
@@ -251,18 +292,31 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
         services.AddRespireStreamWorker<PoisonHandler, RespireStreamEntry>("events", "workers",
             entry => outcome == "deserialize" ? throw new FormatException("private payload") : entry, new()
             {
-                DeadLetterStream = "dlq", DeliveryLimit = limit,
-                MinimumIdleTime = TimeSpan.FromMilliseconds(30), RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
+                DeadLetterStream = "dlq",
+                DeliveryLimit = limit,
+                MinimumIdleTime = TimeSpan.FromMilliseconds(30),
+                RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
             });
         return services.BuildServiceProvider();
     }
 
     public sealed class HandlerState
     {
-        public bool Park { get; init; }
-        public string Outcome { get; set; } = "nack";
+        public bool Park
+        {
+            get; init;
+        }
+
+        public string Outcome
+        {
+            get; set;
+        } = "nack";
         public int Attempts;
-        public Channel<bool> Entered { get; } = Channel.CreateUnbounded<bool>();
+
+        public Channel<bool> Entered
+        {
+            get;
+        } = Channel.CreateUnbounded<bool>();
     }
 
     public sealed class PoisonHandler(HandlerState state) : IRespireStreamHandler<RespireStreamEntry>
@@ -271,7 +325,12 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
         {
             Interlocked.Increment(ref state.Attempts);
             state.Entered.Writer.TryWrite(true);
-            if (state.Park) await Task.Delay(Timeout.InfiniteTimeSpan, token);
+
+            if (state.Park)
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+
             return state.Outcome switch
             {
                 "throw" => throw new InvalidOperationException("private payload"),

@@ -14,13 +14,19 @@ internal static class LeaderElectionMetrics
 
     internal static void Changed(bool elected)
     {
-        try { Changes.Value.Add(1, new KeyValuePair<string, object?>("state", elected ? "elected" : "revoked")); }
+        try
+        {
+            Changes.Value.Add(1, new KeyValuePair<string, object?>("state", elected ? "elected" : "revoked"));
+        }
         catch (Exception) { /* Listener failures must not change lease ownership. */ }
     }
 
     internal static void FailedAttempt()
     {
-        try { Failures.Value.Add(1); }
+        try
+        {
+            Failures.Value.Add(1);
+        }
         catch (Exception) { /* Listener failures must not stop acquisition retries. */ }
     }
 }

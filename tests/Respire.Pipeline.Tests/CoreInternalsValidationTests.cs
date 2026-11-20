@@ -27,10 +27,14 @@ public class CoreInternalsValidationTests
     [Arguments(23)]
     public async Task ConcurrentValidatorsUsePrivateUnixStartupCachesAndCleanUp(int exitCode)
     {
-        if (OperatingSystem.IsWindows()) return; // PowerShell uses XDG_CACHE_HOME only on Unix.
+        if (OperatingSystem.IsWindows())
+        {
+            return; // PowerShell uses XDG_CACHE_HOME only on Unix.
+        }
 
         var inheritedCache = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
         var root = Directory.CreateTempSubdirectory("Respire validation cache test ");
+
         try
         {
             root.CreateSubdirectory("scripts");
@@ -49,8 +53,11 @@ public class CoreInternalsValidationTests
             {
                 var validation = VerifyCoreInternalsDependenciesModule.VerifyAsync(
                     root.FullName, report, exitCode.ToString(), CancellationToken.None);
+
                 if (exitCode == 0)
+                {
                     await validation;
+                }
                 else
                 {
                     var error = await Assert.That(async () => await validation).Throws<InvalidOperationException>();
@@ -61,6 +68,7 @@ public class CoreInternalsValidationTests
 
             var caches = reports.Select(File.ReadAllText).ToArray();
             await Assert.That(caches.Distinct().Count()).IsEqualTo(reports.Length);
+
             foreach (var cache in caches)
             {
                 await Assert.That(Path.GetFileName(cache)).IsEqualTo("powershell");
@@ -69,6 +77,7 @@ public class CoreInternalsValidationTests
                 await Assert.That(privateRoot).IsNotEqualTo(inheritedCache);
                 await Assert.That(Directory.Exists(privateRoot)).IsFalse();
             }
+
             await Assert.That(Environment.GetEnvironmentVariable("XDG_CACHE_HOME")).IsEqualTo(inheritedCache);
         }
         finally
@@ -80,11 +89,15 @@ public class CoreInternalsValidationTests
     [Test]
     public async Task CancellationStopsValidatorBeforeDeletingItsUnixCache()
     {
-        if (OperatingSystem.IsWindows()) return;
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
 
         var root = Directory.CreateTempSubdirectory("Respire validation cancellation ");
         using var cancellation = new CancellationTokenSource();
         Task<string>? validation = null;
+
         try
         {
             root.CreateSubdirectory("scripts");
@@ -110,11 +123,16 @@ public class CoreInternalsValidationTests
         finally
         {
             cancellation.Cancel();
+
             if (validation is not null)
             {
-                try { await validation; }
+                try
+                {
+                    await validation;
+                }
                 catch (OperationCanceledException) { }
             }
+
             root.Delete(recursive: true);
         }
     }
@@ -126,11 +144,19 @@ public class CoreInternalsValidationTests
     public async Task ValidationPropagatesInvalidPackageFailure(bool invalid, bool serializer)
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
+
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "Directory.Build.props")))
+        {
             root = root.Parent;
-        if (root is null) throw new InvalidOperationException("Repository root not found.");
+        }
+
+        if (root is null)
+        {
+            throw new InvalidOperationException("Repository root not found.");
+        }
 
         var packages = Directory.CreateTempSubdirectory("Respire package validation ");
+
         try
         {
             const string version = "1.2.3-preview.1570";
@@ -145,6 +171,7 @@ public class CoreInternalsValidationTests
                         .Descendants("RespirePinCoreDependency").Any(x => x.Value == "true")))
                 .Distinct().ToArray();
             var invalidPackage = serializer ? "Respire.Serialization.MessagePack" : friends[0];
+
             foreach (var id in friends.Prepend("Respire"))
             {
                 using var archive = ZipFile.Open(Path.Combine(packages.FullName, $"{id}.{version}.nupkg"), ZipArchiveMode.Create);

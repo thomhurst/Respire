@@ -1,5 +1,5 @@
-using BenchmarkDotNet.Running;
 using System.Reflection;
+using BenchmarkDotNet.Running;
 using StackExchange.Redis;
 
 Console.WriteLine($"StackExchange.Redis: {typeof(ConnectionMultiplexer).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion}");

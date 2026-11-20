@@ -16,7 +16,13 @@ internal sealed partial class RespireConnection
 {
     internal bool IsStreamingWriteActive
     {
-        get { lock (_writeGate) return _streamingActive; }
+        get
+        {
+            lock (_writeGate)
+            {
+                return _streamingActive;
+            }
+        }
     }
 
     /// <summary>
@@ -58,11 +64,16 @@ internal sealed partial class RespireConnection
     // block. CancelAsync runs them off this thread, and any fault is observed here.
     private static void ObserveCancellationCallbacks(Task? callbacks)
     {
-        if (callbacks is { IsFaulted: true }) _ = callbacks.Exception;
+        if (callbacks is { IsFaulted: true })
+        {
+            _ = callbacks.Exception;
+        }
         else if (callbacks is not null)
+        {
             _ = callbacks.ContinueWith(static completed => _ = completed.Exception,
                 CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
+        }
     }
 
     private ValueTask<RespValue> SendStreamingAsync<TCommand>(
@@ -92,7 +103,12 @@ internal sealed partial class RespireConnection
         CommandWriteObservation? writeObservation = null, bool throwOnError = true)
     {
         _cacheMutationAdmission?.ValidateDispatchAdmission(in command);
-        if (prelude is { } dispatchPrelude) _cacheMutationAdmission?.ValidateDispatchAdmission(in dispatchPrelude);
+
+        if (prelude is { } dispatchPrelude)
+        {
+            _cacheMutationAdmission?.ValidateDispatchAdmission(in dispatchPrelude);
+        }
+
         using var timeoutCancellation = deadline.IsSet
             ? new StreamDeadlineCancellation(this, deadline)
             : null;
@@ -105,6 +121,7 @@ internal sealed partial class RespireConnection
             : CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken, timeoutCancellation.Token, _closedCancellation.Token);
         var effectiveCancellation = linkedCancellation.Token;
+
         try
         {
             await WaitForStreamingGateAsync(effectiveCancellation).ConfigureAwait(false);
@@ -119,6 +136,7 @@ internal sealed partial class RespireConnection
         }
 
         PendingResponseSource source;
+
         try
         {
             source = _sourcePool.Rent(throwOnError, commandName: "SET");
@@ -136,6 +154,7 @@ internal sealed partial class RespireConnection
         StreamPayloadReader? payloadReader = null;
         ReadOnlyMemory<byte> firstChunk = default;
         Task<ReadOnlyMemory<byte>>? firstChunkRead = null;
+
         try
         {
             source.BindMutationFence(command.GetMutationFence());
@@ -143,7 +162,11 @@ internal sealed partial class RespireConnection
             // and acknowledged before a (potentially long) upload takes the wire.
             await WaitForStreamingAdmissionAsync(static connection =>
             {
-                if (connection._credentialRenewalPending) return false;
+                if (connection._credentialRenewalPending)
+                {
+                    return false;
+                }
+
                 connection._streamingActive = true;
                 return true;
             }, effectiveCancellation).ConfigureAwait(false);
@@ -164,6 +187,7 @@ internal sealed partial class RespireConnection
                 payloadReader = new StreamPayloadReader(stream, command.Length, _streamPayloadPool);
                 phase = StreamedSetPhase.ReadingFirstChunk;
                 firstChunkRead = payloadReader.StartRead(effectiveCancellation);
+
                 try
                 {
                     firstChunk = await firstChunkRead.WaitAsync(effectiveCancellation).ConfigureAwait(false);
@@ -180,12 +204,16 @@ internal sealed partial class RespireConnection
             // would have to abort the connection for.
             timeoutCancellation?.ThrowIfDue();
             effectiveCancellation.ThrowIfCancellationRequested();
+
             if (!streamingRoute.IsCurrent())
+            {
                 throw new RespireConnectionRetiredException(Host, Port);
+            }
 
             if (prelude is { } prefix)
             {
                 phase = StreamedSetPhase.AskingQueued;
+
                 try
                 {
                     using var askingResponse = await AppendStreamingPreludeAsync(
@@ -203,8 +231,11 @@ internal sealed partial class RespireConnection
                 // Check again before the SET header is queued so that write cannot start late.
                 timeoutCancellation?.ThrowIfDue();
                 effectiveCancellation.ThrowIfCancellationRequested();
+
                 if (!streamingRoute.IsCurrent())
+                {
                     throw new RespireConnectionRetiredException(Host, Port);
+                }
             }
 
             // Retirement (local or cluster generation) rejects the upload until its header is
@@ -238,6 +269,7 @@ internal sealed partial class RespireConnection
             var translated = error is OperationCanceledException canceled
                 ? TranslateStreamedSetCancellation(canceled, cancellationToken, timeoutCancellation, phase)
                 : null;
+
             if (phase == StreamedSetPhase.ReadingFirstChunk
                 && translated is RespireConnectionRetiredException
                 && firstChunkRead is not null
@@ -249,10 +281,15 @@ internal sealed partial class RespireConnection
                 using var retryReadCancellation = timeoutCancellation is null
                     ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
                     : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCancellation.Token);
+
                 try
                 {
                     Exception? fillError = null;
-                    try { firstChunk = await firstChunkRead.WaitAsync(retryReadCancellation.Token).ConfigureAwait(false); }
+
+                    try
+                    {
+                        firstChunk = await firstChunkRead.WaitAsync(retryReadCancellation.Token).ConfigureAwait(false);
+                    }
                     catch (OperationCanceledException) when (retryReadCancellation.IsCancellationRequested) { throw; }
                     catch (Exception readError) { fillError = readError; }
 
@@ -282,6 +319,7 @@ internal sealed partial class RespireConnection
                     translated = TranslateStreamedSetCancellation(retryCancellation, cancellationToken, timeoutCancellation, phase);
                 }
             }
+
             if ((phase is StreamedSetPhase.ReadingFirstChunk
                     or StreamedSetPhase.AskingQueued
                     or StreamedSetPhase.AskingAccepted)
@@ -291,24 +329,39 @@ internal sealed partial class RespireConnection
                 // ASKING may be accepted before AppendStreamingStart observes retirement; the
                 // payload prefix is still consumed and must lead the replacement upload.
                 var consumed = !firstChunk.IsEmpty ? firstChunk : payloadReader?.ConsumedPrefix ?? default;
-                if (!consumed.IsEmpty) command.RestoreSourcePrefixForRetry(consumed.Span);
+
+                if (!consumed.IsEmpty)
+                {
+                    command.RestoreSourcePrefixForRetry(consumed.Span);
+                }
             }
             // One failure path for every phase: each exception type only decides what the caller
             // sees, while the abort-versus-reclaim decision depends on the phase alone.
             await FailStreamedSetAsync(source, phase, failure, translated is RespireTimeoutException)
                 .ConfigureAwait(false);
-            if (translated is null) throw;
+
+            if (translated is null)
+            {
+                throw;
+            }
+
             throw translated;
         }
         finally
         {
             // Returns the pooled chunk unless a cancelled read still owns it.
             payloadReader?.Dispose();
+
             if (ownsWritePath)
             {
-                lock (_writeGate) _streamingActive = false;
+                lock (_writeGate)
+                {
+                    _streamingActive = false;
+                }
+
                 _capacitySignal.Signal();
             }
+
             _streamingGate.Release();
         }
 
@@ -324,6 +377,7 @@ internal sealed partial class RespireConnection
         source.ErrorAttempts = errorAttempts;
         source.ErrorEndpoint = new(Host, Port);
         bool startedBatch;
+
         try
         {
             lock (_writeGate)
@@ -332,6 +386,7 @@ internal sealed partial class RespireConnection
 
                 var start = _activeBuffer.Count;
                 startedBatch = start == 0 && _inflight.Count == 0;
+
                 try
                 {
                     var writer = new RespWriter(_activeBuffer, command.GetWriteSizeHint());
@@ -355,7 +410,11 @@ internal sealed partial class RespireConnection
                     Volatile.Write(ref _producerProgress.EnqueuedBytes, writeStart);
                     throw new InvalidOperationException("No in-flight slot remained for the ASKING prelude.");
                 }
-                if (_responseTimeout is not null) _activeReplyCount++;
+
+                if (_responseTimeout is not null)
+                {
+                    _activeReplyCount++;
+                }
             }
         }
         catch
@@ -388,7 +447,10 @@ internal sealed partial class RespireConnection
         StreamedSetPhase phase)
     {
         if (callerToken.IsCancellationRequested)
+        {
             return new OperationCanceledException(error.Message, error, callerToken);
+        }
+
         if (timeoutCancellation is { IsCancellationRequested: true })
         {
             return new RespireTimeoutException("SET", timeoutCancellation.EffectiveTimeout, error,
@@ -396,10 +458,16 @@ internal sealed partial class RespireConnection
                     ? RespireCommandStage.WaitingForCapacity
                     : RespireCommandStage.Writing));
         }
+
         if (phase < StreamedSetPhase.HeaderQueued && Volatile.Read(ref _retired))
+        {
             return new RespireConnectionRetiredException(Host, Port);
+        }
+
         if (_closedCancellation.IsCancellationRequested)
+        {
             return ClosedDuringStreamedSet(error);
+        }
 
         return null;
     }
@@ -439,17 +507,25 @@ internal sealed partial class RespireConnection
                 error));
         }
 
-        if (phase < StreamedSetPhase.ResponseQueued) ReclaimUnpublished(source);
-        else await ObserveStreamedSetResponseAsync(source).ConfigureAwait(false);
+        if (phase < StreamedSetPhase.ResponseQueued)
+        {
+            ReclaimUnpublished(source);
+        }
+        else
+        {
+            await ObserveStreamedSetResponseAsync(source).ConfigureAwait(false);
+        }
     }
 
     private async ValueTask WaitForStreamingGateAsync(CancellationToken cancellationToken)
     {
         using var gateCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var gateWait = _streamingGate.WaitAsync(gateCancellation.Token);
+
         if (await Task.WhenAny(gateWait, _retiredSignal.Task).ConfigureAwait(false) == _retiredSignal.Task)
         {
             await gateCancellation.CancelAsync().ConfigureAwait(false);
+
             try
             {
                 await gateWait.ConfigureAwait(false);
@@ -458,14 +534,19 @@ internal sealed partial class RespireConnection
             catch (OperationCanceledException error)
             {
                 if (cancellationToken.IsCancellationRequested)
+                {
                     throw new OperationCanceledException(error.Message, error, cancellationToken);
+                }
             }
 
             cancellationToken.ThrowIfCancellationRequested();
             ThrowIfRetired();
         }
 
-        try { await gateWait.ConfigureAwait(false); }
+        try
+        {
+            await gateWait.ConfigureAwait(false);
+        }
         catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
         {
             throw new OperationCanceledException(error.Message, error, cancellationToken);
@@ -485,12 +566,21 @@ internal sealed partial class RespireConnection
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (TryAdmitStreaming(admit)) return;
+
+            if (TryAdmitStreaming(admit))
+            {
+                return;
+            }
             // Capture the pulse generation before re-checking so a pulse in between is not lost.
             // Capturing registers no cancellation callback, so abandoning it when the re-check
             // passes costs nothing; the shared task completes at the next pulse regardless.
             var signaled = _capacitySignal.CaptureGeneration();
-            if (TryAdmitStreaming(admit)) return;
+
+            if (TryAdmitStreaming(admit))
+            {
+                return;
+            }
+
             await signaled.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
@@ -510,8 +600,15 @@ internal sealed partial class RespireConnection
     // on the replacement. After that the command was accepted, and retirement drains it instead.
     private void ThrowIfStreamingUnavailable(bool rejectRetired)
     {
-        if (rejectRetired) ThrowIfRetired();
-        if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.") { Endpoint = new(Host, Port) };
+        if (rejectRetired)
+        {
+            ThrowIfRetired();
+        }
+
+        if (_dead)
+        {
+            throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.") { Endpoint = new(Host, Port) };
+        }
     }
 
     internal static async ValueTask ObserveStreamedSetResponseAsync(PendingResponseSource source)
@@ -520,6 +617,7 @@ internal sealed partial class RespireConnection
         var commandName = source.CommandName;
         var attempts = source.ErrorAttempts;
         var endpoint = source.ErrorEndpoint;
+
         try
         {
             using var response = await source.Task.ConfigureAwait(false);
@@ -540,7 +638,10 @@ internal sealed partial class RespireConnection
     private ValueTask WriteStreamedPayloadAsync(StreamedSetCommand command, StreamPayloadReader? payloadReader,
         ReadOnlyMemory<byte> firstChunk, CancellationToken cancellationToken)
     {
-        if (payloadReader is not null) return CopyStreamPayloadAsync(payloadReader, firstChunk, cancellationToken);
+        if (payloadReader is not null)
+        {
+            return CopyStreamPayloadAsync(payloadReader, firstChunk, cancellationToken);
+        }
         // A zero-length stream source has no payload; a sequence source never has a reader.
         return command.SourceStream is null
             ? CopySequencePayloadAsync(command.Sequence, cancellationToken)
@@ -571,6 +672,7 @@ internal sealed partial class RespireConnection
         {
             var write = AppendStreamingBytes(chunk.Span);
             ScheduleFlush(startedBatch: false);
+
             if (reader.IsComplete)
             {
                 await write.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -580,6 +682,7 @@ internal sealed partial class RespireConnection
             // AppendStreamingBytes copies the chunk into the connection buffer, so the reader can
             // reuse its single pooled chunk while the socket drains that copy.
             var nextChunk = reader.StartRead(cancellationToken);
+
             try
             {
                 await write.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -600,7 +703,8 @@ internal sealed partial class RespireConnection
 
     private RespireConnectionException ClosedDuringStreamedSet(OperationCanceledException error)
         => new($"Connection to {Host}:{Port} closed before the streamed SET completed.",
-            Volatile.Read(ref _abortReason) ?? error) { Endpoint = new(Host, Port) };
+            Volatile.Read(ref _abortReason) ?? error)
+        { Endpoint = new(Host, Port) };
 
     private async Task DrainBufferedWritesAsync(CancellationToken cancellationToken)
     {
@@ -608,10 +712,12 @@ internal sealed partial class RespireConnection
         {
             Task? write = null;
             var schedule = false;
+
             lock (_writeGate)
             {
                 // Reject retirement before touching the stream source, so a retry starts clean.
                 ThrowIfStreamingUnavailable(rejectRetired: true);
+
                 if (_activeBuffer.Count > 0)
                 {
                     write = _activeBuffer.WriteCompletion;
@@ -630,7 +736,11 @@ internal sealed partial class RespireConnection
                     // the WriteCompletion read ahead of the second _sending read, so a stale
                     // waiter is always paired with a cleared flag here and the loop re-evaluates.
                     Interlocked.MemoryBarrier();
-                    if (!Volatile.Read(ref _sending)) continue;
+
+                    if (!Volatile.Read(ref _sending))
+                    {
+                        continue;
+                    }
                 }
                 else
                 {
@@ -638,8 +748,16 @@ internal sealed partial class RespireConnection
                 }
             }
 
-            if (schedule) ScheduleFlush(startedBatch: false);
-            if (write is null) continue;
+            if (schedule)
+            {
+                ScheduleFlush(startedBatch: false);
+            }
+
+            if (write is null)
+            {
+                continue;
+            }
+
             var drained = write.WaitAsync(cancellationToken);
             // Retirement must not wait behind a stalled earlier write: reject the upload (its
             // source is untouched) so the router retries it on the replacement connection.
@@ -651,6 +769,7 @@ internal sealed partial class RespireConnection
                 cancellationToken.ThrowIfCancellationRequested();
                 ThrowIfRetired();
             }
+
             await drained.ConfigureAwait(false);
         }
     }
@@ -667,6 +786,7 @@ internal sealed partial class RespireConnection
             // flush loop has parked. Wake inline whenever this header starts an empty buffer.
             startedBatch = start == 0;
             requestWriteStart = _producerProgress.EnqueuedBytes;
+
             try
             {
                 var writer = new RespWriter(_activeBuffer, command.GetStartWriteSizeHint());
@@ -680,6 +800,7 @@ internal sealed partial class RespireConnection
                 _activeBuffer.TruncateTo(start);
                 throw;
             }
+
             Volatile.Write(ref _producerProgress.EnqueuedBytes, _producerProgress.EnqueuedBytes + _activeBuffer.Count - start);
             // Record the beginning before any header write. Later payload chunks cannot turn
             // an already ambiguous header into an unwritten attempt.
@@ -707,7 +828,12 @@ internal sealed partial class RespireConnection
         lock (_writeGate)
         {
             ThrowIfStreamingUnavailable(rejectRetired: false);
-            foreach (var segment in bytes) _activeBuffer.Append(segment.Span);
+
+            foreach (var segment in bytes)
+            {
+                _activeBuffer.Append(segment.Span);
+            }
+
             Volatile.Write(ref _producerProgress.EnqueuedBytes, _producerProgress.EnqueuedBytes + bytes.Length);
             return _activeBuffer.WriteCompletion;
         }
@@ -733,10 +859,17 @@ internal sealed partial class RespireConnection
             source.WriteStart = requestWriteStart;
             source.WriteEnd = requestWriteEnd;
             Volatile.Write(ref _producerProgress.EnqueuedBytes, requestWriteEnd);
+
             if (!_inflight.TryEnqueue(source, requestWriteEnd))
+            {
                 throw new InvalidOperationException("No in-flight slot remained for streamed SET response.");
+            }
             // Count the reply only once it is published, so a failed enqueue cannot leak a count.
-            if (_responseTimeout is not null) _activeReplyCount++;
+            if (_responseTimeout is not null)
+            {
+                _activeReplyCount++;
+            }
+
             return _activeBuffer.WriteCompletion;
         }
     }

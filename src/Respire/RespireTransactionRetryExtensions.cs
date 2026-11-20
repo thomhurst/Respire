@@ -92,7 +92,12 @@ public static class RespireTransactionRetryExtensions
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaxAttempts);
         cancellationToken.ThrowIfCancellationRequested();
         var keys = new RespireKey[watchKeys.Length];
-        for (var index = 0; index < keys.Length; index++) keys[index] = watchKeys[index].Snapshot();
+
+        for (var index = 0; index < keys.Length; index++)
+        {
+            keys[index] = watchKeys[index].Snapshot();
+        }
+
         return RunCoreAsync(client, keys, action, options, cancellationToken);
     }
 
@@ -115,27 +120,36 @@ public static class RespireTransactionRetryExtensions
         var transientRetryStarted = false;
         var retryCategory = RespireCommandRetryCategory.ReadOnly;
         var succeeded = false;
+
         try
         {
-            for (;;)
+            for (; ; )
             {
                 ThrowIfStopped();
                 bool committed;
                 T result;
                 var context = new WatchedTransactionRetryContext(deadline);
+
                 try
                 {
                     var transaction = await client.CreateTransactionAsync(watchKeys, token).ConfigureAwait(false);
+
                     await using (transaction.ConfigureAwait(false))
                     {
                         // Only built-in clients expose a logical timeout. Custom clients retain their own deadlines.
-                        if (core is not null) transaction.HelperRetryContext = context;
+                        if (core is not null)
+                        {
+                            transaction.HelperRetryContext = context;
+                        }
+
                         ThrowIfStopped();
+
                         if (retryAfterConflict)
                         {
                             RespireTelemetry.RecordTransactionRetry();
                             retryAfterConflict = false;
                         }
+
                         result = await action(transaction, token).ConfigureAwait(false);
                         ThrowIfStopped();
                         committed = await transaction.CommitWithWatchValidationAsync(token).ConfigureAwait(false);
@@ -145,13 +159,18 @@ public static class RespireTransactionRetryExtensions
                 {
                     ThrowIfStopped();
                     var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
+
                     if (policy is null || !context.TryGetDelay(policy, error, transientAttempts, remaining, token, out var delay))
                     {
                         ThrowIfStopped();
                         throw;
                     }
                     // WATCH acquisition and transaction disposal have both finished before this backoff.
-                    if (delay > TimeSpan.Zero) await Task.Delay(delay, token).ConfigureAwait(false);
+                    if (delay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(delay, token).ConfigureAwait(false);
+                    }
+
                     ThrowIfStopped();
                     transientAttempts++;
                     transientRetryStarted = true;
@@ -165,11 +184,22 @@ public static class RespireTransactionRetryExtensions
                     succeeded = true;
                     return result;
                 }
+
                 RespireTelemetry.RecordTransactionConflict();
                 token.ThrowIfCancellationRequested();
-                if (++conflicts == options.MaxAttempts) throw new RespireTransactionConflictException(conflicts);
+
+                if (++conflicts == options.MaxAttempts)
+                {
+                    throw new RespireTransactionConflictException(conflicts);
+                }
+
                 var conflictDelay = options.GetDelay(conflicts);
-                if (conflictDelay > TimeSpan.Zero) await Task.Delay(conflictDelay, token).ConfigureAwait(false);
+
+                if (conflictDelay > TimeSpan.Zero)
+                {
+                    await Task.Delay(conflictDelay, token).ConfigureAwait(false);
+                }
+
                 retryAfterConflict = true;
             }
         }
@@ -183,14 +213,20 @@ public static class RespireTransactionRetryExtensions
         }
         finally
         {
-            if (transientRetryStarted) RespireTelemetry.RecordCommandRetry(retryCategory, succeeded ? "succeeded" : "exhausted");
+            if (transientRetryStarted)
+            {
+                RespireTelemetry.RecordCommandRetry(retryCategory, succeeded ? "succeeded" : "exhausted");
+            }
         }
 
         void ThrowIfStopped()
         {
             token.ThrowIfCancellationRequested();
+
             if (deadline.IsSet && deadline.RemainingMilliseconds == 0)
+            {
                 throw new RespireTimeoutException("WATCH/MULTI/EXEC", commandTimeout!.Value);
+            }
         }
     }
 }
@@ -201,16 +237,32 @@ internal sealed class WatchedTransactionRetryContext(CommandDeadline deadline)
 {
     private readonly HashSet<RespireCommandRetryCategory> _categories = [];
     private RespireCommandRetryCategory _telemetryCategory = RespireCommandRetryCategory.Always;
-    internal CommandDeadline Deadline { get; } = deadline;
-    internal RespireConnection.CommandWriteObservation WriteObservation { get; } = new();
+
+    internal CommandDeadline Deadline
+    {
+        get;
+    } = deadline;
+
+    internal RespireConnection.CommandWriteObservation WriteObservation
+    {
+        get;
+    } = new();
+
     internal RespireCommandRetryCategory TelemetryCategory => _categories.Count == 0 ? RespireCommandRetryCategory.ReadOnly : _telemetryCategory;
 
     internal void RecordCategory(RespireCommandRetryCategory category)
     {
-        if (!Enum.IsDefined(category)) category = RespireCommandRetryCategory.Never;
+        if (!Enum.IsDefined(category))
+        {
+            category = RespireCommandRetryCategory.Never;
+        }
+
         _categories.Add(category);
         // Numeric ordering is used only to label telemetry, never to decide replay permission.
-        if ((byte)category > (byte)_telemetryCategory) _telemetryCategory = category;
+        if ((byte)category > (byte)_telemetryCategory)
+        {
+            _telemetryCategory = category;
+        }
     }
 
     internal bool TryGetDelay(CommandRetryPolicy policy, Exception error, int attempts, TimeSpan remaining,
@@ -219,11 +271,17 @@ internal sealed class WatchedTransactionRetryContext(CommandDeadline deadline)
         var outcome = WriteObservation.CaptureCompletedOutcome();
         delay = default;
         var delayCategory = RespireCommandRetryCategory.ReadOnly;
+
         foreach (var category in _categories)
         {
-            if (!policy.CanRetry(error, outcome, category, attempts, remaining, token)) return false;
+            if (!policy.CanRetry(error, outcome, category, attempts, remaining, token))
+            {
+                return false;
+            }
+
             delayCategory = category;
         }
+
         return policy.TryGetDelay(error, outcome, delayCategory, attempts, remaining, token, out delay);
     }
 }

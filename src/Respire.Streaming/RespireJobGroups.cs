@@ -21,27 +21,64 @@ public sealed class RespireJobGroupInfo
     }
 
     /// <summary>The application group identity, not a Redis consumer group.</summary>
-    public string Name { get; }
+    public string Name
+    {
+        get;
+    }
+
     /// <summary>Staged jobs, including delayed jobs. Expired entries remain counted until scheduler cleanup.</summary>
-    public long QueuedCount { get; }
+    public long QueuedCount
+    {
+        get;
+    }
+
     /// <summary>Staged jobs whose due time has arrived, before expiry cleanup or admission checks.</summary>
-    public long ReadyCount { get; }
+    public long ReadyCount
+    {
+        get;
+    }
+
     /// <summary>Unexpired delivery leases, not all pending consumer-group entries.</summary>
-    public long ActiveCount { get; }
+    public long ActiveCount
+    {
+        get;
+    }
+
     /// <summary>Whether this application group is paused.</summary>
-    public bool IsPaused { get; }
+    public bool IsPaused
+    {
+        get;
+    }
+
     /// <summary>Whether this group's rate policy currently denies another admission.</summary>
-    public bool IsRateLimited { get; }
+    public bool IsRateLimited
+    {
+        get;
+    }
+
     /// <summary>Whether live leases exhaust the configured concurrency limit.</summary>
     public bool IsConcurrencyLimited => MaxConcurrency is { } maximum && ActiveCount >= maximum;
+
     /// <summary>Whether due work passes group admission. Queue-wide controls and job expiry still apply.</summary>
     public bool IsEligible => ReadyCount > 0 && !IsPaused && !IsRateLimited && !IsConcurrencyLimited;
+
     /// <summary>The configured concurrency limit, or null for unlimited.</summary>
-    public int? MaxConcurrency { get; }
+    public int? MaxConcurrency
+    {
+        get;
+    }
+
     /// <summary>The configured rate policy, or null for unlimited.</summary>
-    public RespireJobRateLimit? RateLimit { get; }
+    public RespireJobRateLimit? RateLimit
+    {
+        get;
+    }
+
     /// <summary>The configured delivery lease duration, defaulting to one minute.</summary>
-    public TimeSpan LeaseDuration { get; }
+    public TimeSpan LeaseDuration
+    {
+        get;
+    }
 }
 
 /// <summary>A bounded page of application groups with queued jobs or retained lease entries.</summary>
@@ -54,9 +91,16 @@ public sealed class RespireJobGroupPage
     }
 
     /// <summary>The groups on this page, ordered by their encoded identities.</summary>
-    public IReadOnlyList<RespireJobGroupInfo> Groups { get; }
+    public IReadOnlyList<RespireJobGroupInfo> Groups
+    {
+        get;
+    }
+
     /// <summary>An opaque continuation cursor, or null at the end. Concurrent changes can affect later pages.</summary>
-    public string? NextCursor { get; }
+    public string? NextCursor
+    {
+        get;
+    }
 }
 
 /// <summary>Bounded inspection and shared pause controls for application job groups.</summary>
@@ -72,10 +116,17 @@ public static class RespireJobGroups
     public static ValueTask<RespireJobGroupPage> ReadAsync(IRespireClient client, string streamKey,
         int count = 50, string? cursor = null, CancellationToken cancellationToken = default)
     {
-        if (count is < 1 or > 200) throw new ArgumentOutOfRangeException(nameof(count));
+        if (count is < 1 or > 200)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+
         if (cursor is not null && (cursor.Length < 3 || cursor[^1] != '|' || cursor.Length % 2 != 1
             || cursor.AsSpan(0, cursor.Length - 1).ContainsAnyExcept(CursorCharacters)))
+        {
             throw new ArgumentException("Invalid group cursor.", nameof(cursor));
+        }
+
         return ReadCoreAsync(client, streamKey, count, cursor ?? "", false, cancellationToken);
     }
 
@@ -117,6 +168,7 @@ public static class RespireJobGroups
             [count, prefix, single ? 1 : 0], cancellationToken).ConfigureAwait(false);
         var rows = reply[0];
         var groups = new RespireJobGroupInfo[rows.Count];
+
         for (var i = 0; i < groups.Length; i++)
         {
             var row = rows[i];
@@ -129,6 +181,7 @@ public static class RespireJobGroups
                 burst == 0 ? null : new() { PermitLimit = burst, Window = TimeSpan.FromMilliseconds(row[8].AsInteger()) },
                 TimeSpan.FromMilliseconds(row[9].AsInteger()));
         }
+
         var next = reply[1].AsString();
         return new(groups, next.Length == 0 ? null : next);
     }

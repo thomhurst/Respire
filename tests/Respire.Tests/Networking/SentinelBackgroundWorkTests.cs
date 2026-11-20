@@ -17,17 +17,30 @@ public class SentinelBackgroundWorkTests
         var registrations = new System.Collections.Concurrent.ConcurrentBag<Task>();
         var workers = Enumerable.Range(0, 32).Select(_ => Task.Run(() =>
         {
-            if (owner.TryStart(SentinelWorkKind.Monitor, () => release.Task) is { } task) registrations.Add(task);
+            if (owner.TryStart(SentinelWorkKind.Monitor, () => release.Task) is { } task)
+            {
+                registrations.Add(task);
+            }
         })).ToArray();
         // Ensure at least one registration precedes Stop, regardless of worker scheduling.
         var first = owner.TryStart(SentinelWorkKind.Supervisor, () => release.Task)!;
         var snapshot = owner.Stop();
         await Task.WhenAll(workers).WaitAsync(Limit);
         await Assert.That(snapshot.Contains(first)).IsTrue();
+
         foreach (var admitted in registrations)
+        {
             await Assert.That(snapshot.Contains(admitted)).IsTrue();
+        }
+
         var called = false;
-        await Assert.That((object?)owner.TryStart(SentinelWorkKind.Rediscovery, () => { called = true; return Task.CompletedTask; })).IsNull();
+        await Assert.That(
+            (object?)owner.TryStart(SentinelWorkKind.Rediscovery, () =>
+            {
+                called = true;
+                return Task.CompletedTask;
+            })
+        ).IsNull();
         await Assert.That(called).IsFalse();
         release.TrySetResult();
         await Task.WhenAll(snapshot).WaitAsync(Limit);
@@ -44,7 +57,13 @@ public class SentinelBackgroundWorkTests
             owner.TryStart(SentinelWorkKind.SourceResolution, () => Task.FromException(first))!,
             owner.TryStart(SentinelWorkKind.Monitor, () => Task.FromException(second))!,
         };
-        try { await Task.WhenAll(tasks).WaitAsync(Limit); } catch (Exception) { }
+
+        try
+        {
+            await Task.WhenAll(tasks).WaitAsync(Limit);
+        }
+        catch (Exception) { }
+
         var error = await Assert.That(() => CleanupTasks.WhenAllAsync(owner.Stop())).ThrowsExactly<AggregateException>();
         await Assert.That(error!.InnerExceptions).Contains(first);
         await Assert.That(error.InnerExceptions).Contains(second);
@@ -56,17 +75,34 @@ public class SentinelBackgroundWorkTests
         var owner = new SentinelBackgroundWork(new Lock());
         var tasks = Enumerable.Range(0, 128).Select(index => owner.TryStart(SentinelWorkKind.Monitor,
             () => Task.FromException(new IOException($"monitor episode {index}")))!).ToArray();
-        try { await Task.WhenAll(tasks).WaitAsync(Limit); } catch (Exception) { }
+
+        try
+        {
+            await Task.WhenAll(tasks).WaitAsync(Limit);
+        }
+        catch (Exception) { }
+
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         Task[] report;
+
         do
         {
             report = owner.Stop();
             // Observe each snapshot, including any synthetic omitted-history diagnostic.
-            try { await CleanupTasks.WhenAllAsync(report); } catch (Exception) { }
-            if (report.Length <= SentinelBackgroundWork.MaximumRetainedFailuresPerKind + 1) break;
+            try
+            {
+                await CleanupTasks.WhenAllAsync(report);
+            }
+            catch (Exception) { }
+
+            if (report.Length <= SentinelBackgroundWork.MaximumRetainedFailuresPerKind + 1)
+            {
+                break;
+            }
+
             await Task.Delay(1);
         } while (System.Diagnostics.Stopwatch.GetElapsedTime(started) < Limit);
+
         await Assert.That(report.Length).IsLessThanOrEqualTo(SentinelBackgroundWork.MaximumRetainedFailuresPerKind + 1);
         var error = await Assert.That(() => CleanupTasks.WhenAllAsync(report)).ThrowsExactly<AggregateException>();
         await Assert.That(error!.Flatten().InnerExceptions.Count).IsEqualTo(9);
@@ -78,8 +114,12 @@ public class SentinelBackgroundWorkTests
     {
         var seed = new RespireEndpoint("seed", 26379);
         var discovery = new SentinelDiscoveryState([seed]);
+
         for (var index = 0; index < SentinelDiscoveryState.MaximumDiscoveredEndpoints; index++)
+        {
             await Assert.That(discovery.TryAdd(new($"learned-{index}", 26379))).IsTrue();
+        }
+
         discovery.Snapshot(out var changed);
         await Assert.That(discovery.TryRemove(new("SEED", 26379))).IsFalse();
         await Assert.That(discovery.TryRemove(new("missing", 26379))).IsFalse();

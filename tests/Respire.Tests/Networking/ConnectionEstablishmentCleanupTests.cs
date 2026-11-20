@@ -45,6 +45,7 @@ public class ConnectionEstablishmentCleanupTests
         using var peer = await listener.AcceptSocketAsync(deadline.Token);
         await using var network = new NetworkStream(peer, ownsSocket: false);
         await using var tls = useTls ? new SslStream(network, leaveInnerStreamOpen: true) : null;
+
         if (tls is not null)
         {
             await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
@@ -54,6 +55,7 @@ public class ConnectionEstablishmentCleanupTests
         }
 
         await AssertFailureAsync(connecting, constructionFails, expected);
+
         if (useTls)
         {
             await Assert.That(clientTls).IsNotNull();
@@ -72,6 +74,7 @@ public class ConnectionEstablishmentCleanupTests
         // macOS's per-user temporary directory can exceed Unix socket path limits.
         var path = $"/tmp/respire-{Guid.NewGuid():N}.sock";
         using var deadline = new CancellationTokenSource(Limit);
+
         try
         {
             using var listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
@@ -103,7 +106,10 @@ public class ConnectionEstablishmentCleanupTests
         {
             // Drain any remaining TLS records until the underlying transport closes.
             var buffer = new byte[1024];
-            while (await peer.ReceiveAsync(buffer, SocketFlags.None, cancellationToken) != 0) { }
+
+            while (await peer.ReceiveAsync(buffer, SocketFlags.None, cancellationToken) != 0)
+            {
+            }
         }
         catch (SocketException error) when (error.SocketErrorCode == SocketError.ConnectionReset)
         {
@@ -129,11 +135,16 @@ public class ConnectionEstablishmentCleanupTests
     private sealed class ConnectedFailureLogger(Exception error) : ILogger
     {
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (eventId.Name == "ConnectionConnected") throw error;
+            if (eventId.Name == "ConnectionConnected")
+            {
+                throw error;
+            }
         }
     }
 }

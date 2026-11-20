@@ -75,6 +75,7 @@ public class SentinelNotificationTests
         state.AcceptConfiguration(hostname, 6, ["192.0.2.1", "192.0.2.2"], peer);
         // A later observation without new peer proof must not expand the accepted owner.
         state.AcceptConfiguration(hostname, 6, ["192.0.2.1", "192.0.2.2"]);
+
         foreach (long? epoch in new long?[] { 6, null })
         {
             await Assert.That(state.IsCurrentConfiguration(new("192.0.2.2", 6379), epoch)).IsTrue();
@@ -125,19 +126,29 @@ public class SentinelNotificationTests
         var hints = Enumerable.Range(1, 12).Select(index => SentinelHintBuilder.Create($"hint-{index}",
             NewPrimary, new($"source-{index}", 6379), MustRediscover: true,
             OldPrimaryAddresses: [$"10.0.0.{index}"], ReportingSentinel: new($"sentinel-{index}", 26379))).ToArray();
+
         for (var attempt = 0; attempt < 128; attempt++)
         {
             var shuffled = hints.Concat(hints).ToArray();
             random.Shuffle(shuffled);
             SentinelHint? merged = null;
-            foreach (var hint in shuffled) merged = SentinelNotificationCoalescer.Merge(merged, in hint);
+
+            foreach (var hint in shuffled)
+            {
+                merged = SentinelNotificationCoalescer.Merge(merged, in hint);
+            }
+
             var result = merged!.Value;
             var sources = result.Sources.ToDictionary(source => source.Endpoint, source => source.Addresses);
             var reporters = result.Reporters;
             await Assert.That(sources.Count).IsEqualTo(hints.Length);
             await Assert.That(reporters).IsEquivalentTo(hints.Select(hint => hint.ReportingSentinel!.Value));
+
             foreach (var hint in hints)
+            {
                 await Assert.That(sources[hint.OldPrimary!.Value]).IsEquivalentTo(hint.Sources[0].Addresses!);
+            }
+
             await Assert.That(result.MustRediscover).IsTrue();
         }
     }
@@ -155,12 +166,14 @@ public class SentinelNotificationTests
     public async Task OfferedEvidenceIsAlwaysQueuedOrDiscoveredAcrossWorkerTransitions()
     {
         var random = new Random(727);
+
         for (var run = 0; run < 64; run++)
         {
             var coalescer = new SentinelNotificationCoalescer();
             var offered = new HashSet<RespireEndpoint>();
             var discovered = new HashSet<RespireEndpoint>();
             var resolution = coalescer.BeginSourceResolution(SentinelHintBuilder.Create("lookup"));
+
             try
             {
                 for (var step = 0; step < 64; step++)
@@ -175,11 +188,25 @@ public class SentinelNotificationTests
                     {
                         discovered.UnionWith(coalescer.Active.Value.Sources.Select(source => source.Endpoint));
                         var next = random.Next(2) == 0 ? coalescer.TakePending() : coalescer.SupersedeActive();
-                        if (next is null) coalescer.Complete();
+
+                        if (next is null)
+                        {
+                            coalescer.Complete();
+                        }
                     }
+
                     var retained = new HashSet<RespireEndpoint>(discovered);
-                    if (coalescer.Active is { } active) retained.UnionWith(active.Sources.Select(source => source.Endpoint));
-                    if (coalescer.Pending is { } pending) retained.UnionWith(pending.Sources.Select(source => source.Endpoint));
+
+                    if (coalescer.Active is { } active)
+                    {
+                        retained.UnionWith(active.Sources.Select(source => source.Endpoint));
+                    }
+
+                    if (coalescer.Pending is { } pending)
+                    {
+                        retained.UnionWith(pending.Sources.Select(source => source.Endpoint));
+                    }
+
                     await Assert.That(retained).IsEquivalentTo(offered);
                     await Assert.That(resolution.Hint.Sources.Select(source => source.Endpoint)).IsEquivalentTo(offered);
                 }
@@ -193,6 +220,7 @@ public class SentinelNotificationTests
     {
         var random = new Random(549);
         var endpoints = Enumerable.Range(0, 8).Select(i => new RespireEndpoint($"10.0.0.{i + 1}", 6379)).ToArray();
+
         for (var iteration = 0; iteration < 256; iteration++)
         {
             var left = CreateHint();
@@ -202,7 +230,11 @@ public class SentinelNotificationTests
             var duplicate = SentinelNotificationCoalescer.Merge(forward, in forward);
             await Assert.That(Evidence(forward)).IsEqualTo(Evidence(reverse));
             await Assert.That(Evidence(duplicate)).IsEqualTo(Evidence(forward));
-            if (left.MustRediscover || right.MustRediscover) await Assert.That(forward.MustRediscover).IsTrue();
+
+            if (left.MustRediscover || right.MustRediscover)
+            {
+                await Assert.That(forward.MustRediscover).IsTrue();
+            }
         }
 
         SentinelHint CreateHint() => SentinelHintBuilder.Create("property", endpoints[random.Next(endpoints.Length)],
@@ -265,7 +297,12 @@ public class SentinelNotificationTests
         var second = SentinelHint.FromDown("master-down:mymaster", NewPrimary, new(secondHost, secondPort));
         await Assert.That(first.Key == second.Key).IsEqualTo(same);
         await Assert.That(first.DownKey == second.DownKey).IsEqualTo(same);
-        if (same) await Assert.That(first.Key.GetHashCode()).IsEqualTo(second.Key.GetHashCode());
+
+        if (same)
+        {
+            await Assert.That(first.Key.GetHashCode()).IsEqualTo(second.Key.GetHashCode());
+        }
+
         var merged = SentinelNotificationCoalescer.Merge(first, in second);
         await Assert.That(merged.DownKey is not null).IsEqualTo(same);
     }
@@ -527,6 +564,7 @@ public class SentinelNotificationTests
         var next = coalescer.TakePending(activeFailed, validatedPrimary: activeFailed ? (RespireEndpoint?)null : OldPrimary);
 
         await Assert.That(next!.Value.ReportingSentinel).IsEqualTo(delayed);
+
         if (!activeFailed)
         {
             await Assert.That(next.Value.Sources.Select(source => source.Endpoint)).IsEquivalentTo([NewPrimary]);
@@ -716,44 +754,72 @@ public class SentinelNotificationTests
             SentinelHintBuilder.Create("gap", MustRediscover: true),
         ];
         var orderings = 0;
-        foreach (var subset in Subsets(hints.Length))
-        foreach (var order in Permutations(subset))
-        {
-            orderings++;
-            var offered = order.Select(index => hints[index]).ToArray();
-            var coalescer = new SentinelNotificationCoalescer();
-            coalescer.Offer(SentinelHintBuilder.Create("active"), targetIsCurrent: false);
-            foreach (var hint in offered) coalescer.Offer(in hint, targetIsCurrent: false);
-            var pending = coalescer.Pending!.Value;
-            var label = string.Join(" > ", offered.Select(hint => hint.Key));
 
-            // A fault, a gap or an untargeted switch can never be satisfied by an earlier discovery.
-            if (offered.Any(hint => hint.MustRediscover))
-                await Assert.That(pending.MustRediscover).IsTrue().Because(label);
-            // Arrival order cannot rank two different targets, so neither may end the worker early.
-            if (offered.Select(hint => hint.Target).OfType<RespireEndpoint>().Distinct().Count() > 1)
-                await Assert.That(pending.MustRediscover).IsTrue().Because(label);
-            // A down event or a gap never erases a pending switch source.
-            if (offered.Any(hint => hint.OldPrimary is not null))
-                await Assert.That(pending.OldPrimary).IsNotNull().Because(label);
-            // A target shortcut is only possible for a hint whose target was actually offered.
-            if (!pending.MustRediscover)
-                await Assert.That(offered.Any(hint => hint.Target == pending.Target)).IsTrue().Because(label);
+        foreach (var subset in Subsets(hints.Length))
+        {
+            foreach (var order in Permutations(subset))
+            {
+                orderings++;
+                var offered = order.Select(index => hints[index]).ToArray();
+                var coalescer = new SentinelNotificationCoalescer();
+                coalescer.Offer(SentinelHintBuilder.Create("active"), targetIsCurrent: false);
+
+                foreach (var hint in offered)
+                {
+                    coalescer.Offer(in hint, targetIsCurrent: false);
+                }
+
+                var pending = coalescer.Pending!.Value;
+                var label = string.Join(" > ", offered.Select(hint => hint.Key));
+
+                // A fault, a gap or an untargeted switch can never be satisfied by an earlier discovery.
+                if (offered.Any(hint => hint.MustRediscover))
+                {
+                    await Assert.That(pending.MustRediscover).IsTrue().Because(label);
+                }
+                // Arrival order cannot rank two different targets, so neither may end the worker early.
+                if (offered.Select(hint => hint.Target).OfType<RespireEndpoint>().Distinct().Count() > 1)
+                {
+                    await Assert.That(pending.MustRediscover).IsTrue().Because(label);
+                }
+                // A down event or a gap never erases a pending switch source.
+                if (offered.Any(hint => hint.OldPrimary is not null))
+                {
+                    await Assert.That(pending.OldPrimary).IsNotNull().Because(label);
+                }
+                // A target shortcut is only possible for a hint whose target was actually offered.
+                if (!pending.MustRediscover)
+                {
+                    await Assert.That(offered.Any(hint => hint.Target == pending.Target)).IsTrue().Because(label);
+                }
+            }
         }
+
         await Assert.That(orderings).IsEqualTo(325);
 
         static IEnumerable<int[]> Subsets(int count)
         {
             for (var mask = 1; mask < 1 << count; mask++)
+            {
                 yield return Enumerable.Range(0, count).Where(index => (mask & (1 << index)) != 0).ToArray();
+            }
         }
 
         static IEnumerable<int[]> Permutations(int[] items)
         {
-            if (items.Length <= 1) { yield return items; yield break; }
+            if (items.Length <= 1)
+            {
+                yield return items;
+                yield break;
+            }
+
             for (var index = 0; index < items.Length; index++)
+            {
                 foreach (var rest in Permutations([.. items[..index], .. items[(index + 1)..]]))
+                {
                     yield return [items[index], .. rest];
+                }
+            }
         }
     }
 

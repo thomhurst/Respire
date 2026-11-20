@@ -24,8 +24,12 @@ internal sealed class JsonTestStore(RedisServerFixture server, RespireProtocol p
         // reindexing JSON documents. Wait for that scan before checking final vector visibility.
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Xunit.TestContext.Current.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
+
         while ((await GetIndexInfoAsync(collection.Name, deadline.Token).ConfigureAwait(false)).Properties["indexing"].Scalar != "0")
+        {
             await Task.Delay(20, deadline.Token).ConfigureAwait(false);
+        }
+
         await base.WaitForDataAsync(collection, recordCount, filter, vectorProperty, vectorSize, dummyVector).ConfigureAwait(false);
     }
 
@@ -39,12 +43,19 @@ internal sealed class JsonTestStore(RedisServerFixture server, RespireProtocol p
 
     protected override async Task StopAsync()
     {
-        if (_client is not { } client) return;
+        if (_client is not { } client)
+        {
+            return;
+        }
+
         _client = null;
+
         try
         {
             await foreach (var name in DefaultVectorStore.ListCollectionNamesAsync().ConfigureAwait(false))
+            {
                 await DefaultVectorStore.EnsureCollectionDeletedAsync(name).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -54,7 +65,10 @@ internal sealed class JsonTestStore(RedisServerFixture server, RespireProtocol p
 
     public override VectorStoreCollection<TKey, TRecord> CreateCollection<TKey, TRecord>(string name, VectorStoreCollectionDefinition definition)
     {
-        if (typeof(TKey) != typeof(string)) throw new NotSupportedException("JSON collections require string keys.");
+        if (typeof(TKey) != typeof(string))
+        {
+            throw new NotSupportedException("JSON collections require string keys.");
+        }
         // GetTypeInfo consults only this source-generated context; reflection serialization is disabled.
         var metadata = (JsonTypeInfo<TRecord>)(JsonModelsContext.Default.GetTypeInfo(typeof(TRecord))
             ?? throw new NotSupportedException("The upstream model requires explicit generated JSON metadata."));
@@ -99,15 +113,32 @@ internal sealed class JsonConformanceMapper<TRecord> : RespireVectorDataJsonMapp
                 var type when type == typeof(string[]) || type == typeof(List<string>) => RespireVectorDataFilterKind.StringCollection,
                 var type when type == typeof(bool) => RespireVectorDataFilterKind.Boolean,
                 _ => RespireVectorDataFilterKind.Numeric,
-            }) { JsonPath = "$." + property.Name }).ToArray();
+            })
+            { JsonPath = "$." + property.Name }).ToArray();
         TextFields = data.Where(property => property.IsFullTextIndexed)
             .Select(property => new RespireVectorDataTextField(property.Name, property.Name)).ToArray();
     }
 
-    public override IReadOnlyList<RespireVectorDataVectorField> VectorFields { get; }
-    public override IReadOnlyList<RespireSearchField> DataFields { get; }
-    public override IReadOnlyList<RespireVectorDataTextField> TextFields { get; }
-    public override IReadOnlyList<RespireVectorDataFilterField> FilterFields { get; }
+    public override IReadOnlyList<RespireVectorDataVectorField> VectorFields
+    {
+        get;
+    }
+
+    public override IReadOnlyList<RespireSearchField> DataFields
+    {
+        get;
+    }
+
+    public override IReadOnlyList<RespireVectorDataTextField> TextFields
+    {
+        get;
+    }
+
+    public override IReadOnlyList<RespireVectorDataFilterField> FilterFields
+    {
+        get;
+    }
+
     public override string GetKey(TRecord record) => (string)_key(record)!;
 }
 

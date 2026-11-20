@@ -20,7 +20,9 @@ public class CrossSlotExceptionTests
 #pragma warning disable RESP010 // Test-owned client isolates cross-slot admission, key-context policy, and queue state for this scenario.
         await using var root = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             IncludeCrossSlotKeyContext = includeKeys,
         });
@@ -31,20 +33,35 @@ public class CrossSlotExceptionTests
         RespireKey[] keys = [first, second];
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
+
         async Task Invoke()
         {
             if (surface == "typed")
             {
-                if (union) await client.Sets.UnionCountAsync(keys);
-                else await client.Sets.DifferenceCountAsync(keys);
+                if (union)
+                {
+                    await client.Sets.UnionCountAsync(keys);
+                }
+                else
+                {
+                    await client.Sets.DifferenceCountAsync(keys);
+                }
             }
             else
             {
                 var sets = surface == "batch" ? batch.Sets : transaction.Sets;
-                if (union) _ = sets.UnionCount(keys);
-                else _ = sets.DifferenceCount(keys);
+
+                if (union)
+                {
+                    _ = sets.UnionCount(keys);
+                }
+                else
+                {
+                    _ = sets.DifferenceCount(keys);
+                }
             }
         }
+
         var error = (await Assert.That(Invoke).ThrowsExactly<RespireCrossSlotException>())!;
         await Assert.That(error.CommandName).IsEqualTo(union ? "SUNIONCARD" : "SDIFFCARD");
         await Assert.That(error.ExpectedSlot).IsEqualTo(((RespireKey)first).ClusterSlot);
@@ -75,7 +92,9 @@ public class CrossSlotExceptionTests
 #pragma warning disable RESP010 // Test-owned client isolates cross-slot admission, key-context policy, and queue state for this scenario.
         await using var root = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             IncludeCrossSlotKeyContext = includeKeys,
             ClientSideCache = cache ? new() : null,
@@ -86,21 +105,31 @@ public class CrossSlotExceptionTests
         byte[] second = [0, 128, .. "{second}:secret"u8];
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
+
         async Task Invoke()
         {
             switch (surface)
             {
-                case "typed": await client.Strings.GetManyAsync(first, second); break;
+                case "typed":
+                    await client.Strings.GetManyAsync(first, second);
+                    break;
                 case "raw":
                     // Immediate raw MGET does not support prefix views; pass its physical keys explicitly.
                     RespireValue[] physicalKeys = [(byte[])[.. "private-prefix:"u8, .. first],
                         (byte[])[.. "private-prefix:"u8, .. second]];
-                    using (await root.ExecuteAsync(RespireCommands.String.MGET, physicalKeys)) { }
+                    using (await root.ExecuteAsync(RespireCommands.String.MGET, physicalKeys))
+                    {
+                    }
                     break;
-                case "batch": _ = batch.Execute("MGET", first, second); break;
-                case "transaction": _ = transaction.Execute("MGET", first, second); break;
+                case "batch":
+                    _ = batch.Execute("MGET", first, second);
+                    break;
+                case "transaction":
+                    _ = transaction.Execute("MGET", first, second);
+                    break;
             }
         }
+
         var error = (await Assert.That(Invoke).ThrowsExactly<RespireCrossSlotException>())!;
         await Assert.That(error.CommandName).IsEqualTo("MGET");
         await Assert.That(error.ExpectedSlot).IsEqualTo(((RespireKey)first).ClusterSlot);
@@ -141,8 +170,11 @@ public class CrossSlotExceptionTests
 #pragma warning disable RESP010 // Test-owned client isolates cross-slot admission, key-context policy, and queue state for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         using var batch = transactional ? null : client.CreateBatch();
@@ -151,8 +183,16 @@ public class CrossSlotExceptionTests
         await Assert.That(() => queue.Execute("MGET", "{first}:key", "{second}:key"))
             .ThrowsExactly<RespireCrossSlotException>();
         var pending = queue.Set("{third}:key", "value");
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         await Assert.That(pending.Result).IsTrue();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("MGET ", StringComparison.Ordinal))).IsFalse();
         await Assert.That(server.ReceivedCommands.Count(command => command == "SET {third}:key value")).IsEqualTo(1);

@@ -20,14 +20,18 @@ public sealed partial class RespireClient
         RespireTelemetry.ErrorObservation owner)
     {
         token.ThrowIfCancellationRequested();
+
         if (_core.Options.CommandHook is null)
+        {
             ValidateHookCommand(command, arguments, RespireCommandFlags.None, fireAndForget: false);
+        }
         // The normal dispatch fence still owns physical FIFO retirement. This outer fence keeps
         // cache publication excluded until the module has accepted the typed reply and cleaned up.
         var cache = _core.ClientCache;
         var fence = cache is null || command.CacheMutation == RespireCacheMutation.ReadOnly
             ? default : cache.BeginUnknownMutation();
         var succeeded = false;
+
         try
         {
             var result = await convert(ExecuteModuleBorrowedAsync(command, arguments, token, owner), owner).ConfigureAwait(false);
@@ -38,10 +42,16 @@ public sealed partial class RespireClient
         {
             if (fence.IsRequired)
             {
-                if (succeeded) cache!.CompleteMutation(in fence, true);
+                if (succeeded)
+                {
+                    cache!.CompleteMutation(in fence, true);
+                }
                 else
                 {
-                    try { cache!.CompleteMutation(in fence, false); }
+                    try
+                    {
+                        cache!.CompleteMutation(in fence, false);
+                    }
                     catch (Exception) { /* Preserve the command or converter failure. */ }
                 }
             }
@@ -51,7 +61,10 @@ public sealed partial class RespireClient
     internal ValueTask<RespireResult> ExecuteModuleBorrowedAsync(RespireCommand command, RespireValue[] arguments,
         CancellationToken token, RespireTelemetry.ErrorObservation owner)
     {
-        try { return ExecuteCommandUnhookedAsync(command, arguments, RespireCommandFlags.None, token, owner); }
+        try
+        {
+            return ExecuteCommandUnhookedAsync(command, arguments, RespireCommandFlags.None, token, owner);
+        }
         catch (Exception error) { return ValueTask.FromException<RespireResult>(error); }
     }
 }

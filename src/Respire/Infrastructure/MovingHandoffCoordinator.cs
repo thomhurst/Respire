@@ -18,7 +18,10 @@ internal sealed class MovingHandoffCoordinator
     private TaskCompletionSource? _drainsIdle;
     private long _handoffEpoch;
 
-    internal Lock Gate { get; } = new();
+    internal Lock Gate
+    {
+        get;
+    } = new();
 
     internal bool HasSequenceFences
     {
@@ -40,25 +43,35 @@ internal sealed class MovingHandoffCoordinator
         long now, CancellationToken stopConnecting)
     {
         AssertGateHeld();
+
         if (!operational || !current || sequence <= lastConnectionSequence)
+        {
             return default;
+        }
 
         if (_sequences.TryGetValue(peer, out var seen) && sequence <= seen.Sequence
             && now < seen.ExpiresAt)
+        {
             return new(MarkConnectionSequence: true, StartWorker: false, HasSupersededEndpoint: false, default);
+        }
 
         _sequences[peer] = (sequence, deadline);
         var hasSupersededEndpoint = _active is { Cancellation.IsCancellationRequested: false };
         var supersededEndpoint = hasSupersededEndpoint ? _active!.Endpoint : default;
         _active?.Cancellation.Cancel();
+
         if (_pending is { } pending)
         {
             pending.Cancellation.Cancel();
             pending.Cancellation.Dispose();
         }
+
         _pending = new Request(endpoint, deadline, CancellationTokenSource.CreateLinkedTokenSource(stopConnecting));
+
         if (_worker)
+        {
             return new(MarkConnectionSequence: true, StartWorker: false, hasSupersededEndpoint, supersededEndpoint);
+        }
 
         _worker = true;
         _workerCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -69,6 +82,7 @@ internal sealed class MovingHandoffCoordinator
     internal Request? TakeNext(bool operational)
     {
         AssertGateHeld();
+
         if (!operational || _pending is null)
         {
             if (_pending is { } pending)
@@ -76,6 +90,7 @@ internal sealed class MovingHandoffCoordinator
                 pending.Cancellation.Cancel();
                 pending.Cancellation.Dispose();
             }
+
             _pending = null;
             _active = null;
             _worker = false;
@@ -92,7 +107,12 @@ internal sealed class MovingHandoffCoordinator
     internal void Complete(Request request)
     {
         AssertGateHeld();
-        if (ReferenceEquals(_active, request)) _active = null;
+
+        if (ReferenceEquals(_active, request))
+        {
+            _active = null;
+        }
+
         request.Cancellation.Dispose();
     }
 
@@ -119,14 +139,21 @@ internal sealed class MovingHandoffCoordinator
     internal void BeginDrain()
     {
         AssertGateHeld();
+
         if (_activeDrains++ == 0 && _drainsIdle?.Task.IsCompleted == true)
+        {
             _drainsIdle = null;
+        }
     }
 
     internal void EndDrain()
     {
         AssertGateHeld();
-        if (--_activeDrains == 0) _drainsIdle?.TrySetResult();
+
+        if (--_activeDrains == 0)
+        {
+            _drainsIdle?.TrySetResult();
+        }
     }
 
     internal Task WaitForDrains()
@@ -139,10 +166,18 @@ internal sealed class MovingHandoffCoordinator
     internal void ForgetSequences(IReadOnlySet<(string Host, int Port)> livePeers)
     {
         AssertGateHeld();
-        if (_sequences.Count == 0) return;
+
+        if (_sequences.Count == 0)
+        {
+            return;
+        }
+
         foreach (var peer in _sequences.Keys.ToArray())
         {
-            if (!livePeers.Contains(peer)) _sequences.Remove(peer);
+            if (!livePeers.Contains(peer))
+            {
+                _sequences.Remove(peer);
+            }
         }
     }
 

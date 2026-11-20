@@ -24,10 +24,14 @@ public class AggregateCommandHookTests
         var baseline = server.CommandsSeen;
         hook.Before = _ =>
         {
-            if (server.CommandsSeen != baseline) throw new Exception("Sent before all admission finished");
+            if (server.CommandsSeen != baseline)
+            {
+                throw new Exception("Sent before all admission finished");
+            }
         };
         RespirePending<string?> first;
         RespirePending<long> second;
+
         if (transaction)
         {
             await using var tx = client.CreateTransaction();
@@ -44,11 +48,17 @@ public class AggregateCommandHookTests
             hook.After = () => hook.ResultsReady = first.HasResult && second.HasResult;
             await batch.ExecuteAsync();
         }
+
         await Assert.That(first.Result).IsEqualTo("value");
         await Assert.That(second.Result).IsEqualTo(5L);
         await Assert.That(hook.ResultsReady).IsTrue();
         var expected = new[] { "enter GET", "enter STRLEN", "complete GET", "complete STRLEN" };
-        if (pipeline) expected = ["pipeline enter", .. expected, "pipeline complete"];
+
+        if (pipeline)
+        {
+            expected = ["pipeline enter", .. expected, "pipeline complete"];
+        }
+
         await Assert.That(hook.Events.SequenceEqual(expected)).IsTrue();
         await Assert.That(hook.Completed.All(c => c.Outcome == RespireCommandOutcome.Succeeded && c.Error is null
             && ReferenceEquals(c.Context, c.State))).IsTrue();
@@ -63,7 +73,16 @@ public class AggregateCommandHookTests
     {
         await using var server = Server();
         var error = new OperationCanceledException("Rejected by policy");
-        var hook = new Hook { Before = c => { if (c.Command == "STRLEN") throw error; } };
+        var hook = new Hook
+        {
+            Before = c =>
+            {
+                if (c.Command == "STRLEN")
+                {
+                    throw error;
+                }
+            }
+        };
         var outer = new Pipeline(hook.Events) { Rejection = rejectPipeline ? error : null };
 #pragma warning disable RESP010 // This aggregate hook scenario owns its client and scripted batch/transaction replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook, outer));
@@ -72,6 +91,7 @@ public class AggregateCommandHookTests
         RespirePending<string?> first;
         RespirePending<long> second;
         RespirePending<string?> third;
+
         if (transaction)
         {
             await using var tx = client.CreateTransaction();
@@ -89,16 +109,19 @@ public class AggregateCommandHookTests
             var result = await batch.TryExecuteAsync();
             await Assert.That(result.FailureCount).IsEqualTo(3);
         }
+
         await Assert.That(ReferenceEquals(first.Error, error) && ReferenceEquals(second.Error, error)
             && ReferenceEquals(third.Error, error)).IsTrue();
         await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
         await Assert.That(hook.Completed.Count).IsEqualTo(rejectPipeline ? 0 : 2);
+
         if (!rejectPipeline)
         {
             await Assert.That(hook.Completed[0].Outcome).IsEqualTo(RespireCommandOutcome.Canceled);
             await Assert.That(hook.Completed[1].Outcome).IsEqualTo(RespireCommandOutcome.Rejected);
             await Assert.That(hook.Completed[1].State).IsNull();
         }
+
         await Assert.That(outer.Outcome).IsEqualTo(rejectPipeline ? RespirePipelineOutcome.Rejected : RespirePipelineOutcome.Canceled);
     }
 
@@ -117,14 +140,27 @@ public class AggregateCommandHookTests
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
         using var cts = new CancellationTokenSource();
-        if (cancel) cts.Cancel();
+
+        if (cancel)
+        {
+            cts.Cancel();
+        }
+
         RespirePending<int> pending;
+
         if (transaction)
         {
             await using var tx = client.CreateTransaction();
             pending = tx.Get<int>("key");
-            if (cancel) await Failure(async () => await tx.CommitAsync(cts.Token));
-            else await tx.CommitAsync(cts.Token);
+
+            if (cancel)
+            {
+                await Failure(async () => await tx.CommitAsync(cts.Token));
+            }
+            else
+            {
+                await tx.CommitAsync(cts.Token);
+            }
         }
         else
         {
@@ -133,12 +169,17 @@ public class AggregateCommandHookTests
             var result = await batch.TryExecuteAsync(cts.Token);
             await Assert.That(result.FailureCount).IsEqualTo(1);
         }
+
         await Assert.That(hook.Completed.Count).IsEqualTo(1);
         await Assert.That(hook.Completed[0].Outcome).IsEqualTo(cancel ? RespireCommandOutcome.Canceled : RespireCommandOutcome.Failed);
         await Assert.That(ReferenceEquals(pending.Error, hook.Completed[0].Error)).IsTrue();
         await Assert.That(hook.Completed[0].Context.CancellationToken).IsEqualTo(cts.Token);
         await Assert.That(pending.Error).IsNotNull();
-        if (serverError) await Assert.That(pending.Error is RespireServerException).IsTrue();
+
+        if (serverError)
+        {
+            await Assert.That(pending.Error is RespireServerException).IsTrue();
+        }
     }
 
     [Test]
@@ -152,6 +193,7 @@ public class AggregateCommandHookTests
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
         var baseline = server.CommandsSeen;
+
         if (transaction)
         {
             await using var tx = client.CreateTransaction();
@@ -164,6 +206,7 @@ public class AggregateCommandHookTests
             await batch.ExecuteAsync();
             await Failure(async () => await batch.ExecuteAsync());
         }
+
         await Assert.That(hook.Events.Count).IsEqualTo(0);
         await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
     }
@@ -200,7 +243,11 @@ public class AggregateCommandHookTests
             ? new[] { "pipeline enter", "pipeline complete", "pipeline enter", "pipeline complete" }
             : Array.Empty<string>();
         await Assert.That(hook.Events.SequenceEqual(expected)).IsTrue();
-        if (outer is not null) await Assert.That(outer.Outcome).IsEqualTo(RespirePipelineOutcome.Succeeded);
+
+        if (outer is not null)
+        {
+            await Assert.That(outer.Outcome).IsEqualTo(RespirePipelineOutcome.Succeeded);
+        }
     }
 
     [Test]
@@ -226,7 +273,11 @@ public class AggregateCommandHookTests
         await Assert.That(error is OperationCanceledException).IsTrue();
         await Assert.That(hook.Completed.Count).IsEqualTo(0);
         await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
-        if (outer is not null) await Assert.That(outer.Outcome).IsEqualTo(RespirePipelineOutcome.Canceled);
+
+        if (outer is not null)
+        {
+            await Assert.That(outer.Outcome).IsEqualTo(RespirePipelineOutcome.Canceled);
+        }
     }
 
     [Test]
@@ -238,7 +289,16 @@ public class AggregateCommandHookTests
     {
         await using var server = Server(failAcknowledgement: true);
         var name = aof ? "WAITAOF" : "WAIT";
-        var hook = new Hook { Before = c => { if (reject && c.Command == name) throw new Exception("No durability"); } };
+        var hook = new Hook
+        {
+            Before = c =>
+            {
+                if (reject && c.Command == name)
+                {
+                    throw new Exception("No durability");
+                }
+            }
+        };
 #pragma warning disable RESP010 // This aggregate hook scenario owns its client and scripted batch/transaction replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
@@ -247,16 +307,29 @@ public class AggregateCommandHookTests
         var pending = batch.Set("key", "value");
         var error = await Failure(async () =>
         {
-            if (aof) await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
-            else await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero);
+            if (aof)
+            {
+                await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
+            }
+            else
+            {
+                await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero);
+            }
         });
         await Assert.That(hook.Completed.Count).IsEqualTo(2);
         await Assert.That(hook.Events.Take(2).SequenceEqual(new[] { "enter SET", "enter " + name })).IsTrue();
         await Assert.That(hook.Completed[0].Outcome).IsEqualTo(reject ? RespireCommandOutcome.Failed : RespireCommandOutcome.Succeeded);
         await Assert.That(hook.Completed[1].Outcome).IsEqualTo(reject ? RespireCommandOutcome.Rejected : RespireCommandOutcome.Failed);
         await Assert.That(ReferenceEquals(hook.Completed[1].Error, error)).IsTrue();
-        if (reject) await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
-        else await Assert.That(pending.Result).IsTrue();
+
+        if (reject)
+        {
+            await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+        }
+        else
+        {
+            await Assert.That(pending.Result).IsTrue();
+        }
     }
 
     [Test]
@@ -265,11 +338,21 @@ public class AggregateCommandHookTests
     public async Task WatchIsAnIndependentSetupScopeAndAbortMatchesPendingOutcome(bool reject)
     {
         await using var server = Server(abort: true);
-        var hook = new Hook { Before = c => { if (reject && c.Command == "WATCH") throw new Exception("No watch"); } };
+        var hook = new Hook
+        {
+            Before = c =>
+            {
+                if (reject && c.Command == "WATCH")
+                {
+                    throw new Exception("No watch");
+                }
+            }
+        };
 #pragma warning disable RESP010 // This aggregate hook scenario owns its client and scripted batch/transaction replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
         var baseline = server.CommandsSeen;
+
         if (reject)
         {
             await Failure(async () => await client.CreateTransactionAsync(["key"]));
@@ -302,15 +385,22 @@ public class AggregateCommandHookTests
         {
             if (command == (transaction ? "EXEC" : "GET key") && Interlocked.Increment(ref attempts) == 1)
             {
-                if (transaction) { server.CloseConnections(); return null; }
+                if (transaction)
+                {
+                    server.CloseConnections();
+                    return null;
+                }
+
                 return "-TRYAGAIN busy\r\n"u8.ToArray();
             }
+
             return original!(connection, command);
         };
         var hook = new Hook();
 #pragma warning disable RESP010 // This retry/fallback scenario owns its client and scripted attempt counters across one logical call.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero } });
+
 #pragma warning restore RESP010
         if (transaction)
         {
@@ -326,6 +416,7 @@ public class AggregateCommandHookTests
             await batch.ExecuteAsync();
             await Assert.That(pending.Result).IsEqualTo("value");
         }
+
         await Assert.That(attempts).IsEqualTo(2);
         await Assert.That(hook.Events.SequenceEqual(new[] { "enter GET", "complete GET" })).IsTrue();
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
@@ -346,23 +437,48 @@ public class AggregateCommandHookTests
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         hook.Completed.Clear();
-        if (reject) hook.Before = _ => throw new InvalidOperationException("No import");
+
+        if (reject)
+        {
+            hook.Before = _ => throw new InvalidOperationException("No import");
+        }
+
         var outsideGate = false;
-        hook.After = () => { using var usage = session.EnterOperation(); outsideGate = true; };
+        hook.After = () =>
+        {
+            using var usage = session.EnterOperation();
+            outsideGate = true;
+        };
+
         if (transaction)
         {
             await using var tx = session.CreateTransaction();
             _ = tx.Hashes.Import("key", "schema", "value");
-            if (reject) await Failure(async () => await tx.CommitAsync());
-            else await tx.CommitAsync();
+
+            if (reject)
+            {
+                await Failure(async () => await tx.CommitAsync());
+            }
+            else
+            {
+                await tx.CommitAsync();
+            }
         }
         else
         {
             using var batch = session.CreateBatch();
             _ = batch.Hashes.Import("key", "schema", "value");
-            if (reject) await Failure(async () => await batch.ExecuteAsync());
-            else await batch.ExecuteAsync();
+
+            if (reject)
+            {
+                await Failure(async () => await batch.ExecuteAsync());
+            }
+            else
+            {
+                await batch.ExecuteAsync();
+            }
         }
+
         await Assert.That(outsideGate).IsTrue();
         await Assert.That(hook.Completed.Count).IsEqualTo(1);
         await Assert.That(hook.Completed[0].Outcome).IsEqualTo(reject ? RespireCommandOutcome.Rejected : RespireCommandOutcome.Succeeded);
@@ -380,7 +496,11 @@ public class AggregateCommandHookTests
         var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (command != (transaction ? "EXEC" : "GET key")) return false;
+            if (command != (transaction ? "EXEC" : "GET key"))
+            {
+                return false;
+            }
+
             submitted.TrySetResult();
             return true;
         };
@@ -389,6 +509,7 @@ public class AggregateCommandHookTests
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
         using var cts = new CancellationTokenSource();
+
         if (transaction)
         {
             await using var tx = client.CreateTransaction();
@@ -407,6 +528,7 @@ public class AggregateCommandHookTests
             cts.Cancel();
             await Assert.That((await execution).FailureCount).IsEqualTo(1);
         }
+
         await Assert.That(hook.Completed.Count).IsEqualTo(1);
         await Assert.That(hook.Completed[0].Outcome).IsEqualTo(RespireCommandOutcome.Canceled);
     }
@@ -424,26 +546,50 @@ public class AggregateCommandHookTests
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
         using var cts = new CancellationTokenSource();
-        if (cancel) cts.Cancel();
+
+        if (cancel)
+        {
+            cts.Cancel();
+        }
+
         var baseline = server.CommandsSeen;
         using var batch = client.CreateBatch();
         var pending = batch.Set("key", "value");
+
         async Task Execute()
         {
-            if (aof) await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero, cts.Token);
-            else await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero, cts.Token);
+            if (aof)
+            {
+                await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero, cts.Token);
+            }
+            else
+            {
+                await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero, cts.Token);
+            }
         }
-        if (cancel) await Failure(Execute);
-        else await Execute();
+
+        if (cancel)
+        {
+            await Failure(Execute);
+        }
+        else
+        {
+            await Execute();
+        }
+
         await Assert.That(hook.Completed.Count).IsEqualTo(2);
         await Assert.That(hook.Completed.All(c => c.Outcome == (cancel ? RespireCommandOutcome.Canceled : RespireCommandOutcome.Succeeded))).IsTrue();
+
         if (cancel)
         {
             await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
             await Assert.That(pending.Error is OperationCanceledException).IsTrue();
         }
 #pragma warning disable RESP002 // Both durability branches above await execution; only the successful, non-canceled path reads the result.
-        else await Assert.That(pending.Result).IsTrue();
+        else
+        {
+            await Assert.That(pending.Result).IsTrue();
+        }
 #pragma warning restore RESP002
     }
 
@@ -451,7 +597,16 @@ public class AggregateCommandHookTests
     public async Task RejectingWatchedCommitRetiresWatchWithoutFramingCommands()
     {
         await using var server = Server();
-        var hook = new Hook { Before = c => { if (c.Command == "GET") throw new Exception("No GET"); } };
+        var hook = new Hook
+        {
+            Before = c =>
+            {
+                if (c.Command == "GET")
+                {
+                    throw new Exception("No GET");
+                }
+            }
+        };
 #pragma warning disable RESP010 // This aggregate hook scenario owns its client and scripted batch/transaction replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
@@ -479,13 +634,22 @@ public class AggregateCommandHookTests
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
         using var cts = new CancellationTokenSource();
-        if (cancel) cts.Cancel();
+
+        if (cancel)
+        {
+            cts.Cancel();
+        }
+
         var baseline = server.CommandsSeen;
         var error = await Failure(async () => await client.CreateTransactionAsync(["key"], cts.Token));
         await Assert.That(hook.Completed.Single().Context.Command).IsEqualTo("WATCH");
         await Assert.That(hook.Completed[0].Outcome).IsEqualTo(cancel ? RespireCommandOutcome.Canceled : RespireCommandOutcome.Failed);
         await Assert.That(ReferenceEquals(hook.Completed[0].Error, error)).IsTrue();
-        if (cancel) await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+
+        if (cancel)
+        {
+            await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+        }
     }
 
     [Test]
@@ -501,10 +665,13 @@ public class AggregateCommandHookTests
         hook.Before = context =>
         {
             if (context.Command == "STRLEN")
+            {
 #pragma warning disable RESP009 // Synchronous admission must finish the nested command before returning; the scripted peer replies within the command timeout.
                 _ = client.GetStringAsync("nested").AsTask().GetAwaiter().GetResult();
+            }
 #pragma warning restore RESP009
         };
+
         if (transaction)
         {
             await using var tx = client.CreateTransaction();
@@ -517,6 +684,7 @@ public class AggregateCommandHookTests
             _ = batch.Strings.Length("key");
             await batch.ExecuteAsync();
         }
+
         await Assert.That(hook.Events.SequenceEqual(new[] { "enter STRLEN", "enter GET", "complete GET", "complete STRLEN" })).IsTrue();
     }
 
@@ -524,6 +692,7 @@ public class AggregateCommandHookTests
     {
         var transactions = new ConcurrentDictionary<int, List<string>>();
         var server = new FakeRespServer(32, FakeRespServer.OkReply);
+
         string Reply(string command) => command.Split(' ')[0] switch
         {
             "GET" => failRead ? "-ERR read failed\r\n" : "$5\r\nvalue\r\n",
@@ -532,13 +701,31 @@ public class AggregateCommandHookTests
             "WAITAOF" => failAcknowledgement ? "-ERR durability failed\r\n" : "*2\r\n:1\r\n:1\r\n",
             _ => "+OK\r\n",
         };
+
         server.ReplyOverride = (connection, command) =>
         {
-            if (command == "CLIENT ID") return ":1\r\n"u8.ToArray();
-            if (command == "MULTI") { transactions[connection] = []; return FakeRespServer.OkReply; }
+            if (command == "CLIENT ID")
+            {
+                return ":1\r\n"u8.ToArray();
+            }
+
+            if (command == "MULTI")
+            {
+                transactions[connection] = [];
+                return FakeRespServer.OkReply;
+            }
+
             if (command == "EXEC" && transactions.TryRemove(connection, out var members))
+            {
                 return System.Text.Encoding.UTF8.GetBytes(abort ? "*-1\r\n" : $"*{members.Count}\r\n" + string.Concat(members.Select(Reply)));
-            if (transactions.TryGetValue(connection, out var queued)) { queued.Add(command); return "+QUEUED\r\n"u8.ToArray(); }
+            }
+
+            if (transactions.TryGetValue(connection, out var queued))
+            {
+                queued.Add(command);
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
             return System.Text.Encoding.UTF8.GetBytes(Reply(command));
         };
         return server;
@@ -546,15 +733,23 @@ public class AggregateCommandHookTests
 
     private static RespireOptions Options(FakeRespServer server, Hook? hook, Pipeline? pipeline = null) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-        Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(3),
-        CommandHook = hook, PipelineHook = pipeline,
+        Endpoints = [new("127.0.0.1", server.Port)],
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromSeconds(3),
+        CommandHook = hook,
+        PipelineHook = pipeline,
     };
 
     private static async Task<Exception> Failure(Func<Task> action)
     {
-        try { await action(); }
+        try
+        {
+            await action();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure");
     }
 
@@ -565,12 +760,14 @@ public class AggregateCommandHookTests
         internal Action<RespireCommandContext>? Before;
         internal Action? After;
         internal bool ResultsReady;
+
         public override object? OnExecuting(RespireCommandContext context)
         {
             Events.Add("enter " + context.Command);
             Before?.Invoke(context);
             return context;
         }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Events.Add("complete " + context.Command);
@@ -583,12 +780,19 @@ public class AggregateCommandHookTests
     {
         internal Exception? Rejection;
         internal RespirePipelineOutcome Outcome;
+
         public override object? OnExecuting(RespirePipelineContext context)
         {
             events.Add("pipeline enter");
-            if (Rejection is not null) throw Rejection;
+
+            if (Rejection is not null)
+            {
+                throw Rejection;
+            }
+
             return null;
         }
+
         public override void OnCompleted(RespirePipelineContext context, object? state, RespirePipelineOutcome outcome, Exception? error)
         {
             Outcome = outcome;

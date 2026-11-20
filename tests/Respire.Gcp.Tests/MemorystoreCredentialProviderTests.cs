@@ -59,7 +59,8 @@ public class MemorystoreCredentialProviderTests
         using var flow = new GoogleAuthorizationCodeFlow(new GoogleAuthorizationCodeFlow.Initializer
         {
             ClientSecrets = new ClientSecrets { ClientId = "client", ClientSecret = "secret" },
-            Clock = new GoogleClock(clock), HttpClientFactory = source,
+            Clock = new GoogleClock(clock),
+            HttpClientFactory = source,
         });
         var user = new UserCredential(flow, "user", new TokenResponse { RefreshToken = "refresh-token" });
         var provider = new RespireMemorystoreCredentialProvider(user.ToGoogleCredential());
@@ -79,7 +80,9 @@ public class MemorystoreCredentialProviderTests
         using var key = RSA.Create(2048);
         var serviceAccount = new ServiceAccountCredential(new ServiceAccountCredential.Initializer("service@example.iam.gserviceaccount.com")
         {
-            Key = key, Clock = new GoogleClock(clock), HttpClientFactory = source,
+            Key = key,
+            Clock = new GoogleClock(clock),
+            HttpClientFactory = source,
             UseJwtAccessWithScopes = true,
         });
         var provider = new RespireMemorystoreCredentialProvider(serviceAccount.ToGoogleCredential());
@@ -181,8 +184,11 @@ public class MemorystoreCredentialProviderTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = protocol,
-            CredentialProvider = CreateProvider(clock, source), CredentialTimeProvider = clock,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Protocol = protocol,
+            CredentialProvider = CreateProvider(clock, source),
+            CredentialTimeProvider = clock,
             // Distinguish the retry timer from the five-second acquisition deadline.
             CredentialRefreshRetryDelay = TimeSpan.FromSeconds(7),
             ConnectTimeout = Limit,
@@ -209,28 +215,48 @@ public class MemorystoreCredentialProviderTests
     private static RespireMemorystoreCredentialProvider CreateProvider(Clock clock, TokenSource source)
         => new(new ComputeCredential(new ComputeCredential.Initializer
         {
-            Clock = new GoogleClock(clock), HttpClientFactory = source,
+            Clock = new GoogleClock(clock),
+            HttpClientFactory = source,
         }).ToGoogleCredential());
 
     private static async Task UntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(Limit);
-        while (!condition()) await Task.Delay(1, timeout.Token);
+
+        while (!condition())
+        {
+            await Task.Delay(1, timeout.Token);
+        }
     }
 
     private sealed class GoogleClock(Clock clock) : IClock
     {
         public DateTime Now => UtcNow.ToLocalTime();
+
         public DateTime UtcNow => clock.GetUtcNow().UtcDateTime;
     }
 
     private sealed class TokenSource : HttpClientFactory
     {
         private int _calls;
+
         public int Calls => Volatile.Read(ref _calls);
-        public string? LastBody { get; private set; }
-        public string? Json { get; init; }
-        public Func<CancellationToken, Task>? BeforeReply { get; init; }
+
+        public string? LastBody
+        {
+            get; private set;
+        }
+
+        public string? Json
+        {
+            get; init;
+        }
+
+        public Func<CancellationToken, Task>? BeforeReply
+        {
+            get; init;
+        }
+
         protected override HttpMessageHandler CreateHandler(CreateHttpClientArgs args) => new Handler(this);
 
         private sealed class Handler(TokenSource source) : HttpMessageHandler
@@ -239,7 +265,12 @@ public class MemorystoreCredentialProviderTests
             {
                 var call = Interlocked.Increment(ref source._calls);
                 source.LastBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-                if (source.BeforeReply is { } beforeReply) await beforeReply(cancellationToken);
+
+                if (source.BeforeReply is { } beforeReply)
+                {
+                    await beforeReply(cancellationToken);
+                }
+
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(source.Json ?? $$"""{"access_token":"token-{{call}}","expires_in":3600,"token_type":"Bearer"}""",

@@ -20,7 +20,11 @@ public partial class ErrorMetricsTests
         {
             SuppressReply = command =>
             {
-                if (command != "SCRIPT FLUSH") return false;
+                if (command != "SCRIPT FLUSH")
+                {
+                    return false;
+                }
+
                 secondWritten.TrySetResult();
                 return true;
             },
@@ -32,7 +36,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
@@ -58,22 +64,41 @@ public partial class ErrorMetricsTests
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        if (disposed) await client.DisposeAsync();
+
+        if (disposed)
+        {
+            await client.DisposeAsync();
+        }
+
         using var capture = new Capture(throwOnMeasurement: true);
         Exception? failure = null;
+
         try
         {
             switch (route)
             {
-                case "integer": await client.Scripts.ExecuteIntegerAsync(null!); break;
-                case "string": await client.Scripts.ExecuteStringAsync(null!); break;
-                case "generic": await client.Scripts.ExecuteAsync<int>(null!); break;
-                case "load": await client.Scripts.LoadAsync(null!); break;
-                case "exists": await client.Scripts.ExistsAsync([]); break;
-                case "flush": await client.Scripts.FlushAsync((RespireScriptFlushMode)99); break;
+                case "integer":
+                    await client.Scripts.ExecuteIntegerAsync(null!);
+                    break;
+                case "string":
+                    await client.Scripts.ExecuteStringAsync(null!);
+                    break;
+                case "generic":
+                    await client.Scripts.ExecuteAsync<int>(null!);
+                    break;
+                case "load":
+                    await client.Scripts.LoadAsync(null!);
+                    break;
+                case "exists":
+                    await client.Scripts.ExistsAsync([]);
+                    break;
+                case "flush":
+                    await client.Scripts.FlushAsync((RespireScriptFlushMode)99);
+                    break;
             }
         }
         catch (ArgumentException error) { failure = error; }
+
         await Assert.That(failure).IsNotNull();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         var item = capture.Items.Single();
@@ -87,7 +112,13 @@ public partial class ErrorMetricsTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         using var capture = new Capture();
-        for (var i = 0; i < 5; i++) { MeasureScriptCaller(false); MeasureScriptCaller(true); }
+
+        for (var i = 0; i < 5; i++)
+        {
+            MeasureScriptCaller(false);
+            MeasureScriptCaller(true);
+        }
+
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
             (Bytes: MeasureScriptCaller(false), Control: MeasureScriptCaller(true)));
         await Assert.That(measured.Bytes).IsEqualTo(0L);
@@ -99,15 +130,21 @@ public partial class ErrorMetricsTests
     private static long MeasureScriptCaller(bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1000; i++)
         {
             var owner = DispatchResponseSource<long>.Start();
             var response = owner.Attach(new ValueTask<long>(42));
 #pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             _ = response.GetAwaiter().GetResult();
+
 #pragma warning restore RESP009
-            if (control) GC.KeepAlive(new byte[37]);
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 }

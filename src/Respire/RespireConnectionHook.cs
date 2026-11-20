@@ -35,10 +35,16 @@ public sealed class RespireConnectionContext
     }
 
     /// <summary>The requested physical endpoint, before DNS resolution; Unix sockets use a path and port zero.</summary>
-    public RespireEndpoint Endpoint { get; }
+    public RespireEndpoint Endpoint
+    {
+        get;
+    }
 
     /// <summary>Whether this attempt uses TLS, including any Sentinel-specific override.</summary>
-    public bool UseTls { get; }
+    public bool UseTls
+    {
+        get;
+    }
 }
 
 /// <summary>The establishment outcome before the completion callback runs.</summary>

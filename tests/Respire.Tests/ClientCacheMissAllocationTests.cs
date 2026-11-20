@@ -30,11 +30,13 @@ public class ClientCacheMissAllocationTests
         // Bind once outside the measurement. This is the actual miss producer's
         // second lookup, after another read wins publication; no wire send starts.
         var producer = BindProducer(client);
+
         for (var index = 0; index < 32; index++)
         {
             Measure(producer, cache, key, false);
             Measure(producer, cache, key, true);
         }
+
         var measured = AllocationMeasurement.WithoutConcurrentGc(() => (
             Actual: Measure(producer, cache, key, false), Control: Measure(producer, cache, key, true)));
         await Assert.That(measured.Actual).IsEqualTo(0);
@@ -70,8 +72,13 @@ public class ClientCacheMissAllocationTests
         await Assert.That(operation.IsCanceled).IsEqualTo(canceled);
         await Assert.That(operation.IsFaulted).IsEqualTo(!canceled);
         Exception? actual = null;
-        try { await operation; }
+
+        try
+        {
+            await operation;
+        }
         catch (Exception error) { actual = error; }
+
         await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
         await Assert.That(cancellation.IsCancellationRequested).IsFalse();
         cancellation.Cancel();
@@ -113,6 +120,7 @@ public class ClientCacheMissAllocationTests
         SynchronizationContext? contextAfter;
         var sawCaller = false;
         ValueTask<RespValue> operation;
+
         try
         {
             SynchronizationContext.SetSynchronizationContext(caller);
@@ -121,21 +129,34 @@ public class ClientCacheMissAllocationTests
                 sawCaller = ReferenceEquals(SynchronizationContext.Current, caller) && local.Value == "caller";
                 local.Value = "converter";
                 SynchronizationContext.SetSynchronizationContext(changed);
-                if (throws) throw expected;
+
+                if (throws)
+                {
+                    throw expected;
+                }
+
                 return value;
             }, true, default);
             valueAfter = local.Value;
             contextAfter = SynchronizationContext.Current;
         }
         finally { SynchronizationContext.SetSynchronizationContext(original); }
+
         await Assert.That(operation.IsCompletedSuccessfully).IsEqualTo(!throws);
+
         if (throws)
         {
             Exception? actual = null;
-            try { await operation; }
+
+            try
+            {
+                await operation;
+            }
             catch (Exception error) { actual = error; }
+
             await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
         }
+
         await Assert.That(sawCaller).IsTrue();
         await Assert.That(valueAfter).IsEqualTo("caller");
         await Assert.That(ReferenceEquals(contextAfter, caller)).IsTrue();
@@ -145,16 +166,25 @@ public class ClientCacheMissAllocationTests
     private static long Measure(MissProducer producer, ClientSideCacheCoordinator cache, RespireKey key, bool control)
     {
         var start = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
             var operation = producer(key, cache, default,
                 static (RespireClient _, in RespValue value) => value, true, default);
+
 #pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             if (!operation.IsCompletedSuccessfully || !operation.Result.AsSpan().SequenceEqual("value"u8))
+            {
                 throw new InvalidOperationException("Expected the racing producer to use the published cache entry.");
+            }
+
 #pragma warning restore RESP009
-            if (control) GC.KeepAlive(new byte[37]);
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - start;
     }
 }

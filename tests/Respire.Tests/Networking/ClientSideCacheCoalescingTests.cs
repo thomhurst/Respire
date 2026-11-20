@@ -25,7 +25,11 @@ public class ClientSideCacheCoalescingTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (command.StartsWith("HELLO ", StringComparison.Ordinal)) return Hello;
+                if (command.StartsWith("HELLO ", StringComparison.Ordinal))
+                {
+                    return Hello;
+                }
+
                 if (command.StartsWith("SET stress:", StringComparison.Ordinal))
                 {
                     var parts = command.Split(' ');
@@ -33,28 +37,37 @@ public class ClientSideCacheCoalescingTests
                     Volatile.Write(ref versions[index], int.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture));
                     return FakeRespServer.OkReply;
                 }
+
                 if (command.StartsWith("GET stress:", StringComparison.Ordinal))
                 {
                     var index = int.Parse(command.AsSpan("GET stress:".Length), System.Globalization.CultureInfo.InvariantCulture);
                     var value = Volatile.Read(ref versions[index]).ToString(System.Globalization.CultureInfo.InvariantCulture);
                     return Encoding.ASCII.GetBytes($"${value.Length}\r\n{value}\r\n");
                 }
+
                 return FakeRespServer.OkReply;
             },
         };
 #pragma warning disable RESP010 // Each coalescing scenario owns and disposes its clients to isolate cache, database, and waiter state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Connections = 2, CommandTimeout = TimeSpan.FromSeconds(10),
+            Connections = 2,
+            CommandTimeout = TimeSpan.FromSeconds(10),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+
 #pragma warning restore RESP010
-        foreach (var key in keys) await Assert.That(await client.GetStringAsync(key)).IsEqualTo("0");
+        foreach (var key in keys)
+        {
+            await Assert.That(await client.GetStringAsync(key)).IsEqualTo("0");
+        }
+
         using var stop = new CancellationTokenSource();
         var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var tasks = new List<Task>();
+
         for (var index = 0; index < keys.Length; index++)
         {
             var worker = index;
@@ -62,6 +75,7 @@ public class ClientSideCacheCoalescingTests
             {
                 var random = new Random(seed + worker);
                 await start.Task;
+
                 for (var value = 1; value <= writes; value++)
                 {
                     await PerturbAsync(random);
@@ -69,6 +83,7 @@ public class ClientSideCacheCoalescingTests
                 }
             }));
         }
+
         for (var index = 0; index < 8; index++)
         {
             var worker = index;
@@ -76,6 +91,7 @@ public class ClientSideCacheCoalescingTests
             {
                 var random = new Random(seed + 100 + worker);
                 await start.Task;
+
                 for (var read = 0; read < writes * 2; read++)
                 {
                     await PerturbAsync(random);
@@ -85,26 +101,53 @@ public class ClientSideCacheCoalescingTests
                 }
             }));
         }
+
         var finished = Task.WhenAll(tasks);
         start.SetResult();
-        try { await finished.WaitAsync(TimeSpan.FromSeconds(20)); }
+
+        try
+        {
+            await finished.WaitAsync(TimeSpan.FromSeconds(20));
+        }
         finally
         {
             stop.Cancel();
-            try { await finished.WaitAsync(TimeSpan.FromSeconds(20)); }
+
+            try
+            {
+                await finished.WaitAsync(TimeSpan.FromSeconds(20));
+            }
             catch (OperationCanceledException) { }
         }
+
         await Assert.That(client.Core.ClientCache!.ActiveSharedReadCount).IsEqualTo(0);
-        foreach (var key in keys) await Assert.That(await client.GetStringAsync(key)).IsEqualTo(writes.ToString());
+
+        foreach (var key in keys)
+        {
+            await Assert.That(await client.GetStringAsync(key)).IsEqualTo(writes.ToString());
+        }
+
         var gets = server.ReceivedCommands.Count(command => command.StartsWith("GET stress:", StringComparison.Ordinal));
-        foreach (var key in keys) await Assert.That(await client.GetStringAsync(key)).IsEqualTo(writes.ToString());
+
+        foreach (var key in keys)
+        {
+            await Assert.That(await client.GetStringAsync(key)).IsEqualTo(writes.ToString());
+        }
+
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("GET stress:", StringComparison.Ordinal)))
             .IsEqualTo(gets);
 
         static async Task PerturbAsync(Random random)
         {
-            if (random.Next(4) == 0) await Task.Yield();
-            if (random.Next(16) == 0) await Task.Delay(1);
+            if (random.Next(4) == 0)
+            {
+                await Task.Yield();
+            }
+
+            if (random.Next(16) == 0)
+            {
+                await Task.Delay(1);
+            }
         }
     }
 
@@ -132,18 +175,36 @@ public class ClientSideCacheCoalescingTests
         awaiter.UnsafeOnCompleted(() =>
         {
             Exception? failure = null;
-            try { _ = awaiter.GetResult(); }
+
+            try
+            {
+                _ = awaiter.GetResult();
+            }
             catch (Exception error) { failure = error; }
+
             observed.TrySetResult((Environment.CurrentManagedThreadId, failure));
-            if (releaseCaller.Wait(TimeSpan.FromSeconds(15))) callerFinished.TrySetResult();
-            else callerFinished.TrySetException(new TimeoutException("Caller was not released."));
+
+            if (releaseCaller.Wait(TimeSpan.FromSeconds(15)))
+            {
+                callerFinished.TrySetResult();
+            }
+            else
+            {
+                callerFinished.TrySetException(new TimeoutException("Caller was not released."));
+            }
         });
         var cancelThread = new Thread(() =>
         {
-            try { cancellation.Cancel(); cancelReturned.TrySetResult(); }
+            try
+            {
+                cancellation.Cancel();
+                cancelReturned.TrySetResult();
+            }
             catch (Exception error) { cancelReturned.TrySetException(error); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         cancelThread.Start();
+
         try
         {
             var result = await observed.Task.WaitAsync(Timeout);
@@ -151,6 +212,7 @@ public class ClientSideCacheCoalescingTests
             await Assert.That(result.Error is OperationCanceledException error && error.CancellationToken == cancellation.Token).IsTrue();
             await cancelReturned.Task.WaitAsync(Timeout);
             await Assert.That(callerFinished.Task.IsCompleted).IsFalse();
+
             if (follower is not null)
             {
                 await server.SendRawAsync("+OK\r\n$5\r\nvalue\r\n+PONG\r\n"u8.ToArray());
@@ -267,10 +329,12 @@ public class ClientSideCacheCoalescingTests
 #pragma warning disable RESP010 // Each coalescing scenario owns and disposes its clients to isolate cache, database, and waiter state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
             ClientSideCache = new()
             {
-                CoalesceConcurrentMisses = true, TrackingMode = RespireClientTrackingMode.Broadcast,
+                CoalesceConcurrentMisses = true,
+                TrackingMode = RespireClientTrackingMode.Broadcast,
                 KeyPrefixes = ["covered:"],
             },
         });
@@ -285,11 +349,13 @@ public class ClientSideCacheCoalescingTests
         await Assert.That(await second.WaitAsync(Timeout)).IsEqualTo("x");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(covered ? 1 : 0);
         var next = client.GetStringAsync(key).AsTask();
+
         if (!covered)
         {
             await WaitUntilAsync(() => server.ReceivedCommands.Count(command => command.StartsWith("GET ")) == 2);
             await server.SendRawAsync("$1\r\nx\r\n"u8.ToArray());
         }
+
         await Assert.That(await next.WaitAsync(Timeout)).IsEqualTo("x");
         await Assert.That(server.ReceivedCommands.Any(command => command == "CLIENT CACHING YES")).IsFalse();
     }
@@ -339,12 +405,17 @@ public class ClientSideCacheCoalescingTests
         var joined = client.GetStringAsync("key").AsTask();
         await WaitUntilAsync(() => server.ReceivedCommands.Contains("GET key"));
         var cache = client.Core.ClientCache!;
-        if (continuityLoss) cache.FlushForContinuityLoss();
+
+        if (continuityLoss)
+        {
+            cache.FlushForContinuityLoss();
+        }
         else
         {
             await server.SendRawAsync(">2\r\n+invalidate\r\n*1\r\n$3\r\nkey\r\n"u8.ToArray());
             await WaitUntilAsync(() => cache.GetStatistics().Invalidations == 1);
         }
+
         var fresh = client.GetStringAsync("key").AsTask();
         await WaitUntilAsync(() => server.ReceivedCommands.Count(c => c == "GET key") == 2);
         await server.SendRawAsync("+OK\r\n$3\r\nold\r\n"u8.ToArray());
@@ -387,6 +458,7 @@ public class ClientSideCacheCoalescingTests
         var identity = new ClientCacheCommandKey("GET", "key");
         var finishReads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
+
         async ValueTask<RespValue> Read(int _, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref calls);
@@ -411,6 +483,7 @@ public class ClientSideCacheCoalescingTests
         });
         var reads = new List<Task<RespValue>>();
         Task invalidating = Task.CompletedTask;
+
         try
         {
             await gateHeld.Task.WaitAsync(Timeout);
@@ -429,8 +502,13 @@ public class ClientSideCacheCoalescingTests
             releaseGate.TrySetResult();
             finishReads.TrySetResult();
             await Task.WhenAll(holder, invalidating).WaitAsync(Timeout);
-            foreach (var read in reads) (await read.WaitAsync(Timeout)).Dispose();
+
+            foreach (var read in reads)
+            {
+                (await read.WaitAsync(Timeout)).Dispose();
+            }
         }
+
         await Assert.That(cache.ActiveSharedReadCount).IsEqualTo(0);
     }
 
@@ -439,6 +517,7 @@ public class ClientSideCacheCoalescingTests
     {
         await using var server = CreateServer();
         var client = await ConnectAsync(server);
+
         await using (client)
         {
             var first = client.GetStringAsync("key").AsTask();
@@ -481,11 +560,13 @@ public class ClientSideCacheCoalescingTests
         var cache = new ClientSideCacheCoordinator(new() { CoalesceConcurrentMisses = true });
         var identity = new ClientCacheCommandKey("GET", "key");
         var calls = 0;
+
         ValueTask<RespValue> Read(int _, CancellationToken token)
         {
             Interlocked.Increment(ref calls);
             return ValueTask.FromResult(RespValue.BulkString("oversized"u8.ToArray()));
         }
+
         using var first = await cache.CoalesceReadAsync(identity, 0, Read, default);
         using var second = await cache.CoalesceReadAsync(identity, 0, Read, default);
         await Assert.That(calls).IsEqualTo(2);
@@ -580,10 +661,12 @@ public class ClientSideCacheCoalescingTests
             Connections = 1,
             ClientSideCache = enabled ? new() { CoalesceConcurrentMisses = true } : new(),
         });
+
 #pragma warning restore RESP010
         async Task<string?> ReadAsync() => many
             ? string.Join(",", await client.Strings.GetManyAsync("key", "missing", "key"))
             : await client.GetStringAsync("key");
+
         var first = ReadAsync();
         var second = ReadAsync();
         await BarrierAsync(server, client, requests);
@@ -604,7 +687,12 @@ public class ClientSideCacheCoalescingTests
         var callers = Enumerable.Range(0, 32).Select(_ => Task.Run(async () =>
         {
             var pending = client.GetStringAsync("key");
-            if (Interlocked.Decrement(ref remaining) == 0) joined.SetResult();
+
+            if (Interlocked.Decrement(ref remaining) == 0)
+            {
+                joined.SetResult();
+            }
+
             return await pending;
         })).ToArray();
         await joined.Task.WaitAsync(Timeout);
@@ -654,6 +742,10 @@ public class ClientSideCacheCoalescingTests
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(Timeout);
-        while (!condition()) await Task.Delay(10, timeout.Token);
+
+        while (!condition())
+        {
+            await Task.Delay(10, timeout.Token);
+        }
     }
 }

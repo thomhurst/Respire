@@ -17,8 +17,15 @@ internal partial record JsonMapperModel(string Id,
 [RespireJson("mutable:{Id}")]
 internal partial class JsonMapperMutable
 {
-    public required string Id { get; init; }
-    public required int Value { get; set; }
+    public required string Id
+    {
+        get; init;
+    }
+
+    public required int Value
+    {
+        get; set;
+    }
 }
 
 [RespireJson("nullable")]
@@ -40,8 +47,12 @@ public class GeneratedJsonMapperTests
             new JsonMapperNullable(null, null, null, null, null, null),
             new JsonMapperNullable(false, long.MinValue, double.Epsilon, decimal.MinValue, Guid.NewGuid(), DateTimeOffset.UtcNow),
         };
+
         foreach (var value in values)
+        {
             await Assert.That(JsonMapperNullableJsonMapper.FromJson(JsonMapperNullableJsonMapper.ToJson(value))).IsEqualTo(value);
+        }
+
         await Assert.That(JsonMapperNullableJsonMapper.FromJson("{}"u8)).IsEqualTo(values[0]);
     }
 
@@ -64,6 +75,7 @@ public class GeneratedJsonMapperTests
     public async Task MetadataAndKeysIgnoreCurrentCulture()
     {
         var previous = CultureInfo.CurrentCulture;
+
         try
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");

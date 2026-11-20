@@ -19,6 +19,7 @@ public sealed partial class RespireClient
         // from here when that caller did not already carry a recovery deadline.
         deadline = CreateCircuitDeadline(deadline);
         var acquisition = new CommandAcquisitionScope(callerToken, deadline, _core.Options.CommandTimeout);
+
         try
         {
             acquisition.CheckDeadline(operation, _core);
@@ -30,9 +31,13 @@ public sealed partial class RespireClient
             }, acquisition.Token, observation, cursorRead, affinity).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (acquisition.IsCallerCancellation(error))
-        { throw new OperationCanceledException(error.Message, error, callerToken); }
+        {
+            throw new OperationCanceledException(error.Message, error, callerToken);
+        }
         catch (OperationCanceledException error) when (acquisition.IsDeadlineCancellation(error))
-        { throw acquisition.CreateTimeout(operation, _core, cause: error); }
+        {
+            throw acquisition.CreateTimeout(operation, _core, cause: error);
+        }
         finally { acquisition.Dispose(); }
     }
 
@@ -41,8 +46,12 @@ public sealed partial class RespireClient
         bool cursorRead = false, ReadAffinity? affinity = null)
     {
         if (_core.Options.BacklogPolicy == RespireBacklogPolicy.FailFast)
+        {
             return await _core.ReadRouter.SelectForDispatchAsync(_readFrom, callerToken, observation, cursorRead, affinity).ConfigureAwait(false);
+        }
+
         var acquisition = new CommandAcquisitionScope(callerToken, deadline, _core.Options.CommandTimeout);
+
         try
         {
             acquisition.CheckDeadline(operation, _core);
@@ -50,13 +59,21 @@ public sealed partial class RespireClient
             // The original deadline still follows it into transport admission.
             if (!cursorRead && !_core.ReadRouter.IsBacklogDraining
                 && _core.ReadRouter.TryAcquireReadyConnection(_readFrom, callerToken) is { } ready
-                && !_core.ReadRouter.IsBacklogDraining) return ready;
+                && !_core.ReadRouter.IsBacklogDraining)
+            {
+                return ready;
+            }
+
             return await _core.ReadRouter.SelectForDispatchAsync(_readFrom, acquisition.Token, observation, cursorRead, affinity).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (acquisition.IsCallerCancellation(error))
-        { throw new OperationCanceledException(error.Message, error, callerToken); }
+        {
+            throw new OperationCanceledException(error.Message, error, callerToken);
+        }
         catch (OperationCanceledException error) when (acquisition.IsDeadlineCancellation(error))
-        { throw acquisition.CreateTimeout(operation, _core, cause: error); }
+        {
+            throw acquisition.CreateTimeout(operation, _core, cause: error);
+        }
         finally { acquisition.Dispose(); }
     }
 }

@@ -16,7 +16,9 @@ if (string.IsNullOrWhiteSpace(builder.Configuration["Dashboard:Password"]))
 }
 builder.Services.AddAuthentication(OperatorAuthenticationHandler.SchemeName)
     .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, OperatorAuthenticationHandler>(
-        OperatorAuthenticationHandler.SchemeName, _ => { });
+        OperatorAuthenticationHandler.SchemeName, _ =>
+        {
+        });
 builder.Services.AddAuthorization(options => options.AddPolicy(OperatorAuthenticationHandler.PolicyName,
     policy => policy.RequireAuthenticatedUser().RequireRole(OperatorAuthenticationHandler.RoleName)));
 builder.Services.AddRespire(builder.Configuration.GetConnectionString("Redis")
@@ -55,19 +57,25 @@ jobs.MapPost("/{id}", async (string id, SampleJob job, IServiceProvider services
 {
     if (!IsValidJobId(id)
         || string.IsNullOrWhiteSpace(job.Message) || job.Message.Length > 1000)
+    {
         return Results.BadRequest("Supply an ID of 1–128 characters and a message of 1–1000 characters.");
+    }
 
     var queue = services.GetRequiredKeyedService<RespireJobQueue<SampleJob>>("RespireWorker");
     var submitted = await queue.EnqueueAsync(id, job, cancellationToken: ct);
     return Results.Accepted($"/jobs/{Uri.EscapeDataString(id)}", new
     {
-        id, submitted.Enqueued, entryId = submitted.EntryId.ToString(),
+        id,
+        submitted.Enqueued,
+        entryId = submitted.EntryId.ToString(),
     });
 });
 jobs.MapGet("/{id}", async (string id, IRespireClient redis, CancellationToken ct) =>
 {
     if (!IsValidJobId(id))
+    {
         return Results.BadRequest("Supply an ID of 1–128 characters.");
+    }
 
     var result = await redis.GetAsync<string>($"RespireWorker:result:{id}", ct);
     return result is null ? Results.NotFound() : Results.Ok(new { id, result });

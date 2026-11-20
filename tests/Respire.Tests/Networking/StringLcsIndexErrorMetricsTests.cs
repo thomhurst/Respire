@@ -17,7 +17,9 @@ public class StringLcsIndexErrorMetricsTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -45,24 +47,48 @@ public class StringLcsIndexErrorMetricsTests
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var capture = new ErrorCapture();
+
         if (mode == "batch")
         {
             using var batch = client.CreateBatch();
-            if (disposed) batch.Dispose();
-            else await batch.ExecuteAsync();
-            if (disposed) await Assert.That(() => batch.Strings.LcsIndex("first", "second"))
+
+            if (disposed)
+            {
+                batch.Dispose();
+            }
+            else
+            {
+                await batch.ExecuteAsync();
+            }
+
+            if (disposed)
+            {
+                await Assert.That(() => batch.Strings.LcsIndex("first", "second"))
                 .ThrowsExactly<ObjectDisposedException>();
-            else await Assert.That(() => batch.Strings.LcsIndex("first", "second"))
+            }
+            else
+            {
+                await Assert.That(() => batch.Strings.LcsIndex("first", "second"))
                 .ThrowsExactly<InvalidOperationException>();
+            }
         }
         else
         {
             await using var transaction = client.CreateTransaction();
-            if (disposed) await transaction.DisposeAsync();
-            else await transaction.CommitAsync();
+
+            if (disposed)
+            {
+                await transaction.DisposeAsync();
+            }
+            else
+            {
+                await transaction.CommitAsync();
+            }
+
             await Assert.That(() => transaction.Strings.LcsIndex("first", "second"))
                 .ThrowsExactly<InvalidOperationException>();
         }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         var tags = capture.Items.Single();
         await Assert.That(tags["error.type"]).IsEqualTo(mode == "batch" && disposed
@@ -83,15 +109,21 @@ public class StringLcsIndexErrorMetricsTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = crossSlot, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = crossSlot,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         using var capture = new ErrorCapture();
         var options = crossSlot ? null : new RespireLcsOptions { MinimumMatchLength = -1 };
+
         async Task Invoke()
         {
-            if (mode == "immediate") await client.Strings.LcsIndexAsync("{a}:first", "{b}:second", options);
+            if (mode == "immediate")
+            {
+                await client.Strings.LcsIndexAsync("{a}:first", "{b}:second", options);
+            }
             else if (mode == "batch")
             {
                 using var batch = client.CreateBatch();
@@ -103,15 +135,28 @@ public class StringLcsIndexErrorMetricsTests
                 _ = transaction.Strings.LcsIndex("{a}:first", "{b}:second", options);
             }
         }
-        if (crossSlot) await Assert.That(Invoke).ThrowsExactly<RespireCrossSlotException>();
-        else await Assert.That(Invoke).ThrowsExactly<ArgumentOutOfRangeException>();
+
+        if (crossSlot)
+        {
+            await Assert.That(Invoke).ThrowsExactly<RespireCrossSlotException>();
+        }
+        else
+        {
+            await Assert.That(Invoke).ThrowsExactly<ArgumentOutOfRangeException>();
+        }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         var tags = capture.Items.Single();
         await Assert.That(tags["error.type"]).IsEqualTo(
             crossSlot ? typeof(RespireCrossSlotException).FullName : typeof(ArgumentOutOfRangeException).FullName);
         await Assert.That((bool)tags["redis.client.errors.internal"]!).IsFalse();
         await Assert.That(tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
-        if (crossSlot) await Assert.That(tags.ContainsKey("db.response.status_code")).IsFalse();
+
+        if (crossSlot)
+        {
+            await Assert.That(tags.ContainsKey("db.response.status_code")).IsFalse();
+        }
+
         await Assert.That(server.ReceivedCommands.Where(command => command != "CLUSTER SLOTS")).IsEmpty();
     }
 
@@ -133,27 +178,56 @@ public class StringLcsIndexErrorMetricsTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var capture = new ErrorCapture();
         using var cancellation = new CancellationTokenSource();
-        if (outcome == "cancelled") cancellation.Cancel();
+
+        if (outcome == "cancelled")
+        {
+            cancellation.Cancel();
+        }
+
         async Task Invoke() => _ = await client.Strings.LcsIndexAsync("first", "second", cancellationToken: cancellation.Token);
-        if (outcome == "cancelled") await Assert.That(Invoke).ThrowsExactly<OperationCanceledException>();
-        else if (outcome == "server") await Assert.That(Invoke).ThrowsExactly<RespireServerException>();
-        else if (outcome == "protocol") await Assert.That(Invoke).ThrowsExactly<RespireProtocolException>();
-        else await Invoke();
+
+        if (outcome == "cancelled")
+        {
+            await Assert.That(Invoke).ThrowsExactly<OperationCanceledException>();
+        }
+        else if (outcome == "server")
+        {
+            await Assert.That(Invoke).ThrowsExactly<RespireServerException>();
+        }
+        else if (outcome == "protocol")
+        {
+            await Assert.That(Invoke).ThrowsExactly<RespireProtocolException>();
+        }
+        else
+        {
+            await Invoke();
+        }
+
         await Assert.That(capture.Items.Count).IsEqualTo(outcome == "success" ? 0 : 1);
-        if (outcome == "cancelled") await Assert.That(server.ReceivedCommands).IsEmpty();
+
+        if (outcome == "cancelled")
+        {
+            await Assert.That(server.ReceivedCommands).IsEmpty();
+        }
     }
 
     private sealed class ErrorCapture : IDisposable
     {
         private readonly MeterListener _listener = new();
-        internal ConcurrentQueue<Dictionary<string, object?>> Items { get; } = new();
+
+        internal ConcurrentQueue<Dictionary<string, object?>> Items
+        {
+            get;
+        } = new();
 
         internal ErrorCapture()
         {
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
                 Items.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));

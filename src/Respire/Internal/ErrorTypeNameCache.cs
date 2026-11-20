@@ -25,10 +25,19 @@ internal sealed class ErrorTypeNameCache
     private string CreateName(Type type)
     {
         var name = type.FullName ?? type.Name;
+
         lock (_gate)
         {
-            if (_names.Contains(name)) return name;
-            if (_names.Count == _limit) return "_OTHER";
+            if (_names.Contains(name))
+            {
+                return name;
+            }
+
+            if (_names.Count == _limit)
+            {
+                return "_OTHER";
+            }
+
             _names.Add(name);
             return name;
         }

@@ -88,9 +88,12 @@ public class ClusterAdministrationIntegrationTests
         topology[0].Primary.NodeId.Should().Be(firstId);
 
         RespireEndpoint Endpoint(int port) => new(container.Hostname, container.GetMappedPublicPort(port));
+
         RespireClient Client(int port) => RespireClient.Create(new RespireOptions
         {
-            Endpoints = [Endpoint(port)], Connections = 1, AllowAdmin = true,
+            Endpoints = [Endpoint(port)],
+            Connections = 1,
+            AllowAdmin = true,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             // A loaded CI runner has stalled the CLUSTER REPLICATE reply past the default 10 s.
@@ -128,9 +131,12 @@ public class ClusterAdministrationIntegrationTests
         nodes.Single().ConfigurationEpoch.Should().Be(bumped.Epoch);
 
         RespireEndpoint Endpoint(int port) => new(container.Hostname, container.GetMappedPublicPort(port));
+
         RespireClient Client(int port) => RespireClient.Create(new RespireOptions
         {
-            Endpoints = [Endpoint(port)], Connections = 1, AllowAdmin = true,
+            Endpoints = [Endpoint(port)],
+            Connections = 1,
+            AllowAdmin = true,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
@@ -145,9 +151,14 @@ public class ClusterAdministrationIntegrationTests
     private static async Task Until(Func<Task<bool>> condition)
     {
         var elapsed = Stopwatch.StartNew();
+
         while (!await condition())
         {
-            if (elapsed.Elapsed > TimeSpan.FromSeconds(20)) throw new TimeoutException("Owned Cluster did not converge.");
+            if (elapsed.Elapsed > TimeSpan.FromSeconds(20))
+            {
+                throw new TimeoutException("Owned Cluster did not converge.");
+            }
+
             await Task.Delay(50);
         }
     }

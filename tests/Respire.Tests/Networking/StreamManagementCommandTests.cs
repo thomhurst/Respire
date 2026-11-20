@@ -25,15 +25,22 @@ public class StreamManagementCommandTests
 #pragma warning disable RESP010 // This test owns the cluster client and topology so cached pending-replay routing cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-            Endpoints = [new("127.0.0.1", seed.Port)], ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            ClusterTopologyRefreshInterval = null,
         });
+
 #pragma warning restore RESP010
         for (var index = 0; index < 4; index++)
         {
             await foreach (var entry in client.Streams.ReadGroupAsync(key, "group", "consumer", (RespireStreamId)"0"))
+            {
                 throw new InvalidOperationException("Empty pending history must not yield an entry.");
+            }
         }
+
         await Assert.That(seed.ReceivedCommands.Any(command => command.StartsWith("XREADGROUP "))).IsFalse();
         await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("XREADGROUP "))).IsEqualTo(4);
     }
@@ -77,11 +84,13 @@ public class StreamManagementCommandTests
         var pending = await client.Streams.ClaimPendingAsync(
             "events", "workers", "bob", TimeSpan.FromMilliseconds(500), count: 25);
         var replayed = new List<RespireStreamEntry>();
+
         await foreach (var replay in client.Streams.ReadGroupAsync(
             "events", "workers", "bob", startAt: RespireStreamId.Beginning, batchSize: 10))
         {
             replayed.Add(replay);
         }
+
         await Assert.That(await claimed[0].AckAsync()).IsTrue();
 
         await Assert.That(claimed.Select(item => item.Id.ToString())).IsEquivalentTo(new[] { "1-0" });
@@ -380,6 +389,7 @@ public class StreamManagementCommandTests
     private static void WriteArray(StringBuilder builder, object?[] values)
     {
         builder.Append('*').Append(values.Length).Append("\r\n");
+
         foreach (var value in values)
         {
             WriteValue(builder, value);

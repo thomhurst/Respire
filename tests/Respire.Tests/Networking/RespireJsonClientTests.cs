@@ -70,8 +70,14 @@ public partial class RespireJsonClientTests
 
         await json.MergeAsync("profile", new Profile(7), JsonTestContext.Default.Profile);
         await json.MergeAsync<Profile>("null-patch", null!, JsonTestContext.Default.Profile);
-        using (await json.Commands.ArrayLengthAsync("profile", "$.items")) { }
-        using (await json.Commands.NumberPowerByAsync("profile", "$.Age", 2.5)) { }
+
+        using (await json.Commands.ArrayLengthAsync("profile", "$.items"))
+        {
+        }
+
+        using (await json.Commands.NumberPowerByAsync("profile", "$.Age", 2.5))
+        {
+        }
 
         await Assert.That(server.ReceivedCommands).Contains("JSON.MERGE tenant:profile . {\"Age\":7}");
         await Assert.That(server.ReceivedCommands).Contains("JSON.MERGE tenant:null-patch . null");
@@ -152,8 +158,13 @@ public partial class RespireJsonClientTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var prefixed = client.WithKeyPrefix("tenant:");
 
-        using (await prefixed.ExecuteAsync(RespireCommands.Dragonfly.JSON_DEBUG_FIELDS, ["profile", "."])) { }
-        using (await prefixed.ExecuteAsync(RespireCommands.Dragonfly.JSON_DEBUG_HELP, [])) { }
+        using (await prefixed.ExecuteAsync(RespireCommands.Dragonfly.JSON_DEBUG_FIELDS, ["profile", "."]))
+        {
+        }
+
+        using (await prefixed.ExecuteAsync(RespireCommands.Dragonfly.JSON_DEBUG_HELP, []))
+        {
+        }
 
         await Assert.That(server.ReceivedCommands).Contains("JSON.DEBUG FIELDS tenant:profile .");
         await Assert.That(server.ReceivedCommands).Contains("JSON.DEBUG HELP");
@@ -172,8 +183,14 @@ public partial class RespireJsonClientTests
 
         // Malformed layouts fault the returned task instead of throwing synchronously.
         ValueTask<RespireResult> malformed = default;
-        await Assert.That(() => { malformed = prefixed.ExecuteAsync(RespireCommands.Json.JSON_MGET, ["."]); }).ThrowsNothing();
-        await Assert.That(async () => { using var result = await malformed; }).Throws<Exception>();
+        await Assert.That(() =>
+        {
+            malformed = prefixed.ExecuteAsync(RespireCommands.Json.JSON_MGET, ["."]);
+        }).ThrowsNothing();
+        await Assert.That(async () =>
+        {
+            using var result = await malformed;
+        }).Throws<Exception>();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("JSON.", StringComparison.Ordinal))).IsFalse();
     }
 
@@ -326,7 +343,12 @@ public partial class RespireJsonClientTests
     {
         const int depth = 100;
         var nested = "null";
-        for (var level = 0; level < depth; level++) nested = "{\"Next\":" + nested + "}";
+
+        for (var level = 0; level < depth; level++)
+        {
+            nested = "{\"Next\":" + nested + "}";
+        }
+
         var matches = string.Join(",", Enumerable.Range(1, 10).Select(age => "{\"Age\":" + age + "}"));
         await using var server = new FakeRespServer(FakeRespServer.OkReply)
         {
@@ -357,7 +379,12 @@ public partial class RespireJsonClientTests
         static int Depth(Node? node)
         {
             var count = 0;
-            for (; node is not null; node = node.Next) count++;
+
+            for (; node is not null; node = node.Next)
+            {
+                count++;
+            }
+
             return count;
         }
     }
@@ -414,15 +441,20 @@ public partial class RespireJsonClientTests
     {
         var operations = new SortedSet<string>(StringComparer.Ordinal);
         var commandAttributes = new List<RespireCommandAttribute>();
+
         foreach (var type in new[] { typeof(RespireCommands.Json), typeof(RespireCommands.Dragonfly) })
         {
             foreach (var field in type.GetFields())
             {
                 if (field.GetValue(null) is RespireCommand command && command.Name.StartsWith("JSON.", StringComparison.Ordinal))
+                {
                     operations.Add(command.Name);
+                }
             }
         }
+
         var modifierCommands = typeof(RespireJsonClient).Assembly.GetType("Respire.Json.IRespireJsonModifierCommands")!;
+
         foreach (var type in new[] { typeof(IRespireJsonCommands), modifierCommands })
         {
             foreach (var method in type.GetMethods())
@@ -455,7 +487,10 @@ public partial class RespireJsonClientTests
 
     private sealed class Node
     {
-        public Node? Next { get; set; }
+        public Node? Next
+        {
+            get; set;
+        }
     }
 
     [JsonSerializable(typeof(Profile))]

@@ -11,99 +11,98 @@ using Hangfire.Server;
 using TUnit.Core;
 using Assert = Xunit.Assert;
 
-namespace Hangfire.Redis.Tests
+namespace Hangfire.Redis.Tests;
+
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+[NotInParallel]
+public class ExpiredJobsWatcherFacts : UpstreamRedisTest
 {
-    [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-    [NotInParallel]
-    public class ExpiredJobsWatcherFacts : UpstreamRedisTest
+    private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(1);
+
+    private readonly RedisStorage _storage;
+    private readonly CancellationTokenSource _cts;
+
+    [After(Test)]
+    public void DisposeCancellation() => _cts.Dispose();
+
+    public ExpiredJobsWatcherFacts(RedisTestContainer fixture) : base(fixture)
     {
-        private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(1);
+        var options = new RedisStorageOptions() { Db = RedisUtils.GetDb() };
+        _storage = new RedisStorage(RedisUtils.Connection, options);
+        _cts = new CancellationTokenSource();
+        _cts.Cancel();
+    }
 
-        private readonly RedisStorage _storage;
-        private readonly CancellationTokenSource _cts;
+    [Test]
+    public void Ctor_ThrowsAnException_WhenStorageIsNull()
+    {
+        Assert.Throws<ArgumentNullException>("storage",
+            () => new ExpiredJobsWatcher(null, CheckInterval));
+    }
 
-        [After(Test)]
-        public void DisposeCancellation() => _cts.Dispose();
+    [Test]
+    public void Ctor_ThrowsAnException_WhenCheckIntervalIsZero()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>("checkInterval",
+            () => new ExpiredJobsWatcher(_storage, TimeSpan.Zero));
+    }
 
-        public ExpiredJobsWatcherFacts(RedisTestContainer fixture) : base(fixture)
-        {
-            var options = new RedisStorageOptions() {Db = RedisUtils.GetDb()};
-            _storage = new RedisStorage(RedisUtils.Connection, options);
-            _cts = new CancellationTokenSource();
-            _cts.Cancel();
-        }
+    [Test]
+    public void Ctor_ThrowsAnException_WhenCheckIntervalIsNegative()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>("checkInterval",
+            () => new ExpiredJobsWatcher(_storage, TimeSpan.FromSeconds(-1)));
+    }
 
-        [Test]
-        public void Ctor_ThrowsAnException_WhenStorageIsNull()
-        {
-            Assert.Throws<ArgumentNullException>("storage",
-                () => new ExpiredJobsWatcher(null, CheckInterval));
-        }
+    [Test]
+    public void Execute_DeletesNonExistingJobs()
+    {
+        var redis = RedisUtils.CreateClient();
 
-        [Test]
-        public void Ctor_ThrowsAnException_WhenCheckIntervalIsZero()
-        {
-            Assert.Throws<ArgumentOutOfRangeException>("checkInterval",
-                () => new ExpiredJobsWatcher(_storage, TimeSpan.Zero));
-        }
+        Assert.Equal(0, redis.ListLength("{hangfire}:succeeded"));
+        Assert.Equal(0, redis.ListLength("{hangfire}:deleted"));
 
-        [Test]
-        public void Ctor_ThrowsAnException_WhenCheckIntervalIsNegative()
-        {
-            Assert.Throws<ArgumentOutOfRangeException>("checkInterval",
-                () => new ExpiredJobsWatcher(_storage, TimeSpan.FromSeconds(-1)));
-        }
+        // Arrange
+        redis.ListRightPush("{hangfire}:succeded", "my-job");
+        redis.ListRightPush("{hangfire}:deleted", "other-job");
 
-        [Test]
-        public void Execute_DeletesNonExistingJobs()
-        {
-            var redis = RedisUtils.CreateClient();
+        var watcher = CreateWatcher();
 
-            Assert.Equal(0, redis.ListLength("{hangfire}:succeeded"));
-            Assert.Equal(0, redis.ListLength("{hangfire}:deleted"));
+        // Act
+        watcher.Execute(_cts.Token);
 
-            // Arrange
-            redis.ListRightPush("{hangfire}:succeded", "my-job");
-            redis.ListRightPush("{hangfire}:deleted", "other-job");
+        // Assert
+        Assert.Equal(0, redis.ListLength("{hangfire}:succeeded"));
+        Assert.Equal(0, redis.ListLength("{hangfire}:deleted"));
+    }
 
-            var watcher = CreateWatcher();
+    [Test]
+    public void Execute_DoesNotDeleteExistingJobs()
+    {
+        var redis = RedisUtils.CreateClient();
+        // Arrange
+        redis.ListRightPush("{hangfire}:succeeded", "my-job");
+        redis.HashSet("{hangfire}:job:my-job", "Fetched",
+            JobHelper.SerializeDateTime(DateTime.UtcNow.AddDays(-1)));
 
-            // Act
-            watcher.Execute(_cts.Token);
+        redis.ListRightPush("{hangfire}:deleted", "other-job");
+        redis.HashSet("{hangfire}:job:other-job", "Fetched",
+            JobHelper.SerializeDateTime(DateTime.UtcNow.AddDays(-1)));
 
-            // Assert
-            Assert.Equal(0, redis.ListLength("{hangfire}:succeeded"));
-            Assert.Equal(0, redis.ListLength("{hangfire}:deleted"));
-        }
+        var watcher = CreateWatcher();
 
-        [Test]
-        public void Execute_DoesNotDeleteExistingJobs()
-        {
-            var redis = RedisUtils.CreateClient();
-            // Arrange
-            redis.ListRightPush("{hangfire}:succeeded", "my-job");
-            redis.HashSet("{hangfire}:job:my-job", "Fetched",
-                JobHelper.SerializeDateTime(DateTime.UtcNow.AddDays(-1)));
+        // Act
+        watcher.Execute(_cts.Token);
 
-            redis.ListRightPush("{hangfire}:deleted", "other-job");
-            redis.HashSet("{hangfire}:job:other-job", "Fetched",
-                JobHelper.SerializeDateTime(DateTime.UtcNow.AddDays(-1)));
-
-            var watcher = CreateWatcher();
-
-            // Act
-            watcher.Execute(_cts.Token);
-
-            // Assert
-            Assert.Equal(1, redis.ListLength("{hangfire}:succeeded"));
-            Assert.Equal(1, redis.ListLength("{hangfire}:deleted"));
-        }
+        // Assert
+        Assert.Equal(1, redis.ListLength("{hangfire}:succeeded"));
+        Assert.Equal(1, redis.ListLength("{hangfire}:deleted"));
+    }
 
 #pragma warning disable 618
-        private IServerComponent CreateWatcher()
+    private IServerComponent CreateWatcher()
 #pragma warning restore 618
-        {
-            return new ExpiredJobsWatcher(_storage, CheckInterval);
-        }
+    {
+        return new ExpiredJobsWatcher(_storage, CheckInterval);
     }
 }

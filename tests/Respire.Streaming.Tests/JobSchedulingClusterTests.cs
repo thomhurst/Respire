@@ -1,6 +1,6 @@
+using System.Reflection;
 using System.Text;
 using Respire.Internal;
-using System.Reflection;
 using Respire.Testing.Containers;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -16,9 +16,11 @@ public class JobSchedulingClusterTests
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
-            Topology = RespireContainerTopology.Cluster, Image = "redis:7.4-alpine",
+            Topology = RespireContainerTopology.Cluster,
+            Image = "redis:7.4-alpine",
         });
         await using var root = await RespireClient.ConnectAsync(fixture.CreateOptions());
+
         foreach (var prefix in new[] { "tenant:", "{tenant}:" })
         {
             var client = root.WithKeyPrefix(prefix);
@@ -50,9 +52,11 @@ public class JobSchedulingClusterTests
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
-            Topology = RespireContainerTopology.Cluster, Image = "redis:7.4-alpine",
+            Topology = RespireContainerTopology.Cluster,
+            Image = "redis:7.4-alpine",
         });
         await using var root = await RespireClient.ConnectAsync(fixture.CreateOptions());
+
         foreach (var prefix in new[] { "tenant:", "{tenant}:" })
         {
             var client = root.WithKeyPrefix(prefix);
@@ -68,7 +72,12 @@ public class JobSchedulingClusterTests
             await Assert.That(replace.Result.Enqueued).IsTrue();
             await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
             var entries = new List<RespireStreamEntry>();
-            for (var i = 0; i < 3; i++) entries.AddRange(await JobReplacementIntegrationTests.Read(client, queue, grouped: true));
+
+            for (var i = 0; i < 3; i++)
+            {
+                entries.AddRange(await JobReplacementIntegrationTests.Read(client, queue, grouped: true));
+            }
+
             await Assert.That(entries.Count).IsEqualTo(1);
             await Assert.That(entries[0].GetString("_respire.job.payload")).IsEqualTo("new");
             await Assert.That((await queue.EnqueueAsync("job", "active duplicate")).Enqueued).IsFalse();
@@ -81,9 +90,11 @@ public class JobSchedulingClusterTests
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
-            Topology = RespireContainerTopology.Cluster, Image = "redis:7.4-alpine",
+            Topology = RespireContainerTopology.Cluster,
+            Image = "redis:7.4-alpine",
         });
         await using var root = await RespireClient.ConnectAsync(fixture.CreateOptions());
+
         foreach (var prefix in new[] { "tenant:", "{tenant}:" })
         {
             var client = root.WithKeyPrefix(prefix);
@@ -101,6 +112,7 @@ public class JobSchedulingClusterTests
             await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(1);
             await Assert.That(await client.Streams.CountAsync(queue.StreamKey + ":scheduled")).IsEqualTo(2);
         }
+
         var otherQueue = new RespireJobQueue<string>(root, "cross-slot", Encoding.UTF8.GetBytes);
         await using var invalid = root.CreateTransaction();
         _ = invalid.Set("{different}:order", "paid");
@@ -115,9 +127,11 @@ public class JobSchedulingClusterTests
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
-            Topology = RespireContainerTopology.Cluster, Image = "redis:7.4-alpine",
+            Topology = RespireContainerTopology.Cluster,
+            Image = "redis:7.4-alpine",
         });
         await using var root = await RespireClient.ConnectAsync(fixture.CreateOptions());
+
         foreach (var prefix in new[] { "tenant:", "{tenant}:" })
         {
             var client = root.WithKeyPrefix(prefix);
@@ -143,7 +157,8 @@ public class JobSchedulingClusterTests
             var keys = JobGroupIntegrationTests.Keys(queue);
             var original = await queue.EnqueueScheduledAsync("id{untrusted}", "payload", new()
             {
-                Group = "tenant:{other}:東京", DeduplicationMode = RespireJobDeduplicationMode.Extend,
+                Group = "tenant:{other}:東京",
+                DeduplicationMode = RespireJobDeduplicationMode.Extend,
             });
             await Assert.That(await queue.EnqueueAsync("id{untrusted}", "duplicate"))
                 .IsEqualTo(new RespireJobEnqueueResult(original.EntryId, false));
@@ -173,13 +188,24 @@ public class JobSchedulingClusterTests
             await queue.EnqueueScheduledAsync("controlled", "payload", new() { Group = "controlled" });
             await queue.SetRateLimitAsync(new() { PermitLimit = 1, Window = TimeSpan.FromHours(1) });
             await queue.PauseAsync();
+
             using (var paused = await JobQueueControlTests.Admit(client, queue, "ReadGrouped"))
+            {
                 await Assert.That(paused[2].AsInteger()).IsEqualTo(1);
+            }
+
             await queue.ResumeAsync();
+
             using (var admitted = await JobQueueControlTests.Admit(client, queue, "ReadGrouped"))
+            {
                 await Assert.That(admitted[1].Count).IsEqualTo(1);
+            }
+
             using (var denied = await JobQueueControlTests.Admit(client, queue, "ReadGrouped"))
+            {
                 await Assert.That(denied[3].AsInteger()).IsGreaterThan(0);
+            }
+
             await Assert.That((await queue.GetStateAsync()).RateLimitHits).IsEqualTo(1);
 
             // Application-group controls use the same explicit keys even when a client prefix

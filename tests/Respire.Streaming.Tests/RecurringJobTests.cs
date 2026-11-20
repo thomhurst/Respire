@@ -19,18 +19,27 @@ public class RecurringJobTests
         await Assert.That(async () => await scheduler.UpsertAsync("id", "payload", new())).Throws<ArgumentException>();
         await Assert.That(async () => await scheduler.UpsertAsync("id", "payload", new()
         {
-            Interval = TimeSpan.FromSeconds(1), Cron = "* * * * *",
+            Interval = TimeSpan.FromSeconds(1),
+            Cron = "* * * * *",
         })).Throws<ArgumentException>();
+
         foreach (var interval in new[] { TimeSpan.Zero, TimeSpan.FromMilliseconds(-1), TimeSpan.FromTicks(1) })
+        {
             await Assert.That(async () => await scheduler.UpsertAsync("id", "payload", new() { Interval = interval }))
                 .Throws<ArgumentOutOfRangeException>();
+        }
+
         await Assert.That(async () => await scheduler.UpsertAsync("id", "payload", new()
         {
-            Interval = TimeSpan.FromSeconds(1), MissedTickPolicy = (RespireJobMissedTickPolicy)123,
+            Interval = TimeSpan.FromSeconds(1),
+            MissedTickPolicy = (RespireJobMissedTickPolicy)123,
         })).Throws<ArgumentOutOfRangeException>();
+
         foreach (var cron in new[] { "", "not cron", "60 * * * *", "* * * * * *" })
+        {
             await Assert.That(async () => await scheduler.UpsertAsync("id", "payload", new() { Cron = cron }))
                 .Throws<Cronos.CronFormatException>();
+        }
     }
 
     [Test]
@@ -79,7 +88,12 @@ public class RecurringJobTests
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
         var services = new ServiceCollection().AddSingleton<IRespireClient>(client);
-        if (logging) services.AddLogging();
+
+        if (logging)
+        {
+            services.AddLogging();
+        }
+
         services.AddRespireJobQueue<Handler, string>("first", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
             new() { TelemetryName = "first" });
         services.AddRespireJobQueue<Handler, string>("second", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,

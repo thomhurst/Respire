@@ -30,6 +30,7 @@ public partial class CommandHookTests
         await using var server = Server();
         using var canceled = new CancellationTokenSource();
         canceled.Cancel();
+
         foreach (var policy in new[] { "absent", "observe", "reject" })
         {
             var rejected = new InvalidOperationException("policy denied");
@@ -44,45 +45,82 @@ public partial class CommandHookTests
             var error = await Failure(async () =>
             {
                 var token = canceled.Token;
+
                 switch (route)
                 {
                     case "array":
                         await using (var iterator = client.Arrays.ScanAsync("key", 0, 10, cancellationToken: token).GetAsyncEnumerator())
+                        {
                             await iterator.MoveNextAsync();
+                        }
                         break;
                     case "typed-array":
                         await using (var iterator = client.Arrays.ScanAsync<int>("key", 0, 10, cancellationToken: token).GetAsyncEnumerator())
+                        {
                             await iterator.MoveNextAsync();
+                        }
                         break;
-                    case "hash-fields": await client.Hashes.ScanFieldsPageAsync("key", cancellationToken: token); break;
-                    case "integer-increment": await client.Strings.IncrementExtendedAsync("key", cancellationToken: token); break;
-                    case "float-increment": await client.Strings.IncrementExtendedAsync("key", 1.5, cancellationToken: token); break;
-                    case "lcs": await client.Strings.LcsIndexAsync("key", "other", cancellationToken: token); break;
-                    case "vector": await client.VectorSets.CountAsync("key", token); break;
-                    case "vector-attributes": await client.VectorSets.SetAttributesAsync("key", "member", 42, token); break;
-                    case "stream-config": await client.Streams.ConfigureAsync("key", new() { IdempotencyMaxSize = 10 }, token); break;
-                    case "stream-nack": await client.Streams.NegativeAcknowledgeAsync("key", "group", RespireStreamNackMode.Silent, (RespireStreamId)"1-0", token); break;
-                    case "stream-consumer": await client.Streams.CreateConsumerAsync("key", "group", "consumer", token); break;
-                    case "stream-id": await client.Streams.SetLastIdAsync("key", "1-0", cancellationToken: token); break;
+                    case "hash-fields":
+                        await client.Hashes.ScanFieldsPageAsync("key", cancellationToken: token);
+                        break;
+                    case "integer-increment":
+                        await client.Strings.IncrementExtendedAsync("key", cancellationToken: token);
+                        break;
+                    case "float-increment":
+                        await client.Strings.IncrementExtendedAsync("key", 1.5, cancellationToken: token);
+                        break;
+                    case "lcs":
+                        await client.Strings.LcsIndexAsync("key", "other", cancellationToken: token);
+                        break;
+                    case "vector":
+                        await client.VectorSets.CountAsync("key", token);
+                        break;
+                    case "vector-attributes":
+                        await client.VectorSets.SetAttributesAsync("key", "member", 42, token);
+                        break;
+                    case "stream-config":
+                        await client.Streams.ConfigureAsync("key", new() { IdempotencyMaxSize = 10 }, token);
+                        break;
+                    case "stream-nack":
+                        await client.Streams.NegativeAcknowledgeAsync("key", "group", RespireStreamNackMode.Silent, (RespireStreamId)"1-0", token);
+                        break;
+                    case "stream-consumer":
+                        await client.Streams.CreateConsumerAsync("key", "group", "consumer", token);
+                        break;
+                    case "stream-id":
+                        await client.Streams.SetLastIdAsync("key", "1-0", cancellationToken: token);
+                        break;
                     case "timeseries-follow":
                     case "timeseries-follow-new":
                         await using (var iterator = new RespireTimeSeriesClient(client).FollowAsync("key",
                             route == "timeseries-follow" ? 0 : RespireTimeSeriesTimestamp.New,
                             cancellationToken: token).GetAsyncEnumerator())
+                        {
                             await iterator.MoveNextAsync();
+                        }
                         break;
                 }
             });
             await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
-            if (policy == "reject") await Assert.That(error).IsSameReferenceAs(rejected);
+
+            if (policy == "reject")
+            {
+                await Assert.That(error).IsSameReferenceAs(rejected);
+            }
             else
             {
                 await Assert.That(error is OperationCanceledException).IsTrue();
                 await Assert.That(((OperationCanceledException)error).CancellationToken).IsEqualTo(canceled.Token);
             }
+
             await Assert.That(hook.Entered.Count).IsEqualTo(policy == "absent" ? 0 : 1);
             await Assert.That(hook.Completed.Count).IsEqualTo(policy == "absent" ? 0 : 1);
-            if (policy == "absent") continue;
+
+            if (policy == "absent")
+            {
+                continue;
+            }
+
             var completed = hook.Completed.Single();
             await Assert.That(completed.Context.Command).IsEqualTo(operation);
             await Assert.That(completed.Error).IsSameReferenceAs(error);
@@ -103,9 +141,16 @@ public partial class CommandHookTests
         var hook = new RecordingHook();
 #pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with { CommandHook = configured ? hook : null });
+
 #pragma warning restore RESP010
-        if (typed) await Check(client.Arrays.ScanAsync<int>("key", 0, 10, cancellationToken: cancellation.Token));
-        else await Check(client.Arrays.ScanAsync("key", 0, 10, cancellationToken: cancellation.Token));
+        if (typed)
+        {
+            await Check(client.Arrays.ScanAsync<int>("key", 0, 10, cancellationToken: cancellation.Token));
+        }
+        else
+        {
+            await Check(client.Arrays.ScanAsync("key", 0, 10, cancellationToken: cancellation.Token));
+        }
 
         async Task Check<T>(IAsyncEnumerable<T> sequence)
         {
@@ -118,7 +163,11 @@ public partial class CommandHookTests
             await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
             await Assert.That(hook.Entered.Count).IsEqualTo(configured ? 1 : 0);
             await Assert.That(hook.Completed.Count).IsEqualTo(configured ? 1 : 0);
-            if (configured) await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+
+            if (configured)
+            {
+                await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+            }
         }
     }
 
@@ -138,7 +187,12 @@ public partial class CommandHookTests
         await using var iterator = new RespireTimeSeriesClient(client).FollowAsync("key", 0,
             cancellationToken: cancellation.Token).GetAsyncEnumerator();
         await Assert.That(await iterator.MoveNextAsync()).IsTrue();
-        if (!betweenSamples) await Assert.That(await iterator.MoveNextAsync()).IsTrue();
+
+        if (!betweenSamples)
+        {
+            await Assert.That(await iterator.MoveNextAsync()).IsTrue();
+        }
+
         var baseline = server.CommandsSeen;
         cancellation.Cancel();
         var error = await Failure(async () => await iterator.MoveNextAsync());
@@ -146,7 +200,11 @@ public partial class CommandHookTests
         await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
         await Assert.That(hook.Entered.Count).IsEqualTo(configured ? 1 : 0);
         await Assert.That(hook.Completed.Count).IsEqualTo(configured ? 1 : 0);
-        if (configured) await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+
+        if (configured)
+        {
+            await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+        }
     }
 
     [Test]
@@ -167,6 +225,7 @@ public partial class CommandHookTests
         var proxy = DispatchProxy.Create<IRespireClient, PolicyForwarder>();
         ((PolicyForwarder)proxy).Inner = view;
         var initialCommands = server.CommandsSeen;
+
         foreach (var target in new[] { view, proxy })
         {
             var baseline = server.CommandsSeen;
@@ -179,6 +238,7 @@ public partial class CommandHookTests
             await ExecuteTarget(target);
             await Assert.That(server.CommandsSeen).IsEqualTo(baseline + 1);
         }
+
         await Assert.That(hook.Entered.Count).IsEqualTo(4);
         await Assert.That(hook.Completed.Count).IsEqualTo(4);
         await Assert.That(hook.Completed.Select(c => c.Outcome).SequenceEqual(new[]
@@ -194,10 +254,20 @@ public partial class CommandHookTests
         {
             switch (route)
             {
-                case "facet": await target.Strings.GetStringAsync("key"); break;
-                case "raw": using (await target.ExecuteAsync(RespireCommands.String.GET, "key")) { } break;
-                case "json": await new RespireJsonClient(target).GetJsonAsync("key"); break;
-                case "array": await target.Arrays.ScanPageAsync("key", 0, 10); break;
+                case "facet":
+                    await target.Strings.GetStringAsync("key");
+                    break;
+                case "raw":
+                    using (await target.ExecuteAsync(RespireCommands.String.GET, "key"))
+                    {
+                    }
+                    break;
+                case "json":
+                    await new RespireJsonClient(target).GetJsonAsync("key");
+                    break;
+                case "array":
+                    await target.Arrays.ScanPageAsync("key", 0, 10);
+                    break;
             }
         }
     }
@@ -221,27 +291,48 @@ public partial class CommandHookTests
             });
 #pragma warning restore RESP010
             ulong end = finalPage ? 0UL : 10UL;
-            if (typed) await Check(client.Arrays.ScanAsync<int>("key", 0, end, pageSize: 1, cancellationToken: cancellation.Token));
-            else await Check(client.Arrays.ScanAsync("key", 0, end, pageSize: 1, cancellationToken: cancellation.Token));
+
+            if (typed)
+            {
+                await Check(client.Arrays.ScanAsync<int>("key", 0, end, pageSize: 1, cancellationToken: cancellation.Token));
+            }
+            else
+            {
+                await Check(client.Arrays.ScanAsync("key", 0, end, pageSize: 1, cancellationToken: cancellation.Token));
+            }
 
             async Task Check<T>(IAsyncEnumerable<T> sequence)
             {
                 await using var iterator = sequence.GetAsyncEnumerator();
                 await Assert.That(await iterator.MoveNextAsync()).IsTrue();
                 var baseline = server.CommandsSeen;
-                if (policy == "reject") hook.Before = _ => throw new InvalidOperationException("No new admission allowed");
+
+                if (policy == "reject")
+                {
+                    hook.Before = _ => throw new InvalidOperationException("No new admission allowed");
+                }
+
                 cancellation.Cancel();
-                if (finalPage) await Assert.That(await iterator.MoveNextAsync()).IsFalse();
+
+                if (finalPage)
+                {
+                    await Assert.That(await iterator.MoveNextAsync()).IsFalse();
+                }
                 else
                 {
                     var error = await Failure(async () => await iterator.MoveNextAsync());
                     await Assert.That(error is OperationCanceledException).IsTrue();
                     await Assert.That(((OperationCanceledException)error).CancellationToken).IsEqualTo(cancellation.Token);
                 }
+
                 await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
                 await Assert.That(hook.Entered.Count).IsEqualTo(policy == "absent" ? 0 : 1);
                 await Assert.That(hook.Completed.Count).IsEqualTo(policy == "absent" ? 0 : 1);
-                if (policy != "absent") await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+
+                if (policy != "absent")
+                {
+                    await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+                }
             }
         }
     }
@@ -249,9 +340,13 @@ public partial class CommandHookTests
     public class PolicyForwarder : DispatchProxy
     {
         internal IRespireClient Inner = null!;
+
         protected override object? Invoke(MethodInfo? method, object?[]? arguments)
         {
-            try { return method!.Invoke(Inner, arguments); }
+            try
+            {
+                return method!.Invoke(Inner, arguments);
+            }
             catch (TargetInvocationException error) when (error.InnerException is not null)
             {
                 ExceptionDispatchInfo.Capture(error.InnerException).Throw();

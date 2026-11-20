@@ -35,8 +35,11 @@ public sealed class RespireElastiCacheIamCredentialProvider : IRespireCredential
         ArgumentNullException.ThrowIfNull(region);
         ArgumentException.ThrowIfNullOrWhiteSpace(cacheName);
         ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+
         if (!string.Equals(cacheName, cacheName.ToLowerInvariant(), StringComparison.Ordinal))
+        {
             throw new ArgumentException("ElastiCache cache names must be lowercase.", nameof(cacheName));
+        }
 
         _awsCredentials = awsCredentials;
         _region = region;

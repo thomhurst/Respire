@@ -1,5 +1,5 @@
-using Respire.Networking;
 using Respire;
+using Respire.Networking;
 
 namespace Respire.Internal;
 
@@ -29,14 +29,26 @@ internal sealed class ClusterNotificationCoordinator
     internal bool AddRoute(ClusterNotificationNode node, RespireSubscription subscription, RespireChannel name)
     {
         var routeName = name.WithoutNotificationMetadata();
+
         lock (Gate)
-        lock (node.Gate)
         {
-            var routes = node.Routes[(int)subscription.Kind];
-            var added = !routes.TryGetValue(routeName, out var consumers);
-            if (added) routes.Add(routeName, consumers = []);
-            if (!consumers.Contains(subscription)) consumers.Add(subscription);
-            return added;
+            lock (node.Gate)
+            {
+                var routes = node.Routes[(int)subscription.Kind];
+                var added = !routes.TryGetValue(routeName, out var consumers);
+
+                if (added)
+                {
+                    routes.Add(routeName, consumers = []);
+                }
+
+                if (!consumers.Contains(subscription))
+                {
+                    consumers.Add(subscription);
+                }
+
+                return added;
+            }
         }
     }
 
@@ -44,7 +56,11 @@ internal sealed class ClusterNotificationCoordinator
     {
         lock (Gate)
         {
-            if (node.Retired) return false;
+            if (node.Retired)
+            {
+                return false;
+            }
+
             Nodes[node.Endpoint] = node;
             return true;
         }
@@ -54,13 +70,24 @@ internal sealed class ClusterNotificationCoordinator
         RespireSubscription subscription, RespireChannel name)
     {
         lock (Gate)
-        lock (node.Gate)
         {
-            var routes = node.Routes[(int)kind];
-            if (!routes.TryGetValue(name, out var consumers) || !consumers.Remove(subscription)) return false;
-            if (consumers.Count != 0) return false;
-            routes.Remove(name);
-            return true;
+            lock (node.Gate)
+            {
+                var routes = node.Routes[(int)kind];
+
+                if (!routes.TryGetValue(name, out var consumers) || !consumers.Remove(subscription))
+                {
+                    return false;
+                }
+
+                if (consumers.Count != 0)
+                {
+                    return false;
+                }
+
+                routes.Remove(name);
+                return true;
+            }
         }
     }
 
@@ -70,19 +97,30 @@ internal sealed class ClusterNotificationCoordinator
         {
             lock (node.Gate)
             {
-                if (node.Retired) return false;
+                if (node.Retired)
+                {
+                    return false;
+                }
+
                 node.Retired = true;
                 Interlocked.Increment(ref node.Epoch);
             }
+
             if (Nodes.TryGetValue(node.Endpoint, out var current) && ReferenceEquals(current, node))
+            {
                 Nodes.Remove(node.Endpoint);
+            }
+
             return true;
         }
     }
 
     internal ClusterNotificationNode? TryGetNode(RespireEndpoint endpoint)
     {
-        lock (Gate) return Nodes.TryGetValue(endpoint, out var node) ? node : null;
+        lock (Gate)
+        {
+            return Nodes.TryGetValue(endpoint, out var node) ? node : null;
+        }
     }
 }
 
@@ -104,7 +142,13 @@ internal sealed class ClusterNotificationNode(RespireEndpoint endpoint)
         get
         {
             foreach (var routes in Routes)
-                if (!routes.IsEmpty) return false;
+            {
+                if (!routes.IsEmpty)
+                {
+                    return false;
+                }
+            }
+
             return true;
         }
     }

@@ -7,25 +7,49 @@ internal static class TimeSeriesReplyParser
 {
     internal static IReadOnlyList<RespireTimeSeriesRow> ParseRows(RespireResult result, int width)
     {
-        if (result.Type != RespireDataType.Array) throw UnexpectedReply();
+        if (result.Type != RespireDataType.Array)
+        {
+            throw UnexpectedReply();
+        }
+
         var rows = new RespireTimeSeriesRow[result.Count];
+
         for (var index = 0; index < rows.Length; index++)
         {
             var row = result[index];
+
             if (row.Count != 2 || row[1].Type != RespireDataType.Array || row[1].Count != width)
+            {
                 throw UnexpectedReply();
+            }
+
             var values = new double[width];
-            for (var value = 0; value < width; value++) values[value] = row[1][value].AsDouble();
+
+            for (var value = 0; value < width; value++)
+            {
+                values[value] = row[1][value].AsDouble();
+            }
+
             rows[index] = new(row[0].AsInteger(), values);
         }
+
         return rows;
     }
 
     internal static string[] ParseLabelTokens(RespireResult result)
     {
-        if (result.Type is not (RespireDataType.Array or RespireDataType.Set)) throw UnexpectedReply();
+        if (result.Type is not (RespireDataType.Array or RespireDataType.Set))
+        {
+            throw UnexpectedReply();
+        }
+
         var values = new string[result.Count];
-        for (var index = 0; index < values.Length; index++) values[index] = result[index].AsString();
+
+        for (var index = 0; index < values.Length; index++)
+        {
+            values[index] = result[index].AsString();
+        }
+
         return values;
     }
 
@@ -44,25 +68,38 @@ internal static class TimeSeriesReplyParser
         {
             // RESP3: key => [labels, ...metadata maps..., samples]. MGET has no metadata and one sample.
             var mapped = new List<RespireTimeSeriesSeries>(result.Count / 2);
+
             for (var index = 0; index + 1 < result.Count; index += 2)
             {
                 var data = result[index + 1];
-                if (data.Count < 2) throw UnexpectedReply();
+
+                if (data.Count < 2)
+                {
+                    throw UnexpectedReply();
+                }
+
                 mapped.Add(new(
                     new RespireKey(result[index].AsBytes()),
                     ParseLabels(data[0]),
                     ParseSeriesSamples(data[data.Count - 1], latestSample)));
             }
+
             return mapped;
         }
 
         // RESP2: [key, labels, samples] per series.
         var series = new List<RespireTimeSeriesSeries>(result.Count);
+
         foreach (var item in result)
         {
-            if (item.Count != 3) throw UnexpectedReply();
+            if (item.Count != 3)
+            {
+                throw UnexpectedReply();
+            }
+
             series.Add(new(new RespireKey(item[0].AsBytes()), ParseLabels(item[1]), ParseSeriesSamples(item[2], latestSample)));
         }
+
         return series;
     }
 
@@ -71,7 +108,9 @@ internal static class TimeSeriesReplyParser
     {
         // Both shapes index as name/value pairs.
         if (result.Type is not (RespireDataType.Map or RespireDataType.Array) || result.Count % 2 != 0)
+        {
             throw UnexpectedReply();
+        }
 
         long totalSamples = 0;
         long memoryUsageBytes = 0;
@@ -87,27 +126,58 @@ internal static class TimeSeriesReplyParser
         IReadOnlyDictionary<string, string?> labels = RespireTimeSeriesInfo.EmptyLabels;
         RespireKey? sourceKey = null;
         IReadOnlyList<RespireTimeSeriesRule> rules = [];
+
         for (var index = 0; index + 1 < result.Count; index += 2)
         {
             var value = result[index + 1];
+
             switch (result[index].AsString())
             {
-                case "totalSamples": totalSamples = value.AsInteger(); break;
-                case "memoryUsage": memoryUsageBytes = value.AsInteger(); break;
-                case "firstTimestamp": firstTimestamp = value.AsInteger(); break;
-                case "lastTimestamp": lastTimestamp = value.AsInteger(); break;
-                case "retentionTime": retentionMilliseconds = value.AsInteger(); break;
-                case "chunkCount": chunkCount = value.AsInteger(); break;
-                case "chunkSize": chunkSizeBytes = value.AsInteger(); break;
-                case "chunkType": chunkType = value.IsNull ? null : value.AsString(); break;
-                case "duplicatePolicy": duplicatePolicy = RespireTimeSeriesOptions.FromPolicy(value.IsNull ? null : value.AsString()); break;
-                case "ignoreMaxTimeDiff": ignoreMaxTimeDifference = value.AsInteger(); break;
-                case "ignoreMaxValDiff": ignoreMaxValueDifference = value.AsDouble(); break;
-                case "labels": labels = ParseLabels(value); break;
-                case "sourceKey": sourceKey = value.IsNull ? (RespireKey?)null : new RespireKey(value.AsBytes()); break;
-                case "rules": rules = ParseRules(value); break;
+                case "totalSamples":
+                    totalSamples = value.AsInteger();
+                    break;
+                case "memoryUsage":
+                    memoryUsageBytes = value.AsInteger();
+                    break;
+                case "firstTimestamp":
+                    firstTimestamp = value.AsInteger();
+                    break;
+                case "lastTimestamp":
+                    lastTimestamp = value.AsInteger();
+                    break;
+                case "retentionTime":
+                    retentionMilliseconds = value.AsInteger();
+                    break;
+                case "chunkCount":
+                    chunkCount = value.AsInteger();
+                    break;
+                case "chunkSize":
+                    chunkSizeBytes = value.AsInteger();
+                    break;
+                case "chunkType":
+                    chunkType = value.IsNull ? null : value.AsString();
+                    break;
+                case "duplicatePolicy":
+                    duplicatePolicy = RespireTimeSeriesOptions.FromPolicy(value.IsNull ? null : value.AsString());
+                    break;
+                case "ignoreMaxTimeDiff":
+                    ignoreMaxTimeDifference = value.AsInteger();
+                    break;
+                case "ignoreMaxValDiff":
+                    ignoreMaxValueDifference = value.AsDouble();
+                    break;
+                case "labels":
+                    labels = ParseLabels(value);
+                    break;
+                case "sourceKey":
+                    sourceKey = value.IsNull ? (RespireKey?)null : new RespireKey(value.AsBytes());
+                    break;
+                case "rules":
+                    rules = ParseRules(value);
+                    break;
             }
         }
+
         return new RespireTimeSeriesInfo
         {
             TotalSamples = totalSamples,
@@ -133,17 +203,27 @@ internal static class TimeSeriesReplyParser
     private static Dictionary<string, string?> ParseLabels(RespireResult labels)
     {
         var result = new Dictionary<string, string?>(StringComparer.Ordinal);
+
         if (labels.Type == RespireDataType.Map)
         {
             for (var index = 0; index + 1 < labels.Count; index += 2)
+            {
                 result[labels[index].AsString()] = ReadLabelValue(labels[index + 1]);
+            }
+
             return result;
         }
+
         foreach (var pair in labels)
         {
-            if (pair.Count != 2) throw UnexpectedReply();
+            if (pair.Count != 2)
+            {
+                throw UnexpectedReply();
+            }
+
             result[pair[0].AsString()] = ReadLabelValue(pair[1]);
         }
+
         return result;
     }
 
@@ -160,13 +240,22 @@ internal static class TimeSeriesReplyParser
     private static List<RespireTimeSeriesSample> ParseSampleList(RespireResult samples)
     {
         var result = new List<RespireTimeSeriesSample>(samples.Count);
-        foreach (var sample in samples) result.Add(ParseSample(sample));
+
+        foreach (var sample in samples)
+        {
+            result.Add(ParseSample(sample));
+        }
+
         return result;
     }
 
     private static RespireTimeSeriesSample ParseSample(RespireResult sample)
     {
-        if (sample.Count != 2) throw UnexpectedReply();
+        if (sample.Count != 2)
+        {
+            throw UnexpectedReply();
+        }
+
         return new(sample[0].AsInteger(), sample[1].AsDouble());
     }
 
@@ -176,25 +265,40 @@ internal static class TimeSeriesReplyParser
         {
             // RESP3: destination => [bucketDuration, aggregator, alignment].
             var mapped = new RespireTimeSeriesRule[rules.Count / 2];
+
             for (var index = 0; index + 1 < rules.Count; index += 2)
+            {
                 mapped[index / 2] = ParseRule(rules[index], rules[index + 1], offset: 0);
+            }
+
             return mapped;
         }
 
         // RESP2: [destination, bucketDuration, aggregator, alignment] per rule.
         var parsed = new RespireTimeSeriesRule[rules.Count];
+
         for (var index = 0; index < parsed.Length; index++)
         {
             var rule = rules[index];
-            if (rule.Count < 3) throw UnexpectedReply();
+
+            if (rule.Count < 3)
+            {
+                throw UnexpectedReply();
+            }
+
             parsed[index] = ParseRule(rule[0], rule, offset: 1);
         }
+
         return parsed;
     }
 
     private static RespireTimeSeriesRule ParseRule(RespireResult destination, RespireResult fields, int offset)
     {
-        if (fields.Count < offset + 2) throw UnexpectedReply();
+        if (fields.Count < offset + 2)
+        {
+            throw UnexpectedReply();
+        }
+
         var align = fields.Count > offset + 2 ? fields[offset + 2].AsInteger() : 0;
         return new(new RespireKey(destination.AsBytes()), fields[offset].AsInteger(), fields[offset + 1].AsString(), align);
     }

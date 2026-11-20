@@ -31,9 +31,20 @@ public class ClientSideCachingBenchmarks
     private ConnectionMultiplexer _stackExchange = null!;
     private IDatabase _stackExchangeDb = null!;
 
-    private string ExistingKey { get; }
-    private string MissingKey { get; }
-    private string HashKey { get; }
+    private string ExistingKey
+    {
+        get;
+    }
+
+    private string MissingKey
+    {
+        get;
+    }
+
+    private string HashKey
+    {
+        get;
+    }
 
     public ClientSideCachingBenchmarks()
     {

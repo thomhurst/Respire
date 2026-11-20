@@ -10,7 +10,10 @@ namespace Respire.IntegrationTests;
 public class SearchIntegrationTests(ModernRedisTestContainer fixture)
 {
     [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
-    public required ModernRedisTestContainer CacheServer { get; init; }
+    public required ModernRedisTestContainer CacheServer
+    {
+        get; init;
+    }
 
     private static readonly RespireSearchExpression All = RespireSearchExpression.FromRaw("*");
     private static readonly byte[] Vector = CreateVector();
@@ -23,12 +26,17 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         await using var client = await ConnectAsync(protocol);
         var search = client.Search;
         var index = NewIndex();
+
         try
         {
             await search.CreateIndexAsync(index, new()
             {
-                Prefixes = [index + ":doc:"], StopWords = [], Language = "english", LanguageField = "language",
-                Score = 0.5, SkipInitialScan = true,
+                Prefixes = [index + ":doc:"],
+                StopWords = [],
+                Language = "english",
+                LanguageField = "language",
+                Score = 0.5,
+                SkipInitialScan = true,
                 Fields =
                 [
                     new("title", RespireSearchFieldType.Text) { Phonetic = RespireSearchPhoneticMatcher.English },
@@ -39,13 +47,27 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
             await client.Hashes.SetAsync(index + ":doc:1", ("title", "Dogs and cats"),
                 ("body", "Dogs chase cats in the garden. Cats chase dogs."), ("rating", "5"), ("language", "english"));
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
             while ((await search.GetIndexInfoAsync(index, deadline.Token)).DocumentCount != 1)
+            {
                 await Task.Delay(20, deadline.Token);
+            }
+
             var options = new RespireSearchQueryOptions
             {
-                InKeys = [index + ":doc:1"], InFields = ["title", "body"], WithScores = true, ExplainScore = true,
-                WithPayloads = true, WithSortKeys = true, SortBy = ("rating", RespireSearchSortDirection.Descending),
-                Scorer = "DISMAX", Language = "english", Verbatim = true, NoStopWords = true, Slop = 0, InOrder = true,
+                InKeys = [index + ":doc:1"],
+                InFields = ["title", "body"],
+                WithScores = true,
+                ExplainScore = true,
+                WithPayloads = true,
+                WithSortKeys = true,
+                SortBy = ("rating", RespireSearchSortDirection.Descending),
+                Scorer = "DISMAX",
+                Language = "english",
+                Verbatim = true,
+                NoStopWords = true,
+                Slop = 0,
+                InOrder = true,
                 Highlight = new() { Fields = ["title"], Tags = ("<mark>", "</mark>") },
                 Summarize = new() { Fields = ["body"], Fragments = 1, Length = 5, Separator = " | " },
                 ReturnFields = ["title", "body", "rating"],
@@ -78,6 +100,7 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         await using var client = await ConnectAsync(protocol);
         var search = client.Search;
         var index = NewIndex();
+
         try
         {
             await CreateDocumentsAsync(client, search, index);
@@ -88,8 +111,10 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
                     RespireSearchAggregateStage.Load("@title", "@year"),
                     RespireSearchAggregateStage.GroupBy([], RespireSearchReducer.Collect(new()
                     {
-                        Fields = ["title", "year"], Distinct = true,
-                        SortBy = [new("year", RespireSearchSortDirection.Descending)], Limit = (0, 1),
+                        Fields = ["title", "year"],
+                        Distinct = true,
+                        SortBy = [new("year", RespireSearchSortDirection.Descending)],
+                        Limit = (0, 1),
                     }, "top")),
                 ],
             });
@@ -121,6 +146,7 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         var first = NewIndex();
         var second = NewIndex();
         var alias = first + ":alias";
+
         try
         {
             await CreateDocumentsAsync(client, search, first);
@@ -148,7 +174,10 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         }
         finally
         {
-            try { await DropIndexIfPresentAsync(search, first); }
+            try
+            {
+                await DropIndexIfPresentAsync(search, first);
+            }
             finally { await DropIndexIfPresentAsync(search, second); }
         }
     }
@@ -161,6 +190,7 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         await using var client = await ConnectAsync(protocol);
         var search = new RespireSearchClient(client);
         var index = NewIndex();
+
         try
         {
             await CreateDocumentsAsync(client, search, index);
@@ -212,6 +242,7 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         await using var client = await ConnectAsync(protocol);
         var search = new RespireSearchClient(client);
         var index = NewIndex();
+
         try
         {
             await CreateDocumentsAsync(client, search, index);
@@ -234,6 +265,7 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
                 (s, token) => s.UpdateAliasAsync(index + ":alias", index, token).AsTask(),
                 (s, token) => s.DeleteAliasAsync(index + ":alias", token).AsTask(),
             ];
+
             foreach (var operation in aliasOperations)
             {
                 Func<Task> prefixedOperation = () => operation(prefixed, default);
@@ -242,12 +274,14 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
 
             using var canceled = new CancellationTokenSource();
             canceled.Cancel();
+
             foreach (var operation in aliasOperations)
             {
                 Func<Task> canceledOperation = () => operation(search, canceled.Token);
                 var error = await canceledOperation.Should().ThrowAsync<OperationCanceledException>();
                 error.Which.CancellationToken.Should().Be(canceled.Token);
             }
+
             Func<Task>[] operations =
             [
                 () => search.DropIndexAsync(index, true, canceled.Token).AsTask(),
@@ -257,11 +291,13 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
                 () => search.VectorSearchAsync(index, new("embedding", Vector, 1), cancellationToken: canceled.Token).AsTask(),
                 () => search.HybridSearchAsync(index, new(All, "embedding", Vector, 1), canceled.Token).AsTask(),
             ];
+
             foreach (var operation in operations)
             {
                 var error = await operation.Should().ThrowAsync<OperationCanceledException>();
                 error.Which.CancellationToken.Should().Be(canceled.Token);
             }
+
             var info = await search.GetIndexInfoAsync(index);
             info.DocumentCount.Should().Be(3);
             info.Attributes.Should().NotContain(attribute => attribute.Identifier == "canceled");
@@ -277,6 +313,7 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         var index = NewIndex();
         var key = index + ":unrelated";
         var dropped = false;
+
         try
         {
             await client.SetAsync(key, "cached");
@@ -297,8 +334,11 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
                 () => search.VectorSearchAsync(index, new("embedding", Vector, 1)).AsTask(),
                 () => search.HybridSearchAsync(index, new(All, "embedding", Vector, 1)).AsTask(),
             ];
+
             foreach (var read in reads)
+            {
                 await AssertCacheRetainedAsync(client, key, read);
+            }
 
             Func<Task>[] aliasMutations =
             [
@@ -306,6 +346,7 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
                 () => search.UpdateAliasAsync(index + ":alias", index).AsTask(),
                 () => search.DeleteAliasAsync(index + ":alias").AsTask(),
             ];
+
             foreach (var mutation in aliasMutations)
             {
                 await client.GetStringAsync(key);
@@ -318,7 +359,10 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
             var page = await search.AggregateWithCursorAsync(index, All,
                 new() { Stages = [RespireSearchAggregateStage.Load("@title")] }, new() { Count = 1 });
             page.IsComplete.Should().BeFalse();
-            await AssertCacheRetainedAsync(client, key, async () => { page = await search.ReadCursorAsync(page, 1); });
+            await AssertCacheRetainedAsync(client, key, async () =>
+            {
+                page = await search.ReadCursorAsync(page, 1);
+            });
             page.IsComplete.Should().BeFalse();
             await AssertCacheRetainedAsync(client, key, () => search.DeleteCursorAsync(page).AsTask());
 
@@ -336,7 +380,13 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         }
         finally
         {
-            try { if (!dropped) await DropIndexIfPresentAsync(search, index); }
+            try
+            {
+                if (!dropped)
+                {
+                    await DropIndexIfPresentAsync(search, index);
+                }
+            }
             finally { await client.Keys.DeleteAsync(key); }
         }
     }
@@ -348,12 +398,16 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         var search = new RespireSearchClient(client);
         var index = NewIndex();
         var wrongTypeKey = index + ":doc:2";
+
         try
         {
             await client.SetAsync(wrongTypeKey, "not-a-hash");
             Func<Task> setup = async () =>
             {
-                try { await CreateDocumentsAsync(client, search, index); }
+                try
+                {
+                    await CreateDocumentsAsync(client, search, index);
+                }
                 finally { await DropIndexIfPresentAsync(search, index); }
             };
             await setup.Should().ThrowAsync<RespireServerException>().WithMessage("*WRONGTYPE*");
@@ -363,7 +417,10 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         }
         finally
         {
-            try { await DropIndexIfPresentAsync(search, index); }
+            try
+            {
+                await DropIndexIfPresentAsync(search, index);
+            }
             finally { await client.Keys.DeleteAsync(wrongTypeKey); }
         }
     }
@@ -386,7 +443,10 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
 
     private static async Task DropIndexIfPresentAsync(RespireSearchClient search, string index)
     {
-        try { await search.DropIndexAsync(index, deleteDocuments: true); }
+        try
+        {
+            await search.DropIndexAsync(index, deleteDocuments: true);
+        }
         catch (RespireServerException error) when (error.Message.Equals($"{index}: no such index", StringComparison.Ordinal)
             || error.Message.Equals("Unknown Index name", StringComparison.OrdinalIgnoreCase)
             // Redis 8.10 reports a missing index with an error code prefix.
@@ -413,20 +473,30 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         });
         // Preserve the initial-scan barrier before writes: a scan racing HSET can index a hash twice.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
         while ((await search.GetIndexInfoAsync(index, deadline.Token)).Properties["indexing"].Scalar != "0")
+        {
             await Task.Delay(20, deadline.Token);
+        }
+
         for (var i = 1; i <= 3; i++)
+        {
             await client.Hashes.SetAsync(index + ":doc:" + i,
                 ("title", "redis"), ("category", i == 1 ? "cache|client" : "cache"),
                 ("year", "2025"), ("embedding", Vector));
+        }
         // Wait for the initial scan and vector visibility; HSET completion alone proves neither.
         while (true)
         {
             var info = await search.GetIndexInfoAsync(index, deadline.Token);
+
             if (info.DocumentCount == 3 && info.Properties["indexing"].Scalar == "0"
                 && (await search.VectorSearchAsync(index, new("embedding", Vector, 3),
                     cancellationToken: deadline.Token)).Documents.Count == 3)
+            {
                 return;
+            }
+
             await Task.Delay(20, deadline.Token);
         }
     }

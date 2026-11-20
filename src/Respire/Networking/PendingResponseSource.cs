@@ -30,12 +30,22 @@ internal abstract partial class PendingResponse
 
     internal void BindMutationFence(in ClientSideCacheCoordinator.MutationFence fence)
     {
-        if (!fence.IsRequired) return;
+        if (!fence.IsRequired)
+        {
+            return;
+        }
+
         if (_mutationReference.IsRequired)
+        {
             throw new InvalidOperationException("A native response already owns a cache mutation fence.");
+        }
+
         _mutationReference = fence.BindNative();
+
         if (!_mutationReference.IsRequired)
+        {
             throw new InvalidOperationException("An accepted mutation must retain its live fence.");
+        }
     }
 
     /// <summary>
@@ -44,6 +54,7 @@ internal abstract partial class PendingResponse
     /// afterwards by the deadline sweep (its only reader).
     /// </summary>
     private long _deadline;
+
     internal CommandDeadline Deadline
     {
         get => CommandDeadline.FromRawValue(Volatile.Read(ref _deadline));
@@ -57,8 +68,15 @@ internal abstract partial class PendingResponse
 
     // Copy before admission; retain until the FIFO reply drains, independently of
     // the caller's final observation, which may already have returned to its pool.
-    internal int ErrorAttempts { get; set; }
-    internal RespireEndpoint? ErrorEndpoint { get; set; }
+    internal int ErrorAttempts
+    {
+        get; set;
+    }
+
+    internal RespireEndpoint? ErrorEndpoint
+    {
+        get; set;
+    }
 
     /// <summary>Completion state captured by the deadline sweep for its epoch-checked CAS.</summary>
     internal long State => Volatile.Read(ref _state);
@@ -98,7 +116,11 @@ internal abstract partial class PendingResponse
 
     private void RetireMutationFence()
     {
-        if (!_mutationReference.IsRequired) return;
+        if (!_mutationReference.IsRequired)
+        {
+            return;
+        }
+
         var mutationReference = _mutationReference;
         _mutationReference = default;
         mutationReference.Release();
@@ -212,10 +234,18 @@ internal abstract partial class PendingResponse
     {
         var errorAttempts = ErrorAttempts;
         var endpoint = ErrorEndpoint;
-        try { ReleaseCallerRef(); }
+
+        try
+        {
+            ReleaseCallerRef();
+        }
         catch (Exception error)
         {
-            if (failure is null) { failure = error; throw; }
+            if (failure is null)
+            {
+                failure = error;
+                throw;
+            }
         }
         finally { ErrorObservation.FinishFinal(observation, failure, observeErrors, errorAttempts, endpoint); }
     }
@@ -224,7 +254,11 @@ internal abstract partial class PendingResponse
     // the same response again; disposal still precedes caller release and publication.
     protected static void DisposeResponse(ref RespValue response, ref bool hasResponse)
     {
-        if (!hasResponse) return;
+        if (!hasResponse)
+        {
+            return;
+        }
+
         var owned = response;
         response = default;
         hasResponse = false;
@@ -253,8 +287,11 @@ internal abstract partial class PendingResponse
     protected void ReleaseRefAtomic()
     {
         Debug.Assert(Volatile.Read(ref _refs) >= 1, "Only a live owner can release a response reference.");
+
         if (Interlocked.Decrement(ref _refs) == 0)
+        {
             ReturnToPool();
+        }
     }
 
     private void ReturnToPool()
@@ -268,12 +305,19 @@ internal abstract partial class PendingResponse
         // Bump the reuse epoch and clear the completed bit in one atomic store, invalidating
         // any state the deadline sweep captured for this incarnation.
         Volatile.Write(ref _state, ((Volatile.Read(ref _state) >> 1) + 1) << 1);
+
         if (_mutationReference.IsRequired)
         {
-            try { RetireMutationFence(); }
+            try
+            {
+                RetireMutationFence();
+            }
             finally { ResetAndReturn(); }
         }
-        else ResetAndReturn();
+        else
+        {
+            ResetAndReturn();
+        }
     }
 
     protected abstract void SetResultCore(in RespValue result);
@@ -288,6 +332,7 @@ internal sealed class MutationDiscardPendingResponse : PendingResponse
 {
     private static readonly ObjectPool<MutationDiscardPendingResponse, PoolPolicy> Pool = new(4096);
     private string? _commandName;
+
     internal override string? CommandName => _commandName;
 
     internal static MutationDiscardPendingResponse Rent(string? commandName)
@@ -300,14 +345,22 @@ internal sealed class MutationDiscardPendingResponse : PendingResponse
 
     // No caller observes a response or exception. In particular, do not queue a callback
     // against this source after its native owner can return it to the pool.
-    protected override void DispatchException(Exception exception) { }
-    protected override void SetExceptionCore(Exception exception) { }
+    protected override void DispatchException(Exception exception)
+    {
+    }
+
+    protected override void SetExceptionCore(Exception exception)
+    {
+    }
+
     protected override void SetResultCore(in RespValue result) => result.Dispose();
+
     protected override void ResetAndReturn() => Pool.Return(this);
 
     private readonly struct PoolPolicy : IPooledObjectPolicy<MutationDiscardPendingResponse>
     {
         public MutationDiscardPendingResponse Create() => new();
+
         public bool TryReset(MutationDiscardPendingResponse source)
         {
             source._commandName = null;
@@ -386,6 +439,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
     private bool CompleteResult(in RespValue result, bool reserved)
     {
         var index = _replyIndex++;
+
         if (index < _replyCount - 1)
         {
             if (index >= _firstQueueReply && result.IsError && !_hasQueueError)
@@ -403,6 +457,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
         }
 
         var completion = result;
+
         if (_hasQueueError)
         {
             completion = _queueError;
@@ -411,7 +466,10 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
             if (_commandName == "MULTI/EXEC" && (result.Type == RespireDataType.Array || result.IsNull
                 || result.IsError && result.AsMemory().Span.SequenceEqual(
                     "EXECABORT Transaction discarded because of previous errors."u8)))
+            {
                 completion = completion.WithTransactionStateCleared();
+            }
+
             RespireTelemetry.RecordDiscardedError(in result, _commandName, ErrorAttempts, ErrorEndpoint);
             result.Dispose();
             _queueError = default;
@@ -442,6 +500,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
             exception = new RespireTimeoutException(CommandName ?? "MULTI/EXEC", timeout, cancelled,
                 _timeoutConnection!.CaptureTimeoutDiagnostics(WriteStart, WriteEnd));
         }
+
         return exception;
     }
 
@@ -544,17 +603,24 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
         var observeErrors = _observeErrors;
         _observation = default;
         Exception? failure = null;
+
         try
         {
             var response = _core.GetResult(token);
+
             if (!_throwOnError || !response.IsError)
             {
                 return response;
             }
 
             var error = ResponseReader.ServerError(in response, _commandName, ErrorEndpoint);
-            try { response.Dispose(); }
+
+            try
+            {
+                response.Dispose();
+            }
             catch { /* Preserve the original server error if response cleanup also fails. */ }
+
             throw error;
         }
         catch (Exception error) { failure = error; throw; }
@@ -678,18 +744,24 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         var observation = _observation;
         var observeErrors = _observeErrors;
         Exception? failure = null;
+
         try
         {
             try
             {
                 _core.GetResult(token);
-                if (_response.IsError) throw ResponseReader.ServerError(in _response, _commandName, ErrorEndpoint);
+
+                if (_response.IsError)
+                {
+                    throw ResponseReader.ServerError(in _response, _commandName, ErrorEndpoint);
+                }
             }
             catch (Exception error) { _duration.Complete(_commandName, error); throw; }
             // Telemetry ends at the response, before user conversion and its failures.
             _duration.Complete(_commandName);
 
             var result = _converter!(_state, in _response);
+
             if (_transferOwnership)
             {
                 _hasResponse = false;
@@ -700,10 +772,17 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         catch (Exception error) { failure = error; throw; }
         finally
         {
-            try { ClearResponse(); }
+            try
+            {
+                ClearResponse();
+            }
             catch (Exception error)
             {
-                if (failure is null) { failure = error; throw; }
+                if (failure is null)
+                {
+                    failure = error;
+                    throw;
+                }
             }
             finally
             {
@@ -725,7 +804,10 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
 
     private void ClearResponse()
     {
-        try { DisposeResponse(ref _response, ref _hasResponse); }
+        try
+        {
+            DisposeResponse(ref _response, ref _hasResponse);
+        }
         finally
         {
             _response = default;
@@ -747,12 +829,16 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
 
         public bool TryReset(ConvertedPendingResponseSource<TState, TResult> source)
         {
-            try { source.ClearResponse(); }
+            try
+            {
+                source.ClearResponse();
+            }
             finally
             {
                 source._commandName = null;
                 source._core.Reset();
             }
+
             return true;
         }
     }
@@ -822,6 +908,7 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
     protected override void SetResultCore(in RespValue result)
     {
         _duration.MarkCompleted();
+
         if (_hasDirectResult)
         {
             // Direct completions carry a default RespValue; nothing to retain.
@@ -845,16 +932,22 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         var observation = _observation;
         var observeErrors = _observeErrors;
         Exception? failure = null;
+
         try
         {
             try
             {
                 _core.GetResult(token);
+
                 if (!_hasDirectResult && _response.IsError)
+                {
                     throw ResponseReader.ServerError(in _response, _commandName, ErrorEndpoint);
+                }
             }
             catch (Exception error) { _duration.Complete(_commandName, error); throw; }
+
             _duration.Complete(_commandName);
+
             if (_hasDirectResult)
             {
                 return _directResult;
@@ -865,10 +958,17 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         catch (Exception error) { failure = error; throw; }
         finally
         {
-            try { Clear(); }
+            try
+            {
+                Clear();
+            }
             catch (Exception error)
             {
-                if (failure is null) { failure = error; throw; }
+                if (failure is null)
+                {
+                    failure = error;
+                    throw;
+                }
             }
             finally
             {
@@ -890,7 +990,10 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
 
     private void Clear()
     {
-        try { DisposeResponse(ref _response, ref _hasResponse); }
+        try
+        {
+            DisposeResponse(ref _response, ref _hasResponse);
+        }
         finally
         {
             _response = default;
@@ -910,12 +1013,16 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
 
         public bool TryReset(StringPendingResponseSource source)
         {
-            try { source.Clear(); }
+            try
+            {
+                source.Clear();
+            }
             finally
             {
                 source._commandName = null;
                 source._core.Reset();
             }
+
             return true;
         }
     }
@@ -926,7 +1033,10 @@ internal sealed class PendingResponsePool
 {
     private readonly ObjectPool<PendingResponseSource, PendingResponseSource.PoolPolicy> _pool;
 
-    internal bool RunContinuationsAsynchronously { get; }
+    internal bool RunContinuationsAsynchronously
+    {
+        get;
+    }
 
     public PendingResponsePool(int maxPoolSize, bool runContinuationsAsynchronously = false)
     {

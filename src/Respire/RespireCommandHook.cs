@@ -19,7 +19,9 @@ namespace Respire;
 public abstract class RespireCommandHook
 {
     /// <summary>Creates a command hook.</summary>
-    protected RespireCommandHook() { }
+    protected RespireCommandHook()
+    {
+    }
 
     /// <summary>Runs synchronously before dispatch or cache lookup. Throw to reject the operation.</summary>
     /// <returns>Optional state passed to completion.</returns>
@@ -42,10 +44,16 @@ public sealed class RespireCommandContext
 
     /// <summary>The normalized command or logical operation name, excluding keys and values.</summary>
     /// <remarks>HIMPORT OPEN denotes import-session acquisition; PROBE HEALTH denotes an explicit health-probe round.</remarks>
-    public string Command { get; }
+    public string Command
+    {
+        get;
+    }
 
     /// <summary>The caller's cancellation token.</summary>
-    public CancellationToken CancellationToken { get; }
+    public CancellationToken CancellationToken
+    {
+        get;
+    }
 }
 
 /// <summary>The final outcome at the command API's result boundary.</summary>

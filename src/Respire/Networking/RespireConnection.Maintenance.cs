@@ -15,6 +15,7 @@ internal sealed partial class RespireConnection
     private readonly struct MaintenanceDrainBarrierCommand : IConnectionProtocolCommand
     {
         public int GetWriteSizeHint() => "*1\r\n$4\r\nPING\r\n"u8.Length;
+
         public ReadCommandKind ReadKind => ReadCommandKind.None;
 
         public void Write(ref RespWriter writer)
@@ -38,16 +39,23 @@ internal sealed partial class RespireConnection
     internal async Task WaitForOtherCommandsToCompleteAsync(CancellationToken cancellationToken)
     {
         while (Volatile.Read(ref _streamingActive) || HasOtherIncompleteCommandThanMaintenanceBarrier)
+        {
             await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken).ConfigureAwait(false);
+        }
     }
 
     internal async Task<bool> WaitForActiveBulkStreamToCompleteAsync(TimeSpan idleTimeout, CancellationToken cancellationToken)
     {
         while (HasActiveBulkStream)
         {
-            if (HasStalledBulkStream(idleTimeout)) return false;
+            if (HasStalledBulkStream(idleTimeout))
+            {
+                return false;
+            }
+
             await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken).ConfigureAwait(false);
         }
+
         return true;
     }
 
@@ -61,15 +69,24 @@ internal sealed partial class RespireConnection
     internal void ReplayUnpublishedMigrations()
     {
         lock (_maintenancePublicationGate)
+        {
             ReplayUnpublishedMigrationsLocked();
+        }
     }
 
     private void ReplayUnpublishedMigrationsLocked()
     {
-        if (Multiplexer is not { } multiplexer || _unpublishedMigrations is null) return;
+        if (Multiplexer is not { } multiplexer || _unpublishedMigrations is null)
+        {
+            return;
+        }
+
         while (_unpublishedMigrations.TryDequeue(out var pending))
+        {
             multiplexer.PublishMaintenanceNotification(
                 multiplexer.CaptureMaintenanceHandlers(pending.Token), this, pending.Notification, pending.Token);
+        }
+
         _unpublishedMigrations = null;
     }
     // Created lazily and only by the receive loop; other threads read the state volatilely.
@@ -84,42 +101,64 @@ internal sealed partial class RespireConnection
     private int _maintenanceStatus;
     // One immutable reference, so a reader never pairs a notification with another's origin.
     private Respire.Infrastructure.MovingAnnouncement? _lastMovingAnnouncement;
+
     // Raised on the receive loop after every applied notification; handlers must not block.
     private event Action? MaintenanceStateChanged;
+
     internal bool HasMaintenanceWindow => Volatile.Read(ref _maintenanceState)?.Remaining(Environment.TickCount64) > 0;
+
     internal bool HasRelaxedTimeoutAllowance => HasMaintenanceWindow && _maintenanceOptions is { } options
         && (_responseTimeout is { } response && options.MaintenanceRelaxedTimeout > response
             || _gatheredWriteTimeout is { } write && options.MaintenanceRelaxedTimeout > write
             || _commandTimeout is { } command && options.MaintenanceRelaxedTimeout > command);
+
     internal Respire.Infrastructure.MovingAnnouncement? LastMovingAnnouncement => Volatile.Read(ref _lastMovingAnnouncement);
 
     private async ValueTask NegotiateMaintenanceAsync(RespireConnectionOptions options, RespireProtocol protocol,
         CancellationToken cancellationToken, bool armCommandDeadline)
     {
-        if (_maintenanceOptions is null) return;
+        if (_maintenanceOptions is null)
+        {
+            return;
+        }
+
         if (protocol != RespireProtocol.Resp3)
         {
             if (options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Enabled)
+            {
                 throw new RespireConnectionException("Maintenance notifications require RESP3.");
+            }
+
             return;
         }
+
         Volatile.Write(ref _maintenanceStatus, MaintenanceNegotiating);
+
         try
         {
             using var reply = await SendAsync(EnableMaintenance, cancellationToken, armCommandDeadline,
                 "CLIENT MAINT_NOTIFICATIONS").ConfigureAwait(false);
+
             if (reply.IsError)
             {
                 DisableMaintenance();
                 var error = reply.GetErrorMessage();
+
                 if (options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Auto
                     && error.StartsWith("ERR ", StringComparison.Ordinal)
                     && (error.Contains("unknown subcommand", StringComparison.OrdinalIgnoreCase)
-                        || error.Contains("unknown command", StringComparison.OrdinalIgnoreCase))) return;
+                        || error.Contains("unknown command", StringComparison.OrdinalIgnoreCase)))
+                {
+                    return;
+                }
+
                 throw CreateHandshakeException(in reply, "CLIENT MAINT_NOTIFICATIONS");
             }
+
             if (!IsMaintenanceAcknowledgement(in reply))
+            {
                 throw new RespireConnectionException("CLIENT MAINT_NOTIFICATIONS returned an invalid acknowledgement.");
+            }
             // The receive loop normally enables at the acknowledgement's wire position already.
             Volatile.Write(ref _maintenanceStatus, MaintenanceEnabled);
         }
@@ -146,16 +185,23 @@ internal sealed partial class RespireConnection
     /// </summary>
     internal async Task DrainPendingMaintenanceNotificationsAsync(CancellationToken cancellationToken)
     {
-        if (Volatile.Read(ref _maintenanceStatus) != MaintenanceEnabled) return;
+        if (Volatile.Read(ref _maintenanceStatus) != MaintenanceEnabled)
+        {
+            return;
+        }
+
         var barrier = new MaintenanceDrainBarrierCommand();
         var send = SendAsync(in barrier, cancellationToken,
             armCommandDeadline: false, commandName: MaintenanceDrainCommandName);
+
         if (send.IsCompleted)
         {
             using var completed = await send.ConfigureAwait(false);
             return;
         }
+
         Interlocked.Increment(ref _outstandingMaintenanceBarriers);
+
         try
         {
             using var reply = await send.ConfigureAwait(false);
@@ -172,18 +218,25 @@ internal sealed partial class RespireConnection
     private void ObserveMaintenanceAcknowledgement(in RespValue reply)
     {
         if (IsMaintenanceAcknowledgement(in reply))
+        {
             Volatile.Write(ref _maintenanceStatus, MaintenanceEnabled);
+        }
     }
 
     private bool TryHandleMaintenancePush(in RespValue value)
     {
         var status = Volatile.Read(ref _maintenanceStatus);
-        if (status == MaintenanceInactive) return false;
+
+        if (status == MaintenanceInactive)
+        {
+            return false;
+        }
         // Capture the handler set and slot-mutation fence atomically before parsing, which can
         // scan up to 16384 triplets. A concurrent retirement cannot split these observations.
         MaintenanceNotificationHandler? migrationHandlers = null;
         var receivedBeforePublication = false;
         long slotMutationToken = 0;
+
         if (MaintenanceNotification.IsSlotMigrationPush(in value))
         {
             var multiplexer = Multiplexer;
@@ -192,10 +245,17 @@ internal sealed partial class RespireConnection
             slotMutationToken = capture.Token;
             migrationHandlers = multiplexer?.CaptureMaintenanceHandlers(slotMutationToken);
         }
-        if (MaintenanceNotification.Parse(in value) is not { } notification) return false;
+
+        if (MaintenanceNotification.Parse(in value) is not { } notification)
+        {
+            return false;
+        }
         // Servers can replay historical completion notifications during opt-in. They must not
         // become a new maintenance window or a current diagnostic event.
-        if (status == MaintenanceNegotiating && notification.IsCompletion) return true;
+        if (status == MaintenanceNegotiating && notification.IsCompletion)
+        {
+            return true;
+        }
         // Dispatch before the window and diagnostics work below, so the migration reaches the
         // topology queue as early as possible.
         lock (_maintenancePublicationGate)
@@ -213,18 +273,26 @@ internal sealed partial class RespireConnection
                 {
                     var pending = _unpublishedMigrations ??= new();
                     // Match the router's DropOldest policy; MOVED/discovery repairs overflow.
-                    if (pending.Count == UnpublishedMigrationCapacity) pending.Dequeue();
+                    if (pending.Count == UnpublishedMigrationCapacity)
+                    {
+                        pending.Dequeue();
+                    }
+
                     pending.Enqueue((notification, slotMutationToken));
                 }
             }
+
             var state = Volatile.Read(ref _maintenanceState);
+
             if (state is null)
             {
                 state = new MaintenanceTimeoutState((long)_maintenanceOptions!.MaintenanceWindowTimeout.TotalMilliseconds);
                 Volatile.Write(ref _maintenanceState, state);
             }
+
             var now = Environment.TickCount64;
             state.Apply(notification, now);
+
             if (_maintenanceOptions!.FailoverMaintenance is { } tracker
                 && notification.Family is "FAILING_OVER" or "MIGRATING" or "MOVING")
             {
@@ -234,6 +302,7 @@ internal sealed partial class RespireConnection
                 tracker.Observe(failoverState, failoverState.Apply(notification, now));
             }
         }
+
         if (notification.Kind == "MOVING")
         {
             // Eligibility and receipt time are captured here, when the push is parsed, because the
@@ -243,8 +312,10 @@ internal sealed partial class RespireConnection
             Volatile.Write(ref _lastMovingAnnouncement, announcement);
             MovingNotification?.Invoke(announcement);
         }
+
         _capacitySignal.Signal(); // Wake parked producers to recompute their effective deadline.
         MaintenanceStateChanged?.Invoke(); // Streamed SET timers recompute theirs too.
+
         if (RespireTelemetry.Source.HasListeners()
             || RespireTelemetry.IsMetricEnabled(RespireMetricGroups.Resiliency, RespireTelemetry.MaintenanceNotifications)
             || _logger is not null)
@@ -252,6 +323,7 @@ internal sealed partial class RespireConnection
             (_maintenanceTelemetry ??= new MaintenanceTelemetry(Host, Port, _maintenanceOptions!.Database, _logger))
                 .Publish(notification);
         }
+
         return true;
     }
 
@@ -276,7 +348,11 @@ internal sealed partial class RespireConnection
     internal CommandDeadline GetReroutedCommandDeadline(CommandDeadline deadline)
     {
         if (!deadline.IsSet || deadline.IsRelaxed
-            || _maintenanceOptions is null || _commandTimeout is not { } normal) return deadline;
+            || _maintenanceOptions is null || _commandTimeout is not { } normal)
+        {
+            return deadline;
+        }
+
         var window = Volatile.Read(ref _maintenanceState)?.GetWindow(Environment.TickCount64);
         return window is not null && deadline.Ticks > window.Started
             && _maintenanceOptions.MaintenanceRelaxedTimeout > normal
@@ -303,17 +379,28 @@ internal sealed partial class RespireConnection
             cancellationToken.ThrowIfCancellationRequested();
             var now = Environment.TickCount64;
             var remaining = RemainingUntilCommandDeadline(deadline.Ticks, now, out var timeout, out var window, deadline.IsRelaxed);
+
             if (remaining <= 0)
+            {
                 throw CreateCapacityTimeout(commandName, timeout);
+            }
             // Window expiration may restore a shorter deadline while this producer is parked.
-            if (window > 0) remaining = Math.Min(remaining, window);
+            if (window > 0)
+            {
+                remaining = Math.Min(remaining, window);
+            }
+
             try
             {
                 await capacityAvailable.WaitAsync(TimeSpan.FromMilliseconds(remaining), cancellationToken).ConfigureAwait(false);
                 var resumedAt = Environment.TickCount64;
                 var resumedRemaining = RemainingUntilCommandDeadline(deadline.Ticks, resumedAt, out var resumedTimeout, out _, deadline.IsRelaxed);
+
                 if (resumedRemaining <= 0)
+                {
                     throw CreateCapacityTimeout(commandName, resumedTimeout);
+                }
+
                 return;
             }
             catch (TimeoutException) { /* Recheck maintenance state before declaring expiry. */ }

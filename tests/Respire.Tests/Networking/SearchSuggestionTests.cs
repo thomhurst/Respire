@@ -35,18 +35,33 @@ public class SearchSuggestionTests
         var args = server.ReceivedArguments.Last();
         await Assert.That(args[1]).IsEquivalentTo(new byte[] { 0, 255, 32 }, CollectionOrdering.Matching);
         var expected = new List<string> { "hel ü", "FUZZY" };
-        if (scores) expected.Add("WITHSCORES");
-        if (payloads) expected.Add("WITHPAYLOADS");
+
+        if (scores)
+        {
+            expected.Add("WITHSCORES");
+        }
+
+        if (payloads)
+        {
+            expected.Add("WITHPAYLOADS");
+        }
+
         expected.AddRange(["MAX", "7"]);
         await Assert.That(args.Skip(2).Select(Encoding.UTF8.GetString)).IsEquivalentTo(expected, CollectionOrdering.Matching);
         await client.Search.GetSuggestionCountAsync(key);
         await Assert.That(result.Count).IsEqualTo(2);
         await Assert.That(result[0].Text).IsEqualTo("hello");
         await Assert.That(result[0].Score).IsEqualTo(scores ? 1.5 : (double?)null);
+
         if (payloads)
+        {
             await Assert.That(result[0].Payload!.Value.ToArray()).IsEquivalentTo(new byte[] { 0, 255 }, CollectionOrdering.Matching);
+        }
         else
+        {
             await Assert.That(result[0].Payload).IsNull();
+        }
+
         await Assert.That(result[1].Payload).IsNull();
     }
 
@@ -121,7 +136,12 @@ public class SearchSuggestionTests
             () => search.GetSuggestionsAsync("key", null!).AsTask(),
             () => search.GetSuggestionsAsync("key", "", new() { Max = 0 }).AsTask(),
             () => search.GetSuggestionsAsync("key", "", new() { Max = -1 }).AsTask()];
-        foreach (var call in calls) await Assert.That(call).Throws<ArgumentException>();
+
+        foreach (var call in calls)
+        {
+            await Assert.That(call).Throws<ArgumentException>();
+        }
+
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT."))).IsFalse();
     }
 
@@ -170,8 +190,15 @@ public class SearchSuggestionTests
 #pragma warning restore RESP010
         var result = await client.Search.GetSuggestionsAsync("key", "x", new() { WithScores = true });
         var score = result[0].Score!.Value;
-        if (double.IsNaN(expected)) await Assert.That(double.IsNaN(score)).IsTrue();
-        else await Assert.That(score).IsEqualTo(expected);
+
+        if (double.IsNaN(expected))
+        {
+            await Assert.That(double.IsNaN(score)).IsTrue();
+        }
+        else
+        {
+            await Assert.That(score).IsEqualTo(expected);
+        }
     }
 
     [Test]

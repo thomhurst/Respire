@@ -29,7 +29,12 @@ public class ConnectionMetricCleanupTests
     internal static int? RunIsolatedQueuedSelectionProbe()
     {
         var expectedRuntime = Environment.GetEnvironmentVariable(QueuedSelectionProbe);
-        if (expectedRuntime is null) return null;
+
+        if (expectedRuntime is null)
+        {
+            return null;
+        }
+
         try
         {
             Require(expectedRuntime == Environment.Version.ToString(), "Probe runtime differs from the parent.");
@@ -44,6 +49,7 @@ public class ConnectionMetricCleanupTests
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.All });
         var server = new FakeRespServer(1, FakeRespServer.PongReply);
         RespireConnection? connection = null;
+
         try
         {
 #pragma warning disable RESP009 // Set up on the child entry thread before this probe occupies the only pool worker.
@@ -55,7 +61,9 @@ public class ConnectionMetricCleanupTests
             listener.InstrumentPublished = (instrument, current) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.connection.wait_time")
+                {
                     current.EnableMeasurementEvents(instrument);
+                }
             };
             listener.SetMeasurementEventCallback<double>((_, _, _, _) => Interlocked.Increment(ref deliveries));
             listener.Start();
@@ -66,6 +74,7 @@ public class ConnectionMetricCleanupTests
             using var release = new ManualResetEventSlim();
             using var finished = new ManualResetEventSlim();
             var gateQueued = false;
+
             try
             {
                 Require(ThreadPool.SetMinThreads(1, minIo) && ThreadPool.SetMaxThreads(1, maxIo),
@@ -98,8 +107,11 @@ public class ConnectionMetricCleanupTests
                 release.Set();
                 ThreadPool.SetMaxThreads(maxWorkers, maxIo);
                 ThreadPool.SetMinThreads(minWorkers, minIo);
+
                 if (gateQueued)
+                {
                     Require(finished.Wait(TimeSpan.FromSeconds(5)), "Worker gate did not finish.");
+                }
             }
         }
         finally
@@ -108,7 +120,9 @@ public class ConnectionMetricCleanupTests
             try
             {
                 if (connection is not null)
+                {
                     connection.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+                }
             }
             finally { server.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult(); }
 #pragma warning restore RESP009
@@ -117,7 +131,10 @@ public class ConnectionMetricCleanupTests
 
     private static void Require(bool condition, string message)
     {
-        if (!condition) throw new InvalidOperationException(message);
+        if (!condition)
+        {
+            throw new InvalidOperationException(message);
+        }
     }
 
     [Test]
@@ -135,10 +152,13 @@ public class ConnectionMetricCleanupTests
         drops.InstrumentPublished = (instrument, current) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.connection.measurements.dropped")
+            {
                 current.EnableMeasurementEvents(instrument);
+            }
         };
         drops.SetMeasurementEventCallback<long>((_, value, _, _) => exportedWhileBlocked = value);
         drops.Start();
+
         try
         {
             connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
@@ -146,7 +166,10 @@ public class ConnectionMetricCleanupTests
             // Keep one callback blocked while a burst exceeds the process-wide capacity.
             // Read before releasing so queued and running deliveries are both counted.
             for (var i = 0; i < 256; i++)
+            {
                 connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
+            }
+
             pendingWhileBlocked = ConnectionTelemetry.PendingMeasurements;
             drops.RecordObservableInstruments();
             // Accepted measurements retain selection; the isolated probe separately
@@ -186,23 +209,47 @@ public class ConnectionMetricCleanupTests
         listener.InstrumentPublished = (instrument, current) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.connection.wait_time")
+            {
                 current.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
         {
             foreach (var tag in tags)
             {
-                if (tag.Key != "db.client.connection.pool.name") continue;
-                if (Equals(tag.Value, "available")) { delivered.TrySetResult(); return; }
-                if (!Equals(tag.Value, "blocked")) continue;
-                if (Interlocked.Increment(ref blockedCount) == 4) entered.TrySetResult();
+                if (tag.Key != "db.client.connection.pool.name")
+                {
+                    continue;
+                }
+
+                if (Equals(tag.Value, "available"))
+                {
+                    delivered.TrySetResult();
+                    return;
+                }
+
+                if (!Equals(tag.Value, "blocked"))
+                {
+                    continue;
+                }
+
+                if (Interlocked.Increment(ref blockedCount) == 4)
+                {
+                    entered.TrySetResult();
+                }
+
                 release.Task.GetAwaiter().GetResult();
             }
         });
         listener.Start();
+
         try
         {
-            for (var i = 0; i < 4; i++) blocked.Waited(System.Diagnostics.Stopwatch.GetTimestamp());
+            for (var i = 0; i < 4; i++)
+            {
+                blocked.Waited(System.Diagnostics.Stopwatch.GetTimestamp());
+            }
+
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             available.Waited(System.Diagnostics.Stopwatch.GetTimestamp());
             await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -228,7 +275,9 @@ public class ConnectionMetricCleanupTests
         listener.InstrumentPublished = (instrument, current) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.connection.wait_time")
+            {
                 current.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<double>((_, _, _, _) =>
         {
@@ -236,11 +285,17 @@ public class ConnectionMetricCleanupTests
             throw new InvalidOperationException("Listener failure.");
         });
         listener.Start();
+
         for (var burst = 0; burst < 2; burst++)
         {
-            for (var i = 0; i < 64; i++) connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
+            for (var i = 0; i < 64; i++)
+            {
+                connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
+            }
+
             await WaitForDeliveries();
         }
+
         await Assert.That(delivered).IsEqualTo(128);
         await Assert.That(ConnectionTelemetry.DroppedMeasurements).IsEqualTo(droppedBefore);
     }
@@ -248,7 +303,11 @@ public class ConnectionMetricCleanupTests
     private static async Task WaitForDeliveries()
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (ConnectionTelemetry.PendingMeasurements != 0) await Task.Delay(1, deadline.Token);
+
+        while (ConnectionTelemetry.PendingMeasurements != 0)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
     }
 
     [Test]
@@ -263,6 +322,7 @@ public class ConnectionMetricCleanupTests
         using var listener = new BlockingListener(instrument);
         var rental = Task.Run(async () => await pool.RentAsync(default));
         Task? cleanup = null;
+
         try
         {
             await listener.Entered.WaitAsync(TimeSpan.FromSeconds(5));
@@ -277,7 +337,11 @@ public class ConnectionMetricCleanupTests
             listener.Release();
             var connection = await rental.WaitAsync(TimeSpan.FromSeconds(5));
             pool.Return(connection);
-            if (cleanup is not null) await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
+
+            if (cleanup is not null)
+            {
+                await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
+            }
         }
     }
 
@@ -291,10 +355,12 @@ public class ConnectionMetricCleanupTests
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
             options: new RespireConnectionOptions
             {
-                Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+                Protocol = RespireProtocol.Resp3,
+                MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
                 CredentialCacheRetirementFence = () => fenced.TrySetResult(),
             });
         using var listener = new BlockingListener("redis.client.connection.handoff");
+
         try
         {
             await source.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:1\r\n+127.0.0.1:{target.Port}\r\n"));
@@ -312,19 +378,36 @@ public class ConnectionMetricCleanupTests
         using var configuration = new MetricConfigurationScope();
         var sent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
-        { SuppressReply = _ => { sent.TrySetResult(); return true; } };
+        {
+            SuppressReply = _ =>
+            {
+                sent.TrySetResult();
+                return true;
+            }
+        };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new() { Protocol = RespireProtocol.Resp2 });
         var pending = connection.SendAsync(new Commands.RawCommand(FakeRespServer.PingFrame)).AsTask();
         await sent.Task.WaitAsync(TimeSpan.FromSeconds(5));
         using var listener = new BlockingListener("redis.client.connection.closed");
         Task? cleanup = null;
+
         try
         {
-            if (dispose) cleanup = Task.Run(async () => await connection.DisposeAsync());
-            else server.CloseConnections();
+            if (dispose)
+            {
+                cleanup = Task.Run(async () => await connection.DisposeAsync());
+            }
+            else
+            {
+                server.CloseConnections();
+            }
+
             await listener.Entered.WaitAsync(TimeSpan.FromSeconds(5));
-            await Assert.That(async () => { using var reply = await pending.WaitAsync(TimeSpan.FromSeconds(5)); })
+            await Assert.That(async () =>
+                {
+                    using var reply = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+                })
                 .Throws<RespireConnectionException>();
             cleanup ??= Task.Run(async () => await connection.DisposeAsync());
             await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
@@ -332,8 +415,16 @@ public class ConnectionMetricCleanupTests
         finally
         {
             listener.Release();
-            if (cleanup is not null) await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
-            try { using var reply = await pending.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+            if (cleanup is not null)
+            {
+                await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+
+            try
+            {
+                using var reply = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             catch (RespireConnectionException) { }
         }
     }
@@ -351,6 +442,7 @@ public class ConnectionMetricCleanupTests
         pool.Return(second);
         using var listener = new BlockingListener("redis.client.connection.closed");
         var cleanup = Task.Run(async () => await pool.DisposeAsync());
+
         try
         {
             await listener.Entered.WaitAsync(TimeSpan.FromSeconds(5));
@@ -383,6 +475,7 @@ public class ConnectionMetricCleanupTests
             returned.TrySetResult();
             await drain;
         });
+
         try
         {
             await listener.Entered.WaitAsync(TimeSpan.FromSeconds(5));
@@ -408,7 +501,9 @@ public class ConnectionMetricCleanupTests
         private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _deliveries;
+
         internal Task Entered => _entered.Task;
+
         internal int Deliveries => Volatile.Read(ref _deliveries);
 
         internal BlockingListener(string name)
@@ -416,7 +511,9 @@ public class ConnectionMetricCleanupTests
             _listener.InstrumentPublished = (instrument, current) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == name)
+                {
                     current.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
             {
@@ -434,6 +531,11 @@ public class ConnectionMetricCleanupTests
         }
 
         internal void Release() => _release.TrySetResult();
-        public void Dispose() { Release(); _listener.Dispose(); }
+
+        public void Dispose()
+        {
+            Release();
+            _listener.Dispose();
+        }
     }
 }

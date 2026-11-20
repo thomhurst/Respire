@@ -17,12 +17,14 @@ public class StreamReferenceTests
     {
         byte[] outcomes = "*3\r\n:-1\r\n:1\r\n:2\r\n"u8.ToArray();
         byte[][] replies = Enumerable.Range(0, 3).SelectMany(_ => new[]
-            { outcomes, outcomes, "$3\r\n9-0\r\n"u8.ToArray(), ":2\r\n"u8.ToArray() }).ToArray();
+        { outcomes, outcomes, "$3\r\n9-0\r\n"u8.ToArray(), ":2\r\n"u8.ToArray() }).ToArray();
+
         if (surface == 2)
         {
             var executed = Encoding.ASCII.GetBytes($"*{replies.Length}\r\n").Concat(replies.SelectMany(x => x)).ToArray();
             replies = [FakeRespServer.OkReply, .. Enumerable.Repeat("+QUEUED\r\n"u8.ToArray(), replies.Length), executed];
         }
+
         await using var server = new FakeRespServer(replies);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var view = client.WithKeyPrefix("tenant:");
@@ -33,10 +35,12 @@ public class StreamReferenceTests
         var pending = new List<RespirePending<RespireStreamDeletionResult[]>>();
         byte[] key = "events"u8.ToArray();
         RespireStreamId[] ids = ["1-0", "2-0", "3-0"];
+
         foreach (var policy in Enum.GetValues<RespireStreamReferencePolicy>())
         {
             var add = new RespireStreamAddOptions { Id = "9-0", MaxLength = 0, ApproximateTrim = false, ReferencePolicy = policy };
             var trim = new RespireStreamTrimOptions { MinId = "9-0", Approximate = true, Limit = 0, ReferencePolicy = policy };
+
             if (queue is null)
             {
                 results.Add(await view.Streams.RemoveAsync(key, policy, ids));
@@ -52,14 +56,27 @@ public class StreamReferenceTests
                 _ = queue.Streams.Trim(key, trim);
             }
         }
+
         Array.Fill(key, (byte)'x');
         Array.Fill(ids, (RespireStreamId)"99-0");
-        if (transaction is not null) await transaction.CommitAsync();
-        else if (batch is not null) await batch.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else if (batch is not null)
+        {
+            await batch.ExecuteAsync();
+        }
+
         results.AddRange(pending.Select(x => x.Result));
+
         foreach (var result in results)
+        {
             await Assert.That(result).IsEquivalentTo(new[] { RespireStreamDeletionResult.NotFound,
                 RespireStreamDeletionResult.Deleted, RespireStreamDeletionResult.Retained }, CollectionOrdering.Matching);
+        }
+
         var expected = new[] { "KEEPREF", "DELREF", "ACKED" }.SelectMany(policy => new[]
         {
             $"XDELEX tenant:events {policy} IDS 3 1-0 2-0 3-0",
@@ -81,16 +98,19 @@ public class StreamReferenceTests
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         RespireStreamId[][] invalid = [[], ["$"], ["-"], ["+"], ["1-*"], ["1-"], ["18446744073709551616-0"]];
+
         foreach (var ids in invalid)
         {
             await Assert.That(async () => await client.Streams.RemoveAsync("events", RespireStreamReferencePolicy.Acknowledged, ids)).Throws<ArgumentException>();
             await Assert.That(async () => await client.Streams.AcknowledgeAndRemoveAsync("events", "g", RespireStreamReferencePolicy.Acknowledged, ids)).Throws<ArgumentException>();
+
             foreach (var queue in new IRespireCommandQueue[] { batch, transaction })
             {
                 await Assert.That(() => queue.Streams.Remove("events", RespireStreamReferencePolicy.Acknowledged, ids)).Throws<ArgumentException>();
                 await Assert.That(() => queue.Streams.AcknowledgeAndRemove("events", "g", RespireStreamReferencePolicy.Acknowledged, ids)).Throws<ArgumentException>();
             }
         }
+
         var unknown = (RespireStreamReferencePolicy)99;
         await Assert.That(async () => await client.Streams.RemoveAsync("events", unknown, "1-0")).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Streams.AcknowledgeAndRemoveAsync("events", null!, RespireStreamReferencePolicy.KeepReferences, "1-0"))
@@ -159,7 +179,7 @@ public class StreamReferenceTests
         await using var seed = new FakeRespServer(topology);
 #pragma warning disable RESP010 // This test owns the cluster client and scripted owner to isolate prefixed stream reference deletion routing.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
-            { Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
+        { Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("{tenant}:");
         await view.Streams.RemoveAsync("events", RespireStreamReferencePolicy.KeepReferences, "1-0");

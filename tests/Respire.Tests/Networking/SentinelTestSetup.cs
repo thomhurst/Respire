@@ -14,8 +14,16 @@ internal static class SentinelTestSetup
         var sentinel = client.Core.Sentinel!;
         using var setup = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await WaitForSubscriptionsAsync(sentinel, 1, setup.Token);
-        if (sentinel.NotificationRediscovery is { } startup) await startup.WaitAsync(setup.Token);
-        if (refreshReplicas) await client.Core.ReadRouter.RefreshNowAsync(setup.Token);
+
+        if (sentinel.NotificationRediscovery is { } startup)
+        {
+            await startup.WaitAsync(setup.Token);
+        }
+
+        if (refreshReplicas)
+        {
+            await client.Core.ReadRouter.RefreshNowAsync(setup.Token);
+        }
     }
 
     internal static Task WaitForSubscriptionsAsync(

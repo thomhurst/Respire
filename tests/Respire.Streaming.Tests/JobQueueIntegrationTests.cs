@@ -46,11 +46,17 @@ public partial class JobQueueIntegrationTests(RedisTestContainer redis)
         // Observe the server's expiry, without assuming a particular scheduling delay.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         RespireJobEnqueueResult next;
+
         do
         {
             next = await queue.EnqueueAsync("expiring", "next", TimeSpan.FromMilliseconds(30), deadline.Token);
-            if (!next.Enqueued) await Task.Delay(10, deadline.Token);
+
+            if (!next.Enqueued)
+            {
+                await Task.Delay(10, deadline.Token);
+            }
         } while (!next.Enqueued);
+
         await Assert.That(next.EntryId).IsNotEqualTo(first.EntryId);
         await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(2);
     }
@@ -65,14 +71,18 @@ public partial class JobQueueIntegrationTests(RedisTestContainer redis)
     public async Task DeniedEnqueueWriteDoesNotAppendOrReserveTheJobId(int protocol, string deniedCommand)
     {
         await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-            with { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
+            with
+        { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
         var username = "job-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">job-test-password", "~*", "+@all", "-" + deniedCommand]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Protocol = (RespireProtocol)protocol, Username = username, Password = "job-test-password" });
+                with
+            { Protocol = (RespireProtocol)protocol, Username = username, Password = "job-test-password" });
             var queue = Queue(restricted);
+
             for (var attempt = 0; attempt < 2; attempt++)
             {
                 await Assert.That(async () => await queue.EnqueueAsync("recoverable", "payload"))
@@ -106,6 +116,7 @@ public partial class JobQueueIntegrationTests(RedisTestContainer redis)
             .GetValue(null)!;
         var deduplicationKey = queue.StreamKey + ":dedup:" + Convert.ToHexString(
             System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("recoverable")));
+
         for (var attempt = 0; attempt < 2; attempt++)
         {
             await Assert.That(async () =>
@@ -155,11 +166,13 @@ public partial class JobQueueIntegrationTests(RedisTestContainer redis)
                 queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, "crashed", new() { Count = 1 });
             await Assert.That(delivery.Single().Id).IsEqualTo(enqueued.EntryId);
         }
+
         var state = new HandlerState();
         await using var provider = Worker(client, state);
         var worker = provider.GetServices<IHostedService>().Single();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await worker.StartAsync(deadline.Token);
+
         try
         {
             var recovered = await state.Received.Task.WaitAsync(deadline.Token);
@@ -193,6 +206,7 @@ public partial class JobQueueIntegrationTests(RedisTestContainer redis)
         var worker = provider.GetServices<IHostedService>().Single();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await worker.StartAsync(deadline.Token);
+
         try
         {
             await UntilAsync(async () => await client.Streams.CountAsync(queue.DeadLetterStreamKey) == 1, deadline.Token);
@@ -222,22 +236,29 @@ public partial class JobQueueIntegrationTests(RedisTestContainer redis)
         await queue.EnqueueAsync("slow", "payload");
         var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var first = new HandlerState { OnHandle = async token =>
+        var first = new HandlerState
+        {
+            OnHandle = async token =>
         {
             await releaseFirst.Task.WaitAsync(token);
             return staleResult;
-        } };
-        var second = new HandlerState { OnHandle = async token =>
+        }
+        };
+        var second = new HandlerState
+        {
+            OnHandle = async token =>
         {
             await releaseSecond.Task.WaitAsync(token);
             return RespireStreamWorkerResult.Ack;
-        } };
+        }
+        };
         await using var firstProvider = Worker(client, first);
         await using var secondProvider = Worker(client, second);
         var firstWorker = firstProvider.GetServices<IHostedService>().Single();
         var secondWorker = secondProvider.GetServices<IHostedService>().Single();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await firstWorker.StartAsync(deadline.Token);
+
         try
         {
             var firstJob = await first.Received.Task.WaitAsync(deadline.Token);
@@ -282,6 +303,7 @@ public partial class JobQueueIntegrationTests(RedisTestContainer redis)
             await secondWorker.StopAsync(deadline.Token);
         }
     }
+
     private ValueTask<RespireClient> ConnectAsync(int protocol = 3)
         => RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
 
@@ -293,8 +315,10 @@ public partial class JobQueueIntegrationTests(RedisTestContainer redis)
         var services = new ServiceCollection().AddSingleton(client).AddSingleton(state);
         services.AddRespireJobQueue<Handler, string>("test", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString, new()
         {
-            ConsumerName = "recovery", MinimumIdleTime = TimeSpan.FromMilliseconds(50),
-            RecoveryPollInterval = TimeSpan.FromMilliseconds(20), ReadWait = TimeSpan.FromMilliseconds(20),
+            ConsumerName = "recovery",
+            MinimumIdleTime = TimeSpan.FromMilliseconds(50),
+            RecoveryPollInterval = TimeSpan.FromMilliseconds(20),
+            ReadWait = TimeSpan.FromMilliseconds(20),
             DeliveryLimit = 2,
         });
         return services.BuildServiceProvider();
@@ -302,15 +326,29 @@ public partial class JobQueueIntegrationTests(RedisTestContainer redis)
 
     private static async Task UntilAsync(Func<Task<bool>> predicate, CancellationToken token)
     {
-        while (!await predicate()) await Task.Delay(10, token);
+        while (!await predicate())
+        {
+            await Task.Delay(10, token);
+        }
     }
 
     public sealed class HandlerState
     {
-        public TaskCompletionSource<RespireJob<string>> Received { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public RespireStreamWorkerResult Result { get; init; } = RespireStreamWorkerResult.Ack;
+        public TaskCompletionSource<RespireJob<string>> Received
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public RespireStreamWorkerResult Result
+        {
+            get; init;
+        } = RespireStreamWorkerResult.Ack;
         public int Attempts;
-        public Func<CancellationToken, ValueTask<RespireStreamWorkerResult>>? OnHandle { get; init; }
+
+        public Func<CancellationToken, ValueTask<RespireStreamWorkerResult>>? OnHandle
+        {
+            get; init;
+        }
     }
 
     public sealed class Handler(HandlerState state) : IRespireStreamHandler<RespireJob<string>>

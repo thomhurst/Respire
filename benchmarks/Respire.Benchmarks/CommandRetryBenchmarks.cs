@@ -27,7 +27,10 @@ public class CommandRetryBenchmarks
         .WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
 
     [Params("Default", "Disabled", "Enabled")]
-    public string Policy { get; set; } = "Default";
+    public string Policy
+    {
+        get; set;
+    } = "Default";
 
     [GlobalSetup]
     public async Task Setup()
@@ -37,7 +40,9 @@ public class CommandRetryBenchmarks
         {
             Endpoints = { new(Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1",
                 int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var port) ? port : 6379) },
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         };
         RespireRetryPolicy? policy = Policy switch
@@ -53,8 +58,12 @@ public class CommandRetryBenchmarks
         _groupOperation = (client, token) => client.Strings.LengthAsync(_key, token);
         await _client.SetAsync(_key, "value");
         await _client.Scripts.LoadAsync(_script);
+
         if (await TypedLength() != 5 || await CatalogLength() != 5 || await ScriptLength() != 5 || await GroupLength() != 5)
+        {
             throw new InvalidOperationException("Retry benchmark fixture returned an unexpected length.");
+        }
+
         ReportMemory("connected-idle");
         // Bounded sequential churn measures retained ownership outside the timed region.
         for (var i = 0; i < 256; i++)
@@ -64,10 +73,12 @@ public class CommandRetryBenchmarks
             await ScriptLength();
             await GroupLength();
         }
+
         ReportMemory("after-churn");
     }
 
-    [Benchmark] public ValueTask<long> TypedLength() => _client.Strings.LengthAsync(_key);
+    [Benchmark]
+    public ValueTask<long> TypedLength() => _client.Strings.LengthAsync(_key);
 
     [Benchmark]
     public async ValueTask<long> CatalogLength()
@@ -76,7 +87,8 @@ public class CommandRetryBenchmarks
         return result.AsInteger();
     }
 
-    [Benchmark] public ValueTask<long> ScriptLength() => _client.Scripts.ExecuteIntegerAsync(_script, _keys);
+    [Benchmark]
+    public ValueTask<long> ScriptLength() => _client.Scripts.ExecuteIntegerAsync(_script, _keys);
 
     [Benchmark]
     public ValueTask<long> GroupLength() => _group.ExecuteAsync(
@@ -85,8 +97,16 @@ public class CommandRetryBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_client is not null) await _client.DisposeAsync();
-        if (_group is not null) await _group.DisposeAsync();
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+        }
+
+        if (_group is not null)
+        {
+            await _group.DisposeAsync();
+        }
+
         _client = null!;
         _group = null!;
         ReportMemory("after-dispose");
@@ -99,7 +119,9 @@ public class CommandRetryBenchmarks
         using var process = Process.GetCurrentProcess();
         Console.WriteLine("RECEIVE_MEMORY " + JsonSerializer.Serialize(new
         {
-            stage, policy = Policy, managedBytes = GC.GetTotalMemory(false),
+            stage,
+            policy = Policy,
+            managedBytes = GC.GetTotalMemory(false),
             pohBytes = info.GenerationInfo[4].SizeAfterBytes,
             pohFragmentedBytes = info.GenerationInfo[4].FragmentationAfterBytes,
             workingSetBytes = process.WorkingSet64,

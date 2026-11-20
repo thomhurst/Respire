@@ -90,6 +90,7 @@ public class TypedCollectionReadTests
     private static byte[] ArrayReply(params string?[] values)
     {
         var reply = new StringBuilder().Append('*').Append(values.Length).Append("\r\n");
+
         foreach (var value in values)
         {
             if (value is null)

@@ -15,6 +15,7 @@ public sealed class JsonCancellationTests(RedisServerFixture server)
     {
         var store = new JsonTestStore(server, protocol);
         await store.ReferenceCountingStartAsync();
+
         try
         {
             using var collection = store.CreateCollection<string, BasicModelTests<string>.Record>("cancelled", new()
@@ -50,11 +51,13 @@ public sealed class JsonCancellationTests(RedisServerFixture server)
                 () => Drain(((IKeywordHybridSearchable<BasicModelTests<string>.Record>)collection)
                     .HybridSearchAsync(record.Vector, ["original"], 1, cancellationToken: token)),
             ];
+
             foreach (var operation in operations)
             {
                 var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(operation);
                 Assert.Equal(token, exception.CancellationToken);
             }
+
             Assert.True(await collection.CollectionExistsAsync(TestContext.Current.CancellationToken));
             record.AssertEqual(await collection.GetAsync(record.Key, new() { IncludeVectors = true }, TestContext.Current.CancellationToken), true, true);
         }
@@ -66,6 +69,8 @@ public sealed class JsonCancellationTests(RedisServerFixture server)
 
     private static async Task Drain<T>(IAsyncEnumerable<T> results)
     {
-        await foreach (var result in results) { }
+        await foreach (var result in results)
+        {
+        }
     }
 }

@@ -44,25 +44,40 @@ public sealed partial class RespireClient
         var telemetryEndpoint = new RespireEndpoint(connection.Host, connection.Port);
         RespireConnection? telemetryConnection = connection;
         Exception? failure = null;
+
         try
         {
             onEndpointSelected?.Invoke(telemetryEndpoint, connection);
+
             for (var attempt = 0; ; attempt++)
             {
                 RespireServerException error;
+
                 try
                 {
                     // Register before dispatch, under the same gate as the socket loss
                     // fence. The union covers completed values and overlapping fills.
-                    if (track) trackedTarget?.RegisterRead(operation, in command);
+                    if (track)
+                    {
+                        trackedTarget?.RegisterRead(operation, in command);
+                    }
+
                     var reply = execution is null
                         ? await SendReplicaRedirectAttemptAsync(operation, connection, command,
                             cancellationToken, deadline, observation, sendAsking, tracking, track).ConfigureAwait(false)
                         : await SendReplicaRedirectAttemptAsync(operation, connection,
                             new SendTimestampCommand<TCommand>(command, execution),
                             cancellationToken, deadline, observation, sendAsking, tracking, track).ConfigureAwait(false);
-                    if (!reply.IsError) return reply;
-                    try { error = ResponseReader.ServerError(in reply, operation, new(connection.Host, connection.Port)); }
+
+                    if (!reply.IsError)
+                    {
+                        return reply;
+                    }
+
+                    try
+                    {
+                        error = ResponseReader.ServerError(in reply, operation, new(connection.Host, connection.Port));
+                    }
                     finally { reply.Dispose(); }
                 }
                 catch (RespireConnectionRetiredException retired) when (allowStreamingConnectionReroute
@@ -70,11 +85,13 @@ public sealed partial class RespireClient
                 {
                     observation.Handled(retired, new(connection.Host, connection.Port));
                     connection = target;
+
                     if (trackedTarget is not null)
                     {
                         trackedTarget.UseConnection(connection);
                         onTrackingReady?.Invoke();
                     }
+
                     telemetryEndpoint = new(connection.Host, connection.Port);
                     telemetryConnection = connection;
                     deadline = rerouted;
@@ -90,7 +107,11 @@ public sealed partial class RespireClient
                 catch (RespireServerException rejection) { error = rejection; }
 
                 if (error.Code != "REDIRECT" || attempt >= ClusterRouter.RedirectLimit
-                    || !TryParseReplicaRedirect(error.Message, connection.Host, out var endpoint)) throw error;
+                    || !TryParseReplicaRedirect(error.Message, connection.Host, out var endpoint))
+                {
+                    throw error;
+                }
+
                 continuityPending = retainTracking;
                 execution?.RecordCommandNotApplied();
                 // A connected source can grant maintenance time without retiring. Carry
@@ -98,15 +119,28 @@ public sealed partial class RespireClient
                 deadline = connection.GetReroutedCommandDeadline(deadline);
                 acquisition.Dispose();
                 acquisition = new CommandAcquisitionScope(cancellationToken, deadline, _core.Options.CommandTimeout);
-                if (!retainTracking) _core.ClientCache?.FlushForContinuityLoss();
+
+                if (!retainTracking)
+                {
+                    _core.ClientCache?.FlushForContinuityLoss();
+                }
+
                 command.ValidateAdmission();
                 acquisition.CheckDeadline(operation, _core);
+
                 if (observation.IsEmpty)
+                {
                     RespireTelemetry.RecordError(error, internallyHandled: true, attempt, new(connection.Host, connection.Port));
-                else observation.Handled(error, new(connection.Host, connection.Port));
+                }
+                else
+                {
+                    observation.Handled(error, new(connection.Host, connection.Port));
+                }
 
                 if (execution is not null)
+                {
                     await execution.ReleaseRedirectTargetAsync().ConfigureAwait(false);
+                }
 
                 if (pool is not null)
                 {
@@ -116,6 +150,7 @@ public sealed partial class RespireClient
                     rentedConnection = null;
                     await _core.ReleaseServerPoolAsync(completedPool).ConfigureAwait(false);
                 }
+
                 trackedTarget?.Dispose();
                 trackedTarget = null;
                 // Acquisition can fail before a connection exists. Attribute it to the
@@ -125,12 +160,14 @@ public sealed partial class RespireClient
                 telemetry.UpdateServerEndpoint(endpoint.Host, endpoint.Port);
                 observation.UseEndpoint(endpoint, cancellationToken);
                 onEndpointSelected?.Invoke(endpoint, null);
+
                 if (retainTracking && _core.RedirectTargets is { } targets)
                 {
                     // The acquisition owner now guarantees the failure fence.
                     continuityPending = false;
                     trackedTarget = await AcquireTrackedReplicaTargetAsync(targets, endpoint, acquisition.Token).ConfigureAwait(false);
                 }
+
                 if (trackedTarget is not null)
                 {
                     connection = trackedTarget.Connection;
@@ -145,13 +182,16 @@ public sealed partial class RespireClient
                         continuityPending = false;
                         _core.ClientCache?.FlushForContinuityLoss();
                     }
+
                     pool = _core.CreateServerPool(endpoint, replicaRedirect: true);
                     // The logical command owns the deadline, including any maintenance allowance.
                     rentedConnection = await RentReplicaRedirectTargetAsync(pool, acquisition.Token).ConfigureAwait(false);
                     connection = rentedConnection;
                 }
+
                 telemetryConnection = connection;
                 onEndpointSelected?.Invoke(endpoint, connection);
+
                 if (execution is not null)
                 {
                     // A redirect is proof that the previous attempt did not run. Capture and
@@ -160,6 +200,7 @@ public sealed partial class RespireClient
                     execution.Connection = connection;
                     execution.ConnectionIdentity = GetTrackedConnectionIdentity(connection, reliable);
                 }
+
                 acquisition.CheckDeadline(operation, _core, connection);
                 // Release this admission timer; another redirect can re-arm the remaining deadline.
                 acquisition.Dispose();
@@ -182,24 +223,36 @@ public sealed partial class RespireClient
         finally
         {
             acquisition.Dispose();
+
             try
             {
                 // An accepted REDIRECT is a continuity signal even when cancellation,
                 // deadline or cleanup prevents handing it to the acquisition owner.
-                if (continuityPending) _core.ClientCache?.FlushForContinuityLoss();
+                if (continuityPending)
+                {
+                    _core.ClientCache?.FlushForContinuityLoss();
+                }
+
                 telemetry.Complete(operation, telemetryEndpoint.Host, telemetryEndpoint.Port, _core.Options.Database,
                     storedProcedureName, error: failure, connection: telemetryConnection);
             }
             finally
             {
                 trackedTarget?.Dispose();
+
                 if (pool is not null)
                 {
                     if (execution is not null)
+                    {
                         execution.HoldRedirectTarget(_core, pool, rentedConnection);
+                    }
                     else
                     {
-                        if (rentedConnection is not null) pool.Return(rentedConnection);
+                        if (rentedConnection is not null)
+                        {
+                            pool.Return(rentedConnection);
+                        }
+
                         await _core.ReleaseServerPoolAsync(pool).ConfigureAwait(false);
                     }
                 }
@@ -210,7 +263,11 @@ public sealed partial class RespireClient
     private static async ValueTask<bool> InitializeTrackedRedirectTargetAsync(
         RespireConnection connection, TrackedScriptExecution execution, CancellationToken cancellationToken)
     {
-        if (!execution.RequiresRedirectIdentity && execution.ConnectionIdentity.ServerClientId == 0) return false;
+        if (!execution.RequiresRedirectIdentity && execution.ConnectionIdentity.ServerClientId == 0)
+        {
+            return false;
+        }
+
         try
         {
             await connection.EnsureServerClientIdAsync(cancellationToken).ConfigureAwait(false);
@@ -229,6 +286,7 @@ public sealed partial class RespireClient
         ReplicaRedirectTargets targets, RespireEndpoint endpoint, CancellationToken cancellationToken)
     {
         CircuitAdmission admission;
+
         try
         {
             _core.ValidateReplicaRedirectDestination(endpoint);
@@ -240,7 +298,11 @@ public sealed partial class RespireClient
             _core.ClientCache?.FlushForContinuityLoss();
             throw;
         }
-        try { return await targets.AcquireAsync(endpoint, cancellationToken).ConfigureAwait(false); }
+
+        try
+        {
+            return await targets.AcquireAsync(endpoint, cancellationToken).ConfigureAwait(false);
+        }
         catch (Exception error) { admission.ConnectionFailed(error, cancellationToken); throw; }
         finally { admission.Dispose(); }
     }
@@ -260,6 +322,7 @@ public sealed partial class RespireClient
         var admission = (tracking ? _core.Circuits is not null && !_snapshotPrefixedBinaryKeys
             : UsesCircuitResponsePath(operation, pinToConnection: false))
             ? AcquireCircuit(connection, cancellationToken) : default;
+
         try
         {
             var response = tracking
@@ -283,6 +346,7 @@ public sealed partial class RespireClient
         DedicatedConnectionPool pool, CancellationToken cancellationToken)
     {
         var admission = _core.Circuits?.Acquire(pool.Endpoint, cancellationToken) ?? default;
+
         try
         {
             // The caller owns the logical deadline. Recovery may retry connection setup,

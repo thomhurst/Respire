@@ -34,8 +34,16 @@ public class BackplaneTests(RedisTestContainer fixture)
         await using var wire = await client.SubscribeAsync(channel);
         await using var reader = wire.GetAsyncEnumerator();
         var original = BackplaneMessage.CreateForEntrySet("source", "key-é", DateTime.UtcNow.Ticks);
-        if (synchronous) backplane.Publish(original, new());
-        else await backplane.PublishAsync(original, new());
+
+        if (synchronous)
+        {
+            backplane.Publish(original, new());
+        }
+        else
+        {
+            await backplane.PublishAsync(original, new());
+        }
+
         await reader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         var decoded = BackplaneMessage.FromByteArray(reader.Current.Payload.ToArray());
         await Assert.That(decoded.CacheKey).IsEqualTo(original.CacheKey);
@@ -55,8 +63,15 @@ public class BackplaneTests(RedisTestContainer fixture)
         await Assert.That(synchronous ? listener.SyncMessages : listener.AsyncMessages).IsEqualTo(2);
         await Assert.That(synchronous ? listener.AsyncMessages : listener.SyncMessages).IsEqualTo(0);
 
-        if (synchronous) backplane.Unsubscribe();
-        else await backplane.UnsubscribeAsync();
+        if (synchronous)
+        {
+            backplane.Unsubscribe();
+        }
+        else
+        {
+            await backplane.UnsubscribeAsync();
+        }
+
         await Assert.That(async () => await backplane.PublishAsync(original, new())).ThrowsExactly<InvalidOperationException>();
         await SubscribeAsync(backplane, listener.Options, synchronous);
         await Assert.That(await ReadAsync(listener.Connections)).IsFalse();
@@ -83,6 +98,7 @@ public class BackplaneTests(RedisTestContainer fixture)
         });
         await backplane.SubscribeAsync(ours.Options);
         await upstream.SubscribeAsync(theirs.Options);
+
         try
         {
             await backplane.PublishAsync(BackplaneMessage.CreateForEntryExpire("ours", "one", DateTime.UtcNow.Ticks), new());
@@ -124,6 +140,7 @@ public class BackplaneTests(RedisTestContainer fixture)
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var events = Channel.CreateUnbounded<string>();
+
         async ValueTask Receive(BackplaneMessage message)
         {
             if (message.CacheKey == "hold")
@@ -132,22 +149,41 @@ public class BackplaneTests(RedisTestContainer fixture)
                 await release.Task;
                 throw new InvalidOperationException("controlled callback failure");
             }
+
             events.Writer.TryWrite(message.CacheKey!);
         }
-        var options = new BackplaneSubscriptionOptions("test", "instance", channel, _ => { }, _ => { },
-            info => { if (info.IsReconnection) events.Writer.TryWrite("gap"); return default; }, Receive);
+
+        var options = new BackplaneSubscriptionOptions("test", "instance", channel, _ =>
+        {
+        }, _ =>
+        {
+        },
+            info =>
+            {
+                if (info.IsReconnection)
+                {
+                    events.Writer.TryWrite("gap");
+                }
+
+                return default;
+            }, Receive);
         await using var backplane = new RespireFusionCacheBackplane(client, new(BufferSize: 1, Overflow: RespireSubscriptionOverflow.DropOldest));
         await backplane.SubscribeAsync(options);
+
         try
         {
             await backplane.PublishAsync(BackplaneMessage.CreateForEntrySet("source", "hold", DateTime.UtcNow.Ticks), new());
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
             for (var index = 0; index < 8; index++)
+            {
                 await backplane.PublishAsync(BackplaneMessage.CreateForEntrySet("source", $"next-{index}", DateTime.UtcNow.Ticks), new());
+            }
             // This acknowledgement shares the subscriber's ordered receive stream and follows those messages.
             await using var barrier = await client.SubscribeAsync(Name());
         }
         finally { release.TrySetResult(); }
+
         await Assert.That(await ReadAsync(events)).IsEqualTo("gap");
         await Assert.That(await ReadAsync(events)).IsEqualTo("next-7");
     }
@@ -169,21 +205,42 @@ public class BackplaneTests(RedisTestContainer fixture)
         using var isolated = CreateCache(Name(), isolatedBackplane);
         var privateEntry = new FusionCacheEntryOptions { SkipBackplaneNotifications = true, Duration = TimeSpan.FromMinutes(1) };
         await isolated.SetAsync("key", 99, privateEntry);
+
         foreach (var action in new[] { "set", "remove", "expire" })
         {
             await second.SetAsync("key", 42, privateEntry);
+
             if (synchronous)
             {
-                if (action == "set") first.Set("key", 1);
-                else if (action == "remove") first.Remove("key");
-                else first.Expire("key");
+                if (action == "set")
+                {
+                    first.Set("key", 1);
+                }
+                else if (action == "remove")
+                {
+                    first.Remove("key");
+                }
+                else
+                {
+                    first.Expire("key");
+                }
             }
             else
             {
-                if (action == "set") await first.SetAsync("key", 1);
-                else if (action == "remove") await first.RemoveAsync("key");
-                else await first.ExpireAsync("key");
+                if (action == "set")
+                {
+                    await first.SetAsync("key", 1);
+                }
+                else if (action == "remove")
+                {
+                    await first.RemoveAsync("key");
+                }
+                else
+                {
+                    await first.ExpireAsync("key");
+                }
             }
+
             await WaitUntilAsync(async () => await second.GetOrDefaultAsync("key", -1) == -1);
             await Assert.That(await isolated.GetOrDefaultAsync("key", -1)).IsEqualTo(99);
         }
@@ -201,46 +258,90 @@ public class BackplaneTests(RedisTestContainer fixture)
         => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
         {
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
-            ClientName = name, Connections = 1, AllowAdmin = true,
+            ClientName = name,
+            Connections = 1,
+            AllowAdmin = true,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
 
     private static string Name() => "fusion:" + Guid.NewGuid().ToString("N");
+
     private static Task<T> ReadAsync<T>(Channel<T> channel) => channel.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
     private static async Task WaitUntilAsync(Func<ValueTask<bool>> predicate)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!await predicate()) await Task.Delay(10, timeout.Token);
+
+        while (!await predicate())
+        {
+            await Task.Delay(10, timeout.Token);
+        }
     }
+
     private static ValueTask SubscribeAsync(RespireFusionCacheBackplane backplane, BackplaneSubscriptionOptions options, bool synchronous)
     {
-        if (!synchronous) return backplane.SubscribeAsync(options);
+        if (!synchronous)
+        {
+            return backplane.SubscribeAsync(options);
+        }
+
         backplane.Subscribe(options);
         return default;
     }
 
     private sealed class Listener
     {
-        internal Channel<BackplaneMessage> Messages { get; } = Channel.CreateUnbounded<BackplaneMessage>();
-        internal Channel<bool> Connections { get; } = Channel.CreateUnbounded<bool>();
+        internal Channel<BackplaneMessage> Messages
+        {
+            get;
+        } = Channel.CreateUnbounded<BackplaneMessage>();
+
+        internal Channel<bool> Connections
+        {
+            get;
+        } = Channel.CreateUnbounded<bool>();
         internal int SyncMessages;
         internal int AsyncMessages;
-        internal BackplaneSubscriptionOptions Options { get; }
+
+        internal BackplaneSubscriptionOptions Options
+        {
+            get;
+        }
+
         internal Listener(string channel)
         {
             Options = new("test", "instance", channel,
                 info => Connections.Writer.TryWrite(info.IsReconnection),
-                message => { Interlocked.Increment(ref SyncMessages); Messages.Writer.TryWrite(message); },
-                info => { Connections.Writer.TryWrite(info.IsReconnection); return default; },
-                message => { Interlocked.Increment(ref AsyncMessages); Messages.Writer.TryWrite(message); return default; });
+                message =>
+                {
+                    Interlocked.Increment(ref SyncMessages);
+                    Messages.Writer.TryWrite(message);
+                },
+                info =>
+                {
+                    Connections.Writer.TryWrite(info.IsReconnection);
+                    return default;
+                },
+                message =>
+                {
+                    Interlocked.Increment(ref AsyncMessages);
+                    Messages.Writer.TryWrite(message);
+                    return default;
+                });
         }
     }
 
     private sealed class RecordingLogger : ILogger<RespireFusionCacheBackplane>
     {
-        internal ConcurrentQueue<int> Events { get; } = new();
+        internal ConcurrentQueue<int> Events
+        {
+            get;
+        } = new();
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
             => Events.Enqueue(eventId.Id);
     }

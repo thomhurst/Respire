@@ -10,13 +10,22 @@ namespace Respire.Coordination.Tests;
 public class HashFieldLeaseTests
 {
     [ClassDataSource<SharedRedis72>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis72 Redis72 { get; init; }
+    public required SharedRedis72 Redis72
+    {
+        get; init;
+    }
 
     [ClassDataSource<SharedRedis74>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis74 Redis74 { get; init; }
+    public required SharedRedis74 Redis74
+    {
+        get; init;
+    }
 
     [ClassDataSource<SharedRedis74Cluster>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis74Cluster Cluster { get; init; }
+    public required SharedRedis74Cluster Cluster
+    {
+        get; init;
+    }
 
     [Test]
     public async Task BinaryFieldLeaseExpiresIndependentlyAndRejectsStaleOwner()
@@ -194,7 +203,9 @@ public class HashFieldLeaseTests
 
         using (var replicated = await primary.Core.Multiplexer.GetConnection().SendAsync(
                    new Cmd2(new Verb(-1, "WAIT"), 1, 5000), default))
+        {
             await Assert.That(replicated.AsInteger()).IsEqualTo(1);
+        }
 
         await using var promoted = await RespireClient.ConnectAsync(new RespireOptions
         {
@@ -203,8 +214,12 @@ public class HashFieldLeaseTests
             Protocol = RespireProtocol.Resp3,
             AllowAdmin = true,
         });
+
         using (var promotion = await promoted.ExecuteAsync(RespireCommands.Server.REPLICAOF, "NO", "ONE"))
+        {
             await Assert.That(promotion.AsString()).IsEqualTo("OK");
+        }
+
         await Task.Delay(700);
 
         await using var replacementClient = await RespireClient.ConnectAsync(new RespireOptions

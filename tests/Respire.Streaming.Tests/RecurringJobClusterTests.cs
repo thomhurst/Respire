@@ -14,9 +14,11 @@ public class RecurringJobClusterTests
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
-            Topology = RespireContainerTopology.Cluster, Image = "redis:7.4-alpine",
+            Topology = RespireContainerTopology.Cluster,
+            Image = "redis:7.4-alpine",
         });
         await using var root = await RespireClient.ConnectAsync(fixture.CreateOptions());
+
         foreach (var prefix in new[] { "tenant:", "{tenant}:" })
         {
             var client = root.WithKeyPrefix(prefix);
@@ -35,7 +37,11 @@ public class RecurringJobClusterTests
 
     private sealed class ManualClock : TimeProvider
     {
-        public DateTimeOffset UtcNow { get; set; } = new(2026, 10, 15, 0, 0, 0, TimeSpan.Zero);
+        public DateTimeOffset UtcNow
+        {
+            get; set;
+        } = new(2026, 10, 15, 0, 0, 0, TimeSpan.Zero);
+
         public override DateTimeOffset GetUtcNow() => UtcNow;
     }
 }

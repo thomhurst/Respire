@@ -72,18 +72,32 @@ internal readonly struct BatchScriptCommand(
     RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never) : IRespCommand
 {
     public RespireCommandRetryCategory RetryCategory => retryCategory;
+
     public int GetWriteSizeHint() => CommandWriteSizeHint.Add(
         CommandWriteSizeHint.For(verb, source.GetWriteSizeHint()), tail);
+
     public bool TryGetArgument(int index, out RespireValue value)
     {
-        if (index == 0) { value = source; return true; }
-        if ((uint)(index - 1) < (uint)tail.Length) { value = tail[index - 1]; return true; }
+        if (index == 0)
+        {
+            value = source;
+            return true;
+        }
+
+        if ((uint)(index - 1) < (uint)tail.Length)
+        {
+            value = tail[index - 1];
+            return true;
+        }
+
         value = default;
         return false;
     }
 
     public ReadCommandKind ReadKind => verb.ReadKind;
+
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
 
     public bool TryGetClusterSlot(out int slot)
@@ -102,6 +116,7 @@ internal readonly struct BatchScriptCommand(
         writer.WriteArrayHeader(verb.Tokens + 1 + tail.Length);
         writer.WriteRaw(verb.Bulk);
         source.WriteTo(ref writer);
+
         foreach (var value in tail)
         {
             value.WriteTo(ref writer);

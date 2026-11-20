@@ -34,22 +34,36 @@ public class ListMoveManyIntegrationTests(ModernRedisTestContainer fixture)
             (RespireListSide.Right, RespireListSide.Left, RespireListMoveOrder.Bulk, ["c", "d"]),
             (RespireListSide.Right, RespireListSide.Right, RespireListMoveOrder.Bulk, ["c", "d"]),
         ];
+
         foreach (var mode in new[] { "immediate", "blocking", "batch", "transaction" })
-        foreach (var same in new[] { false, true })
-        foreach (var test in cases)
         {
-            await view.Keys.DeleteAsync("s", "d");
-            await view.Lists.RightPushAsync("s", "a", "b", "c", "d");
-            if (!same) await view.Lists.RightPushAsync("d", "x");
-            var destination = same ? "s" : "d";
-            var result = await Move(view, mode, destination, test.From, test.To, test.Order);
-            result.Should().Equal(test.Values);
-            string[] remainder = test.From == RespireListSide.Left ? ["c", "d"] : ["a", "b"];
-            var originalDestination = same ? remainder : ["x"];
-            var expected = test.To == RespireListSide.Left
-                ? test.Values.Concat(originalDestination) : originalDestination.Concat(test.Values);
-            (await view.Lists.RangeAsync(destination)).Should().Equal(expected);
-            if (!same) (await view.Lists.RangeAsync("s")).Should().Equal(remainder);
+            foreach (var same in new[] { false, true })
+            {
+                foreach (var test in cases)
+                {
+                    await view.Keys.DeleteAsync("s", "d");
+                    await view.Lists.RightPushAsync("s", "a", "b", "c", "d");
+
+                    if (!same)
+                    {
+                        await view.Lists.RightPushAsync("d", "x");
+                    }
+
+                    var destination = same ? "s" : "d";
+                    var result = await Move(view, mode, destination, test.From, test.To, test.Order);
+                    result.Should().Equal(test.Values);
+                    string[] remainder = test.From == RespireListSide.Left ? ["c", "d"] : ["a", "b"];
+                    var originalDestination = same ? remainder : ["x"];
+                    var expected = test.To == RespireListSide.Left
+                        ? test.Values.Concat(originalDestination) : originalDestination.Concat(test.Values);
+                    (await view.Lists.RangeAsync(destination)).Should().Equal(expected);
+
+                    if (!same)
+                    {
+                        (await view.Lists.RangeAsync("s")).Should().Equal(remainder);
+                    }
+                }
+            }
         }
     }
 
@@ -108,7 +122,10 @@ public class ListMoveManyIntegrationTests(ModernRedisTestContainer fixture)
         // Local socket disposal does not acknowledge Redis processing the disconnect. Wait for
         // that exact blocked client to disappear before a write could satisfy its old command.
         while ((await observer.Server.ClientsAsync(deadline.Token)).Any(client => client.Id == blockedId))
+        {
             await Task.Delay(10, deadline.Token);
+        }
+
         await view.Lists.RightPushAsync("s", "next");
         (await view.Lists.MoveManyAsync("s", "d", waitFor: TimeSpan.FromSeconds(1), cancellationToken: deadline.Token)).Should().Equal("next");
     }
@@ -119,7 +136,12 @@ public class ListMoveManyIntegrationTests(ModernRedisTestContainer fixture)
         {
             var blocked = (await observer.Server.ClientsAsync(cancellationToken))
                 .FirstOrDefault(x => x.Name == name && x.Flags.Contains('b') && x.Command == "blmovem");
-            if (blocked is not null) return blocked.Id;
+
+            if (blocked is not null)
+            {
+                return blocked.Id;
+            }
+
             await Task.Delay(10, cancellationToken);
         }
     }
@@ -128,15 +150,26 @@ public class ListMoveManyIntegrationTests(ModernRedisTestContainer fixture)
         RespireListSide from, RespireListSide to, RespireListMoveOrder order)
     {
         if (mode is "immediate" or "blocking")
+        {
             return await (mode == "blocking"
                 ? client.Lists.MoveManyAsync("s", destination, TimeSpan.FromSeconds(1), 2, from, to, order: order)
                 : client.Lists.MoveManyAsync("s", destination, 2, from, to, order: order));
+        }
+
         using var batch = mode == "batch" ? client.CreateBatch() : null;
         await using var transaction = mode == "transaction" ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = queue.Lists.MoveMany("s", destination, 2, from, to, order: order);
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         return pending.Result;
     }
 }

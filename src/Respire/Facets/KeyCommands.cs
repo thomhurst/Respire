@@ -198,15 +198,21 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     public ValueTask<long> TouchAsync(RespireKey key, CancellationToken cancellationToken)
         => TouchAsync([key], cancellationToken);
 
-
     // Single-key DEL and EXISTS own only their preflight and pass an empty observation, so the
     // default standalone route dispatches natively. See RespireClient.RecordPreflightFailure.
     public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys)
     {
         if (keys.Length == 1)
+        {
             return client.IntegerAsync("DEL", new Cmd1(Verbs.Del, client.PreflightKey(in keys[0])), CancellationToken.None);
+        }
+
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(DeleteBorrowedAsync(keys, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(DeleteBorrowedAsync(keys, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -216,9 +222,16 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     public ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
     {
         if (keys.Length == 1)
+        {
             return client.IntegerAsync("DEL", new Cmd1(Verbs.Del, client.PreflightKey(in keys[0])), cancellationToken);
+        }
+
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(DeleteBorrowedAsync(keys, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(DeleteBorrowedAsync(keys, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -228,9 +241,18 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     public ValueTask<long> UnlinkAsync(params ReadOnlySpan<RespireKey> keys)
     {
         var borrowed = DispatchResponseSource.DecoratedObservation;
-        if (borrowed.IsOpen) return UnlinkBorrowedAsync(keys, borrowed);
+
+        if (borrowed.IsOpen)
+        {
+            return UnlinkBorrowedAsync(keys, borrowed);
+        }
+
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(UnlinkBorrowedAsync(keys, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(UnlinkBorrowedAsync(keys, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -240,9 +262,18 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     public ValueTask<long> UnlinkAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
     {
         var borrowed = DispatchResponseSource.DecoratedObservation;
-        if (borrowed.IsOpen) return UnlinkBorrowedAsync(keys, cancellationToken, borrowed);
+
+        if (borrowed.IsOpen)
+        {
+            return UnlinkBorrowedAsync(keys, cancellationToken, borrowed);
+        }
+
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(UnlinkBorrowedAsync(keys, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(UnlinkBorrowedAsync(keys, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -259,7 +290,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(ExpireBorrowedAsync(key, expiry, when, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpireBorrowedAsync(key, expiry, when, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -270,6 +305,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         var condition = ExpireWhenToken(when);
+
         if (expiry.IsPersist)
         {
             if (condition is not null)
@@ -305,7 +341,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     public ValueTask<RespireTtlResult> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireTtlResult>.Start();
-        try { return owner.Attach(ExpiryBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpiryBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -318,7 +358,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     public ValueTask<RespireExpiryTimeResult> ExpiryTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireExpiryTimeResult>.Start();
-        try { return owner.Attach(ExpiryTimeBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpiryTimeBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -329,7 +373,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         RespireKey key, RespireExpiryTimePrecision precision, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireExpiryTimeResult>.Start();
-        try { return owner.Attach(ExpiryTimeBorrowedAsync(key, precision, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ExpiryTimeBorrowedAsync(key, precision, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -344,7 +392,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     public ValueTask<string?> EncodingAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
-        try { return owner.Attach(EncodingBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(EncodingBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -354,7 +406,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     public ValueTask<TimeSpan?> IdleTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<TimeSpan?>.Start();
-        try { return owner.Attach(IdleTimeBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(IdleTimeBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -365,7 +421,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     public ValueTask<long?> FrequencyAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long?>.Start();
-        try { return owner.Attach(FrequencyBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(FrequencyBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -375,7 +435,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     public ValueTask<long?> ReferenceCountAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long?>.Start();
-        try { return owner.Attach(ReferenceCountBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(ReferenceCountBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -385,20 +449,23 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     internal static TimeSpan? ParseIdleTime(in RespValue value)
         => value.IsNull ? null : TimeSpan.FromSeconds(ResponseReader.Integer(in value));
 
-    internal static (string Operation, Verb Verb) ExpiryTimeCommand(RespireExpiryTimePrecision precision)
-        => precision switch
-        {
-            RespireExpiryTimePrecision.Milliseconds => ("PEXPIRETIME", RespireCommands.Key.PEXPIRETIME.Verb),
-            RespireExpiryTimePrecision.Seconds => ("EXPIRETIME", RespireCommands.Key.EXPIRETIME.Verb),
-            _ => throw new ArgumentOutOfRangeException(nameof(precision), precision, null),
-        };
+    internal static (string Operation, Verb Verb) ExpiryTimeCommand(RespireExpiryTimePrecision precision) => precision switch
+    {
+        RespireExpiryTimePrecision.Milliseconds => ("PEXPIRETIME", RespireCommands.Key.PEXPIRETIME.Verb),
+        RespireExpiryTimePrecision.Seconds => ("EXPIRETIME", RespireCommands.Key.EXPIRETIME.Verb),
+        _ => throw new ArgumentOutOfRangeException(nameof(precision), precision, null),
+    };
 
     public ValueTask<RespireKeyType> TypeAsync(
         RespireKey key,
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireKeyType>.Start();
-        try { return owner.Attach(TypeBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(TypeBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -412,7 +479,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     public ValueTask<bool> RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(RenameBorrowedAsync(key, newKey, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RenameBorrowedAsync(key, newKey, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -426,7 +497,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(TryRenameBorrowedAsync(key, newKey, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(TryRenameBorrowedAsync(key, newKey, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -444,7 +519,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(CopyBorrowedAsync(source, destination, replace, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(CopyBorrowedAsync(source, destination, replace, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -469,7 +548,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(CopyBorrowedAsync(source, destination, destinationDatabase, replace, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(CopyBorrowedAsync(source, destination, destinationDatabase, replace, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -496,15 +579,23 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         ArgumentOutOfRangeException.ThrowIfNegative(destinationDatabase);
         var resolvedSource = client.Key(in source);
         var resolvedDestination = client.Key(in destination);
+
         if (client.Core.Cluster is not null && resolvedSource.AsKey().ClusterSlot != resolvedDestination.AsKey().ClusterSlot)
+        {
             throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, "COPY", resolvedSource.AsKey().ClusterSlot, resolvedDestination.AsKey().ClusterSlot, resolvedDestination);
+        }
+
         return (resolvedSource, resolvedDestination);
     }
 
     public ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(TouchBorrowedAsync(keys, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(TouchBorrowedAsync(keys, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -514,23 +605,26 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     public ValueTask<long> TouchAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(TouchBorrowedAsync(keys, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(TouchBorrowedAsync(keys, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
     private ValueTask<long> TouchBorrowedAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.IntegerKeysAsync("TOUCH", Verbs.Touch, keys, cancellationToken, observation: observation);
 
-    internal static string? ExpireWhenToken(RespireExpireWhen when)
-        => when switch
-        {
-            RespireExpireWhen.Always => null,
-            RespireExpireWhen.NotExists => "NX",
-            RespireExpireWhen.Exists => "XX",
-            RespireExpireWhen.GreaterThan => "GT",
-            RespireExpireWhen.LessThan => "LT",
-            _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
-        };
+    internal static string? ExpireWhenToken(RespireExpireWhen when) => when switch
+    {
+        RespireExpireWhen.Always => null,
+        RespireExpireWhen.NotExists => "NX",
+        RespireExpireWhen.Exists => "XX",
+        RespireExpireWhen.GreaterThan => "GT",
+        RespireExpireWhen.LessThan => "LT",
+        _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
+    };
 
     public async IAsyncEnumerable<string> ScanAsync(
         string? match = null,
@@ -541,6 +635,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         string? typeToken;
         RespireValue? effectiveMatch;
         var prefix = client.KeyPrefix;
+
         try
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
@@ -558,16 +653,20 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         {
             var checkpoint = RespireClusterScanCursor.Start;
             var migrationDelayMs = 50;
+
             do
             {
                 CollectionScan.CheckCancellation(cancellationToken);
                 var page = await ScanClusterPageAsync(checkpoint, match, type, countHint, cancellationToken).ConfigureAwait(false);
+
                 foreach (var key in page.Keys)
                 {
                     CollectionScan.CheckCancellation(cancellationToken);
                     yield return key;
                 }
+
                 checkpoint = page.Cursor;
+
                 if (page.WaitingOnMigration)
                 {
                     // The page owner has completed; the migration wait is a separate enumeration boundary.
@@ -581,9 +680,13 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
                         ErrorObservation.FinishFinal(default, error);
                         throw;
                     }
+
                     migrationDelayMs = Math.Min(migrationDelayMs * 2, 250);
                 }
-                else migrationDelayMs = 50;
+                else
+                {
+                    migrationDelayMs = 50;
+                }
             }
             while (!checkpoint.IsComplete);
 
@@ -601,10 +704,15 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             var cursor = "0";
             // Every page of this enumeration returns to the server that issued its cursor.
             var affinity = new ReadAffinity();
+
             do
             {
                 // Configured pages check cancellation after hook admission in the conversion helper.
-                if (client.Core.Options.CommandHook is null) CollectionScan.CheckCancellation(token);
+                if (client.Core.Options.CommandHook is null)
+                {
+                    CollectionScan.CheckCancellation(token);
+                }
+
                 var args = (effectiveMatch, typeToken) switch
                 {
                     (null, null) => new RespireValue[] { cursor, "COUNT", countHint },
@@ -619,6 +727,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
                         var elements = CollectionScan.ParsePage(in reply, "SCAN", out _);
                         string[] page;
                         int pageCount;
+
                         if (prefix is null)
                         {
                             page = ResponseReader.StringArray(in elements[1]);
@@ -629,9 +738,16 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
                             var values = elements[1].AsArray();
                             page = new string[values.Length];
                             pageCount = 0;
+
                             foreach (ref readonly var value in values)
-                                if (ScanKey(in value, prefix) is { } key) page[pageCount++] = key;
+                            {
+                                if (ScanKey(in value, prefix) is { } key)
+                                {
+                                    page[pageCount++] = key;
+                                }
+                            }
                         }
+
                         return (Cursor: elements[0].AsString(), Page: page, Count: pageCount);
                     }).ConfigureAwait(false);
                 cursor = result.Cursor;
@@ -646,52 +762,71 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         }
     }
 
-    internal static RespireKeyType ParseKeyType(string value)
-        => value switch
-        {
-            "none" => RespireKeyType.None,
-            "string" => RespireKeyType.String,
-            "list" => RespireKeyType.List,
-            "set" => RespireKeyType.Set,
-            "zset" => RespireKeyType.SortedSet,
-            "hash" => RespireKeyType.Hash,
-            "stream" => RespireKeyType.Stream,
-            "vectorset" => RespireKeyType.VectorSet,
-            "array" => RespireKeyType.Array,
-            _ => RespireKeyType.Unknown,
-        };
+    internal static RespireKeyType ParseKeyType(string value) => value switch
+    {
+        "none" => RespireKeyType.None,
+        "string" => RespireKeyType.String,
+        "list" => RespireKeyType.List,
+        "set" => RespireKeyType.Set,
+        "zset" => RespireKeyType.SortedSet,
+        "hash" => RespireKeyType.Hash,
+        "stream" => RespireKeyType.Stream,
+        "vectorset" => RespireKeyType.VectorSet,
+        "array" => RespireKeyType.Array,
+        _ => RespireKeyType.Unknown,
+    };
 
-    private static string? FormatKeyType(RespireKeyType? type)
-        => type switch
-        {
-            null => null,
-            RespireKeyType.String => "string",
-            RespireKeyType.List => "list",
-            RespireKeyType.Set => "set",
-            RespireKeyType.SortedSet => "zset",
-            RespireKeyType.Hash => "hash",
-            RespireKeyType.Stream => "stream",
-            RespireKeyType.VectorSet => "vectorset",
-            RespireKeyType.Array => "array",
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(type), type, "SCAN TYPE requires a concrete Redis key type."),
-        };
+    private static string? FormatKeyType(RespireKeyType? type) => type switch
+    {
+        null => null,
+        RespireKeyType.String => "string",
+        RespireKeyType.List => "list",
+        RespireKeyType.Set => "set",
+        RespireKeyType.SortedSet => "zset",
+        RespireKeyType.Hash => "hash",
+        RespireKeyType.Stream => "stream",
+        RespireKeyType.VectorSet => "vectorset",
+        RespireKeyType.Array => "array",
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(type), type, "SCAN TYPE requires a concrete Redis key type."),
+    };
 
     private static RespireValue? ScanMatch(KeyPrefix? prefix, string? match)
     {
-        if (prefix is null) return match is null ? (RespireValue?)null : new RespireValue(match);
-        if (prefix.Text is { } text) return new RespireValue(EscapeGlob(text) + (match ?? "*"));
+        if (prefix is null)
+        {
+            return match is null ? (RespireValue?)null : new RespireValue(match);
+        }
+
+        if (prefix.Text is { } text)
+        {
+            return new RespireValue(EscapeGlob(text) + (match ?? "*"));
+        }
+
         var suffix = System.Text.Encoding.UTF8.GetBytes(match ?? "*");
         var escapedLength = prefix.Bytes.Length;
-        foreach (var value in prefix.Bytes)
-            if (IsGlobMeta(value)) escapedLength++;
-        var pattern = new byte[checked(escapedLength + suffix.Length)];
-        var offset = 0;
+
         foreach (var value in prefix.Bytes)
         {
-            if (IsGlobMeta(value)) pattern[offset++] = (byte)'\\';
+            if (IsGlobMeta(value))
+            {
+                escapedLength++;
+            }
+        }
+
+        var pattern = new byte[checked(escapedLength + suffix.Length)];
+        var offset = 0;
+
+        foreach (var value in prefix.Bytes)
+        {
+            if (IsGlobMeta(value))
+            {
+                pattern[offset++] = (byte)'\\';
+            }
+
             pattern[offset++] = value;
         }
+
         suffix.CopyTo(pattern, offset);
         return new RespireValue(pattern);
     }
@@ -704,6 +839,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             var key = value.AsString();
             return key.StartsWith(text, StringComparison.Ordinal) ? key[text.Length..] : null;
         }
+
         var bytes = value.AsSpan();
         return bytes.StartsWith(prefix.Bytes) ? Utf8String.GetString(bytes[prefix.Bytes.Length..]) : null;
     }
@@ -717,6 +853,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         }
 
         var builder = new System.Text.StringBuilder(value.Length + 4);
+
         foreach (var c in value)
         {
             if (IsGlobMeta(c))

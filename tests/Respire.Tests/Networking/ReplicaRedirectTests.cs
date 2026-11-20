@@ -25,7 +25,13 @@ public partial class ReplicaRedirectTests
         {
             ShouldListenTo = static source => source.Name == "Respire",
             Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = activity => { lock (activities) activities.Add(activity); },
+            ActivityStopped = activity =>
+            {
+                lock (activities)
+                {
+                    activities.Add(activity);
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
         using var meter = new MeterListener();
@@ -33,15 +39,23 @@ public partial class ReplicaRedirectTests
         {
             if (instrument.Meter.Name == "Respire"
                 && instrument.Name is "db.client.operation.duration" or "redis.client.errors")
+            {
                 capture.EnableMeasurementEvents(instrument);
+            }
         };
         meter.SetMeasurementEventCallback<double>((_, _, tags, _) =>
         {
-            lock (durations) durations.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            lock (durations)
+            {
+                durations.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            }
         });
         meter.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
-            lock (errors) errors.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            lock (errors)
+            {
+                errors.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            }
         });
         meter.Start();
         await using var target = new FakeRespServer(3) { CloseConnectionAfterCommand = 1 };
@@ -60,10 +74,17 @@ public partial class ReplicaRedirectTests
 #pragma warning restore RESP010
         var procedure = RespireScript.Create("return 7");
         var operation = script ? procedure.EvalShaOperation : "GET";
+
         async Task Send()
         {
-            if (script) await client.Scripts.ExecuteIntegerAsync(procedure, "key");
-            else await client.GetStringAsync("key");
+            if (script)
+            {
+                await client.Scripts.ExecuteIntegerAsync(procedure, "key");
+            }
+            else
+            {
+                await client.GetStringAsync("key");
+            }
         }
 
         await Assert.That(Send).Throws<RespireConnectionException>();
@@ -71,11 +92,25 @@ public partial class ReplicaRedirectTests
         Activity[] traces;
         Dictionary<string, object?>[] measurements;
         Dictionary<string, object?>[] failures;
-        lock (activities) traces = activities.Where(activity => Equals(activity.GetTagItem("db.operation.name"), operation)).ToArray();
-        lock (durations) measurements = durations.Where(tags => Equals(tags.GetValueOrDefault("db.operation.name"), operation)).ToArray();
-        lock (errors) failures = errors.ToArray();
+
+        lock (activities)
+        {
+            traces = activities.Where(activity => Equals(activity.GetTagItem("db.operation.name"), operation)).ToArray();
+        }
+
+        lock (durations)
+        {
+            measurements = durations.Where(tags => Equals(tags.GetValueOrDefault("db.operation.name"), operation)).ToArray();
+        }
+
+        lock (errors)
+        {
+            failures = errors.ToArray();
+        }
+
         await Assert.That(traces.Length).IsEqualTo(2);
         await Assert.That(measurements.Length).IsEqualTo(2);
+
         foreach (var trace in traces)
         {
             await Assert.That(trace.GetTagItem("server.port")).IsEqualTo(target.Port);
@@ -83,19 +118,29 @@ public partial class ReplicaRedirectTests
             // No target connection was acquired: do not attach the source socket as its peer.
             await Assert.That(trace.GetTagItem("network.peer.port")).IsNull();
         }
+
         foreach (var measurement in measurements)
+        {
             await Assert.That(measurement["server.port"]).IsEqualTo(target.Port);
+        }
+
         var redirects = failures.Where(tags => Equals(tags.GetValueOrDefault("db.response.status_code"), "REDIRECT")).ToArray();
         await Assert.That(redirects.Length).IsEqualTo(2);
+
         foreach (var redirect in redirects)
         {
             await Assert.That(redirect["server.port"]).IsEqualTo(replica.Port);
             await Assert.That((bool)redirect["redis.client.errors.internal"]!).IsTrue();
         }
+
         var finalErrors = failures.Where(tags => Equals(tags.GetValueOrDefault("redis.client.errors.internal"), false)).ToArray();
         await Assert.That(finalErrors.Length).IsEqualTo(2);
+
         foreach (var error in finalErrors)
+        {
             await Assert.That(error["server.port"]).IsEqualTo(target.Port);
+        }
+
         await Assert.That(target.ReceivedCommands).IsEquivalentTo(["CLIENT CAPA REDIRECT"]);
     }
 
@@ -202,12 +247,23 @@ public partial class ReplicaRedirectTests
         var original = client.Core.Multiplexer.GetConnection();
         await source.SendRawAsync(Bytes(">3\r\n+MIGRATING\r\n:1\r\n:10\r\n"));
         using var maintenanceWait = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!original.HasMaintenanceWindow) await Task.Delay(10, maintenanceWait.Token);
+
+        while (!original.HasMaintenanceWindow)
+        {
+            await Task.Delay(10, maintenanceWait.Token);
+        }
 
         // No retirement or replacement: the still-connected source grants the allowance.
         // Exercise both the check after a late reply and the timer during target acquisition.
-        if (delayHandshake) target.DelayCommand("HELLO 3", 1500);
-        else source.DelayCommand("GET key", 1500);
+        if (delayHandshake)
+        {
+            target.DelayCommand("HELLO 3", 1500);
+        }
+        else
+        {
+            source.DelayCommand("GET key", 1500);
+        }
+
         using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await Assert.That(await client.GetStringAsync("key", caller.Token)).IsEqualTo("value");
         await Assert.That(original.IsConnected).IsTrue();
@@ -233,8 +289,10 @@ public partial class ReplicaRedirectTests
 #pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
         {
-            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
-            CommandTimeout = TimeSpan.FromSeconds(1), MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(10),
+            Protocol = RespireProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            CommandTimeout = TimeSpan.FromSeconds(1),
+            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(10),
             CircuitBreaker = circuit ? new() : null,
             ReconnectPolicy = new(),
         });
@@ -242,7 +300,12 @@ public partial class ReplicaRedirectTests
         var original = client.Core.Multiplexer.GetConnection();
         await source.SendRawAsync(Bytes(">3\r\n+MIGRATING\r\n:1\r\n:10\r\n"));
         using var maintenanceWait = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!original.HasMaintenanceWindow) await Task.Delay(10, maintenanceWait.Token);
+
+        while (!original.HasMaintenanceWindow)
+        {
+            await Task.Delay(10, maintenanceWait.Token);
+        }
+
         var announcement = client.Core.Multiplexer.CaptureMovingAnnouncement(0, original,
             new MaintenanceNotification("MOVING", 1, 10, new("127.0.0.1", replacement.Port)));
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -252,8 +315,15 @@ public partial class ReplicaRedirectTests
 
         // Cross the normal deadline either before the redirect or while acquiring its target.
         // Both waits must retain the maintenance allowance granted by the retired connection.
-        if (delayHandshake) target.DelayCommand("HELLO 3", 1500);
-        else replacement.DelayCommand("GET key", 1500);
+        if (delayHandshake)
+        {
+            target.DelayCommand("HELLO 3", 1500);
+        }
+        else
+        {
+            replacement.DelayCommand("GET key", 1500);
+        }
+
         using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var reply = await client.SendOnConnectionAsync("GET", original,
             new Respire.Commands.Cmd1(Respire.Commands.Verbs.Get, "key"), caller.Token);
@@ -289,20 +359,34 @@ public partial class ReplicaRedirectTests
             Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStarted = activity =>
             {
-                if (Equals(activity.GetTagItem("db.stored_procedure.name"), procedure.Sha1)) beforeScriptSend?.Invoke();
+                if (Equals(activity.GetTagItem("db.stored_procedure.name"), procedure.Sha1))
+                {
+                    beforeScriptSend?.Invoke();
+                }
             },
-            ActivityStopped = activity => { lock (activities) activities.Add(activity); },
+            ActivityStopped = activity =>
+            {
+                lock (activities)
+                {
+                    activities.Add(activity);
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
         using var meter = new MeterListener();
         meter.InstrumentPublished = (instrument, capture) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
                 capture.EnableMeasurementEvents(instrument);
+            }
         };
         meter.SetMeasurementEventCallback<double>((_, _, tags, _) =>
         {
-            lock (measurements) measurements.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            lock (measurements)
+            {
+                measurements.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            }
         });
         meter.Start();
         await using var target = Server();
@@ -310,7 +394,8 @@ public partial class ReplicaRedirectTests
 #pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
         {
-            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CircuitBreaker = circuit ? new() : null,
         });
 #pragma warning restore RESP010
@@ -319,12 +404,15 @@ public partial class ReplicaRedirectTests
             new MaintenanceNotification("MOVING", 1, 10, new("127.0.0.1", target.Port)));
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.Core.Multiplexer.MovingHandoffPublished += () => published.TrySetResult();
+
         async Task PublishReplacement()
         {
             client.Core.Multiplexer.QueueDedicatedMovingHandoff(original, announcement, static () => true);
             await published.Task.WaitAsync(TimeSpan.FromSeconds(5));
         }
+
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         if (script)
         {
             // Script selection precedes activity creation; retire that selection before admission.
@@ -340,13 +428,23 @@ public partial class ReplicaRedirectTests
                 new Respire.Commands.Cmd1(Respire.Commands.Verbs.Get, "key"), timeout.Token);
             await Assert.That(reply.AsString()).IsEqualTo("value");
         }
+
         var wireOperation = script ? "EVALSHA " : "GET ";
         await Assert.That(source.ReceivedCommands.Any(command => command.StartsWith(wireOperation, StringComparison.Ordinal))).IsFalse();
         await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith(wireOperation, StringComparison.Ordinal))).IsEqualTo(1);
         Activity[] traces;
         Dictionary<string, object?>[] durations;
-        lock (activities) traces = activities.Where(activity => Equals(activity.GetTagItem("db.operation.name"), operation)).ToArray();
-        lock (measurements) durations = measurements.Where(tags => Equals(tags.GetValueOrDefault("db.operation.name"), operation)).ToArray();
+
+        lock (activities)
+        {
+            traces = activities.Where(activity => Equals(activity.GetTagItem("db.operation.name"), operation)).ToArray();
+        }
+
+        lock (measurements)
+        {
+            durations = measurements.Where(tags => Equals(tags.GetValueOrDefault("db.operation.name"), operation)).ToArray();
+        }
+
         await Assert.That(traces.Length).IsEqualTo(1);
         await Assert.That(traces[0].GetTagItem("server.port")).IsEqualTo(target.Port);
         await Assert.That(durations.Length).IsEqualTo(1);
@@ -623,12 +721,14 @@ public partial class ReplicaRedirectTests
             captureSendTimestampOnly: captureTimestampOnly, onSerialized: timestamps.Add,
             onCommandNotApplied: () => rejections++);
         long targetAdmission;
+
         try
         {
             await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
             targetAdmission = Stopwatch.GetTimestamp();
         }
         finally { releaseHandshake.TrySetResult(); }
+
         using var reply = await execution.ConsumeResponseAsync();
         await Assert.That(reply.AsInteger()).IsEqualTo(1);
         await Assert.That(execution.ConnectionIdentity.Endpoint.Port).IsEqualTo(primary.Port);
@@ -658,18 +758,29 @@ public partial class ReplicaRedirectTests
         {
             ShouldListenTo = static source => source.Name == "Respire",
             Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = activity => { lock (activities) activities.Add(activity); },
+            ActivityStopped = activity =>
+            {
+                lock (activities)
+                {
+                    activities.Add(activity);
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
         using var meter = new MeterListener();
         meter.InstrumentPublished = (instrument, capture) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
                 capture.EnableMeasurementEvents(instrument);
+            }
         };
         meter.SetMeasurementEventCallback<double>((_, _, tags, _) =>
         {
-            lock (measurements) measurements.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            lock (measurements)
+            {
+                measurements.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            }
         });
         meter.Start();
         await using var primary = new FakeRespServer(4)
@@ -685,14 +796,29 @@ public partial class ReplicaRedirectTests
         { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null });
 #pragma warning restore RESP010
         var script = RespireScript.Create("return 7");
+
         if (fail)
+        {
             await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(script, "key")).Throws<RespireServerException>();
+        }
         else
+        {
             await Assert.That(await client.Scripts.ExecuteIntegerAsync(script, "key")).IsEqualTo(7);
+        }
+
         Activity[] traces;
         Dictionary<string, object?>[] durations;
-        lock (activities) traces = activities.Where(activity => Equals(activity.GetTagItem("db.stored_procedure.name"), script.Sha1)).ToArray();
-        lock (measurements) durations = measurements.Where(tags => Equals(tags.GetValueOrDefault("db.operation.name"), script.EvalShaOperation)).ToArray();
+
+        lock (activities)
+        {
+            traces = activities.Where(activity => Equals(activity.GetTagItem("db.stored_procedure.name"), script.Sha1)).ToArray();
+        }
+
+        lock (measurements)
+        {
+            durations = measurements.Where(tags => Equals(tags.GetValueOrDefault("db.operation.name"), script.EvalShaOperation)).ToArray();
+        }
+
         await Assert.That(traces.Length).IsEqualTo(1);
         await Assert.That(traces[0].GetTagItem("server.port")).IsEqualTo(primary.Port);
         await Assert.That(traces[0].Status == ActivityStatusCode.Error).IsEqualTo(fail);
@@ -712,7 +838,13 @@ public partial class ReplicaRedirectTests
         {
             ShouldListenTo = static source => source.Name == "Respire",
             Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = activity => { lock (activities) activities.Add(activity); },
+            ActivityStopped = activity =>
+            {
+                lock (activities)
+                {
+                    activities.Add(activity);
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
         await using var primary = new FakeRespServer(":7\r\n"u8.ToArray());
@@ -726,7 +858,12 @@ public partial class ReplicaRedirectTests
 #pragma warning restore RESP010
         using var reply = await client.ExecuteAsync("FCALL", "my_function", 0);
         Activity[] matches;
-        lock (activities) matches = activities.Where(activity => activity.GetTagItem("db.stored_procedure.name") as string == "my_function").ToArray();
+
+        lock (activities)
+        {
+            matches = activities.Where(activity => activity.GetTagItem("db.stored_procedure.name") as string == "my_function").ToArray();
+        }
+
         await Assert.That(matches.Length).IsEqualTo(1);
         await Assert.That(matches[0].DisplayName.Contains("my_function", StringComparison.Ordinal)).IsTrue();
         await Assert.That(matches[0].GetTagItem("server.port")).IsEqualTo(redirect ? primary.Port : replica.Port);
@@ -749,7 +886,10 @@ public partial class ReplicaRedirectTests
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { RetryPolicy = retry ? new() : null });
 #pragma warning restore RESP010
-        var error = await Assert.That(async () => { using var reply = await client.ExecuteAsync("SCAN", cursor); })
+        var error = await Assert.That(async () =>
+            {
+                using var reply = await client.ExecuteAsync("SCAN", cursor);
+            })
             .Throws<RespireServerException>();
         await Assert.That(error!.Code).IsEqualTo("REDIRECT");
         await Assert.That(primary.CommandsSeen).IsEqualTo(0);
@@ -879,14 +1019,20 @@ public partial class ReplicaRedirectTests
             Bytes($"-REDIRECT 127.0.0.1:{warmTarget.Port}\r\n")))
 #pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using (var warmClient = await RespireClient.ConnectAsync(Options(warmReplica.Port) with
-            { CommandTimeout = TimeSpan.FromSeconds(5), RetryPolicy = retry ? new() : null }))
+        { CommandTimeout = TimeSpan.FromSeconds(5), RetryPolicy = retry ? new() : null }))
+        {
 #pragma warning restore RESP010
             await Assert.That(await warmClient.GetStringAsync("key")).IsEqualTo("x");
+        }
 
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var target = new FakeRespServer
         {
-            SuppressReply = _ => { entered.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                entered.TrySetResult();
+                return true;
+            },
         };
         await using var replica = new FakeRespServer
         {
@@ -898,11 +1044,13 @@ public partial class ReplicaRedirectTests
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         {
             CommandTimeout = TimeSpan.FromMilliseconds(cancelCaller ? 5000 : 300),
-            RetryPolicy = retry ? new() : null, ReconnectPolicy = new(),
+            RetryPolicy = retry ? new() : null,
+            ReconnectPolicy = new(),
         });
 #pragma warning restore RESP010
         var pending = client.GetStringAsync("key", caller.Token).AsTask();
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (cancelCaller)
         {
             caller.Cancel();
@@ -910,7 +1058,10 @@ public partial class ReplicaRedirectTests
             await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
         }
         else
+        {
             await Assert.That(async () => await pending).Throws<RespireTimeoutException>();
+        }
+
         await target.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(target.ReceivedCommands).IsEquivalentTo(["CLIENT CAPA REDIRECT"]);
     }
@@ -936,29 +1087,45 @@ public partial class ReplicaRedirectTests
         };
 #pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with { RetryPolicy = new() });
+
 #pragma warning restore RESP010
         switch (shape)
         {
-            case "typed-read": await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value"); break;
+            case "typed-read":
+                await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+                break;
             case "raw-read":
                 using (var reply = await client.ExecuteAsync("GET", "key"))
+                {
                     await Assert.That(reply.AsString()).IsEqualTo("value");
+                }
                 break;
             case "catalog-read":
                 using (var reply = await client.ExecuteAsync(RespireCommands.String.GET, ["key"]))
+                {
                     await Assert.That(reply.AsString()).IsEqualTo("value");
+                }
                 break;
-            case "typed-write": await client.SetAsync("key", "value"); break;
+            case "typed-write":
+                await client.SetAsync("key", "value");
+                break;
             case "raw-write":
                 using (var reply = await client.ExecuteAsync("SET", "key", "value"))
+                {
                     await Assert.That(reply.AsString()).IsEqualTo("OK");
+                }
                 break;
             case "catalog-write":
                 using (var reply = await client.ExecuteAsync(RespireCommands.String.SET, ["key", "value"]))
+                {
                     await Assert.That(reply.AsString()).IsEqualTo("OK");
+                }
                 break;
-            default: await client.ExecuteFireAndForgetAsync("SET", "key", "value"); break;
+            default:
+                await client.ExecuteFireAndForgetAsync("SET", "key", "value");
+                break;
         }
+
         await Assert.That(target.ReceivedCommands).IsEquivalentTo([
             "CLIENT CAPA REDIRECT", shape.EndsWith("read", StringComparison.Ordinal) ? "GET key" : "SET key value"]);
     }
@@ -975,7 +1142,13 @@ public partial class ReplicaRedirectTests
         {
             ShouldListenTo = static source => source.Name == "Respire",
             Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = activity => { lock (activities) activities.Add(activity); },
+            ActivityStopped = activity =>
+            {
+                lock (activities)
+                {
+                    activities.Add(activity);
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
         await using var target = new FakeRespServer(2)
@@ -992,15 +1165,26 @@ public partial class ReplicaRedirectTests
 #pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
+
 #pragma warning restore RESP010
         if (fail)
+        {
             await Assert.That(async () => await client.GetStringAsync("key")).Throws<RespireServerException>();
+        }
         else
+        {
             await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        }
+
         await Assert.That(reads).IsEqualTo(2);
         await Assert.That(replica.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(2);
         Activity[] traces;
-        lock (activities) traces = activities.Where(activity => Equals(activity.GetTagItem("db.operation.name"), "GET")).ToArray();
+
+        lock (activities)
+        {
+            traces = activities.Where(activity => Equals(activity.GetTagItem("db.operation.name"), "GET")).ToArray();
+        }
+
         await Assert.That(traces.Length).IsEqualTo(1);
         await Assert.That(traces[0].GetTagItem("server.port")).IsEqualTo(target.Port);
         await Assert.That(traces[0].Status == ActivityStatusCode.Error).IsEqualTo(fail);
@@ -1026,10 +1210,12 @@ public partial class ReplicaRedirectTests
         {
             RetryPolicy = new()
             {
-                MaxAttempts = 2, InitialBackoff = TimeSpan.Zero,
+                MaxAttempts = 2,
+                InitialBackoff = TimeSpan.Zero,
                 MaxCommandRetryCategory = permitAccumulating ? RespireCommandRetryCategory.WriteAccumulating : RespireCommandRetryCategory.ReadOnly,
             },
         });
+
 #pragma warning restore RESP010
         if (permitAccumulating)
         {
@@ -1037,8 +1223,14 @@ public partial class ReplicaRedirectTests
             await Assert.That(reply.AsInteger()).IsEqualTo(2);
         }
         else
-            await Assert.That(async () => { using var reply = await client.ExecuteAsync(RespireCommands.String.INCR, ["counter"]); })
+        {
+            await Assert.That(async () =>
+                {
+                    using var reply = await client.ExecuteAsync(RespireCommands.String.INCR, ["counter"]);
+                })
                 .Throws<RespireConnectionException>();
+        }
+
         await Assert.That(target.ReceivedCommands.Count(command => command == "INCR counter")).IsEqualTo(permitAccumulating ? 2 : 1);
         await Assert.That(replica.ReceivedCommands.Count(command => command == "INCR counter")).IsEqualTo(permitAccumulating ? 2 : 1);
     }
@@ -1066,12 +1258,14 @@ public partial class ReplicaRedirectTests
 #pragma warning disable RESP010 // Each wire case owns its fake topology and client capability/redirect state; sharing would cross test boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
         { ClientSideCache = new(), RetryPolicy = retry ? new() : null });
+
 #pragma warning restore RESP010
         for (var attempt = 0; attempt < 2; attempt++)
         {
             var value = multi ? (await client.Strings.GetManyAsync("key"))[0] : await client.GetStringAsync("key");
             await Assert.That(value).IsEqualTo("1");
         }
+
         await Assert.That(reads).IsEqualTo(1);
         await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("CLIENT TRACKING ", StringComparison.Ordinal))).IsEqualTo(1);
         await Assert.That(target.ReceivedCommands.Count(command => command == "CLIENT CACHING YES")).IsEqualTo(1);
@@ -1088,7 +1282,9 @@ public partial class ReplicaRedirectTests
 
     private static RespireOptions Options(int port) => new()
     {
-        Protocol = RespireProtocol.Resp2, Connections = 1, EnableReplicaRedirects = true,
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        EnableReplicaRedirects = true,
         Endpoints = [new("127.0.0.1", port)],
     };
 

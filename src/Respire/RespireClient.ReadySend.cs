@@ -43,6 +43,7 @@ public sealed partial class RespireClient
         // Duration senders are reached only through CanUseDirectReplySource, which excluded listeners.
         var durationStarted = sender.ObserveDuration ? RespireTelemetry.CaptureCommandDurationStart(operation) : default;
         RespireConnection? connection;
+
         try
         {
             connection = UsesPrimaryBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
@@ -54,21 +55,43 @@ public sealed partial class RespireClient
         {
             // The captured generation names the attempted data node, with or without Sentinel.
             var endpoint = cancellationToken.IsCancellationRequested ? (RespireEndpoint?)null : multiplexer.ActiveConnectionEndpoint;
+
             if (_core.Sentinel is not null)
+            {
                 return CaptureReadySendFailure<TResult>(error, cache, mutationFence, observeSelectionErrors, endpoint);
-            if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
-            if (observeSelectionErrors) RespireTelemetry.RecordError(error, internallyHandled: false, endpoint: endpoint);
+            }
+
+            if (mutationFence.IsRequired)
+            {
+                cache!.CompleteMutation(in mutationFence);
+            }
+
+            if (observeSelectionErrors)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: false, endpoint: endpoint);
+            }
+
             throw;
         }
+
         if (connection is null)
+        {
             return SendBackloggedReadyAsync<TCommand, TResult, TSend>(operation, command, cancellationToken, sender,
                 durationStarted, cache, mutationFence, observeSelectionErrors, observation);
+        }
+
         if (sender.ObserveDuration && _core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
+        {
             return SendCircuitReadyAsync<TCommand, TResult, TSend>(operation, connection, command, cancellationToken, sender,
                 durationStarted, cache, mutationFence, observation);
+        }
+
         if (mutationFence.IsRequired)
+        {
             return SendReadyMutationAsync<TCommand, TResult, TSend>(connection, operation, in command, cancellationToken, sender,
                 cache!, mutationFence, durationStarted, observation);
+        }
+
         try
         {
             return sender.Send(connection, operation, in command, cancellationToken, durationStarted, errorObservation: observation);
@@ -89,6 +112,7 @@ public sealed partial class RespireClient
         where TSend : struct, IReadySend<TResult>
     {
         var dispatched = false;
+
         try
         {
             var deadline = CreateCircuitDeadline();
@@ -96,12 +120,19 @@ public sealed partial class RespireClient
             return await RunPrimaryBacklogAsync(operation, cancellationToken, deadline, (connection, originalDeadline) =>
             {
                 dispatched = true;
+
                 if (sender.ObserveDuration && _core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
+                {
                     return SendCircuitReadyAsync<BacklogCommand<TCommand>, TResult, TSend>(operation, connection, snapshot,
                         cancellationToken, sender, durationStarted, cache, mutationFence, observation, originalDeadline);
+                }
+
                 if (mutationFence.IsRequired)
+                {
                     return SendReadyMutationAsync<BacklogCommand<TCommand>, TResult, TSend>(connection, operation, snapshot,
                         cancellationToken, sender, cache!, mutationFence, durationStarted, observation, originalDeadline);
+                }
+
                 return sender.Send(connection, operation, snapshot, cancellationToken, durationStarted, originalDeadline,
                     errorObservation: observation);
             }, observation).ConfigureAwait(false);
@@ -110,10 +141,18 @@ public sealed partial class RespireClient
         {
             if (!dispatched)
             {
-                if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
-                if (observeErrors) RespireTelemetry.RecordError(error, internallyHandled: false,
+                if (mutationFence.IsRequired)
+                {
+                    cache!.CompleteMutation(in mutationFence);
+                }
+
+                if (observeErrors)
+                {
+                    RespireTelemetry.RecordError(error, internallyHandled: false,
                     endpoint: _core.Multiplexer.ActiveConnectionEndpoint);
+                }
             }
+
             throw;
         }
     }
@@ -129,6 +168,7 @@ public sealed partial class RespireClient
         where TSend : struct, IReadySend<TResult>
     {
         ValueTask<TResult> response;
+
         try
         {
             response = sender.Send(connection, operation, new MutationCommand<TCommand>(command, mutationFence),
@@ -139,6 +179,7 @@ public sealed partial class RespireClient
             // The async boundary keeps cancellation status, as the former ready-send failure path did.
             response = ValueTask.FromException<TResult>(error);
         }
+
         return CompleteObservedMutationAsync(response, cache, mutationFence, observation);
     }
 
@@ -153,16 +194,25 @@ public sealed partial class RespireClient
         try
         {
             TResult result;
-            try { result = await response.ConfigureAwait(false); }
+
+            try
+            {
+                result = await response.ConfigureAwait(false);
+            }
             catch
             {
-                try { cache.CompleteMutation(in fence, false); }
+                try
+                {
+                    cache.CompleteMutation(in fence, false);
+                }
                 catch (Exception)
                 {
                     // Cleanup cannot replace the response failure or turn cancellation into a fault.
                 }
+
                 throw;
             }
+
             cache.CompleteMutation(in fence, true);
             return result;
         }
@@ -177,7 +227,11 @@ public sealed partial class RespireClient
     // Constrained value-type dispatch keeps each specialized response source without a delegate or boxing.
     private interface IReadySend<TResult>
     {
-        bool ObserveDuration { get; }
+        bool ObserveDuration
+        {
+            get;
+        }
+
         ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken,
             RespireTelemetry.OperationStart durationStarted, CommandDeadline commandDeadline = default,
@@ -187,6 +241,7 @@ public sealed partial class RespireClient
     private readonly struct RawReadySend(RespireClient client, RespireTelemetry.ErrorObservation observation) : IReadySend<RespValue>
     {
         public bool ObserveDuration => false;
+
         public ValueTask<RespValue> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken,
             RespireTelemetry.OperationStart durationStarted, CommandDeadline commandDeadline = default,
@@ -198,7 +253,9 @@ public sealed partial class RespireClient
     private readonly struct StringReadySend : IReadySend<string?>, IClusterReadySend<string?>
     {
         public bool ObserveDuration => true;
+
         public bool TransferOwnership => false;
+
         public string? Convert(in RespValue response) => ResponseReader.StringOrNull(in response);
 
         public ValueTask<string?> Send<TCommand>(RespireConnection connection, string operation,
@@ -218,7 +275,9 @@ public sealed partial class RespireClient
     private readonly struct BytesReadySend : IReadySend<byte[]?>, IClusterReadySend<byte[]?>
     {
         public bool ObserveDuration => true;
+
         public bool TransferOwnership => false;
+
         public byte[]? Convert(in RespValue response) => ResponseReader.BytesOrNull(in response);
 
         public ValueTask<byte[]?> Send<TCommand>(RespireConnection connection, string operation,
@@ -239,6 +298,7 @@ public sealed partial class RespireClient
         TState state, ResponseConverter<TState, TResult> converter, bool transferOwnership) : IReadySend<TResult>
     {
         public bool ObserveDuration => true;
+
         public ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken,
             RespireTelemetry.OperationStart durationStarted, CommandDeadline commandDeadline = default,
@@ -255,8 +315,16 @@ public sealed partial class RespireClient
         // Readiness is an observation, not a lease: socket loss, retirement, or disposal
         // can make GetConnection or admission throw after validation. A command writer
         // can also throw before admission. Preserve the former async acquisition result.
-        if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
-        if (reportError) RespireTelemetry.RecordError(error, internallyHandled: false, endpoint: endpoint);
+        if (mutationFence.IsRequired)
+        {
+            cache!.CompleteMutation(in mutationFence);
+        }
+
+        if (reportError)
+        {
+            RespireTelemetry.RecordError(error, internallyHandled: false, endpoint: endpoint);
+        }
+
         return ReadySendFailureAsync<TResult>(error);
     }
 

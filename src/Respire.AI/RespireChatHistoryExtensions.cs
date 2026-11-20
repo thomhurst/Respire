@@ -42,6 +42,7 @@ public static class RespireChatHistoryExtensions
             var request = Materialize(messages, options);
             var history = await store.ReadAsync(conversationId, maximumMessages, cancellationToken).ConfigureAwait(false);
             var updates = new List<ChatResponseUpdate>();
+
             await foreach (var update in InnerClient.GetStreamingResponseAsync(history.Concat(request), options, cancellationToken).ConfigureAwait(false))
             {
                 updates.Add(update);
@@ -55,8 +56,12 @@ public static class RespireChatHistoryExtensions
         private static List<ChatMessage> Materialize(IEnumerable<ChatMessage> messages, ChatOptions? options)
         {
             ArgumentNullException.ThrowIfNull(messages);
+
             if (options?.ConversationId is not null || options?.ContinuationToken is not null || options?.AllowBackgroundResponses == true)
+            {
                 throw new ArgumentException("Redis chat history requires client-managed, foreground conversation history.", nameof(options));
+            }
+
             return messages.ToList();
         }
     }

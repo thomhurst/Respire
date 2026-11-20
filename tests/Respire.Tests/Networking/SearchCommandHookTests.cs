@@ -111,6 +111,7 @@ public class SearchCommandHookTests
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
+
         try
         {
             var pending = Call(client.Search, "search", cancellation.Token);
@@ -141,11 +142,18 @@ public class SearchCommandHookTests
 #pragma warning disable RESP010 // This preflight scenario owns isolated client options and hooks to verify rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         await client.Strings.GetStringAsync("cached");
-        hook.Before = context => { if (context.Command == "FT.ALIASADD") throw new InvalidOperationException("rejected"); };
+        hook.Before = context =>
+        {
+            if (context.Command == "FT.ALIASADD")
+            {
+                throw new InvalidOperationException("rejected");
+            }
+        };
         await Failure(() => client.Search.AddAliasAsync("alias", "idx").AsTask());
         await client.Search.ListIndexesAsync();
         await client.Strings.GetStringAsync("cached");
@@ -173,7 +181,13 @@ public class SearchCommandHookTests
         var probeFinished = false;
         var hook = new Hook
         {
-            Before = context => { if (context.Command == "COMMAND INFO") throw new InvalidOperationException("application probe rejected"); },
+            Before = context =>
+            {
+                if (context.Command == "COMMAND INFO")
+                {
+                    throw new InvalidOperationException("application probe rejected");
+                }
+            },
             After = _ => probeFinished = server.ReceivedCommands.Contains("COMMAND INFO FT.HYBRID"),
         };
 #pragma warning disable RESP010 // This search hook scenario owns its client and scripted query/cursor cleanup state.
@@ -207,7 +221,13 @@ public class SearchCommandHookTests
         var cleanedUp = false;
         var hook = new Hook
         {
-            Before = context => { if (context.Command == "FT.CURSOR DEL") throw new InvalidOperationException("application delete rejected"); },
+            Before = context =>
+            {
+                if (context.Command == "FT.CURSOR DEL")
+                {
+                    throw new InvalidOperationException("application delete rejected");
+                }
+            },
             After = _ => cleanedUp = server.ReceivedCommands.Contains("FT.CURSOR DEL idx 42"),
         };
 #pragma warning disable RESP010 // This search hook scenario owns its client and scripted query/cursor cleanup state.
@@ -244,7 +264,11 @@ public class SearchCommandHookTests
         {
             pages++;
             await Assert.That(hook.Completed.Count).IsEqualTo(pages);
-            if (breakEarly) break;
+
+            if (breakEarly)
+            {
+                break;
+            }
         }
 
         await Assert.That(pages).IsEqualTo(breakEarly ? 1 : 2);
@@ -264,7 +288,10 @@ public class SearchCommandHookTests
         Task? nested = null;
         hook.Before = context =>
         {
-            if (context.Command == "FT.SEARCH") nested = client.Strings.GetStringAsync("nested").AsTask();
+            if (context.Command == "FT.SEARCH")
+            {
+                nested = client.Strings.GetStringAsync("nested").AsTask();
+            }
         };
         hook.After = _ => throw new InvalidOperationException("observer failure");
 
@@ -355,6 +382,7 @@ public class SearchCommandHookTests
         proxy.FailCleanupSynchronously = synchronousFailure;
 
         var pages = 0;
+
         await foreach (var page in new RespireSearchClient(decorated).AggregatePagesAsync("idx", RespireSearchExpression.FromRaw("*")))
         {
             pages++;
@@ -374,19 +402,29 @@ public class SearchCommandHookTests
         public Exception? CursorCleanupError;
         public bool FailCleanupSynchronously;
         public readonly List<string> Commands = [];
+
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             if (targetMethod!.Name == nameof(IRespireClient.ExecuteLeaseAsync))
             {
                 Commands.Add(((RespireCommand)args![0]!).Name);
+
                 if (FailHybridSynchronously && Commands[^1] == "FT.HYBRID")
+                {
                     throw new RespireServerException("ERR unknown command 'FT.HYBRID'");
+                }
+
                 if (CursorCleanupError is { } cleanupError && Commands[^1] == "FT.CURSOR DEL")
                 {
-                    if (FailCleanupSynchronously) throw cleanupError;
+                    if (FailCleanupSynchronously)
+                    {
+                        throw cleanupError;
+                    }
+
                     return ValueTask.FromException<RespireResult>(cleanupError);
                 }
             }
+
             return targetMethod.Invoke(Inner, args);
         }
     }
@@ -394,24 +432,56 @@ public class SearchCommandHookTests
     private static async Task Call(RespireSearchClient search, string route, CancellationToken token = default)
     {
         var expression = RespireSearchExpression.FromRaw("*");
+
         switch (route)
         {
-            case "search": await search.SearchAsync("idx", new(expression), token); break;
-            case "aggregate": await search.AggregateAsync("idx", expression, cancellationToken: token); break;
-            case "cursor": await search.AggregateWithCursorAsync("idx", expression, cancellationToken: token); break;
-            case "read": await search.ReadCursorAsync("idx", 7, cancellationToken: token); break;
-            case "delete": await search.DeleteCursorAsync("idx", 7, token); break;
-            case "hybrid": await search.HybridSearchAsync("idx", new(expression, "embedding", new byte[] { 1, 2 }, 3), token); break;
-            case "profile": await search.ProfileSearchAsync("idx", new(expression), cancellationToken: token); break;
-            case "config": await search.GetConfigurationAsync(cancellationToken: token); break;
-            case "config-set": await search.SetConfigurationAsync("TIMEOUT", "1", token); break;
-            case "info": await search.GetIndexInfoAsync("idx", token); break;
-            case "aliases": await search.ListAliasesAsync("idx", token); break;
-            case "suggestion": await search.AddSuggestionAsync("suggestions", "term", 1, cancellationToken: token); break;
-            case "synonyms": await search.GetSynonymsAsync("idx", token); break;
-            case "spell": await search.SpellCheckAsync("idx", "word", cancellationToken: token); break;
-            case "dictionary": await search.AddDictionaryTermsAsync("dict", ["word"], token); break;
-            default: throw new ArgumentOutOfRangeException(nameof(route));
+            case "search":
+                await search.SearchAsync("idx", new(expression), token);
+                break;
+            case "aggregate":
+                await search.AggregateAsync("idx", expression, cancellationToken: token);
+                break;
+            case "cursor":
+                await search.AggregateWithCursorAsync("idx", expression, cancellationToken: token);
+                break;
+            case "read":
+                await search.ReadCursorAsync("idx", 7, cancellationToken: token);
+                break;
+            case "delete":
+                await search.DeleteCursorAsync("idx", 7, token);
+                break;
+            case "hybrid":
+                await search.HybridSearchAsync("idx", new(expression, "embedding", new byte[] { 1, 2 }, 3), token);
+                break;
+            case "profile":
+                await search.ProfileSearchAsync("idx", new(expression), cancellationToken: token);
+                break;
+            case "config":
+                await search.GetConfigurationAsync(cancellationToken: token);
+                break;
+            case "config-set":
+                await search.SetConfigurationAsync("TIMEOUT", "1", token);
+                break;
+            case "info":
+                await search.GetIndexInfoAsync("idx", token);
+                break;
+            case "aliases":
+                await search.ListAliasesAsync("idx", token);
+                break;
+            case "suggestion":
+                await search.AddSuggestionAsync("suggestions", "term", 1, cancellationToken: token);
+                break;
+            case "synonyms":
+                await search.GetSynonymsAsync("idx", token);
+                break;
+            case "spell":
+                await search.SpellCheckAsync("idx", "word", cancellationToken: token);
+                break;
+            case "dictionary":
+                await search.AddDictionaryTermsAsync("dict", ["word"], token);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(route));
         }
     }
 
@@ -423,15 +493,23 @@ public class SearchCommandHookTests
 
     private static RespireOptions Options(FakeRespServer server, RespireCommandHook? hook) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-        Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5),
-        CommandHook = hook, AllowAdmin = true,
+        Endpoints = [new("127.0.0.1", server.Port)],
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromSeconds(5),
+        CommandHook = hook,
+        AllowAdmin = true,
     };
 
     private static async Task<Exception> Failure(Func<Task> action)
     {
-        try { await action(); }
+        try
+        {
+            await action();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure.");
     }
 
@@ -441,12 +519,14 @@ public class SearchCommandHookTests
         internal Action<RespireCommandContext>? After;
         internal readonly ConcurrentQueue<RespireCommandContext> Entered = new();
         internal readonly ConcurrentQueue<(string Command, object? State, RespireCommandOutcome Outcome, Exception? Error)> Completed = new();
+
         public override object? OnExecuting(RespireCommandContext context)
         {
             Entered.Enqueue(context);
             Before?.Invoke(context);
             return context;
         }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Completed.Enqueue((context.Command, state, outcome, error));

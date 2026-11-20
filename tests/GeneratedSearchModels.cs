@@ -1,6 +1,6 @@
+using System.Text.Json.Serialization;
 using Respire.Json;
 using Respire.Search;
-using System.Text.Json.Serialization;
 
 namespace Respire.Tests.Models;
 

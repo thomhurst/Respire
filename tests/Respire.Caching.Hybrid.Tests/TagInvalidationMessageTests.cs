@@ -51,18 +51,38 @@ public class TagInvalidationMessageTests
     {
         var protocol = new TagInvalidationMessage("n", 64);
         var frame = protocol.Encode(Guid.NewGuid(), "tag", DateTimeOffset.UtcNow);
+
         switch (mutation)
         {
-            case 0: frame = []; break;
-            case 1: frame = frame[..31]; break;
-            case 2: frame[3] = (byte)'2'; break;
-            case 3: BinaryPrimitives.WriteInt64LittleEndian(frame.AsSpan(20), -1); break;
-            case 4: BinaryPrimitives.WriteInt64LittleEndian(frame.AsSpan(20), long.MaxValue); break;
-            case 5: BinaryPrimitives.WriteInt32LittleEndian(frame.AsSpan(28), int.MaxValue); break;
-            case 6: frame[33] = 255; break;
-            case 7: frame = new byte[65]; break;
-            case 8: frame = protocol.Encode(Guid.NewGuid(), "   ", DateTimeOffset.UtcNow); break;
+            case 0:
+                frame = [];
+                break;
+            case 1:
+                frame = frame[..31];
+                break;
+            case 2:
+                frame[3] = (byte)'2';
+                break;
+            case 3:
+                BinaryPrimitives.WriteInt64LittleEndian(frame.AsSpan(20), -1);
+                break;
+            case 4:
+                BinaryPrimitives.WriteInt64LittleEndian(frame.AsSpan(20), long.MaxValue);
+                break;
+            case 5:
+                BinaryPrimitives.WriteInt32LittleEndian(frame.AsSpan(28), int.MaxValue);
+                break;
+            case 6:
+                frame[33] = 255;
+                break;
+            case 7:
+                frame = new byte[65];
+                break;
+            case 8:
+                frame = protocol.Encode(Guid.NewGuid(), "   ", DateTimeOffset.UtcNow);
+                break;
         }
+
         await Assert.That(protocol.TryDecode(frame, out _, out _, out _)).IsFalse();
     }
 

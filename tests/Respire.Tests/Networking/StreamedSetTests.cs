@@ -31,7 +31,8 @@ public sealed class StreamedSetTests
 #pragma warning disable RESP010 // This test owns the client and dedicated pool so retiring an ASK route cannot affect other uploads.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", oldTarget.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", oldTarget.Port)],
         });
 #pragma warning restore RESP010
         var pool = client.Core.DedicatedPool;
@@ -43,11 +44,17 @@ public sealed class StreamedSetTests
         var asking = new ProtocolCommand<RawCommand>(new("*1\r\n$6\r\nASKING\r\n"u8.ToArray()));
         var pending = connection.SendAskingStreamedSetAsync(in asking, command, timeout.Token,
             CommandDeadline.After(10_000), new DedicatedStreamRoute(client.Core, pool, connection), errorAttempts: 0).AsTask();
+
         while (!oldTarget.ReceivedCommands.Contains("ASKING"))
         {
-            if (pending.IsCompleted) await pending;
+            if (pending.IsCompleted)
+            {
+                await pending;
+            }
+
             await Task.Delay(5, timeout.Token);
         }
+
         await pool.DisposeAsync();
         await oldTarget.SendRawAsync(FakeRespServer.OkReply);
         await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<RespireConnectionRetiredException>();
@@ -118,22 +125,31 @@ public sealed class StreamedSetTests
                     connecting.TrySetResult();
                     await Task.Delay(Timeout.InfiniteTimeSpan, token);
                 }
+
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
-                try { await socket.ConnectAsync(host, port, token); }
+
+                try
+                {
+                    await socket.ConnectAsync(host, port, token);
+                }
                 catch { socket.Dispose(); throw; }
+
                 return new NetworkStream(socket, ownsSocket: true);
             },
         });
+
 #pragma warning restore RESP010
         if (mode == "cluster-rent")
         {
             await client.PingAsync();
             Volatile.Write(ref stall, true);
         }
+
         using var cancellation = new CancellationTokenSource();
         await using var source = new MemoryStream("data"u8.ToArray());
         var upload = client.Strings.SetAsync("key", source, source.Length, cancellationToken: cancellation.Token).AsTask();
         await connecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (cancelCaller)
         {
             cancellation.Cancel();
@@ -147,6 +163,7 @@ public sealed class StreamedSetTests
                 .Throws<RespireTimeoutException>();
             await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
         }
+
         await Assert.That(source.Position).IsEqualTo(0);
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
     }
@@ -154,7 +171,12 @@ public sealed class StreamedSetTests
     private static byte[] PatternedPayload(int length)
     {
         var payload = new byte[length];
-        for (var index = 0; index < payload.Length; index++) payload[index] = (byte)(index % 251);
+
+        for (var index = 0; index < payload.Length; index++)
+        {
+            payload[index] = (byte)(index % 251);
+        }
+
         return payload;
     }
 
@@ -169,9 +191,20 @@ public sealed class StreamedSetTests
         var secondReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("SET ", StringComparison.Ordinal)) return false;
-            if (command.StartsWith("SET first ", StringComparison.Ordinal)) firstReceived.TrySetResult();
-            else secondReceived.TrySetResult();
+            if (!command.StartsWith("SET ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (command.StartsWith("SET first ", StringComparison.Ordinal))
+            {
+                firstReceived.TrySetResult();
+            }
+            else
+            {
+                secondReceived.TrySetResult();
+            }
+
             return true;
         };
 #pragma warning disable RESP010 // This test owns the client and dedicated pool to compare canceled and replacement upload sockets.
@@ -184,7 +217,11 @@ public sealed class StreamedSetTests
 #pragma warning restore RESP010
         var pool = await client.Core.GetDedicatedPoolAsync(timeout.Token, observation: default);
         var connection = await pool.RentAsync(timeout.Token, kind: Respire.Internal.DedicatedLeaseKind.Streaming);
-        using (await connection.SendCheckedAsync(new Cmd(new Verb("PING")), timeout.Token)) { }
+
+        using (await connection.SendCheckedAsync(new Cmd(new Verb("PING")), timeout.Token))
+        {
+        }
+
         pool.Return(connection);
         using var cancellation = new CancellationTokenSource();
         using var source = new PartialThenBlockedStream(new byte[RespireConnection.StreamChunkSize + 1],
@@ -193,6 +230,7 @@ public sealed class StreamedSetTests
             ? client.Strings.SetAsync("first", source, source.Length, cancellationToken: cancellation.Token).AsTask()
             : client.Strings.SetAsync("first", new ReadOnlySequence<byte>(new byte[] { 1 }),
                 cancellationToken: cancellation.Token).AsTask();
+
         if (midFrame)
         {
             await source.Paused.Task.WaitAsync(timeout.Token);
@@ -201,8 +239,13 @@ public sealed class StreamedSetTests
         else
         {
             await firstReceived.Task.WaitAsync(timeout.Token);
-            while (connection.IsStreamingWriteActive) await Task.Delay(1, timeout.Token);
+
+            while (connection.IsStreamingWriteActive)
+            {
+                await Task.Delay(1, timeout.Token);
+            }
         }
+
         cancellation.Cancel();
         await Assert.That(async () => await first.WaitAsync(timeout.Token)).Throws<OperationCanceledException>();
         await Assert.That(connection.IsConnected).IsFalse();
@@ -306,8 +349,13 @@ public sealed class StreamedSetTests
         catch
         {
             cancellation.Cancel();
-            try { await upload; }
+
+            try
+            {
+                await upload;
+            }
             catch (Exception) { }
+
             throw;
         }
 
@@ -334,11 +382,20 @@ public sealed class StreamedSetTests
         });
         // One 3 MiB segment (split into chunks) followed by many small segments (coalesced).
         var payload = new byte[length];
-        for (var index = 0; index < payload.Length; index++) payload[index] = (byte)(index % 251);
+
+        for (var index = 0; index < payload.Length; index++)
+        {
+            payload[index] = (byte)(index % 251);
+        }
+
         var first = new BufferSegment(payload.AsMemory(0, largeSegment));
         var last = first;
+
         for (var offset = largeSegment; offset < length; offset += 1000)
+        {
             last = last.Append(payload.AsMemory(offset, Math.Min(1000, length - offset)));
+        }
+
         var sequence = new ReadOnlySequence<byte>(first, 0, last, last.Memory.Length);
         var command = new StreamedSetCommand((RespireValue)"large-sequence", sequence, default, RespireSetWhen.Always);
 
@@ -466,7 +523,11 @@ public sealed class StreamedSetTests
         finally
         {
             source.ContinueReading.TrySetResult();
-            try { await send.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+            try
+            {
+                await send.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             catch { }
         }
 
@@ -508,7 +569,11 @@ public sealed class StreamedSetTests
         finally
         {
             transport.OpenSecondWrite();
-            try { await send.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+            try
+            {
+                await send.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             catch { }
         }
     }
@@ -536,6 +601,7 @@ public sealed class StreamedSetTests
         using var cancellation = new CancellationTokenSource();
         var command = new StreamedSetCommand((RespireValue)"partial-prefetch", source, length, default, RespireSetWhen.Always);
         var send = connection.SendCheckedAsync(in command, cancellationToken: cancellation.Token, commandName: "SET").AsTask();
+
         try
         {
             await transport.SecondWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
@@ -550,9 +616,14 @@ public sealed class StreamedSetTests
         {
             source.ContinueThirdRead.TrySetResult();
             transport.OpenSecondWrite();
-            try { await send.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+            try
+            {
+                await send.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             catch { }
         }
+
         await pool.WaitForReturnAsync(source.CapturedBuffer!).WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(pool.Returned.Contains(source.CapturedBuffer!)).IsTrue();
     }
@@ -972,6 +1043,7 @@ public sealed class StreamedSetTests
         var set = connection.SendCheckedAsync(in command, commandName: "SET", cancellationToken: cancellation.Token).AsTask();
 
         byte[]? buffer = null;
+
         try
         {
             await source.SecondReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -985,7 +1057,12 @@ public sealed class StreamedSetTests
         {
             source.ContinueSecondRead.Set();
         }
-        if (buffer is null) return;
+
+        if (buffer is null)
+        {
+            return;
+        }
+
         await source.SecondReadCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await pool.WaitForReturnAsync(buffer).WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(pool.Returned.Contains(buffer)).IsTrue();
@@ -1028,6 +1105,7 @@ public sealed class StreamedSetTests
     public async Task TokenlessSourceCancellationIsClassifiedFromLinkedSources(bool timeout)
     {
         CountingSetServer? server = new();
+
         try
         {
             await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
@@ -1044,6 +1122,7 @@ public sealed class StreamedSetTests
                 using var _ = await connection.SendCheckedAsync(in command, commandName: "SET");
             });
             await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
             if (!timeout)
             {
                 await server.DisposeAsync();
@@ -1069,7 +1148,10 @@ public sealed class StreamedSetTests
         }
         finally
         {
-            if (server is not null) await server.DisposeAsync();
+            if (server is not null)
+            {
+                await server.DisposeAsync();
+            }
         }
     }
 
@@ -1174,12 +1256,16 @@ public sealed class StreamedSetTests
         var source = new CancellationCallbackStream(blockCallback);
         var command = new StreamedSetCommand((RespireValue)"callback", source, 1, default, RespireSetWhen.Always);
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+
         try
         {
             await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await server.DisposeAsync();
             server = null;
-            await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(5)); })
+            await Assert.That(async () =>
+                {
+                    using var _ = await set.WaitAsync(TimeSpan.FromSeconds(5));
+                })
                 .Throws<RespireConnectionException>();
             await source.CallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(connection.IsConnected).IsFalse();
@@ -1187,9 +1273,15 @@ public sealed class StreamedSetTests
         finally
         {
             source.ReleaseCallback.TrySetResult();
-            if (server is not null) await server.DisposeAsync();
+
+            if (server is not null)
+            {
+                await server.DisposeAsync();
+            }
+
             await source.DisposeAsync();
         }
+
         await source.CallbackCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
@@ -1210,6 +1302,7 @@ public sealed class StreamedSetTests
 #pragma warning restore RESP010
         var source = new NonCooperativeStream();
         var set = client.Strings.SetAsync("stalled-source", source, 1).AsTask();
+
         try
         {
             await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1224,6 +1317,7 @@ public sealed class StreamedSetTests
             // Finish the ignored read even after an assertion fails, returning its rented buffer.
             source.CompleteRead.TrySetResult();
         }
+
         await source.ReadCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
@@ -1249,8 +1343,15 @@ public sealed class StreamedSetTests
                 },
             });
         using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
-        if (stallPayload) transport!.GateSecondWrite();
-        else transport!.CloseGate();
+
+        if (stallPayload)
+        {
+            transport!.GateSecondWrite();
+        }
+        else
+        {
+            transport!.CloseGate();
+        }
         // An exact MemoryStream fills inline, so thread-pool starvation cannot expire the
         // deadline before the header is queued. Gate the transport instead of relying on
         // kernel socket capacity, and prove that the selected frame write actually started.
@@ -1336,7 +1437,12 @@ public sealed class StreamedSetTests
         });
 #pragma warning restore RESP010
         var pool = client.Core.DedicatedPool;
-        if (routeRetires) await pool.DisposeAsync();
+
+        if (routeRetires)
+        {
+            await pool.DisposeAsync();
+        }
+
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
             Protocol = RespireProtocol.Resp2,
@@ -1473,13 +1579,16 @@ public sealed class StreamedSetTests
         await using var connection = await RespireConnection.ConnectAsync(
             "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
             {
-                Protocol = RespireProtocol.Resp2, CommandTimeout = null, Generation = generation,
+                Protocol = RespireProtocol.Resp2,
+                CommandTimeout = null,
+                Generation = generation,
             });
         using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
         using var source = new GatedFirstReadStream(synchronousRead);
         var command = new StreamedSetCommand("retry", source, 4, default, RespireSetWhen.Always);
         var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await source.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         try
         {
             generation.IsRetired = true;
@@ -1489,6 +1598,7 @@ public sealed class StreamedSetTests
             await Assert.That(send.IsCompleted).IsFalse();
         }
         finally { source.Release.TrySetResult(); }
+
         await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<RespireConnectionRetiredException>();
 
@@ -1501,17 +1611,36 @@ public sealed class StreamedSetTests
     private sealed class GatedFirstReadStream(bool synchronousRead) : MemoryStream(new byte[] { 1, 2, 3, 4 })
     {
         private bool _first = true;
-        internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Entered
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Release
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (!_first) return base.ReadAsync(buffer, cancellationToken);
+            if (!_first)
+            {
+                return base.ReadAsync(buffer, cancellationToken);
+            }
+
             _first = false;
             Entered.TrySetResult();
-            if (!synchronousRead) return ReadAfterReleaseAsync(buffer);
+
+            if (!synchronousRead)
+            {
+                return ReadAfterReleaseAsync(buffer);
+            }
+
             Release.Task.GetAwaiter().GetResult();
             return base.ReadAsync(buffer[..2], CancellationToken.None);
         }
+
         private async ValueTask<int> ReadAfterReleaseAsync(Memory<byte> buffer)
         {
             await Release.Task;
@@ -1597,11 +1726,19 @@ public sealed class StreamedSetTests
     private sealed class UnknownLengthSeekableStream(byte[] bytes) : Stream
     {
         private int _position;
+
         public override bool CanRead => true;
+
         public override bool CanSeek => true;
+
         public override bool CanWrite => false;
+
         public override long Length => throw new NotSupportedException("Length is unknown.");
-        public override long Position { get => _position; set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => _position; set => throw new NotSupportedException();
+        }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -1612,33 +1749,56 @@ public sealed class StreamedSetTests
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        public override void Flush() { }
+
+        public override void Flush()
+        {
+        }
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class ThrowingStream(int bytesBeforeFailure = 0) : Stream
     {
         private int _read;
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             if (_read >= bytesBeforeFailure)
+            {
                 return ValueTask.FromException<int>(new IOException("Source failed mid-frame."));
+            }
+
             var count = Math.Min(buffer.Length, bytesBeforeFailure - _read);
             buffer.Span[..count].Fill((byte)'x');
             _read += count;
             return ValueTask.FromResult(count);
         }
+
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
@@ -1646,12 +1806,21 @@ public sealed class StreamedSetTests
     {
         private int _position;
         private int _maximumReadSize;
+
         internal int MaximumReadSize => Volatile.Read(ref _maximumReadSize);
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => length;
-        public override long Position { get => _position; set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => _position; set => throw new NotSupportedException();
+        }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -1659,24 +1828,39 @@ public sealed class StreamedSetTests
             UpdateMaximum(ref _maximumReadSize, buffer.Length);
             var count = Math.Min(Math.Min(buffer.Length, maximumRead), length - _position);
             var output = buffer.Span[..count];
-            for (var index = 0; index < count; index++) output[index] = (byte)((_position + index) % 251);
+
+            for (var index = 0; index < count; index++)
+            {
+                output[index] = (byte)((_position + index) % 251);
+            }
+
             _position += count;
             return ValueTask.FromResult(count);
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
         private static void UpdateMaximum(ref int target, int value)
         {
             var current = Volatile.Read(ref target);
+
             while (value > current)
             {
                 var previous = Interlocked.CompareExchange(ref target, value, current);
-                if (previous == current) return;
+
+                if (previous == current)
+                {
+                    return;
+                }
+
                 current = previous;
             }
         }
@@ -1693,12 +1877,21 @@ public sealed class StreamedSetTests
         private int _writeCount;
 
         internal Task WriteStarted => _writeStarted.Task;
+
         internal Task SecondWriteStarted => _secondWriteStarted.Task;
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => true;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
 
         internal void CloseGate() => _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -1715,6 +1908,7 @@ public sealed class StreamedSetTests
                 _secondWriteStarted.TrySetResult();
                 await _secondWriteGate.Task.WaitAsync(cancellationToken);
             }
+
             _writeStarted.TrySetResult();
             await _gate.Task.WaitAsync(cancellationToken);
             await _inner.WriteAsync(buffer, cancellationToken);
@@ -1730,10 +1924,15 @@ public sealed class StreamedSetTests
             => _inner.ReadAsync(buffer, offset, count, cancellationToken);
 
         public override Task FlushAsync(CancellationToken cancellationToken) => _inner.FlushAsync(cancellationToken);
+
         public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+
         public override void Write(byte[] buffer, int offset, int count) => _inner.Write(buffer, offset, count);
+
         public override void Flush() => _inner.Flush();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
 
         protected override void Dispose(bool disposing)
@@ -1745,6 +1944,7 @@ public sealed class StreamedSetTests
                 _inner.Dispose();
                 client.Dispose();
             }
+
             base.Dispose(disposing);
         }
 
@@ -1760,38 +1960,75 @@ public sealed class StreamedSetTests
     {
         private int _position;
         private int _reads;
-        internal TaskCompletionSource SecondReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource SecondReadStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => length;
-        public override long Position { get => _position; set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => _position; set => throw new NotSupportedException();
+        }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (Interlocked.Increment(ref _reads) == 2) SecondReadStarted.TrySetResult();
+            if (Interlocked.Increment(ref _reads) == 2)
+            {
+                SecondReadStarted.TrySetResult();
+            }
+
             var count = Math.Min(buffer.Length, length - _position);
-            for (var index = 0; index < count; index++) buffer.Span[index] = (byte)((_position + index) % 251);
+
+            for (var index = 0; index < count; index++)
+            {
+                buffer.Span[index] = (byte)((_position + index) % 251);
+            }
+
             _position += count;
             return ValueTask.FromResult(count);
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class FailingSecondReadStream(int length) : Stream
     {
         private int _readCount;
-        internal TaskCompletionSource SecondReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource SecondReadStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => length;
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -1801,26 +2038,42 @@ public sealed class StreamedSetTests
                 return ValueTask.FromException<int>(new IOException("Prefetched source read failed."));
             }
 
-            for (var index = 0; index < buffer.Length; index++) buffer.Span[index] = (byte)(index % 251);
+            for (var index = 0; index < buffer.Length; index++)
+            {
+                buffer.Span[index] = (byte)(index % 251);
+            }
+
             return ValueTask.FromResult(buffer.Length);
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class TrackingArrayPool : ArrayPool<byte>
     {
-        internal ConcurrentBag<byte[]> Returned { get; } = [];
+        internal ConcurrentBag<byte[]> Returned
+        {
+            get;
+        } = [];
         private readonly ConcurrentDictionary<byte[], TaskCompletionSource> _returnSignals = new(ReferenceEqualityComparer.Instance);
 
         internal Task WaitForReturnAsync(byte[] buffer)
         {
             var signal = _returnSignals.GetOrAdd(buffer, static _ => new(TaskCreationOptions.RunContinuationsAsynchronously));
-            if (Returned.Contains(buffer)) signal.TrySetResult();
+
+            if (Returned.Contains(buffer))
+            {
+                signal.TrySetResult();
+            }
+
             return signal.Task;
         }
 
@@ -1837,15 +2090,39 @@ public sealed class StreamedSetTests
     {
         private int _readCount;
         private int _position;
-        internal ManualResetEventSlim ContinueSecondRead { get; } = new();
-        internal TaskCompletionSource SecondReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource SecondReadCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal byte[]? CapturedBuffer { get; private set; }
+
+        internal ManualResetEventSlim ContinueSecondRead
+        {
+            get;
+        } = new();
+
+        internal TaskCompletionSource SecondReadStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource SecondReadCompleted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal byte[]? CapturedBuffer
+        {
+            get; private set;
+        }
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => RespireConnection.StreamChunkSize * 2L;
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -1859,20 +2136,29 @@ public sealed class StreamedSetTests
                 SecondReadCompleted.TrySetResult();
                 return ValueTask.FromResult(buffer.Length);
             }
+
             Fill(buffer.Span);
             return ValueTask.FromResult(buffer.Length);
         }
 
         private void Fill(Span<byte> buffer)
         {
-            for (var index = 0; index < buffer.Length; index++) buffer[index] = (byte)((_position + index) % 251);
+            for (var index = 0; index < buffer.Length; index++)
+            {
+                buffer[index] = (byte)((_position + index) % 251);
+            }
+
             _position += buffer.Length;
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
@@ -1880,20 +2166,44 @@ public sealed class StreamedSetTests
     {
         private int _readCount;
         private int _position;
-        internal byte[]? CapturedBuffer { get; private set; }
-        internal TaskCompletionSource ThirdReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource ContinueThirdRead { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal byte[]? CapturedBuffer
+        {
+            get; private set;
+        }
+
+        internal TaskCompletionSource ThirdReadStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ContinueThirdRead
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => RespireConnection.StreamChunkSize * 2L;
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (MemoryMarshal.TryGetArray((ReadOnlyMemory<byte>)buffer, out var segment)) CapturedBuffer = segment.Array;
+            if (MemoryMarshal.TryGetArray((ReadOnlyMemory<byte>)buffer, out var segment))
+            {
+                CapturedBuffer = segment.Array;
+            }
+
             var count = buffer.Length;
+
             switch (Interlocked.Increment(ref _readCount))
             {
                 case 2:
@@ -1907,31 +2217,51 @@ public sealed class StreamedSetTests
             }
             // Cancellation can race an already accepted chunk reaching CountingSetServer.
             // Keep the fixture's payload valid even when the server sees that prefix.
-            for (var index = 0; index < count; index++) buffer.Span[index] = (byte)((_position + index) % 251);
+            for (var index = 0; index < count; index++)
+            {
+                buffer.Span[index] = (byte)((_position + index) % 251);
+            }
+
             _position += count;
             return count;
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class SynchronouslyBlockingStream(TimeSpan delay) : Stream
     {
         private bool _read;
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
 
         // Ignores the token and completes synchronously after the delay.
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (_read) return ValueTask.FromResult(0);
+            if (_read)
+            {
+                return ValueTask.FromResult(0);
+            }
+
             _read = true;
             Thread.Sleep(delay);
             "late"u8.CopyTo(buffer.Span);
@@ -1939,34 +2269,63 @@ public sealed class StreamedSetTests
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class PausedStream(int prefix = 0) : Stream
     {
         private int _read;
-        internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource ContinueReading { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ReadStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ContinueReading
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => prefix + 4;
-        public override long Position { get => _read; set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => _read; set => throw new NotSupportedException();
+        }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             if (_read < prefix)
             {
                 var count = Math.Min(buffer.Length, prefix - _read);
-                for (var index = 0; index < count; index++) buffer.Span[index] = (byte)((_read + index) % 251);
+
+                for (var index = 0; index < count; index++)
+                {
+                    buffer.Span[index] = (byte)((_read + index) % 251);
+                }
+
                 _read += count;
                 return count;
             }
 
-            if (_read != prefix) return 0;
+            if (_read != prefix)
+            {
+                return 0;
+            }
+
             ReadStarted.TrySetResult();
             await ContinueReading.Task.WaitAsync(cancellationToken);
             "data"u8.CopyTo(buffer.Span);
@@ -1975,9 +2334,13 @@ public sealed class StreamedSetTests
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
@@ -1985,12 +2348,24 @@ public sealed class StreamedSetTests
     {
         private int _position;
         private int _blocked;
-        internal TaskCompletionSource Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Paused
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => payload.Length;
-        public override long Position { get => _position; set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => _position; set => throw new NotSupportedException();
+        }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -2007,9 +2382,13 @@ public sealed class StreamedSetTests
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
@@ -2017,20 +2396,49 @@ public sealed class StreamedSetTests
     {
         private int _position;
         private int _blocked;
-        internal TaskCompletionSource Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource ContinueReading { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal byte[]? CapturedBuffer { get; private set; }
+
+        internal TaskCompletionSource Paused
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ContinueReading
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Completed
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal byte[]? CapturedBuffer
+        {
+            get; private set;
+        }
+
         internal int CapturedBufferLength => CapturedBuffer?.Length ?? throw new InvalidOperationException("No source buffer captured.");
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => payload.Length;
-        public override long Position { get => _position; set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => _position; set => throw new NotSupportedException();
+        }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (MemoryMarshal.TryGetArray((ReadOnlyMemory<byte>)buffer, out var segment)) CapturedBuffer = segment.Array;
+            if (MemoryMarshal.TryGetArray((ReadOnlyMemory<byte>)buffer, out var segment))
+            {
+                CapturedBuffer = segment.Array;
+            }
+
             if (_position >= pauseAfter && Interlocked.Exchange(ref _blocked, 1) == 0)
             {
                 Paused.TrySetResult();
@@ -2040,14 +2448,23 @@ public sealed class StreamedSetTests
             var count = Math.Min(Math.Min(buffer.Length, maxRead), payload.Length - _position);
             payload.AsMemory(_position, count).CopyTo(buffer);
             _position += count;
-            if (_position == payload.Length) Completed.TrySetResult();
+
+            if (_position == payload.Length)
+            {
+                Completed.TrySetResult();
+            }
+
             return count;
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
@@ -2055,13 +2472,29 @@ public sealed class StreamedSetTests
     {
         private int _position;
         private int _blocked;
-        internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource ContinueReading { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ReadStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ContinueReading
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => payload.Length;
-        public override long Position { get => _position; set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => _position; set => throw new NotSupportedException();
+        }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -2079,19 +2512,33 @@ public sealed class StreamedSetTests
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class TestConnectionGeneration : IConnectionGeneration
     {
-        public bool IsRetired { get; set; }
+        public bool IsRetired
+        {
+            get; set;
+        }
+
         public ValueTask ValidateAsync(RespireConnection connection, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
-        public void ObserveResponse(RespireConnection connection, string? operation, in RespValue response) { }
-        public void ConnectionClosed(RespireConnection connection, bool unexpected) { }
+
+        public void ObserveResponse(RespireConnection connection, string? operation, in RespValue response)
+        {
+        }
+
+        public void ConnectionClosed(RespireConnection connection, bool unexpected)
+        {
+        }
     }
 
     // The read waits (blocking) until its token is cancelled, then reports cancellation without
@@ -2099,14 +2546,34 @@ public sealed class StreamedSetTests
     private sealed class TokenlessCancellationStream : Stream
     {
         private int _reads;
-        internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource TokenlessCancellationThrown { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal bool ThrewTokenless { get; private set; }
+
+        internal TaskCompletionSource ReadStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource TokenlessCancellationThrown
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal bool ThrewTokenless
+        {
+            get; private set;
+        }
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => 4;
-        public override long Position { get => _reads; set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => _reads; set => throw new NotSupportedException();
+        }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -2116,29 +2583,56 @@ public sealed class StreamedSetTests
                 SpinWait.SpinUntil(() => cancellationToken.IsCancellationRequested, TimeSpan.FromSeconds(5));
             }
 
-            if (!cancellationToken.IsCancellationRequested) throw new InvalidOperationException("Token was not cancelled.");
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                throw new InvalidOperationException("Token was not cancelled.");
+            }
+
             ThrewTokenless = true;
             TokenlessCancellationThrown.TrySetResult();
             return ValueTask.FromException<int>(new OperationCanceledException("Source observed cancellation."));
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class NonCooperativeStream : Stream
     {
-        internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource CompleteRead { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource ReadCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReadStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource CompleteRead
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ReadCompleted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => 1;
-        public override long Position { get => 0; set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => 0; set => throw new NotSupportedException();
+        }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -2150,34 +2644,69 @@ public sealed class StreamedSetTests
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class CancellationCallbackStream(bool blockCallback) : Stream
     {
         private CancellationTokenRegistration _registration;
-        internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource CallbackEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource ReleaseCallback { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource CallbackCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ReadStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource CallbackEntered
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ReleaseCallback
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource CallbackCompleted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => 1;
-        public override long Position { get => 0; set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => 0; set => throw new NotSupportedException();
+        }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             _registration = cancellationToken.Register(() =>
             {
                 CallbackEntered.TrySetResult();
+
                 try
                 {
-                    if (blockCallback) ReleaseCallback.Task.GetAwaiter().GetResult();
-                    else throw new InvalidOperationException("Test cancellation callback failure.");
+                    if (blockCallback)
+                    {
+                        ReleaseCallback.Task.GetAwaiter().GetResult();
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException("Test cancellation callback failure.");
+                    }
                 }
                 finally { CallbackCompleted.TrySetResult(); }
             });
@@ -2189,14 +2718,22 @@ public sealed class StreamedSetTests
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) _registration.Dispose();
+            if (disposing)
+            {
+                _registration.Dispose();
+            }
+
             base.Dispose(disposing);
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
@@ -2223,9 +2760,16 @@ public sealed class StreamedSetTests
             => Interlocked.Increment(ref _accessCount) == 1
                 ? _bytes
                 : throw new InvalidOperationException("Test memory access failure.");
+
         public override MemoryHandle Pin(int elementIndex = 0) => throw new NotSupportedException();
-        public override void Unpin() { }
-        protected override void Dispose(bool disposing) { }
+
+        public override void Unpin()
+        {
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+        }
     }
 
     private sealed class CountingSetServer : IAsyncDisposable
@@ -2237,10 +2781,18 @@ public sealed class StreamedSetTests
         private readonly ConcurrentQueue<string> _commands = new();
         private readonly TaskCompletionSource _connectionClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private byte[]? _smallValue;
+
         internal int Port => ((IPEndPoint)_listener.LocalEndpoint).Port;
-        internal int ValueLength { get; private set; }
+
+        internal int ValueLength
+        {
+            get; private set;
+        }
+
         internal byte[]? SmallValue => _smallValue;
+
         internal string[] Commands => _commands.ToArray();
+
         internal Task ConnectionClosed => _connectionClosed.Task;
 
         internal CountingSetServer()
@@ -2276,19 +2828,31 @@ public sealed class StreamedSetTests
                     while (!_stop.IsCancellationRequested)
                     {
                         var marker = await ReadByteAsync(stream, _stop.Token);
+
                         if (marker < 0)
                         {
                             _connectionClosed.TrySetResult();
                             return;
                         }
-                        if (marker != '*') throw new InvalidDataException("Expected RESP array header.");
+
+                        if (marker != '*')
+                        {
+                            throw new InvalidDataException("Expected RESP array header.");
+                        }
+
                         var count = int.Parse(await ReadLineAsync(stream, _stop.Token));
                         string? command = null;
                         var libraryInfo = false;
+
                         for (var index = 0; index < count; index++)
                         {
-                            if (await ReadByteAsync(stream, _stop.Token) != '$') throw new InvalidDataException("Expected bulk argument.");
+                            if (await ReadByteAsync(stream, _stop.Token) != '$')
+                            {
+                                throw new InvalidDataException("Expected bulk argument.");
+                            }
+
                             var length = int.Parse(await ReadLineAsync(stream, _stop.Token));
+
                             if (index == 0)
                             {
                                 var name = new byte[length];
@@ -2298,18 +2862,36 @@ public sealed class StreamedSetTests
                             else if (command == "SET" && index == 2)
                             {
                                 ValueLength = length;
-                                if (length <= 1024) _smallValue = new byte[length];
+
+                                if (length <= 1024)
+                                {
+                                    _smallValue = new byte[length];
+                                }
+
                                 var scratch = new byte[16 * 1024];
                                 var consumed = 0;
+
                                 while (consumed < length)
                                 {
                                     var read = Math.Min(scratch.Length, length - consumed);
                                     await stream.ReadExactlyAsync(scratch.AsMemory(0, read), _stop.Token);
-                                    if (_smallValue is not null) scratch.AsSpan(0, read).CopyTo(_smallValue.AsSpan(consumed));
+
+                                    if (_smallValue is not null)
+                                    {
+                                        scratch.AsSpan(0, read).CopyTo(_smallValue.AsSpan(consumed));
+                                    }
+
                                     if (_smallValue is null)
+                                    {
                                         for (var i = 0; i < read; i++)
+                                        {
                                             if (scratch[i] != (byte)((consumed + i) % 251))
+                                            {
                                                 throw new InvalidDataException("Stream payload bytes changed during transmission.");
+                                            }
+                                        }
+                                    }
+
                                     consumed += read;
                                 }
                             }
@@ -2317,17 +2899,28 @@ public sealed class StreamedSetTests
                             {
                                 var argument = new byte[length];
                                 await stream.ReadExactlyAsync(argument, _stop.Token);
+
                                 if (command == "CLIENT" && index == 1)
+                                {
                                     libraryInfo = argument.AsSpan().SequenceEqual("SETINFO"u8);
+                                }
                             }
 
                             var crlf = new byte[2];
                             await stream.ReadExactlyAsync(crlf, _stop.Token);
-                            if (crlf[0] != '\r' || crlf[1] != '\n') throw new InvalidDataException("Invalid bulk terminator.");
+
+                            if (crlf[0] != '\r' || crlf[1] != '\n')
+                            {
+                                throw new InvalidDataException("Invalid bulk terminator.");
+                            }
                         }
 
                         // Setup metadata must not count as application upload traffic.
-                        if (!libraryInfo) _commands.Enqueue(command ?? "");
+                        if (!libraryInfo)
+                        {
+                            _commands.Enqueue(command ?? "");
+                        }
+
                         var reply = command == "PING" ? "+PONG\r\n"u8.ToArray() : "+OK\r\n"u8.ToArray();
                         await stream.WriteAsync(reply, _stop.Token);
                     }
@@ -2349,15 +2942,26 @@ public sealed class StreamedSetTests
         private static async Task<string> ReadLineAsync(Stream stream, CancellationToken cancellationToken)
         {
             var line = new ArrayBufferWriter<byte>();
+
             while (true)
             {
                 var value = await ReadByteAsync(stream, cancellationToken);
-                if (value < 0) throw new EndOfStreamException();
+
+                if (value < 0)
+                {
+                    throw new EndOfStreamException();
+                }
+
                 if (value == '\r')
                 {
-                    if (await ReadByteAsync(stream, cancellationToken) != '\n') throw new InvalidDataException("Invalid RESP line ending.");
+                    if (await ReadByteAsync(stream, cancellationToken) != '\n')
+                    {
+                        throw new InvalidDataException("Invalid RESP line ending.");
+                    }
+
                     return Encoding.ASCII.GetString(line.WrittenSpan);
                 }
+
                 line.GetSpan(1)[0] = (byte)value;
                 line.Advance(1);
             }
@@ -2367,10 +2971,15 @@ public sealed class StreamedSetTests
         {
             _stop.Cancel();
             _listener.Stop();
-            try { await _runner; }
+
+            try
+            {
+                await _runner;
+            }
             catch (OperationCanceledException) { }
             catch (IOException) { }
             catch (SocketException) { }
+
             _stop.Dispose();
         }
     }

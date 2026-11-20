@@ -41,18 +41,26 @@ public class ImmediateRawKeyLayoutTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Endpoints = [new("localhost", 1)], Connections = 1,
+            UseCluster = true,
+            Endpoints = [new("localhost", 1)],
+            Connections = 1,
         });
 #pragma warning restore RESP010
         var args = CreateArguments(operation, "{a}:one", "{b}:two");
         var catalog = RespireCommands.All.ToArray().Single(command => command.Name == operation);
+
         foreach (var descriptor in new[] { catalog, (RespireCommand)operation })
         {
             var error = await Assert.That(async () =>
                 await client.ExecuteAsync(descriptor, args, flags: RespireCommandFlags.NoRedirect))
                 .ThrowsExactly<RespireCrossSlotException>();
             await Assert.That(error!.ExpectedSlot).IsNotEqualTo(error.ConflictingSlot);
-            if (catalog.IsBlocking(args)) continue;
+
+            if (catalog.IsBlocking(args))
+            {
+                continue;
+            }
+
             var discarded = await Assert.That(async () => await client.ExecuteFireAndForgetAsync(descriptor, args))
                 .ThrowsExactly<RespireCrossSlotException>();
             await Assert.That(discarded!.ExpectedSlot).IsNotEqualTo(discarded.ConflictingSlot);
@@ -66,7 +74,9 @@ public class ImmediateRawKeyLayoutTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Endpoints = [new("localhost", 1)], Connections = 1,
+            UseCluster = true,
+            Endpoints = [new("localhost", 1)],
+            Connections = 1,
         });
 #pragma warning restore RESP010
         var first = "{a}:key with spaces";
@@ -96,10 +106,13 @@ public class ImmediateRawKeyLayoutTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         foreach (var operation in operations)
         {
             var args = CreateArguments(operation, first, second);
@@ -109,6 +122,7 @@ public class ImmediateRawKeyLayoutTests
             await Assert.That(result.AsString()).IsEqualTo("OK");
             var actual = owner.ReceivedArguments[^1];
             await Assert.That(actual.Length).IsEqualTo(args.Length + 1);
+
             for (var index = 0; index < args.Length; index++)
             {
                 var expected = new byte[args[index].GetWireLength()];
@@ -116,6 +130,7 @@ public class ImmediateRawKeyLayoutTests
                 await Assert.That(actual[index + 1]).IsEquivalentTo(expected, CollectionOrdering.Matching);
             }
         }
+
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         await Assert.That(owner.CommandsSeen).IsEqualTo(operations.Length);
     }
@@ -136,7 +151,9 @@ public class ImmediateRawKeyLayoutTests
         await using var cluster = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         using var unknown = await cluster.ExecuteAsync("VENDOR.UNKNOWN", "{a}:one", "{b}:two");
@@ -153,12 +170,18 @@ public class ImmediateRawKeyLayoutTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Endpoints = [new("localhost", 1)], Connections = 1,
+            UseCluster = true,
+            Endpoints = [new("localhost", 1)],
+            Connections = 1,
         });
+
 #pragma warning restore RESP010
         foreach (var args in new RespireValue[][] { ["script", -1], ["script", long.MaxValue], ["script", 2, "one"] })
+        {
             await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Scripting.EVAL, args))
                 .Throws<ArgumentException>();
+        }
+
         await Assert.That(async () => await client.ExecuteAsync(RespireCommands.String.MSET, "unpaired"))
             .Throws<ArgumentException>();
         using var batch = client.CreateBatch();
@@ -199,11 +222,17 @@ public class ImmediateRawKeyLayoutTests
     private static long MeasureValidationAllocations(RespireValue[] keys, bool allocate, int iterations)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < iterations; index++)
         {
             RawCommandKeyLayouts.ValidateClusterKeys("KEYDB.MEXISTS", keys);
-            if (allocate) GC.KeepAlive(AllocateControl());
+
+            if (allocate)
+            {
+                GC.KeepAlive(AllocateControl());
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 

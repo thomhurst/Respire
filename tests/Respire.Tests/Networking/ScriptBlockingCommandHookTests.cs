@@ -59,7 +59,10 @@ public class ScriptBlockingCommandHookTests
 #pragma warning restore RESP010
         hook.Before = _ =>
         {
-            if (server.CommandsSeen != 0) throw new InvalidOperationException("Admission was late");
+            if (server.CommandsSeen != 0)
+            {
+                throw new InvalidOperationException("Admission was late");
+            }
         };
 
         await Execute(client, route, readOnly: readOnly);
@@ -146,7 +149,16 @@ public class ScriptBlockingCommandHookTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         var rejection = new InvalidOperationException("Denied");
-        var hook = new RecordingHook { Before = _ => { if (reject) throw rejection; } };
+        var hook = new RecordingHook
+        {
+            Before = _ =>
+            {
+                if (reject)
+                {
+                    throw rejection;
+                }
+            }
+        };
 #pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
@@ -160,6 +172,7 @@ public class ScriptBlockingCommandHookTests
         await Assert.That(completed.Context.CancellationToken).IsEqualTo(cancellation.Token);
         await Assert.That(completed.Error).IsSameReferenceAs(error);
         await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+
         if (reject)
         {
             await Assert.That(error).IsSameReferenceAs(rejection);
@@ -189,7 +202,10 @@ public class ScriptBlockingCommandHookTests
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
         hook.Before = _ => throw new InvalidOperationException("Page denied");
 
-        await Failure(async () => { _ = await enumerator.MoveNextAsync(); });
+        await Failure(async () =>
+        {
+            _ = await enumerator.MoveNextAsync();
+        });
 
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
         await Assert.That(hook.Completed.Count).IsEqualTo(2);
@@ -212,7 +228,10 @@ public class ScriptBlockingCommandHookTests
         var commands = server.CommandsSeen;
         cancellation.Cancel();
 
-        var error = await Failure(async () => { _ = await enumerator.MoveNextAsync(); });
+        var error = await Failure(async () =>
+        {
+            _ = await enumerator.MoveNextAsync();
+        });
 
         await Assert.That(error is OperationCanceledException).IsTrue();
         await Assert.That(hook.Entered.Count).IsEqualTo(1);
@@ -232,7 +251,12 @@ public class ScriptBlockingCommandHookTests
         using var cancellation = new CancellationTokenSource();
         var hook = new RecordingHook();
         var options = Options(server, hook);
-        if (!configured) options = options with { CommandHook = null };
+
+        if (!configured)
+        {
+            options = options with { CommandHook = null };
+        }
+
 #pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = await RespireClient.ConnectAsync(options);
 #pragma warning restore RESP010
@@ -248,8 +272,11 @@ public class ScriptBlockingCommandHookTests
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
         await Assert.That(hook.Entered.Count).IsEqualTo(configured ? 1 : 0);
         await Assert.That(hook.Completed.Count).IsEqualTo(configured ? 1 : 0);
+
         if (configured)
+        {
             await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+        }
     }
 
     [Test]
@@ -288,7 +315,11 @@ public class ScriptBlockingCommandHookTests
         await Assert.That(result[0].AsInteger()).IsEqualTo(42);
         await Assert.That(result[1].AsString()).IsEqualTo("value");
         // Caller-selected conversion is deliberately outside the already completed raw result.
-        await Failure(() => { _ = result[1].AsDouble(); return Task.CompletedTask; });
+        await Failure(() =>
+        {
+            _ = result[1].AsDouble();
+            return Task.CompletedTask;
+        });
         await Assert.That(hook.Completed.Count).IsEqualTo(1);
     }
 
@@ -303,7 +334,10 @@ public class ScriptBlockingCommandHookTests
         Task? nested = null;
         hook.Before = _ =>
         {
-            if (hook.Entered.Count == 1) nested = Execute(client, "integer");
+            if (hook.Entered.Count == 1)
+            {
+                nested = Execute(client, "integer");
+            }
         };
 
         await Execute(client, "integer");
@@ -331,8 +365,17 @@ public class ScriptBlockingCommandHookTests
         var script = RespireScript.Create("return 42").WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         Exception? error = null;
 
-        if (fail) error = await Failure(async () => { _ = await client.Scripts.ExecuteIntegerAsync(script); });
-        else await Assert.That(await client.Scripts.ExecuteIntegerAsync(script)).IsEqualTo(42);
+        if (fail)
+        {
+            error = await Failure(async () =>
+            {
+                _ = await client.Scripts.ExecuteIntegerAsync(script);
+            });
+        }
+        else
+        {
+            await Assert.That(await client.Scripts.ExecuteIntegerAsync(script)).IsEqualTo(42);
+        }
 
         await Assert.That(server.CommandsSeen).IsEqualTo(3);
         await Assert.That(hook.Entered.Count).IsEqualTo(1);
@@ -353,7 +396,11 @@ public class ScriptBlockingCommandHookTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith(Command(route) + " ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith(Command(route) + " ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 sent.TrySetResult();
                 return true;
             },
@@ -377,49 +424,124 @@ public class ScriptBlockingCommandHookTests
 
     private static string Command(string route) => route switch
     {
-        "blocking" => "BLPOP", "cursor" => "SSCAN", "keys" => "SCAN",
-        "hash-cursor" => "HSCAN", "sorted-set-cursor" => "ZSCAN",
+        "blocking" => "BLPOP",
+        "cursor" => "SSCAN",
+        "keys" => "SCAN",
+        "hash-cursor" => "HSCAN",
+        "sorted-set-cursor" => "ZSCAN",
         "stream-group" or "stream-group-options" or "stream-group-pending" or "stream-group-options-pending" => "XREADGROUP",
-        "blocking-move" => "BLMOVEM", "move" => "LMOVEM", _ => "EVALSHA",
+        "blocking-move" => "BLMOVEM",
+        "move" => "LMOVEM",
+        _ => "EVALSHA",
     };
 
     private static async Task Execute(RespireClient client, string route, CancellationToken token = default, bool readOnly = false)
     {
         var script = RespireScript.Create("return 42", readOnly);
+
         switch (route)
         {
-            case "owned": using (await client.Scripts.ExecuteAsync(script, cancellationToken: token)) { } break;
-            case "lease": using (await client.Scripts.ExecuteLeaseAsync(script, cancellationToken: token)) { } break;
-            case "span": using (await client.Scripts.ExecuteSpanAsync(script, [], [], token)) { } break;
-            case "lease-span": using (await client.Scripts.ExecuteLeaseSpanAsync(script, [], [], token)) { } break;
-            case "integer": _ = await client.Scripts.ExecuteIntegerAsync(script, cancellationToken: token); break;
-            case "string": _ = await client.Scripts.ExecuteStringAsync(script, cancellationToken: token); break;
-            case "typed": _ = await client.Scripts.ExecuteAsync<long>(script, cancellationToken: token); break;
-            case "blocking": _ = await client.Lists.PopAsync(["list"], TimeSpan.FromSeconds(1), cancellationToken: token); break;
-            case "cursor": await foreach (var _ in client.Sets.ScanAsync("set", cancellationToken: token)) { } break;
-            case "keys": await foreach (var _ in client.Keys.ScanAsync(cancellationToken: token)) { } break;
-            case "hash-cursor": await foreach (var _ in client.Hashes.ScanAsync("hash", cancellationToken: token)) { } break;
-            case "sorted-set-cursor": await foreach (var _ in client.SortedSets.ScanAsync("sorted-set", cancellationToken: token)) { } break;
-            case "blocking-move": _ = await client.Lists.MoveManyAsync("source", "destination", TimeSpan.FromSeconds(1), cancellationToken: token); break;
-            case "move": _ = await client.Lists.MoveManyAsync("source", "destination", cancellationToken: token); break;
-            case "stream-group": await foreach (var _ in client.Streams.ReadGroupAsync("stream", "group", "consumer", cancellationToken: token)) { } break;
-            case "stream-group-options": await foreach (var _ in client.Streams.ReadGroupAsync(new RespireStreamReadOptions(), "stream", "group", "consumer", cancellationToken: token)) { } break;
-            case "stream-group-pending": await foreach (var _ in client.Streams.ReadGroupAsync("stream", "group", "consumer", RespireStreamId.Beginning, cancellationToken: token)) { } break;
-            case "stream-group-options-pending": await foreach (var _ in client.Streams.ReadGroupAsync(new RespireStreamReadOptions(), "stream", "group", "consumer", RespireStreamId.Beginning, cancellationToken: token)) { } break;
-            default: throw new ArgumentOutOfRangeException(nameof(route));
+            case "owned":
+                using (await client.Scripts.ExecuteAsync(script, cancellationToken: token))
+                {
+                }
+                break;
+            case "lease":
+                using (await client.Scripts.ExecuteLeaseAsync(script, cancellationToken: token))
+                {
+                }
+                break;
+            case "span":
+                using (await client.Scripts.ExecuteSpanAsync(script, [], [], token))
+                {
+                }
+                break;
+            case "lease-span":
+                using (await client.Scripts.ExecuteLeaseSpanAsync(script, [], [], token))
+                {
+                }
+                break;
+            case "integer":
+                _ = await client.Scripts.ExecuteIntegerAsync(script, cancellationToken: token);
+                break;
+            case "string":
+                _ = await client.Scripts.ExecuteStringAsync(script, cancellationToken: token);
+                break;
+            case "typed":
+                _ = await client.Scripts.ExecuteAsync<long>(script, cancellationToken: token);
+                break;
+            case "blocking":
+                _ = await client.Lists.PopAsync(["list"], TimeSpan.FromSeconds(1), cancellationToken: token);
+                break;
+            case "cursor":
+                await foreach (var _ in client.Sets.ScanAsync("set", cancellationToken: token))
+                {
+                }
+                break;
+            case "keys":
+                await foreach (var _ in client.Keys.ScanAsync(cancellationToken: token))
+                {
+                }
+                break;
+            case "hash-cursor":
+                await foreach (var _ in client.Hashes.ScanAsync("hash", cancellationToken: token))
+                {
+                }
+                break;
+            case "sorted-set-cursor":
+                await foreach (var _ in client.SortedSets.ScanAsync("sorted-set", cancellationToken: token))
+                {
+                }
+                break;
+            case "blocking-move":
+                _ = await client.Lists.MoveManyAsync("source", "destination", TimeSpan.FromSeconds(1), cancellationToken: token);
+                break;
+            case "move":
+                _ = await client.Lists.MoveManyAsync("source", "destination", cancellationToken: token);
+                break;
+            case "stream-group":
+                await foreach (var _ in client.Streams.ReadGroupAsync("stream", "group", "consumer", cancellationToken: token))
+                {
+                }
+                break;
+            case "stream-group-options":
+                await foreach (var _ in client.Streams.ReadGroupAsync(new RespireStreamReadOptions(), "stream", "group", "consumer", cancellationToken: token))
+                {
+                }
+                break;
+            case "stream-group-pending":
+                await foreach (var _ in client.Streams.ReadGroupAsync("stream", "group", "consumer", RespireStreamId.Beginning, cancellationToken: token))
+                {
+                }
+                break;
+            case "stream-group-options-pending":
+                await foreach (var _ in client.Streams.ReadGroupAsync(new RespireStreamReadOptions(), "stream", "group", "consumer", RespireStreamId.Beginning, cancellationToken: token))
+                {
+                }
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(route));
         }
     }
 
     private static RespireOptions Options(FakeRespServer server, RespireCommandHook hook) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-        Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5), CommandHook = hook,
+        Endpoints = [new("127.0.0.1", server.Port)],
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromSeconds(5),
+        CommandHook = hook,
     };
 
     private static async Task<Exception> Failure(Func<Task> action)
     {
-        try { await action(); }
+        try
+        {
+            await action();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure.");
     }
 
@@ -429,16 +551,22 @@ public class ScriptBlockingCommandHookTests
         internal bool ThrowOnCompleted;
         internal readonly ConcurrentQueue<RespireCommandContext> Entered = new();
         internal readonly ConcurrentQueue<(RespireCommandContext Context, object? State, RespireCommandOutcome Outcome, Exception? Error)> Completed = new();
+
         public override object? OnExecuting(RespireCommandContext context)
         {
             Entered.Enqueue(context);
             Before?.Invoke(context);
             return context;
         }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Completed.Enqueue((context, state, outcome, error));
-            if (ThrowOnCompleted) throw new InvalidOperationException("Observer failure");
+
+            if (ThrowOnCompleted)
+            {
+                throw new InvalidOperationException("Observer failure");
+            }
         }
     }
 }

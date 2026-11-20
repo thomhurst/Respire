@@ -35,8 +35,16 @@ public class ArrayFacetTests
         var binary = queue.Arrays.Set("binary", 0UL, (ReadOnlyMemory<byte>)bytes);
         var binaryRead = queue.Arrays.GetString("binary", 0UL);
         var binaryCount = queue.Arrays.Count("binary");
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         await Assert.That(set.Result).IsEqualTo(0UL);
         await Assert.That(second.Result).IsEqualTo("6");
         await Assert.That(third.Result).IsEqualTo("9");

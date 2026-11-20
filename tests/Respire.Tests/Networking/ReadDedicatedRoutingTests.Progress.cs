@@ -68,10 +68,12 @@ public partial class ReadDedicatedRoutingTests
         core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>(
             (connection, _) => ValueTask.FromResult(connection.Port == primary.Port ? 1L : 10L), () => Interlocked.Add(ref now, 2_000));
         using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
         try
         {
             core.TestingDedicatedPoolOverride = pool;
             await Assert.That(pool.Endpoint).IsNotEqualTo(core.Multiplexer.ActiveConnectionEndpoint);
+
             if (failRental && !hasReplica)
             {
                 var error = await Assert.That(async () =>
@@ -85,8 +87,13 @@ public partial class ReadDedicatedRoutingTests
                 lease.Pool.Return(lease.Connection);
                 await Assert.That(lease.IsReplica).IsEqualTo(failRental && hasReplica);
                 await Assert.That(lease.Connection.Port).IsEqualTo(failRental && hasReplica ? replica.Port : primary.Port);
-                if (!failRental) await Assert.That(lease.Pool).IsSameReferenceAs(pool);
+
+                if (!failRental)
+                {
+                    await Assert.That(lease.Pool).IsSameReferenceAs(pool);
+                }
             }
+
             await Assert.That(caller.IsCancellationRequested).IsFalse();
             await Assert.That(rentals).IsEqualTo(1);
         }
@@ -97,8 +104,13 @@ public partial class ReadDedicatedRoutingTests
             if (host == "127.0.0.1" && port == primary.Port)
             {
                 Interlocked.Increment(ref rentals);
-                if (failRental) throw expected;
+
+                if (failRental)
+                {
+                    throw expected;
+                }
             }
+
             return await OpenSocketAsync("127.0.0.1", port, token);
         }
     }

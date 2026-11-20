@@ -35,13 +35,18 @@ public class ClientCacheQueryDependencyWireTests
 #pragma warning disable RESP010 // This redirect scenario owns and disposes its client to isolate topology and cache publication state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Endpoints = [new("127.0.0.1", seed.Port)], Connections = 1,
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
-            CommandTimeout = Limit, ConnectTimeout = Limit,
+            UseCluster = true,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
+            CommandTimeout = Limit,
+            ConnectTimeout = Limit,
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
         var mutation = cache.BeginUnknownMutation();
+
         try
         {
             var reading = client.Strings.LengthAsync("key").AsTask();
@@ -105,14 +110,32 @@ public class ClientCacheQueryDependencyWireTests
             using var cancellation = new CancellationTokenSource();
             var reading = ReadAsync(client, hash, cancellation.Token);
             await WaitUntilAsync(() => Pending(client) == 1);
-            if (dispose) await client.DisposeAsync();
-            else cancellation.Cancel();
+
+            if (dispose)
+            {
+                await client.DisposeAsync();
+            }
+            else
+            {
+                cancellation.Cancel();
+            }
+
             Exception? failure = null;
-            try { await reading.WaitAsync(Limit); }
+
+            try
+            {
+                await reading.WaitAsync(Limit);
+            }
             catch (Exception error) { failure = error; }
+
             await Assert.That(failure).IsNotNull();
             await Assert.That(failure is TimeoutException).IsFalse();
-            if (!dispose) await Assert.That(failure is OperationCanceledException).IsTrue();
+
+            if (!dispose)
+            {
+                await Assert.That(failure is OperationCanceledException).IsTrue();
+            }
+
             await WaitUntilAsync(() => ClientCacheQueryDependencyTests.PendingDependencies(cache) == 0);
             await Assert.That(cache.Count).IsEqualTo(0);
         }
@@ -136,7 +159,9 @@ public class ClientCacheQueryDependencyWireTests
             // A caller's strict converter can fail after an otherwise cacheable RESP reply was
             // published. The dependency lease must still retire exactly once.
             if (hash || reply.StartsWith("-ERR", StringComparison.Ordinal))
+            {
                 await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+            }
         }
     }
 
@@ -144,15 +169,27 @@ public class ClientCacheQueryDependencyWireTests
     {
         using var response = await client.ExecuteAsync((RespireCommand)(hash ? "HMGET" : "STRLEN"),
             hash ? ["first", "a", "missing"] : ["first"], cancellationToken: cancellation);
-        if (response.IsError) throw new RespireServerException(response.ErrorMessage);
-        if (!hash && response.Type != RespireDataType.Integer) throw new FormatException("Expected an integer query reply.");
+
+        if (response.IsError)
+        {
+            throw new RespireServerException(response.ErrorMessage);
+        }
+
+        if (!hash && response.Type != RespireDataType.Integer)
+        {
+            throw new FormatException("Expected an integer query reply.");
+        }
     }
 
     private static FakeRespServer Server() => new(FakeRespServer.OkReply)
     {
         ReplyOverride = (_, command) =>
         {
-            if (!command.StartsWith("HMGET ", StringComparison.Ordinal)) return Handshake(command);
+            if (!command.StartsWith("HMGET ", StringComparison.Ordinal))
+            {
+                return Handshake(command);
+            }
+
             return command.Contains("missing a", StringComparison.Ordinal)
                 ? "*2\r\n$-1\r\n$1\r\nA\r\n"u8.ToArray() : "*2\r\n$1\r\nA\r\n$-1\r\n"u8.ToArray();
         },
@@ -168,9 +205,12 @@ public class ClientCacheQueryDependencyWireTests
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server, bool coalesce)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespireProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { ReuseHashFields = true, CoalesceConcurrentMisses = coalesce },
-            CommandTimeout = Limit, ConnectTimeout = Limit,
+            CommandTimeout = Limit,
+            ConnectTimeout = Limit,
         });
 
     private static int Pending(RespireClient client) => ClientCacheQueryDependencyTests.PendingDependencies(client.Core.ClientCache!);
@@ -178,6 +218,10 @@ public class ClientCacheQueryDependencyWireTests
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(Limit);
-        while (!condition()) await Task.Delay(5, timeout.Token);
+
+        while (!condition())
+        {
+            await Task.Delay(5, timeout.Token);
+        }
     }
 }

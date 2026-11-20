@@ -16,12 +16,15 @@ internal sealed partial class StreamCommands
     {
         var owner = DispatchResponseSource<bool>.Start();
         Exception? failure = null;
+
         try
         {
             var page = new ContinuousHookPage(initial.ToArray(), batchSize, cancellationToken, owner.Observation);
+
             while (true)
             {
                 RespireStreamReadResult[] results;
+
                 try
                 {
                     // Admission surrounds resolution and recovery, so a transport-shaped
@@ -30,12 +33,17 @@ internal sealed partial class StreamCommands
                         (Owner: this, Page: page), static s => s.Owner.ReadHookPageAsync(s.Page)).ConfigureAwait(false);
                 }
                 catch (Exception error) { failure = error; throw; }
+
                 foreach (var result in results)
                 {
                     foreach (var entry in result.Entries)
                     {
-                        try { cancellationToken.ThrowIfCancellationRequested(); }
+                        try
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                        }
                         catch (Exception error) { failure = error; throw; }
+
                         yield return new RespireStreamReadEntry(result.Key, entry);
                     }
                 }
@@ -66,7 +74,11 @@ internal sealed partial class StreamCommands
         {
             for (var i = 0; i < page.Streams.Length; i++)
             {
-                if (page.Streams[i].After != RespireStreamId.New) continue;
+                if (page.Streams[i].After != RespireStreamId.New)
+                {
+                    continue;
+                }
+
                 var newest = await client.ConvertUnobservedResponseAsync("XREVRANGE",
                     new Cmd5(Verbs.XRevRange, client.Key(page.Streams[i].Key), "+", "-", "COUNT", 1),
                     page.Token, this,
@@ -74,12 +86,14 @@ internal sealed partial class StreamCommands
                     page.Observation).ConfigureAwait(false);
                 page.Streams[i].After = newest.Length == 0 ? RespireStreamId.Beginning : newest[0].Id;
             }
+
             page.Command = BuildReadCommand(client, page.Streams, page.BatchSize, TimeSpan.FromSeconds(1));
         }
 
         var command = page.Command.Value;
         var failures = 0;
         RespireStreamReadResult[] results;
+
         while (true)
         {
             try
@@ -105,15 +119,22 @@ internal sealed partial class StreamCommands
         foreach (var result in results)
         {
             if (!page.Indexes.TryGetValue(result.Key, out var index))
+            {
                 throw new RespireProtocolException("XREAD returned an unrequested stream.");
+            }
+
             foreach (var entry in result.Entries)
             {
                 if (entry.Id <= page.Streams[index].After)
+                {
                     throw new RespireProtocolException("XREAD returned a non-increasing entry id.");
+                }
+
                 page.Streams[index].After = entry.Id;
                 command.SetAfter(index, entry.Id);
             }
         }
+
         page.Command = command;
         return results;
     }

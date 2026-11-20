@@ -20,19 +20,33 @@ public partial class ReadDedicatedRoutingTests
         sentinel.SuppressReply = command =>
         {
             if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
-                || Interlocked.Increment(ref discoveries) == 1) return false;
+                || Interlocked.Increment(ref discoveries) == 1)
+            {
+                return false;
+            }
+
             blocked.TrySetResult();
             return true;
         };
 #pragma warning disable RESP010 // This exclusion scenario owns and disposes its client to isolate discovery and failed dedicated candidates.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.Nearest)
-            with { SentinelPrimaryName = "primary" });
+            with
+        { SentinelPrimaryName = "primary" });
 #pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await blocked.Task.WaitAsync(deadline.Token);
-        while (client.Core.Sentinel!.SubscribedSentinelCount == 0) await Task.Delay(5, deadline.Token);
+
+        while (client.Core.Sentinel!.SubscribedSentinelCount == 0)
+        {
+            await Task.Delay(5, deadline.Token);
+        }
+
         var ready = SentinelTestSetup.WaitForStartupAsync(client);
-        try { await Assert.That(ready.IsCompleted).IsFalse(); }
+
+        try
+        {
+            await Assert.That(ready.IsCompleted).IsFalse();
+        }
         finally
         {
             var index = sentinel.ReceivedCommands.ToList()
@@ -41,6 +55,7 @@ public partial class ReadDedicatedRoutingTests
             sentinel.SuppressReply = null;
             await sentinel.SendRawAsync(sentinel.ReplyOverride!(connection, sentinel.ReceivedCommands[index])!, connection);
         }
+
         await ready.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(client.Core.Sentinel!.SubscribedSentinelCount).IsEqualTo(1);
     }
@@ -53,7 +68,8 @@ public partial class ReadDedicatedRoutingTests
         await using var sentinel = Sentinel(primary, () => [replica]);
 #pragma warning disable RESP010 // This exclusion scenario owns and disposes its client to isolate discovery and failed dedicated candidates.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.Nearest)
-            with { SentinelPrimaryName = "primary" });
+            with
+        { SentinelPrimaryName = "primary" });
 #pragma warning restore RESP010
         await SentinelTestSetup.WaitForStartupAsync(client);
         var router = client.Core.ReadRouter;
@@ -67,7 +83,11 @@ public partial class ReadDedicatedRoutingTests
         var discoveries = 0;
         sentinel.ReplyOverride = (id, command) =>
         {
-            if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")) return originalReply(id, command);
+            if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME "))
+            {
+                return originalReply(id, command);
+            }
+
             Interlocked.Increment(ref discoveries);
             return "*-1\r\n"u8.ToArray();
         };
@@ -123,9 +143,13 @@ public partial class ReadDedicatedRoutingTests
             if (port != primary.Port && connections.AddOrUpdate(port, 1, (_, count) => count + 1) > 1)
             {
                 attempts.AddOrUpdate(port, 1, (_, count) => count + 1);
+
                 if (allReplicasFail || port == first.Port)
+                {
                     throw new RespireConnectionException("Dedicated candidate unavailable.");
+                }
             }
+
             return await OpenSocketAsync(host, port, token);
         }
     }
@@ -139,7 +163,11 @@ public partial class ReadDedicatedRoutingTests
         var discoveryStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         sentinel.SuppressReply = command =>
         {
-            if (!command.StartsWith("SENTINEL REPLICAS ")) return false;
+            if (!command.StartsWith("SENTINEL REPLICAS "))
+            {
+                return false;
+            }
+
             discoveryStarted.TrySetResult();
             return true;
         };
@@ -149,7 +177,8 @@ public partial class ReadDedicatedRoutingTests
 #pragma warning disable RESP010 // This exclusion scenario owns and disposes its client to isolate discovery and failed dedicated candidates.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.Nearest) with
         {
-            SentinelPrimaryName = "primary", TestingStreamFactory = OpenStreamAsync,
+            SentinelPrimaryName = "primary",
+            TestingStreamFactory = OpenStreamAsync,
         });
 #pragma warning restore RESP010
         var router = client.Core.ReadRouter;
@@ -177,6 +206,7 @@ public partial class ReadDedicatedRoutingTests
                 await failRental.Task.WaitAsync(token);
                 throw new RespireConnectionException("Dedicated primary unavailable after replica discovery.");
             }
+
             return await OpenSocketAsync(host, port, token);
         }
     }

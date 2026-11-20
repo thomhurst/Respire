@@ -24,6 +24,7 @@ public class FakePipeDisposalTests
         using var stream = CreateStream(reader, output.Writer);
         var buffer = new byte[1];
         var read = Task.Run(async () => await stream.ReadAsync(buffer));
+
         try
         {
             await input.Writer.WriteAsync(new byte[] { 42 });
@@ -34,6 +35,7 @@ public class FakePipeDisposalTests
         {
             release.Set();
         }
+
         try
         {
             // The read already owns a non-cancelled result; only AdvanceTo is held.
@@ -58,6 +60,7 @@ public class FakePipeDisposalTests
         var writer = new HeldMemoryWriter(output.Writer, release);
         using var stream = CreateStream(input.Reader, writer);
         var write = Task.Run(async () => await stream.WriteAsync(new byte[] { 42 }));
+
         try
         {
             await writer.Entered.Task.WaitAsync(Limit);
@@ -67,10 +70,15 @@ public class FakePipeDisposalTests
         {
             release.Set();
         }
+
         try
         {
-            try { await write.WaitAsync(Limit); }
+            try
+            {
+                await write.WaitAsync(Limit);
+            }
             catch (OperationCanceledException) { } // Disposal may cancel the pending flush.
+
             await writer.Completed.Task.WaitAsync(Limit);
             await Assert.That(async () => await stream.WriteAsync(new byte[] { 43 })).ThrowsExactly<ObjectDisposedException>();
         }
@@ -87,51 +95,87 @@ public class FakePipeDisposalTests
 
     private sealed class HeldAdvanceReader(PipeReader inner, ManualResetEventSlim release) : PipeReader
     {
-        internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Entered
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Completed
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override void AdvanceTo(SequencePosition consumed) => AdvanceTo(consumed, consumed);
+
         public override void AdvanceTo(SequencePosition consumed, SequencePosition examined)
         {
             Entered.TrySetResult();
-            if (!release.Wait(Limit)) throw new TimeoutException("The controlled read boundary was not released.");
+
+            if (!release.Wait(Limit))
+            {
+                throw new TimeoutException("The controlled read boundary was not released.");
+            }
+
             inner.AdvanceTo(consumed, examined);
         }
+
         public override void CancelPendingRead() => inner.CancelPendingRead();
+
         public override void Complete(Exception? exception = null)
         {
             inner.Complete(exception);
             Completed.TrySetResult();
         }
+
         public override ValueTask<ReadResult> ReadAsync(CancellationToken cancellationToken = default) => inner.ReadAsync(cancellationToken);
+
         public override bool TryRead(out ReadResult result) => inner.TryRead(out result);
     }
 
     private sealed class HeldMemoryWriter(PipeWriter inner, ManualResetEventSlim release) : PipeWriter
     {
-        internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Entered
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Completed
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override void Advance(int bytes) => inner.Advance(bytes);
+
         public override void CancelPendingFlush() => inner.CancelPendingFlush();
+
         public override void Complete(Exception? exception = null)
         {
             inner.Complete(exception);
             Completed.TrySetResult();
         }
+
         public override ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default) => inner.FlushAsync(cancellationToken);
+
         public override Memory<byte> GetMemory(int sizeHint = 0)
         {
             Hold();
             return inner.GetMemory(sizeHint);
         }
+
         public override Span<byte> GetSpan(int sizeHint = 0)
         {
             Hold();
             return inner.GetSpan(sizeHint);
         }
+
         private void Hold()
         {
             Entered.TrySetResult();
-            if (!release.Wait(Limit)) throw new TimeoutException("The controlled write boundary was not released.");
+
+            if (!release.Wait(Limit))
+            {
+                throw new TimeoutException("The controlled write boundary was not released.");
+            }
         }
     }
 }

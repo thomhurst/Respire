@@ -24,6 +24,7 @@ public class AggregateProgressTransferTests
             .IsEqualTo(RespParseStatus.Done);
         await Assert.That(control.TryParseResumable(input, ref controlPosition, out var expected, out _))
             .IsEqualTo(RespParseStatus.Done);
+
         using (actual)
         using (expected)
         {
@@ -41,6 +42,7 @@ public class AggregateProgressTransferTests
             position = 0;
             await Assert.That(parser.TryParse("*1\r\n+fresh\r\n"u8, ref position, out var following, out _))
                 .IsEqualTo(RespParseStatus.Done);
+
             using (following)
             {
                 await Assert.That(following.AsArray()[0].AsString()).IsEqualTo("fresh");
@@ -81,6 +83,7 @@ public class AggregateProgressTransferTests
         var expectedPosition = 0;
         await Assert.That(RespParser.TryParseValue(complete, ref expectedPosition, out var expected))
             .IsEqualTo(RespParseStatus.Done);
+
         using (expected)
         using (var parser = new RespParseState(int.MaxValue))
         {
@@ -98,6 +101,7 @@ public class AggregateProgressTransferTests
             byte[] next = [.. remaining, .. "llo\r\n"u8];
             position = 0;
             await Assert.That(parser.TryParse(next, ref position, out var actual, out _)).IsEqualTo(RespParseStatus.Done);
+
             using (actual)
             using (var owned = actual.ToOwned())
             {
@@ -122,6 +126,7 @@ public class AggregateProgressTransferTests
         var complete = Encoding.ASCII.GetBytes(frame);
         var expectedPosition = 0;
         RespParser.TryParseValue(complete, ref expectedPosition, out var expected);
+
         using (expected)
         {
             for (var split = 1; split < complete.Length; split++)
@@ -136,14 +141,21 @@ public class AggregateProgressTransferTests
                 position = 0;
                 await Assert.That(parser.TryParse(next, ref position, out var actual, out _))
                     .IsEqualTo(RespParseStatus.Done);
+
                 using (actual)
                 {
                     await Assert.That(actual.Equals(expected)).IsTrue();
                     await Assert.That(position).IsEqualTo(next.Length - 5);
                 }
+
                 await Assert.That(parser.TryParse(next, ref position, out var following, out _))
                     .IsEqualTo(RespParseStatus.Done);
-                using (following) await Assert.That(following.AsInteger()).IsEqualTo(99);
+
+                using (following)
+                {
+                    await Assert.That(following.AsInteger()).IsEqualTo(99);
+                }
+
                 await Assert.That(position).IsEqualTo(next.Length);
                 await Assert.That(parser.IsIdle).IsTrue();
             }
@@ -170,6 +182,7 @@ public class AggregateProgressTransferTests
         var filled = RespParser.CopyToPooled(type, "txt:abcdef"u8);
         // SupplyDirectFill transfers ownership; only the returned root disposes filled.
         await Assert.That(parser.SupplyDirectFill(in filled, out var value)).IsTrue();
+
         using (value)
         {
             var saved = value.AsArray()[0].AsString();
@@ -179,6 +192,7 @@ public class AggregateProgressTransferTests
             await Assert.That(integer).IsEqualTo(1);
             await Assert.That(payload).IsEqualTo(marker == '=' ? "abcdef" : "txt:abcdef");
         }
+
         await Assert.That(parser.IsIdle).IsTrue();
     }
 
@@ -203,6 +217,7 @@ public class AggregateProgressTransferTests
         position = 0;
         await Assert.That(parser.TryParse("*1\r\n+fresh\r\n"u8, ref position, out var fresh, out _))
             .IsEqualTo(RespParseStatus.Done);
+
         using (fresh)
         {
             var text = fresh.AsArray()[0].AsString();
@@ -221,12 +236,14 @@ public class AggregateProgressTransferTests
         var position = 0;
         var status = parser.TryParse(input, ref position, out _, out _);
         await Assert.That(status).IsEqualTo(depth == 512 ? RespParseStatus.NeedMoreData : RespParseStatus.InvalidData);
+
         if (depth == 513)
         {
             await Assert.That(position).IsEqualTo(0);
             await Assert.That(parser.IsIdle).IsTrue();
             return;
         }
+
 #if DEBUG
         await Assert.That(parser.ResumedScalarCountForTests).IsEqualTo(0);
 #endif
@@ -234,15 +251,22 @@ public class AggregateProgressTransferTests
         input.AsSpan().Fill(0);
         position = 0;
         await Assert.That(parser.TryParse(next, ref position, out var value, out _)).IsEqualTo(RespParseStatus.Done);
+
         using (value)
         {
             var child = value;
-            for (var i = 1; i < depth; i++) child = child.AsArray()[0];
+
+            for (var i = 1; i < depth; i++)
+            {
+                child = child.AsArray()[0];
+            }
+
             var saved = child.AsArray()[0].AsString();
             var text = child.AsArray()[1].AsString();
             await Assert.That(saved).IsEqualTo("saved");
             await Assert.That(text).IsEqualTo("hello");
         }
+
         await Assert.That(parser.IsIdle).IsTrue();
     }
 

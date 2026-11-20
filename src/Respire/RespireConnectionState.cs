@@ -40,18 +40,45 @@ public readonly record struct RespireConnectionStateChange(
     Exception? Error)
 {
     /// <summary>The recovery path, when explicitly attributed.</summary>
-    public RespireReconnectSource ReconnectSource { get; init; }
+    public RespireReconnectSource ReconnectSource
+    {
+        get; init;
+    }
+
     /// <summary>The source's state before aggregation into endpoint health, when supplied.</summary>
-    public RespireConnectionState? SourceState { get; init; }
+    public RespireConnectionState? SourceState
+    {
+        get; init;
+    }
+
     /// <summary>Process-local dedicated rent or Cluster discovery identifier; null for other transitions.</summary>
     /// <remarks>Identifiers are scoped by ReconnectSource. Include that source when correlating episodes.</remarks>
-    public long? ReconnectEpisodeId { get; init; }
+    public long? ReconnectEpisodeId
+    {
+        get; init;
+    }
+
     /// <summary>One-based configured replacement attempt; zero for transitions without policy metadata.</summary>
-    public int ReconnectAttempt { get; init; }
+    public int ReconnectAttempt
+    {
+        get; init;
+    }
+
     /// <summary>Zero-based source slot within this endpoint's multiplexer generation; null for dedicated or endpoint-wide transitions.</summary>
-    public int? ConnectionSlot { get; init; }
+    public int? ConnectionSlot
+    {
+        get; init;
+    }
+
     /// <summary>Delay reserved before this Reconnecting attempt; null when no attempt is scheduled.</summary>
-    public TimeSpan? NextReconnectDelay { get; init; }
+    public TimeSpan? NextReconnectDelay
+    {
+        get; init;
+    }
+
     /// <summary>Whether this connection slot, dedicated rent, pub/sub episode, or Cluster discovery round exhausted its configured attempt limit.</summary>
-    public bool ReconnectExhausted { get; init; }
+    public bool ReconnectExhausted
+    {
+        get; init;
+    }
 }

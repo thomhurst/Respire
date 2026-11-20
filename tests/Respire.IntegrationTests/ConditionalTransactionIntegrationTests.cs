@@ -18,8 +18,17 @@ public class ConditionalTransactionIntegrationTests(VersionedServerFixture serve
         await using var client = await RespireClient.ConnectAsync(server.ConnectionString(protocol));
         var view = client.WithKeyPrefix("tenant:");
         byte[] value = [0, 255, 13, 10];
-        if (token != "NX" || !matches) await view.SetAsync("condition", value);
-        if (token == "XX" && !matches) await view.DeleteAsync("condition");
+
+        if (token != "NX" || !matches)
+        {
+            await view.SetAsync("condition", value);
+        }
+
+        if (token == "XX" && !matches)
+        {
+            await view.DeleteAsync("condition");
+        }
+
         var condition = token switch
         {
             "IFEQ" => RespireCondition.ValueEquals("condition", matches ? value : new byte[] { 1 }),
@@ -102,7 +111,9 @@ public class ConditionalTransactionIntegrationTests(VersionedServerFixture serve
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(cluster.Hostname, cluster.GetMappedPublicPort(6379))],
-            UseCluster = true, Protocol = (RespireProtocol)protocol, Connections = 1,
+            UseCluster = true,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
         });
         var view = client.WithKeyPrefix($"{Guid.NewGuid():N}:");
         await view.SetAsync("{a}:version", "old");

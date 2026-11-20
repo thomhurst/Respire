@@ -13,16 +13,27 @@ public sealed partial class RespireFakeServer
         ReadOnlyMemory<byte>? firstArgument = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
+
         if (command.Any(char.IsWhiteSpace) || command.Any(char.IsControl))
+        {
             throw new ArgumentException("Specify one command name without whitespace or controls.", nameof(command));
+        }
+
         ArgumentNullException.ThrowIfNull(fault);
-        if (occurrences is <= 0) throw new ArgumentOutOfRangeException(nameof(occurrences));
+
+        if (occurrences is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(occurrences));
+        }
+
         var scope = new RespireFakeFaultScope(this, command.ToUpperInvariant(), firstArgument?.ToArray(), fault, occurrences);
+
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             _faults.Add(scope);
         }
+
         return scope;
     }
 
@@ -30,32 +41,45 @@ public sealed partial class RespireFakeServer
     public void ResetFaults()
     {
         RespireFakeFaultScope[] faults;
+
         lock (_gate)
         {
             faults = _faults.ToArray();
             _faults.Clear();
         }
-        foreach (var fault in faults) fault.Dispose();
+
+        foreach (var fault in faults)
+        {
+            fault.Dispose();
+        }
     }
 
     internal void RemoveFault(RespireFakeFaultScope scope)
     {
-        lock (_gate) _faults.Remove(scope);
+        lock (_gate)
+        {
+            _faults.Remove(scope);
+        }
     }
 
     private RespireFakeFaultScope? MatchFault(byte[][] arguments)
     {
         var command = Token(arguments[0]);
+
         lock (_gate)
         {
             foreach (var scope in _faults)
             {
                 if (!scope.Available || scope.Command != command
                     || scope.FirstArgument is { } first && (arguments.Length < 2 || !first.AsSpan().SequenceEqual(arguments[1])))
+                {
                     continue;
+                }
+
                 scope.Reserve();
                 return scope;
             }
+
             return null;
         }
     }
@@ -63,23 +87,30 @@ public sealed partial class RespireFakeServer
     private static async Task ApplyWaitAsync(Connection connection, RespireFakeFaultScope scope)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(connection.Lifetime.Token, scope.Removal);
+
         try
         {
             if (scope.Fault.Kind == RespireFakeFault.ActionKind.Delay)
+            {
                 await Task.Delay(scope.Fault.Duration, stop.Token).ConfigureAwait(false);
+            }
             else if (scope.Fault.Kind == RespireFakeFault.ActionKind.Pause)
+            {
                 await scope.Fault.Gate!.Released.WaitAsync(stop.Token).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException) when (scope.Removal.IsCancellationRequested && !connection.Lifetime.IsCancellationRequested)
         {
             // Removing a rule releases waiting commands. Closing the connection aborts them.
         }
+
         connection.Lifetime.Token.ThrowIfCancellationRequested();
     }
 
     private async Task<Outbound?> ExecuteWithFaultAsync(Connection connection, byte[][] arguments)
     {
         var expectation = ObserveCommand(connection, arguments);
+
         if (expectation.Rejected)
         {
             lock (_gate)
@@ -90,12 +121,19 @@ public sealed partial class RespireFakeServer
                 return rejection;
             }
         }
+
         var scope = MatchFault(arguments);
         var fault = scope?.Fault;
+
         if (fault is { AfterExecution: false })
         {
             scope!.ObserveMatch();
-            if (fault.Kind == RespireFakeFault.ActionKind.Disconnect) return null;
+
+            if (fault.Kind == RespireFakeFault.ActionKind.Disconnect)
+            {
+                return null;
+            }
+
             if (fault.Kind == RespireFakeFault.ActionKind.Error)
             {
                 lock (_gate)
@@ -105,24 +143,37 @@ public sealed partial class RespireFakeServer
                     return rejection;
                 }
             }
+
             await ApplyWaitAsync(connection, scope).ConfigureAwait(false);
         }
+
         connection.Lifetime.Token.ThrowIfCancellationRequested();
         var reply = expectation.Response is not null
             ? ExecuteLocked(connection, arguments, scope, out _, expectedReply: expectation.Response)
             : Token(arguments[0]) switch
+            {
+                "BLMOVEM" => await ExecuteBlockingListMoveAsync(connection, arguments, scope).ConfigureAwait(false),
+                "XREAD" or "XREADGROUP" => await ExecuteStreamReadAsync(connection, arguments, scope).ConfigureAwait(false),
+                _ => ExecuteLocked(connection, arguments, scope, out _),
+            };
+
+        if (reply is null)
         {
-            "BLMOVEM" => await ExecuteBlockingListMoveAsync(connection, arguments, scope).ConfigureAwait(false),
-            "XREAD" or "XREADGROUP" => await ExecuteStreamReadAsync(connection, arguments, scope).ConfigureAwait(false),
-            _ => ExecuteLocked(connection, arguments, scope, out _),
-        };
-        if (reply is null) return null;
+            return null;
+        }
+
         if (fault is { AfterExecution: true })
         {
             scope!.ObserveMatch();
-            if (fault.Kind == RespireFakeFault.ActionKind.Disconnect) return null;
+
+            if (fault.Kind == RespireFakeFault.ActionKind.Disconnect)
+            {
+                return null;
+            }
+
             await ApplyWaitAsync(connection, scope).ConfigureAwait(false);
         }
+
         reply.Ready.TrySetResult();
         return reply;
     }

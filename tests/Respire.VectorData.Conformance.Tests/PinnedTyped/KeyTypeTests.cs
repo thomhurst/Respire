@@ -82,6 +82,7 @@ public abstract class KeyTypeTests(KeyTypeTests.Fixture fixture)
     public abstract class Fixture : VectorStoreFixture
     {
         protected virtual string CollectionNameBase => nameof(KeyTypeTests);
+
         public virtual string CollectionName => TestStore.AdjustCollectionName(CollectionNameBase);
 
         public virtual VectorStoreCollection<TKey, Record<TKey>> CreateCollection<TKey>(bool? withAutoGeneration)
@@ -111,8 +112,19 @@ public abstract class KeyTypeTests(KeyTypeTests.Fixture fixture)
 
     public class Record<TKey>
     {
-        public TKey Key { get; set; } = default!;
-        public int Int { get; set; }
-        public ReadOnlyMemory<float> Vector { get; set; }
+        public TKey Key
+        {
+            get; set;
+        } = default!;
+
+        public int Int
+        {
+            get; set;
+        }
+
+        public ReadOnlyMemory<float> Vector
+        {
+            get; set;
+        }
     }
 }

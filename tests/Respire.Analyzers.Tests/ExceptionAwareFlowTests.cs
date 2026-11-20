@@ -287,8 +287,16 @@ public class ExceptionAwareFlowTests
     {
         byte value = 128;
         var overflow = false;
-        try { checked { value <<= 1; } }
+
+        try
+        {
+            checked
+            {
+                value <<= 1;
+            }
+        }
         catch (OverflowException) { overflow = true; }
+
         await Assert.That(overflow).IsTrue();
     }
 
@@ -299,6 +307,7 @@ public class ExceptionAwareFlowTests
     public async Task SignedMinimumRemainderCanOverflowAtRuntime(string type)
     {
         var overflow = false;
+
         try
         {
             _ = type switch
@@ -309,12 +318,15 @@ public class ExceptionAwareFlowTests
             };
         }
         catch (OverflowException) { overflow = true; }
+
         await Assert.That(overflow).IsTrue();
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         static long IntRemainder(int value, int divisor) => value % divisor;
+
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         static long LongRemainder(long value, long divisor) => value % divisor;
+
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         static long NativeRemainder(nint value, nint divisor) => value % divisor;
     }
@@ -2028,8 +2040,13 @@ public class ExceptionAwareFlowTests
         var rhsValue = true;
         int[] array = [0];
         var value = 0;
-        try { (array[Throws()], value) = ((flag = rhsValue) ? 0 : 0, 1); }
+
+        try
+        {
+            (array[Throws()], value) = ((flag = rhsValue) ? 0 : 0, 1);
+        }
         catch (InvalidOperationException) { }
+
         await Assert.That(flag).IsFalse();
         await Assert.That(value).IsEqualTo(0);
 

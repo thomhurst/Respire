@@ -24,18 +24,34 @@ public class RespireHealthProbeContractTests
     private static HealthCheckContext Context()
         => new() { Registration = new("respire", _ => throw new NotSupportedException(), HealthStatus.Unhealthy, null) };
 
-    public interface IProbeClient : IRespireClient, IRespireHealthProbe { }
+    public interface IProbeClient : IRespireClient, IRespireHealthProbe
+    {
+    }
 
     public class ProbeClientProxy : RespireHealthCheckTests.HealthClientProxy
     {
-        public Func<RespireHealthProbeOptions, CancellationToken, ValueTask<RespireHealthProbeResult[]>>? Probe { get; set; }
-        public Func<CancellationToken, ValueTask<TimeSpan>>? Ping { get; set; }
+        public Func<RespireHealthProbeOptions, CancellationToken, ValueTask<RespireHealthProbeResult[]>>? Probe
+        {
+            get; set;
+        }
+
+        public Func<CancellationToken, ValueTask<TimeSpan>>? Ping
+        {
+            get; set;
+        }
+
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             if (targetMethod?.Name == nameof(IRespireHealthProbe.ProbeHealthAsync))
+            {
                 return Probe!((RespireHealthProbeOptions)args![0]!, (CancellationToken)args[1]!);
+            }
+
             if (targetMethod?.Name == nameof(IRespireClient.PingAsync) && Ping is not null)
+            {
                 return Ping((CancellationToken)args![0]!);
+            }
+
             return base.Invoke(targetMethod, args);
         }
     }
@@ -95,7 +111,9 @@ public class RespireHealthProbeContractTests
         };
         var result = await new RespireHealthCheck(client, new()
         {
-            ProbeAllNodes = allNodes, MaxConcurrentProbes = 3, ProbeTimeout = TimeSpan.FromSeconds(4),
+            ProbeAllNodes = allNodes,
+            MaxConcurrentProbes = 3,
+            ProbeTimeout = TimeSpan.FromSeconds(4),
         }).CheckHealthAsync(Context());
         await Assert.That(result.Status).IsEqualTo(failure ? HealthStatus.Unhealthy : HealthStatus.Healthy);
         await Assert.That(proxy.PingCalls).IsEqualTo(0);
@@ -107,7 +125,11 @@ public class RespireHealthProbeContractTests
         await Assert.That(nodes.Length).IsEqualTo(allNodes ? 2 : 1);
         await Assert.That(nodes[0].Endpoint).IsEqualTo(endpoint);
         await Assert.That((int)result.Data["failedNodes"]).IsEqualTo(failure ? 1 : 0);
-        if (failure) await Assert.That(((AggregateException)result.Exception!).InnerExceptions[0]).IsSameReferenceAs(error);
+
+        if (failure)
+        {
+            await Assert.That(((AggregateException)result.Exception!).InnerExceptions[0]).IsSameReferenceAs(error);
+        }
     }
 
     [Test]
@@ -124,17 +146,27 @@ public class RespireHealthProbeContractTests
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var blocked = new TaskCompletionSource<RespireHealthProbeResult[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         var blockedPing = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
-        proxy.Probe = (_, _) => { entered.TrySetResult(); return new(blocked.Task); };
-        proxy.Ping = _ => { entered.TrySetResult(); return new(blockedPing.Task); };
+        proxy.Probe = (_, _) =>
+        {
+            entered.TrySetResult();
+            return new(blocked.Task);
+        };
+        proxy.Ping = _ =>
+        {
+            entered.TrySetResult();
+            return new(blockedPing.Task);
+        };
         using var cancel = new CancellationTokenSource();
         var check = new RespireHealthCheck(client, new()
         {
             ProbeTimeout = callerCancellation ? TimeSpan.FromSeconds(30) : TimeSpan.FromMilliseconds(30),
         });
         var pending = check.CheckHealthAsync(Context(), cancel.Token);
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
             if (callerCancellation)
             {
                 cancel.Cancel();
@@ -212,11 +244,13 @@ public class RespireHealthProbeContractTests
                 return factory(host, port, token);
             },
         });
+
         if (retired)
         {
             await client.PingAsync();
             await client.Core.Multiplexer.GetExistingHealthConnection()!.RetireAsync();
         }
+
         var results = await client.ProbeHealthAsync(new() { ProbeAllNodes = true });
         await Assert.That(results.Length).IsEqualTo(1);
         await Assert.That(results[0].IsConnected).IsFalse();
@@ -234,11 +268,17 @@ public class RespireHealthProbeContractTests
         var topology = Encoding.ASCII.GetBytes(
             $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n"
             + $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
+
         foreach (var server in new[] { first, second })
+        {
             server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : FakeRespServer.PongReply;
+        }
+
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = true,
             Endpoints = [new("127.0.0.1", first.Port)],
         });
         await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default);
@@ -250,25 +290,37 @@ public class RespireHealthProbeContractTests
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         blockedServer.SuppressReply = command =>
         {
-            if (command != "PING") return false;
+            if (command != "PING")
+            {
+                return false;
+            }
+
             started.TrySetResult();
             return true;
         };
         var waitingCommands = waitingServer.CommandsSeen;
         var pending = client.ProbeHealthAsync(new()
         {
-            ProbeAllNodes = true, MaxConcurrentProbes = 1,
+            ProbeAllNodes = true,
+            MaxConcurrentProbes = 1,
             Timeout = retireSecond ? TimeSpan.FromSeconds(5) : TimeSpan.FromMilliseconds(100),
         }).AsTask();
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(waitingServer.CommandsSeen).IsEqualTo(waitingCommands);
+
         if (retireSecond)
         {
             await captured[1].Connection!.RetireAsync();
             await blockedServer.SendRawAsync(FakeRespServer.PongReply);
         }
+
         var results = await pending.WaitAsync(TimeSpan.FromSeconds(5));
-        if (!retireSecond) await blockedServer.SendRawAsync(FakeRespServer.PongReply);
+
+        if (!retireSecond)
+        {
+            await blockedServer.SendRawAsync(FakeRespServer.PongReply);
+        }
+
         await Assert.That(results.Select(result => result.Endpoint)).IsEquivalentTo(captured.Select(target => target.Endpoint));
         await Assert.That(results[1].IsConnected).IsTrue();
         await Assert.That(results[1].Error).IsNotNull();

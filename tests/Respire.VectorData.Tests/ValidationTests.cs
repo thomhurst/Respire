@@ -152,6 +152,7 @@ public class ValidationTests
     public async Task PrintableAsciiAndDefaultTagSeparatorsPassBeforeCollectionIo()
     {
         await using var client = Client();
+
         for (var separator = 32; separator <= 126; separator++)
         {
             using var store = new RespireVectorStore(client);
@@ -159,6 +160,7 @@ public class ValidationTests
             using var collection = store.GetHashCollection<Movie>("movies");
             collection.Name.Should().Be("movies");
         }
+
         using var defaultStore = new RespireVectorStore(client);
         defaultStore.RegisterMapper(new ScalarMapper(new("tags", RespireSearchFieldType.Tag)));
         using var defaultCollection = defaultStore.GetHashCollection<Movie>("movies");
@@ -216,9 +218,13 @@ public class ValidationTests
     private sealed class ScalarMapper(RespireSearchField scalarField) : RespireVectorDataHashMapper<Movie>
     {
         public override IReadOnlyList<RespireSearchField> DataFields => [scalarField];
+
         public override IReadOnlyList<RespireVectorDataVectorField> VectorFields => [new(nameof(Movie.Vector), "embedding", 2)];
+
         public override string GetKey(Movie record) => record.Id;
+
         public override IReadOnlyDictionary<string, ReadOnlyMemory<byte>> Write(Movie record) => throw new NotSupportedException();
+
         public override Movie Read(string key, IReadOnlyDictionary<string, ReadOnlyMemory<byte>> fields) => throw new NotSupportedException();
     }
 
@@ -231,6 +237,8 @@ public class ValidationTests
 
     private static async Task Collect<T>(IAsyncEnumerable<T> values)
     {
-        await foreach (var value in values) { }
+        await foreach (var value in values)
+        {
+        }
     }
 }

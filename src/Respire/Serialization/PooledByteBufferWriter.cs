@@ -12,13 +12,19 @@ internal sealed class PooledByteBufferWriter(ArrayPool<byte>? pool = null) : IBu
     private bool _disposed;
 
     internal ReadOnlySpan<byte> WrittenSpan => _buffer.AsSpan(0, _written);
+
     internal ReadOnlyMemory<byte> WrittenMemory => _buffer.AsMemory(0, _written);
 
     public void Advance(int count)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentOutOfRangeException.ThrowIfNegative(count);
-        if (count > _buffer.Length - _written) throw new ArgumentOutOfRangeException(nameof(count));
+
+        if (count > _buffer.Length - _written)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+
         _written += count;
     }
 
@@ -39,19 +45,38 @@ internal sealed class PooledByteBufferWriter(ArrayPool<byte>? pool = null) : IBu
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentOutOfRangeException.ThrowIfNegative(sizeHint);
         sizeHint = Math.Max(1, sizeHint);
-        if (sizeHint <= _buffer.Length - _written) return;
+
+        if (sizeHint <= _buffer.Length - _written)
+        {
+            return;
+        }
+
         var required = checked(_written + sizeHint);
         var capacity = (int)Math.Min(Array.MaxLength, Math.Max((long)required, Math.Max(256L, (long)_buffer.Length * 2)));
-        if (capacity < required) throw new OutOfMemoryException();
+
+        if (capacity < required)
+        {
+            throw new OutOfMemoryException();
+        }
+
         var replacement = _pool.Rent(capacity);
         WrittenSpan.CopyTo(replacement);
-        if (_buffer.Length != 0) _pool.Return(_buffer, clearArray: true);
+
+        if (_buffer.Length != 0)
+        {
+            _pool.Return(_buffer, clearArray: true);
+        }
+
         _buffer = replacement;
     }
 
     public void Dispose()
     {
-        if (_disposed) return;
+        if (_disposed)
+        {
+            return;
+        }
+
         Reset();
         _disposed = true;
     }
@@ -59,7 +84,12 @@ internal sealed class PooledByteBufferWriter(ArrayPool<byte>? pool = null) : IBu
     internal void Reset()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_buffer.Length != 0) _pool.Return(_buffer, clearArray: true);
+
+        if (_buffer.Length != 0)
+        {
+            _pool.Return(_buffer, clearArray: true);
+        }
+
         _buffer = [];
         _written = 0;
     }

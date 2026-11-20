@@ -74,21 +74,39 @@ public partial class ErrorMetricsTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var capture = new Capture(throwOnMeasurement: true);
         Exception? failure = null;
+
         try
         {
             switch (route)
             {
-                case "take": await client.Locks.TryTakeAsync("key", default, TimeSpan.FromSeconds(30)); break;
-                case "release": await client.Locks.ReleaseAsync("key", default); break;
-                case "reset": await client.Locks.ResetExpiryAsync("key", "owner", TimeSpan.Zero); break;
-                case "acquire": await client.Locks.AcquireAsync("key", TimeSpan.Zero); break;
-                case "wait": await client.Locks.AcquireAsync("key", TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(-1)); break;
-                case "retry": await client.Locks.AcquireAsync("key", TimeSpan.FromSeconds(30), TimeSpan.Zero, TimeSpan.Zero); break;
-                case "throw": await client.Locks.AcquireOrThrowAsync("key", TimeSpan.Zero); break;
-                case "extension": await client.Locks.AcquireAsync("key", TimeSpan.Zero, keepAlive: true); break;
+                case "take":
+                    await client.Locks.TryTakeAsync("key", default, TimeSpan.FromSeconds(30));
+                    break;
+                case "release":
+                    await client.Locks.ReleaseAsync("key", default);
+                    break;
+                case "reset":
+                    await client.Locks.ResetExpiryAsync("key", "owner", TimeSpan.Zero);
+                    break;
+                case "acquire":
+                    await client.Locks.AcquireAsync("key", TimeSpan.Zero);
+                    break;
+                case "wait":
+                    await client.Locks.AcquireAsync("key", TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(-1));
+                    break;
+                case "retry":
+                    await client.Locks.AcquireAsync("key", TimeSpan.FromSeconds(30), TimeSpan.Zero, TimeSpan.Zero);
+                    break;
+                case "throw":
+                    await client.Locks.AcquireOrThrowAsync("key", TimeSpan.Zero);
+                    break;
+                case "extension":
+                    await client.Locks.AcquireAsync("key", TimeSpan.Zero, keepAlive: true);
+                    break;
             }
         }
         catch (ArgumentException error) { failure = error; }
+
         await Assert.That(failure).IsNotNull();
         await Assert.That(server.ReceivedCommands).IsEmpty();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
@@ -119,7 +137,11 @@ public partial class ErrorMetricsTests
         await using var server = NativeLockMetricServer();
         server.SuppressReply = command =>
         {
-            if (!command.Contains(" IFEQ ", StringComparison.Ordinal) || !command.StartsWith("SET ", StringComparison.Ordinal)) return false;
+            if (!command.Contains(" IFEQ ", StringComparison.Ordinal) || !command.StartsWith("SET ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             written.TrySetResult();
             return true;
         };
@@ -153,8 +175,18 @@ public partial class ErrorMetricsTests
         await using var server = NativeLockMetricServer();
         server.SuppressReply = command =>
         {
-            if (command.StartsWith("DELEX ", StringComparison.Ordinal)) { written.TrySetResult(); return true; }
-            if (command == "CLIENT KILL ID 41") { fenced.TrySetResult(); return true; }
+            if (command.StartsWith("DELEX ", StringComparison.Ordinal))
+            {
+                written.TrySetResult();
+                return true;
+            }
+
+            if (command == "CLIENT KILL ID 41")
+            {
+                fenced.TrySetResult();
+                return true;
+            }
+
             return false;
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
@@ -176,7 +208,12 @@ public partial class ErrorMetricsTests
         await Assert.That(release.IsCanceled).IsTrue();
         var items = capture.Items.ToArray();
         await Assert.That(items.Length).IsEqualTo(fenceFails ? 2 : 1);
-        if (fenceFails) await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsTrue();
+
+        if (fenceFails)
+        {
+            await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsTrue();
+        }
+
         await Assert.That((bool)items[^1].Tags["redis.client.errors.internal"]!).IsFalse();
         await Assert.That(items[^1].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(fenceFails ? 1 : 0);
     }
@@ -190,11 +227,27 @@ public partial class ErrorMetricsTests
         await using var server = NativeLockMetricServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var mutex = await client.Locks.AcquireOrThrowAsync("key", TimeSpan.FromSeconds(30));
-        if (serverFailure) server.ReplyOverride = (_, _) => "-WRONGTYPE private-key\r\n"u8.ToArray();
-        else await client.DisposeAsync();
+
+        if (serverFailure)
+        {
+            server.ReplyOverride = (_, _) => "-WRONGTYPE private-key\r\n"u8.ToArray();
+        }
+        else
+        {
+            await client.DisposeAsync();
+        }
+
         using var capture = new Capture(throwOnMeasurement: true);
-        if (serverFailure) await Assert.That(async () => await mutex.DisposeAsync()).Throws<RespireServerException>();
-        else await mutex.DisposeAsync();
+
+        if (serverFailure)
+        {
+            await Assert.That(async () => await mutex.DisposeAsync()).Throws<RespireServerException>();
+        }
+        else
+        {
+            await mutex.DisposeAsync();
+        }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         await Assert.That(capture.Items.Single().Tags["redis.client.errors.internal"]).IsEqualTo(!serverFailure);
         await Assert.That(capture.Items.Single().Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
@@ -212,7 +265,11 @@ public partial class ErrorMetricsTests
             : NativeLockMetricReply(command);
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("EVAL ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("EVAL ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             written.TrySetResult();
             return true;
         };
@@ -231,7 +288,12 @@ public partial class ErrorMetricsTests
         await Assert.That(ReferenceEquals(firstError, secondError)).IsTrue();
         var final = capture.Items.Where(item => Equals(item.Tags["redis.client.errors.internal"], false)).ToArray();
         await Assert.That(final.Length).IsEqualTo(2);
-        foreach (var item in final) await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(3);
+
+        foreach (var item in final)
+        {
+            await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(3);
+        }
+
         await Assert.That(mutex.IsReleased).IsFalse();
     }
 
@@ -240,7 +302,13 @@ public partial class ErrorMetricsTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         using var capture = new Capture();
-        for (var i = 0; i < 5; i++) { MeasureNativeLockOwner(false); MeasureNativeLockOwner(true); }
+
+        for (var i = 0; i < 5; i++)
+        {
+            MeasureNativeLockOwner(false);
+            MeasureNativeLockOwner(true);
+        }
+
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
             (Bytes: MeasureNativeLockOwner(false), Control: MeasureNativeLockOwner(true)));
         await Assert.That(measured.Bytes).IsEqualTo(0L);
@@ -252,14 +320,20 @@ public partial class ErrorMetricsTests
     private static long MeasureNativeLockOwner(bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1000; i++)
         {
             var owner = DispatchResponseSource<RespireLockReleaseOutcome>.Start();
 #pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             _ = owner.Attach(new ValueTask<RespireLockReleaseOutcome>(RespireLockReleaseOutcome.Released)).GetAwaiter().GetResult();
+
 #pragma warning restore RESP009
-            if (control) GC.KeepAlive(new byte[37]);
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -270,13 +344,25 @@ public partial class ErrorMetricsTests
 
     private sealed class CompletingReleaseObservation : IDispatchObservation
     {
-        internal Func<int> Read { get; set; } = null!;
+        internal Func<int> Read
+        {
+            get; set;
+        } = null!;
+
         public bool IsOpen(long generation) => generation == 1;
+
         public int Attempts(long generation) => Read();
+
         public RespireEndpoint? Endpoint(long generation) => null;
-        public void UseEndpoint(long generation, RespireEndpoint? endpoint) { }
+
+        public void UseEndpoint(long generation, RespireEndpoint? endpoint)
+        {
+        }
+
         public void SetAttempts(long generation, int attempts) => throw new NotSupportedException();
+
         public bool Handled(long generation, Exception error, RespireEndpoint? endpoint, bool overrideEndpoint) => throw new NotSupportedException();
+
         public void Retry(long generation) => throw new NotSupportedException();
     }
 
@@ -284,22 +370,31 @@ public partial class ErrorMetricsTests
     {
         public ValueTask<RespireLockAttempt> AcquireAsync(RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default)
             => inner.AcquireAsync(key, expiry, cancellationToken);
+
         public ValueTask<RespireLockAttempt> AcquireAsync(RespireKey key, TimeSpan expiry, TimeSpan wait, CancellationToken cancellationToken = default)
             => inner.AcquireAsync(key, expiry, wait, cancellationToken);
+
         public ValueTask<RespireLockAttempt> AcquireAsync(RespireKey key, TimeSpan expiry, TimeSpan wait, TimeSpan retryEvery, CancellationToken cancellationToken = default)
             => inner.AcquireAsync(key, expiry, wait, retryEvery, cancellationToken);
+
         public ValueTask<RespireLock> AcquireOrThrowAsync(RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default)
             => inner.AcquireOrThrowAsync(key, expiry, cancellationToken);
+
         public ValueTask<RespireLock> AcquireOrThrowAsync(RespireKey key, TimeSpan expiry, TimeSpan wait, CancellationToken cancellationToken = default)
             => inner.AcquireOrThrowAsync(key, expiry, wait, cancellationToken);
+
         public ValueTask<RespireLock> AcquireOrThrowAsync(RespireKey key, TimeSpan expiry, TimeSpan wait, TimeSpan retryEvery, CancellationToken cancellationToken = default)
             => inner.AcquireOrThrowAsync(key, expiry, wait, retryEvery, cancellationToken);
+
         public ValueTask<bool> TryTakeAsync(RespireKey key, RespireLockToken token, TimeSpan expiry, CancellationToken cancellationToken = default)
             => inner.TryTakeAsync(key, token, expiry, cancellationToken);
+
         public ValueTask<bool> ReleaseAsync(RespireKey key, RespireLockToken token, CancellationToken cancellationToken = default)
             => inner.ReleaseAsync(key, token, cancellationToken);
+
         public ValueTask<bool> ResetExpiryAsync(RespireKey key, RespireLockToken token, TimeSpan newDuration, CancellationToken cancellationToken = default)
             => inner.ResetExpiryAsync(key, token, newDuration, cancellationToken);
+
         public ValueTask<RespireLockToken?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.GetOwnerTokenAsync(key, cancellationToken);
     }

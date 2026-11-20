@@ -12,58 +12,57 @@ using Hangfire.Redis.Tests.Utils;
 using TUnit.Core;
 using Assert = Xunit.Assert;
 
-namespace Hangfire.Redis.Tests
+namespace Hangfire.Redis.Tests;
+
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+[NotInParallel]
+public class RedisSubscriptionFacts : UpstreamRedisTest
 {
-    [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-    [NotInParallel]
-    public class RedisSubscriptionFacts : UpstreamRedisTest
+    private readonly CancellationTokenSource _cts;
+
+    [After(Test)]
+    public void DisposeCancellation() => _cts.Dispose();
+    private readonly RedisStorage _storage;
+    private readonly Mock<ISubscriber> _subscriber;
+
+    public RedisSubscriptionFacts(RedisTestContainer fixture) : base(fixture)
     {
-        private readonly CancellationTokenSource _cts;
+        _cts = new CancellationTokenSource();
 
-        [After(Test)]
-        public void DisposeCancellation() => _cts.Dispose();
-        private readonly RedisStorage _storage;
-        private readonly Mock<ISubscriber> _subscriber;
+        var options = new RedisStorageOptions() { Db = RedisUtils.GetDb() };
+        _storage = new RedisStorage(RedisUtils.Connection, options);
 
-        public RedisSubscriptionFacts(RedisTestContainer fixture) : base(fixture)
-        {
-            _cts = new CancellationTokenSource();
-
-            var options = new RedisStorageOptions() { Db = RedisUtils.GetDb() };
-            _storage = new RedisStorage(RedisUtils.Connection, options);
-
-            _subscriber = new Mock<ISubscriber>();
-        }
-
-        [Test]
-        public void Ctor_ThrowAnException_WhenStorageIsNull()
-        {
-            Assert.Throws<ArgumentNullException>("storage",
-                () => new RedisSubscription(null, _subscriber.Object));
-        }
-
-        [Test]
-        public void Ctor_ThrowAnException_WhenSubscriberIsNull()
-        {
-            Assert.Throws<ArgumentNullException>("subscriber",
-                () => new RedisSubscription(_storage, null));
-        }
-        [Test]
-        public void WaitForJob_WaitForTheTimeout()
-        {
-            //Arrange
-            Stopwatch sw = new Stopwatch();
-            var subscription = new RedisSubscription(_storage, RedisUtils.CreateSubscriber());
-            var timeout = TimeSpan.FromMilliseconds(100);
-            sw.Start();
-
-            //Act
-            subscription.WaitForJob(timeout, _cts.Token);
-
-            //Assert
-            sw.Stop();
-            Assert.True(sw.ElapsedMilliseconds >= 99);
-        }
+        _subscriber = new Mock<ISubscriber>();
     }
 
+    [Test]
+    public void Ctor_ThrowAnException_WhenStorageIsNull()
+    {
+        Assert.Throws<ArgumentNullException>("storage",
+            () => new RedisSubscription(null, _subscriber.Object));
+    }
+
+    [Test]
+    public void Ctor_ThrowAnException_WhenSubscriberIsNull()
+    {
+        Assert.Throws<ArgumentNullException>("subscriber",
+            () => new RedisSubscription(_storage, null));
+    }
+
+    [Test]
+    public void WaitForJob_WaitForTheTimeout()
+    {
+        //Arrange
+        Stopwatch sw = new Stopwatch();
+        var subscription = new RedisSubscription(_storage, RedisUtils.CreateSubscriber());
+        var timeout = TimeSpan.FromMilliseconds(100);
+        sw.Start();
+
+        //Act
+        subscription.WaitForJob(timeout, _cts.Token);
+
+        //Assert
+        sw.Stop();
+        Assert.True(sw.ElapsedMilliseconds >= 99);
+    }
 }

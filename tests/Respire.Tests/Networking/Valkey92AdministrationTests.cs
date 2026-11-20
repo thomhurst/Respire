@@ -68,7 +68,10 @@ public class Valkey92AdministrationTests
 #pragma warning disable RESP010 // This role-command test owns its admin client and fixed success/error replies to verify exact token boundaries.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true, Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2,
         });
 #pragma warning restore RESP010
         await client.WithKeyPrefix("tenant:").Server.AclSetRoleAsync("r", ["(+get ~cache:*)"]);
@@ -87,7 +90,10 @@ public class Valkey92AdministrationTests
     private static byte[] Encode(object value)
     {
         if (value is object[] items)
+        {
             return Encoding.ASCII.GetBytes($"*{items.Length}\r\n").Concat(items.SelectMany(Encode)).ToArray();
+        }
+
         var bytes = value is byte[] binary ? binary : Encoding.UTF8.GetBytes((string)value);
         return Encoding.ASCII.GetBytes($"${bytes.Length}\r\n").Concat(bytes).Concat("\r\n"u8.ToArray()).ToArray();
     }

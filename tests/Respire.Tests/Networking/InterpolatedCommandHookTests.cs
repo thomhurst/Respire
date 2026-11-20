@@ -33,8 +33,15 @@ public partial class CommandHookTests
         {
             Before = _ =>
             {
-                if (phase == "rejection") throw rejection;
-                if (phase == "cancellation") cancellation.Cancel();
+                if (phase == "rejection")
+                {
+                    throw rejection;
+                }
+
+                if (phase == "cancellation")
+                {
+                    cancellation.Cancel();
+                }
             },
         };
 #pragma warning disable RESP010 // This interpolation hook scenario owns its client, observer state and scripted replies.
@@ -43,12 +50,33 @@ public partial class CommandHookTests
         using var errors = new InterpolatedErrorCapture();
         var baseline = server.CommandsSeen;
         RespireCommandInterpolatedStringHandler command = $"GET {"key"}";
-        if (phase == "preflight") command = new RespireCommandInterpolatedStringHandler(0, 0);
+
+        if (phase == "preflight")
+        {
+            command = new RespireCommandInterpolatedStringHandler(0, 0);
+        }
+
         var error = await Failure(() => SendInterpolated(client, route, command, token: cancellation.Token));
-        if (phase == "rejection") await Assert.That(error).IsSameReferenceAs(rejection);
-        if (phase == "cancellation") await Assert.That(error is OperationCanceledException).IsTrue();
-        if (phase == "server") await Assert.That(error is RespireServerException).IsTrue();
-        else await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+
+        if (phase == "rejection")
+        {
+            await Assert.That(error).IsSameReferenceAs(rejection);
+        }
+
+        if (phase == "cancellation")
+        {
+            await Assert.That(error is OperationCanceledException).IsTrue();
+        }
+
+        if (phase == "server")
+        {
+            await Assert.That(error is RespireServerException).IsTrue();
+        }
+        else
+        {
+            await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+        }
+
         await Assert.That(hook.Completed.Count).IsEqualTo(phase == "preflight" ? 0 : 1);
         await Assert.That(errors.Items.Count).IsEqualTo(1);
         await Assert.That((bool)errors.Items.Single()["redis.client.errors.internal"]!).IsFalse();
@@ -57,14 +85,20 @@ public partial class CommandHookTests
     private sealed class InterpolatedErrorCapture : IDisposable
     {
         private readonly MeterListener _listener = new();
-        internal ConcurrentQueue<Dictionary<string, object?>> Items { get; } = new();
+
+        internal ConcurrentQueue<Dictionary<string, object?>> Items
+        {
+            get;
+        } = new();
 
         internal InterpolatedErrorCapture()
         {
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (ReferenceEquals(instrument.Meter, RespireTelemetry.Meter) && instrument.Name == "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
                 Items.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
@@ -122,15 +156,22 @@ public partial class CommandHookTests
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
 #pragma warning restore RESP010
         var baseline = server.CommandsSeen;
+
         foreach (var formattedSubcommand in new[] { false, true })
         {
             var command = new RespireCommandInterpolatedStringHandler(20, 2);
             command.AppendLiteral(formattedSubcommand ? "script" : "script exists");
-            if (formattedSubcommand) command.AppendFormatted("exists");
+
+            if (formattedSubcommand)
+            {
+                command.AppendFormatted("exists");
+            }
+
             command.AppendFormatted("secret digest with spaces");
             var error = await Failure(() => SendInterpolated(client, route, command));
             await Assert.That(error).IsSameReferenceAs(rejected);
         }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
         await Assert.That(hook.Entered.Count).IsEqualTo(2);
         await Assert.That(hook.Entered.All(c => c.Command == "SCRIPT EXISTS")).IsTrue();
@@ -155,12 +196,17 @@ public partial class CommandHookTests
         var empty = new RespireCommandInterpolatedStringHandler(0, 0);
         await Check(empty);
         await Check($"MGET {"{a}:one"} {"{b}:two"}");
-        if (route == "forget") await Check($"BLPOP {"key"} {0}");
+
+        if (route == "forget")
+        {
+            await Check($"BLPOP {"key"} {0}");
+        }
         else
         {
             await Check($"GET {"key"}", (RespireCommandFlags)128);
             await Check($"FUNCTION FLUSH", RespireCommandFlags.NoRedirect);
         }
+
         await Assert.That(hook.Entered).IsEmpty();
         await Assert.That(hook.Completed).IsEmpty();
         await Assert.That(hooked.IsConnected).IsFalse();
@@ -176,8 +222,10 @@ public partial class CommandHookTests
 
     private static RespireOptions OptionsForUnavailableEndpoint(int port) => new()
     {
-        Endpoints = [new("127.0.0.1", port)], UseCluster = true,
-        Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
+        Endpoints = [new("127.0.0.1", port)],
+        UseCluster = true,
+        Protocol = RespireProtocol.Resp2,
+        ThreadPoolMonitoring = false,
     };
 
     [Test]
@@ -192,7 +240,11 @@ public partial class CommandHookTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (command != "GET key") return false;
+            if (command != "GET key")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -202,13 +254,20 @@ public partial class CommandHookTests
 #pragma warning restore RESP010
         var baseline = server.CommandsSeen;
         using var cancellation = new CancellationTokenSource();
-        if (!pending) cancellation.Cancel();
+
+        if (!pending)
+        {
+            cancellation.Cancel();
+        }
+
         var response = SendInterpolated(client, route, $"GET {"key"}", token: cancellation.Token);
+
         if (pending)
         {
             await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
             cancellation.Cancel();
         }
+
         var error = await Failure(() => response);
         await Assert.That(error is OperationCanceledException).IsTrue();
         var completion = hook.Completed.Single();
@@ -216,7 +275,11 @@ public partial class CommandHookTests
         await Assert.That(completion.Error).IsSameReferenceAs(error);
         await Assert.That(completion.Context.CancellationToken).IsEqualTo(cancellation.Token);
         await Assert.That(hook.Entered.Count).IsEqualTo(1);
-        if (!pending) await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+
+        if (!pending)
+        {
+            await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+        }
     }
 
     [Test]
@@ -259,6 +322,7 @@ public partial class CommandHookTests
         await Assert.That(server.ReceivedCommands.Count(c => c == "GET key")).IsEqualTo(1);
         await Assert.That(hook.Entered.Count).IsEqualTo(configured ? 1 : 0);
         await Assert.That(hook.Completed.Count).IsEqualTo(configured ? 1 : 0);
+
         if (configured)
         {
             await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Failed);
@@ -283,7 +347,11 @@ public partial class CommandHookTests
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
         // Raw APIs do not choose a typed conversion. A caller's later conversion failure must
         // neither change the published result outcome nor produce a second completion.
-        var error = await Failure(() => { _ = result.AsDouble(); return Task.CompletedTask; });
+        var error = await Failure(() =>
+        {
+            _ = result.AsDouble();
+            return Task.CompletedTask;
+        });
         await Assert.That(error is FormatException).IsTrue();
         await Assert.That(hook.Completed.Count).IsEqualTo(1);
         await Assert.That(result.IsDisposed).IsFalse();
@@ -307,13 +375,17 @@ public partial class CommandHookTests
 #pragma warning disable RESP010 // This reentrancy/concurrency scenario owns its client and shared callback state until all calls finish.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         {
-            UseCluster = true, ClusterTopologyRefreshInterval = null,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
         });
 #pragma warning restore RESP010
         Task<long>? nested = null;
         hook.Before = context =>
         {
-            if (context.Command == "GET") nested = client.Strings.LengthAsync("nested").AsTask();
+            if (context.Command == "GET")
+            {
+                nested = client.Strings.LengthAsync("nested").AsTask();
+            }
         };
         await Execute(client, route);
         await nested!;
@@ -335,7 +407,8 @@ public partial class CommandHookTests
 #pragma warning disable RESP010 // This interpolation hook scenario owns its client, observer state and scripted replies.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var activeAtAdmission = -1;
@@ -353,8 +426,17 @@ public partial class CommandHookTests
         RespireCommandInterpolatedStringHandler command, RespireCommandFlags flags = default,
         CancellationToken token = default)
     {
-        if (route == "forget") await client.ExecuteFireAndForgetAsync(command, token);
-        else if (route == "lease") { using var result = await client.ExecuteLeaseAsync(command, flags, token); }
-        else { using var result = await client.ExecuteAsync(command, flags, token); }
+        if (route == "forget")
+        {
+            await client.ExecuteFireAndForgetAsync(command, token);
+        }
+        else if (route == "lease")
+        {
+            using var result = await client.ExecuteLeaseAsync(command, flags, token);
+        }
+        else
+        {
+            using var result = await client.ExecuteAsync(command, flags, token);
+        }
     }
 }

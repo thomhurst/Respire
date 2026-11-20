@@ -13,10 +13,19 @@ public class ReliableTopicValidationTests
     {
         var client = DispatchProxy.Create<IResolvingClient, ResolvingClient>();
         var serialized = false;
-        byte[] Serialize(string value) { serialized = true; return Encoding.UTF8.GetBytes(value); }
+
+        byte[] Serialize(string value)
+        {
+            serialized = true;
+            return Encoding.UTF8.GetBytes(value);
+        }
+
         foreach (var name in new[] { "", " ", "topic{tag}", "topic}", "\ud800" })
+        {
             await Assert.That(() => new RespireReliableTopic<string>(client, name, Serialize, Encoding.UTF8.GetString))
                 .Throws<ArgumentException>();
+        }
+
         await Assert.That(() => new RespireReliableTopic<string>(client, "topic", Serialize, Encoding.UTF8.GetString, deliveryLimit: 0))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => new RespireReliableTopic<string>(client, "topic", Serialize, Encoding.UTF8.GetString, maximumLength: 0))
@@ -31,8 +40,12 @@ public class ReliableTopicValidationTests
             .Throws<OperationCanceledException>();
         var nullCodec = new RespireReliableTopic<string>(client, "topic", _ => null!, Encoding.UTF8.GetString);
         await Assert.That(async () => await nullCodec.PublishAsync("payload")).Throws<InvalidOperationException>();
+
         foreach (var name in new[] { "", " ", "\ud800" })
+        {
             await Assert.That(async () => await topic.SubscribeAsync(name)).Throws<ArgumentException>();
+        }
+
         await Assert.That(serialized).IsFalse();
         await Assert.That(((ResolvingClient)(object)client).CommandCalls).IsEqualTo(0);
     }
@@ -48,17 +61,29 @@ public class ReliableTopicValidationTests
         await Assert.That(proxy.CommandCalls).IsEqualTo(0);
     }
 
-    public interface IResolvingClient : IRespireClient, IRespireNameResolver { }
+    public interface IResolvingClient : IRespireClient, IRespireNameResolver
+    {
+    }
 
     public class ResolvingClient : DispatchProxy
     {
-        public bool Alias { get; set; }
-        public int CommandCalls { get; private set; }
+        public bool Alias
+        {
+            get; set;
+        }
+
+        public int CommandCalls
+        {
+            get; private set;
+        }
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             if (targetMethod!.Name == nameof(IRespireNameResolver.ResolveKey))
+            {
                 return Alias ? (RespireKey)"{topic}:alias" : args![0];
+            }
+
             CommandCalls++;
             throw new InvalidOperationException("Validation must fail before executing commands.");
         }

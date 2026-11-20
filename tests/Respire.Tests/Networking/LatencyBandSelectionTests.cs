@@ -13,8 +13,12 @@ public class LatencyBandSelectionTests
     public async Task BandRevalidationChecksUnselectedMembersAndIgnoresSlowerCandidates(int candidateCount)
     {
         var selection = new NearestReadSelection<int>(0, candidateCount + 1, TimeSpan.Zero);
+
         while (selection.TryNext(out var index))
+        {
             selection.QueueSample(index, ValueTask.FromResult(ReadLatencyResult.Measured(index == candidateCount ? 100 : 10)));
+        }
+
         await Assert.That(selection.TryGet(out var selected)).IsTrue();
         await Assert.That(selected).IsEqualTo(0);
         await Assert.That(selection.AllBandCandidatesMatch(candidateCount - 1, static (candidate, removed) => candidate != removed)).IsFalse();
@@ -27,16 +31,27 @@ public class LatencyBandSelectionTests
     public async Task SnapshotReuseRetainsImmutableObservationUntilBandChanges(int candidateCount)
     {
         RespireReadRoutingSnapshot? snapshot = null;
+
         for (uint start = 0; start < candidateCount; start++)
         {
             var selection = new NearestReadSelection<int>(start, candidateCount, TimeSpan.Zero);
+
             while (selection.TryNext(out var index))
+            {
                 selection.QueueSample(index, ValueTask.FromResult(ReadLatencyResult.Measured(index % 2)));
+            }
+
             await Assert.That(selection.TryGet(out _)).IsTrue();
             var captured = selection.CaptureSnapshot(RespireReadFrom.Replica, null, value => new("host", value), snapshot);
-            if (snapshot is not null) await Assert.That(captured).IsSameReferenceAs(snapshot);
+
+            if (snapshot is not null)
+            {
+                await Assert.That(captured).IsSameReferenceAs(snapshot);
+            }
+
             snapshot = captured;
         }
+
         var changed = new NearestReadSelection<int>(0, 1, TimeSpan.Zero);
         changed.QueueSample(99, ValueTask.FromResult(ReadLatencyResult.Measured(0)));
         await Assert.That(changed.TryGet(out _)).IsTrue();
@@ -65,17 +80,29 @@ public class LatencyBandSelectionTests
         _ = initial.TryGet(out _);
         var snapshot = initial.CaptureSnapshot(RespireReadFrom.Replica, null, static value => new("host", value));
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (uint start = 0; start < 1_000; start++)
         {
             var selection = new NearestReadSelection<int>(start, 3, TimeSpan.Zero);
+
             while (selection.TryNext(out var index))
+            {
                 selection.QueueSample(index, ValueTask.FromResult(ReadLatencyResult.Measured(index == 1 ? 100 : 10)));
+            }
+
             if (!selection.TryGet(out var selected) || selected == 1
                 || !ReferenceEquals(snapshot, selection.CaptureSnapshot(RespireReadFrom.Replica, null,
                     static value => new("host", value), snapshot)))
+            {
                 throw new InvalidOperationException("The warm band changed unexpectedly.");
-            if (allocate) GC.KeepAlive(new byte[37]);
+            }
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -84,13 +111,18 @@ public class LatencyBandSelectionTests
     {
         var firstRange = new ClusterReplicaSet([], TimeSpan.Zero);
         var secondRange = new ClusterReplicaSet([], TimeSpan.Zero);
+
         for (uint expected = 1; expected <= 6; expected++)
         {
             foreach (var range in new[] { firstRange, secondRange })
             {
                 var selection = new NearestReadSelection<int>(range.NextLatencyStart(), 3, TimeSpan.Zero);
+
                 while (selection.TryNext(out var index))
+                {
                     selection.QueueSample(index, ValueTask.FromResult(ReadLatencyResult.Measured(index == 0 ? 100 : 10)));
+                }
+
                 await Assert.That(selection.TryGet(out var selected)).IsTrue();
                 await Assert.That(selected).IsEqualTo((int)(expected % 2) + 1);
             }
@@ -101,14 +133,20 @@ public class LatencyBandSelectionTests
     public async Task RotationIsUniformWithinBandDespiteGapsInTopology()
     {
         var counts = new int[5];
+
         for (uint start = 0; start < 20; start++)
         {
             var selection = new NearestReadSelection<int>(start, 5, TimeSpan.FromTicks(5));
+
             while (selection.TryNext(out var index))
+            {
                 selection.QueueSample(index, ValueTask.FromResult(ReadLatencyResult.Measured(index is 1 or 2 ? 10 : 100)));
+            }
+
             await Assert.That(selection.TryGet(out var selected)).IsTrue();
             counts[selected]++;
         }
+
         await Assert.That(counts[1]).IsEqualTo(10);
         await Assert.That(counts[2]).IsEqualTo(10);
         await Assert.That(counts.Sum()).IsEqualTo(20);
@@ -158,8 +196,12 @@ public class LatencyBandSelectionTests
         for (uint start = 0; start < 3; start++)
         {
             var selection = new NearestReadSelection<int>(start, 3, TimeSpan.Zero);
+
             while (selection.TryNext(out var index))
+            {
                 selection.QueueSample(index, ValueTask.FromResult(ReadLatencyResult.Unknown));
+            }
+
             await Assert.That(selection.TryGet(out var selected)).IsTrue();
             await Assert.That(selected).IsEqualTo((int)start);
         }
@@ -174,8 +216,12 @@ public class LatencyBandSelectionTests
         selection.QueueSample("second", ValueTask.FromResult(ReadLatencyResult.Measured(10)));
         selection.QueueSample("unlinked", ValueTask.FromResult(ReadLatencyResult.Measured(0)), linked: false);
         pending.SetResult(ReadLatencyResult.Measured(15));
+
         while (selection.TryNextSample(out var sample))
+        {
             selection.Consider(sample.Candidate, await sample.Latency, sample.Linked, sample.Order, sample.Priority);
+        }
+
         await Assert.That(selection.TryGet(out var selected)).IsTrue();
         await Assert.That(selected).IsEqualTo("first");
     }
@@ -185,7 +231,8 @@ public class LatencyBandSelectionTests
     {
         await Assert.That(() => RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("localhost")], ReplicaLatencyTolerance = TimeSpan.FromTicks(-1),
+            Endpoints = [new("localhost")],
+            ReplicaLatencyTolerance = TimeSpan.FromTicks(-1),
         })).ThrowsExactly<RespireConfigurationException>();
     }
 }

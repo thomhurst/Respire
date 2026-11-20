@@ -39,7 +39,11 @@ public class StalledDeliveryTests
                 using var value = firstAwaiter.GetResult();
                 entered.TrySetResult();
                 // Blocks on the reply queued behind it, as sync-over-async on one connection does.
-                if (!secondTask.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Second reply was never delivered.");
+                if (!secondTask.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    throw new TimeoutException("Second reply was never delivered.");
+                }
+
                 using var secondValue = secondTask.Result;
                 completed.TrySetResult(secondValue.AsInteger());
             }
@@ -91,6 +95,7 @@ public class StalledDeliveryTests
         scheduler.Add(sources[2], RespValue.Integer(3));
         scheduler.Add(sources[3], RespValue.Integer(4));
         scheduler.Flush();
+
         try
         {
             await Assert.That(scheduler.RescueStalledRunner(0, 500)).IsFalse();
@@ -124,7 +129,11 @@ public class StalledDeliveryTests
         var loneTask = lone.Task.AsTask();
         scheduler.Add(lone, RespValue.Integer(1));
         scheduler.Flush();
-        using (await loneTask.WaitAsync(TimeSpan.FromSeconds(5))) { }
+
+        using (await loneTask.WaitAsync(TimeSpan.FromSeconds(5)))
+        {
+        }
+
         await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(watch.IsCompleted).IsFalse();
 
@@ -142,6 +151,7 @@ public class StalledDeliveryTests
         });
         scheduler.Add(first, RespValue.Integer(2));
         scheduler.Flush();
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -188,6 +198,7 @@ public class StalledDeliveryTests
         scheduler.Add(transaction, RespValue.SimpleString("QUEUED"u8.ToArray()));
         scheduler.Add(transaction, RespValue.Integer(42));
         scheduler.Flush();
+
         try
         {
             await Assert.That(scheduler.RescueStalledRunner(0, 500)).IsFalse();
@@ -220,6 +231,7 @@ public class StalledDeliveryTests
         var scheduler = new CompletionScheduler();
         scheduler.Add(source, RespValue.Integer(1));
         scheduler.Flush();
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -243,7 +255,8 @@ public class StalledDeliveryTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new RespireConnectionOptions
             {
-                CommandTimeout = commandTimeout ? TimeSpan.FromSeconds(30) : null, StalledDeliveryThreshold = FastRescue,
+                CommandTimeout = commandTimeout ? TimeSpan.FromSeconds(30) : null,
+                StalledDeliveryThreshold = FastRescue,
             });
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var awaiter = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();
@@ -281,7 +294,11 @@ public class StalledDeliveryTests
         {
             SuppressReply = command =>
             {
-                if (command != "PING" || Interlocked.Increment(ref pings) != 1) return false;
+                if (command != "PING" || Interlocked.Increment(ref pings) != 1)
+                {
+                    return false;
+                }
+
                 firstSent.TrySetResult();
                 return true;
             },
@@ -292,9 +309,13 @@ public class StalledDeliveryTests
         var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var response = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+
         if (convertResponse)
+        {
             response = PooledResponseSource<int, RespValue>.Create(response, 0,
                 static (int _, in RespValue value) => value, transferOwnership: true);
+        }
+
         var awaiter = response.ConfigureAwait(false).GetAwaiter();
         awaiter.UnsafeOnCompleted(() =>
         {
@@ -333,7 +354,11 @@ public class StalledDeliveryTests
         {
             SuppressReply = command =>
             {
-                if (command != "PING") return false;
+                if (command != "PING")
+                {
+                    return false;
+                }
+
                 firstSent.TrySetResult();
                 return true;
             },
@@ -343,9 +368,13 @@ public class StalledDeliveryTests
         var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var response = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+
         if (convertResponse)
+        {
             response = PooledResponseSource<int, RespValue>.Create(response, 0,
                 static (int _, in RespValue value) => value, transferOwnership: true);
+        }
+
         var awaiter = response.ConfigureAwait(false).GetAwaiter();
         awaiter.UnsafeOnCompleted(() =>
         {
@@ -355,6 +384,7 @@ public class StalledDeliveryTests
         });
 
         Task? dispose = null;
+
         try
         {
             await firstSent.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -384,7 +414,11 @@ public class StalledDeliveryTests
         {
             SuppressReply = command =>
             {
-                if (command == "PING" && Interlocked.Increment(ref pings) == 2) allSent.TrySetResult();
+                if (command == "PING" && Interlocked.Increment(ref pings) == 2)
+                {
+                    allSent.TrySetResult();
+                }
+
                 return command == "PING";
             },
         };
@@ -421,8 +455,12 @@ public class StalledDeliveryTests
         // The second PONG arrived with the first, so it is queued behind the blocked
         // continuation; close the connection before the stall threshold.
         var deadline = DateTime.UtcNow.AddSeconds(10);
+
         while (!connection.HasUndeliveredReplies && DateTime.UtcNow < deadline)
+        {
             await Task.Delay(5);
+        }
+
         await Assert.That(connection.HasUndeliveredReplies).IsTrue();
         var disposed = connection.DisposeAsync().AsTask();
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -442,7 +480,11 @@ public class StalledDeliveryTests
         {
             SuppressReply = command =>
             {
-                if (command == "PING" && Interlocked.Increment(ref pings) == 3) allSent.TrySetResult();
+                if (command == "PING" && Interlocked.Increment(ref pings) == 3)
+                {
+                    allSent.TrySetResult();
+                }
+
                 return command == "PING";
             },
         };
@@ -495,8 +537,12 @@ public class StalledDeliveryTests
         // Both later replies must be parsed and queued behind the blocked continuation, so only
         // teardown handoffs can deliver them.
         var deadline = DateTime.UtcNow.AddSeconds(10);
+
         while (connection.UndeliveredReplyCount < 2 && DateTime.UtcNow < deadline)
+        {
             await Task.Delay(5);
+        }
+
         await Assert.That(connection.UndeliveredReplyCount).IsEqualTo(2);
         var disposed = connection.DisposeAsync().AsTask();
         await firstDone.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -515,6 +561,7 @@ public class StalledDeliveryTests
         scheduler.Add(source, RespValue.Integer(2));
         scheduler.Flush();
         await source.FirstEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         try
         {
             await Assert.That(scheduler.RescueStalledRunner(0, 500)).IsFalse();
@@ -546,6 +593,7 @@ public class StalledDeliveryTests
         {
             var active = Interlocked.Increment(ref _active);
             InterlockedMax(ref MaxConcurrent, active);
+
             if (Interlocked.Increment(ref Completions) == 1)
             {
                 FirstEntered.TrySetResult();
@@ -556,15 +604,22 @@ public class StalledDeliveryTests
             return true;
         }
 
-        protected override void SetResultCore(in RespValue result) { }
+        protected override void SetResultCore(in RespValue result)
+        {
+        }
 
-        protected override void SetExceptionCore(Exception exception) { }
+        protected override void SetExceptionCore(Exception exception)
+        {
+        }
 
-        protected override void ResetAndReturn() { }
+        protected override void ResetAndReturn()
+        {
+        }
 
         private static void InterlockedMax(ref int target, int value)
         {
             int current;
+
             while ((current = Volatile.Read(ref target)) < value
                 && Interlocked.CompareExchange(ref target, value, current) != current)
             {

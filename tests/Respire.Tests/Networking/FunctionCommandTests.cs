@@ -24,7 +24,8 @@ public class FunctionCommandTests
         byte[] binary = [0, 255, 128];
         RespireValue[] args = ["ignored", binary];
         var pending = client.Functions.ExecuteSpanAsync(RespireFunction.Create("function", readOnly), keys.AsSpan(1), args.AsSpan(1));
-        keys[1] = "changed"; args[1] = "changed";
+        keys[1] = "changed";
+        args[1] = "changed";
         using var result = await pending;
         await Assert.That(result.AsInteger()).IsEqualTo(42);
         var actual = server.ReceivedArguments.Single();
@@ -43,11 +44,17 @@ public class FunctionCommandTests
         byte[] binary = [0, 255, 128];
         byte[] bulk = [.. "$3\r\n"u8, .. binary, .. "\r\n"u8];
         byte[][] replies = [[.. "*2\r\n"u8, .. bulk, .. "*1\r\n"u8, .. bulk], bulk, FakeRespServer.OkReply];
-        if (transaction) replies = [FakeRespServer.OkReply, .. Enumerable.Repeat("+QUEUED\r\n"u8.ToArray(), 3), [.. "*3\r\n"u8, .. replies.SelectMany(x => x)]];
+
+        if (transaction)
+        {
+            replies = [FakeRespServer.OkReply, .. Enumerable.Repeat("+QUEUED\r\n"u8.ToArray(), 3), [.. "*3\r\n"u8, .. replies.SelectMany(x => x)]];
+        }
+
         await using var server = new FakeRespServer(replies);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         RespireResult owned;
         byte[] dump;
+
         using (var batch = client.WithKeyPrefix("tenant:").CreateBatch())
         {
             await using var tx = client.WithKeyPrefix("tenant:").CreateTransaction();
@@ -55,16 +62,29 @@ public class FunctionCommandTests
             var call = functions.Execute(RespireFunction.Create("function", true), ["key"], [binary]);
             var backup = functions.Dump();
             var restore = functions.Restore(binary, RespireFunctionRestorePolicy.Replace);
-            if (transaction) await tx.CommitAsync(); else await batch.ExecuteAsync();
-            owned = call.Result; dump = backup.Result;
+
+            if (transaction)
+            {
+                await tx.CommitAsync();
+            }
+            else
+            {
+                await batch.ExecuteAsync();
+            }
+
+            owned = call.Result;
+            dump = backup.Result;
             await Assert.That(restore.Result).IsTrue();
         }
+
         await client.DisposeAsync();
+
         using (owned)
         {
             await Assert.That(owned[0].AsBytes()).IsEquivalentTo(binary, CollectionOrdering.Matching);
             await Assert.That(owned[1][0].AsBytes()).IsEquivalentTo(binary, CollectionOrdering.Matching);
         }
+
         await Assert.That(dump).IsEquivalentTo(binary, CollectionOrdering.Matching);
         var restoreWire = server.ReceivedArguments.Single(a => Encoding.UTF8.GetString(a[0]) == "FUNCTION" && Encoding.UTF8.GetString(a[1]) == "RESTORE");
         await Assert.That(restoreWire[2]).IsEquivalentTo(binary, CollectionOrdering.Matching);
@@ -78,7 +98,10 @@ public class FunctionCommandTests
         await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true, Endpoints = { new RespireEndpoint("localhost") } });
 #pragma warning restore RESP010
         var function = RespireFunction.Create("function");
-        await Assert.That(async () => { using var result = await client.Functions.ExecuteAsync(function, ["{a}", "{b}"]); }).Throws<RespireCrossSlotException>();
+        await Assert.That(async () =>
+        {
+            using var result = await client.Functions.ExecuteAsync(function, ["{a}", "{b}"]);
+        }).Throws<RespireCrossSlotException>();
         using var batch = client.CreateBatch();
         await Assert.That(() => batch.Functions.Execute(function, ["{a}", "{b}"])).Throws<RespireCrossSlotException>();
         await using var tx = client.CreateTransaction();
@@ -122,12 +145,20 @@ public class FunctionCommandTests
     public async Task CancellationDoesNotReload(bool readOnly)
     {
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var server = new FakeRespServer { SuppressReply = _ => { arrived.TrySetResult(); return true; } };
+        await using var server = new FakeRespServer
+        {
+            SuppressReply = _ =>
+            {
+                arrived.TrySetResult();
+                return true;
+            }
+        };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
         var function = RespireFunctionLibrary.Create("#!lua name=sample\nreturn 1").Function("function", readOnly);
         var pending = client.Functions.ExecuteIntegerAsync(function, cancellationToken: cancellation.Token).AsTask();
-        await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5)); cancellation.Cancel();
+        await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
         await Assert.That(async () => await pending).Throws<OperationCanceledException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
     }
@@ -157,8 +188,15 @@ public class FunctionCommandTests
     {
         await using var server = new FakeRespServer("*1\r\n$3\r\nodd\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        if (stats) await Assert.That(async () => await client.Functions.StatsAsync()).Throws<RespireProtocolException>();
-        else await Assert.That(async () => await client.Functions.ListAsync()).Throws<RespireProtocolException>();
+
+        if (stats)
+        {
+            await Assert.That(async () => await client.Functions.StatsAsync()).Throws<RespireProtocolException>();
+        }
+        else
+        {
+            await Assert.That(async () => await client.Functions.ListAsync()).Throws<RespireProtocolException>();
+        }
     }
 
     [Test]
@@ -166,18 +204,24 @@ public class FunctionCommandTests
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
         RespireKey key = "key";
-        var token = cache.BeginRead(in key); var value = RespValue.BulkString("value"u8.ToArray());
+        var token = cache.BeginRead(in key);
+        var value = RespValue.BulkString("value"u8.ToArray());
         cache.CompleteRead(in token, in value, allowInsert: true);
+
         foreach (var operation in new[] { "FCALL_RO", "FUNCTION LOAD", "FUNCTION LIST", "FUNCTION DELETE", "FUNCTION FLUSH", "FUNCTION DUMP", "FUNCTION RESTORE", "FUNCTION STATS" })
         {
             var command = new Cmd1(new Verb(operation), "argument");
-            var fence = cache.BeforeCommand(operation, in command); cache.CompleteMutation(in fence);
+            var fence = cache.BeforeCommand(operation, in command);
+            cache.CompleteMutation(in fence);
         }
+
         await Assert.That(cache.Count).IsEqualTo(1);
         var write = new Cmd1(new Verb("FCALL"), "function");
-        var mutation = cache.BeforeCommand("FCALL", in write); cache.CompleteMutation(in mutation);
+        var mutation = cache.BeforeCommand("FCALL", in write);
+        cache.CompleteMutation(in mutation);
         await Assert.That(cache.Count).IsEqualTo(0);
     }
+
     [Test]
     public async Task CancellationWhileWaitingForReloadGateDoesNotLoad()
     {
@@ -186,12 +230,18 @@ public class FunctionCommandTests
         var library = RespireFunctionLibrary.Create("#!lua name=sample\nreturn 1");
         var gate = library.ReloadState(client.Core).Gate;
         await gate.WaitAsync();
+
         try
         {
             using var cancellation = new CancellationTokenSource();
             var pending = client.Functions.ExecuteIntegerAsync(library.Function("function"), cancellationToken: cancellation.Token).AsTask();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+
+            while (server.CommandsSeen == 0)
+            {
+                await Task.Delay(10, timeout.Token);
+            }
+
             cancellation.Cancel();
             await Assert.That(async () => await pending).Throws<OperationCanceledException>();
             await Assert.That(server.CommandsSeen).IsEqualTo(1);
@@ -217,11 +267,16 @@ public class FunctionCommandTests
 
         RespValue Map(RespValue[] values)
         {
-            if (!resp3) return RespValue.Array(values);
+            if (!resp3)
+            {
+                return RespValue.Array(values);
+            }
+
             var rented = RespirePools.ValueArrays.Rent(values.Length);
             values.CopyTo(rented, 0);
             return RespValue.PooledAggregate(RespireDataType.Map, rented, values.Length);
         }
+
         static RespValue Text(string value) => RespValue.BulkString(Encoding.UTF8.GetBytes(value));
     }
 
@@ -246,9 +301,18 @@ public class FunctionCommandTests
             },
             SuppressReply = command =>
             {
-                if (!command.StartsWith("FCALL ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("FCALL ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 var number = Interlocked.Increment(ref calls);
-                if (number == 2) arrived.TrySetResult();
+
+                if (number == 2)
+                {
+                    arrived.TrySetResult();
+                }
+
                 return number <= 2;
             }
         };
@@ -300,13 +364,17 @@ public class FunctionCommandTests
             "-ERR Library 'sample' already exists\r\n"u8.ToArray(), metadata, ":42\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var function = RespireFunctionLibrary.Create(source).Function("function");
+
         if (outcome == 0)
+        {
             await Assert.That(await client.Functions.ExecuteIntegerAsync(function)).IsEqualTo(42);
+        }
         else
         {
             var error = await Assert.That(async () => await client.Functions.ExecuteIntegerAsync(function)).ThrowsExactly<RespireServerException>();
             await Assert.That(error!.Message).IsEqualTo("ERR Library 'sample' already exists");
         }
+
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("FUNCTION LOAD ", StringComparison.Ordinal))).IsEqualTo(1);
         await Assert.That(server.ReceivedCommands.Count(command => command == "FUNCTION LIST LIBRARYNAME sample WITHCODE")).IsEqualTo(2);
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("FCALL ", StringComparison.Ordinal))).IsEqualTo(outcome == 0 ? 2 : 1);

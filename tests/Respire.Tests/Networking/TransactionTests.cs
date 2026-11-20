@@ -218,12 +218,14 @@ public class TransactionTests
         await using var client = await ConnectAsync(server.Port);
 
         var transaction = client.CreateTransaction();
+
         for (var i = 0; i < 50; i++)
         {
             _ = transaction.Set($"tx{i}", "v");
         }
 
         var concurrent = new List<Task>();
+
         for (var i = 0; i < 50; i++)
         {
             concurrent.Add(client.SetAsync($"plain{i}", "v").AsTask());
@@ -236,6 +238,7 @@ public class TransactionTests
         var commands = server.ReceivedCommands;
         var multiIndex = -1;
         var execIndex = -1;
+
         for (var i = 0; i < commands.Count; i++)
         {
             if (commands[i] == "MULTI")
@@ -250,6 +253,7 @@ public class TransactionTests
 
         await Assert.That(multiIndex).IsGreaterThanOrEqualTo(0);
         await Assert.That(execIndex).IsEqualTo(multiIndex + 51);
+
         for (var i = multiIndex + 1; i < execIndex; i++)
         {
             await Assert.That(commands[i].StartsWith("SET tx")).IsTrue();

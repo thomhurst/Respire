@@ -16,9 +16,20 @@ namespace Respire.Internal;
 /// </remarks>
 internal readonly struct SentinelEndpointIdentity : IEquatable<SentinelEndpointIdentity>
 {
-    internal string Host { get; }
-    internal int Port { get; }
-    internal bool IsNumeric { get; }
+    internal string Host
+    {
+        get;
+    }
+
+    internal int Port
+    {
+        get;
+    }
+
+    internal bool IsNumeric
+    {
+        get;
+    }
 
     internal SentinelEndpointIdentity(RespireEndpoint endpoint)
     {
@@ -31,6 +42,7 @@ internal readonly struct SentinelEndpointIdentity : IEquatable<SentinelEndpointI
         => Port == other.Port && StringComparer.OrdinalIgnoreCase.Equals(Host, other.Host);
 
     public override bool Equals(object? obj) => obj is SentinelEndpointIdentity other && Equals(other);
+
     // A default identity has no Host; keep default(struct) equality and hashing valid.
     public override int GetHashCode()
         => HashCode.Combine(Host is null ? 0 : StringComparer.OrdinalIgnoreCase.GetHashCode(Host), Port);
@@ -55,17 +67,21 @@ internal readonly struct SentinelEndpointIdentity : IEquatable<SentinelEndpointI
     internal sealed class EndpointComparer : IEqualityComparer<RespireEndpoint>
     {
         internal static readonly EndpointComparer Instance = new();
+
         public bool Equals(RespireEndpoint x, RespireEndpoint y)
             => new SentinelEndpointIdentity(x).Equals(new(y));
+
         public int GetHashCode(RespireEndpoint endpoint) => new SentinelEndpointIdentity(endpoint).GetHashCode();
     }
 
     internal sealed class AddressComparer : IEqualityComparer<string>
     {
         internal static readonly AddressComparer Instance = new();
+
         public bool Equals(string? x, string? y)
             => StringComparer.OrdinalIgnoreCase.Equals(x, y) || x is not null && y is not null
                 && StringComparer.OrdinalIgnoreCase.Equals(NormalizeHost(x), NormalizeHost(y));
+
         public int GetHashCode(string address) => StringComparer.OrdinalIgnoreCase.GetHashCode(NormalizeHost(address));
     }
 }
@@ -85,9 +101,17 @@ internal readonly struct SentinelEndpointIdentity : IEquatable<SentinelEndpointI
 /// </remarks>
 internal readonly record struct SentinelAddressEvidence
 {
-    internal RespireEndpoint Endpoint { get; }
-    internal ImmutableArray<string> Addresses { get; }
+    internal RespireEndpoint Endpoint
+    {
+        get;
+    }
+
+    internal ImmutableArray<string> Addresses
+    {
+        get;
+    }
     private readonly SentinelEndpointIdentity _identity;
+
     internal bool IsDefault => _identity.Host is null;
 
     internal SentinelAddressEvidence(RespireEndpoint endpoint, string[]? addresses)
@@ -105,32 +129,65 @@ internal readonly record struct SentinelAddressEvidence
 
     private static ImmutableArray<string> NormalizeAddresses(ImmutableArray<string> addresses)
     {
-        if (addresses.IsDefaultOrEmpty) return addresses;
+        if (addresses.IsDefaultOrEmpty)
+        {
+            return addresses;
+        }
+
         ImmutableArray<string>.Builder? normalized = null;
+
         for (var index = 0; index < addresses.Length; index++)
         {
             var address = SentinelEndpointIdentity.NormalizeHost(addresses[index]);
-            if (StringComparer.Ordinal.Equals(address, addresses[index])) continue;
+
+            if (StringComparer.Ordinal.Equals(address, addresses[index]))
+            {
+                continue;
+            }
+
             normalized ??= addresses.ToBuilder();
             normalized[index] = address;
         }
+
         return normalized?.ToImmutable() ?? addresses;
     }
 
     internal bool HasSameAddresses(string[] addresses)
     {
-        if (Addresses.IsDefault || Addresses.Length != addresses.Length) return false;
+        if (Addresses.IsDefault || Addresses.Length != addresses.Length)
+        {
+            return false;
+        }
+
         for (var index = 0; index < Addresses.Length; index++)
-            if (!SentinelEndpointIdentity.AddressComparer.Instance.Equals(Addresses[index], addresses[index])) return false;
+        {
+            if (!SentinelEndpointIdentity.AddressComparer.Instance.Equals(Addresses[index], addresses[index]))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 
     internal bool HasSameSnapshot(SentinelAddressEvidence other)
     {
-        if (IsDefault || other.IsDefault) return IsDefault && other.IsDefault;
+        if (IsDefault || other.IsDefault)
+        {
+            return IsDefault && other.IsDefault;
+        }
+
         if (!_identity.Equals(other._identity)
-            || Addresses.IsDefault != other.Addresses.IsDefault) return false;
-        if (Addresses.IsDefault) return true;
+            || Addresses.IsDefault != other.Addresses.IsDefault)
+        {
+            return false;
+        }
+
+        if (Addresses.IsDefault)
+        {
+            return true;
+        }
+
         return ContainsAll(Addresses, other.Addresses) && ContainsAll(other.Addresses, Addresses);
 
         static bool ContainsAll(ImmutableArray<string> known, ImmutableArray<string> candidates)
@@ -138,10 +195,22 @@ internal readonly record struct SentinelAddressEvidence
             foreach (var candidate in candidates)
             {
                 var found = false;
+
                 foreach (var address in known)
-                    if (StringComparer.OrdinalIgnoreCase.Equals(address, candidate)) { found = true; break; }
-                if (!found) return false;
+                {
+                    if (StringComparer.OrdinalIgnoreCase.Equals(address, candidate))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    return false;
+                }
             }
+
             return true;
         }
     }
@@ -150,11 +219,26 @@ internal readonly record struct SentinelAddressEvidence
     {
         get
         {
-            if (_identity.IsNumeric) return _identity.Host;
-            if (Addresses.IsDefaultOrEmpty) return null;
+            if (_identity.IsNumeric)
+            {
+                return _identity.Host;
+            }
+
+            if (Addresses.IsDefaultOrEmpty)
+            {
+                return null;
+            }
+
             var address = Addresses[0];
+
             for (var index = 1; index < Addresses.Length; index++)
-                if (!StringComparer.OrdinalIgnoreCase.Equals(address, Addresses[index])) return null;
+            {
+                if (!StringComparer.OrdinalIgnoreCase.Equals(address, Addresses[index]))
+                {
+                    return null;
+                }
+            }
+
             return address;
         }
     }
@@ -171,11 +255,27 @@ internal readonly record struct SentinelAddressEvidence
     // used to confirm ownership or consume a fence: those require ConfirmsPeer.
     internal bool CouldMatch(SentinelAddressEvidence candidate)
     {
-        if (IsDefault || candidate.IsDefault || Endpoint.Port != candidate.Endpoint.Port) return false;
-        if (Contains(candidate._identity.Host)) return true;
+        if (IsDefault || candidate.IsDefault || Endpoint.Port != candidate.Endpoint.Port)
+        {
+            return false;
+        }
+
+        if (Contains(candidate._identity.Host))
+        {
+            return true;
+        }
+
         if (!candidate.Addresses.IsDefaultOrEmpty)
+        {
             foreach (var address in candidate.Addresses)
-                if (Contains(address)) return true;
+            {
+                if (Contains(address))
+                {
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 
@@ -184,10 +284,23 @@ internal readonly record struct SentinelAddressEvidence
         // Both observations were normalized at construction. Repeated source/candidate
         // comparisons never parse IPs or allocate inside the Cartesian comparison loop.
         var comparer = StringComparer.OrdinalIgnoreCase;
-        if (comparer.Equals(_identity.Host, host)) return true;
+
+        if (comparer.Equals(_identity.Host, host))
+        {
+            return true;
+        }
+
         if (!Addresses.IsDefaultOrEmpty)
+        {
             foreach (var address in Addresses)
-                if (comparer.Equals(address, host)) return true;
+            {
+                if (comparer.Equals(address, host))
+                {
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 }
@@ -215,7 +328,10 @@ internal readonly record struct SentinelValidatedPrimary(RespireEndpoint Endpoin
         // Fresh DNS takes precedence over the hostname: its owner may have changed
         // since ROLE accepted the physical peer. Ambiguous sets cannot confirm it.
         if (Peer is { } peer && (addresses is { Length: > 0 } || IPAddress.TryParse(candidate.Host, out _)))
+        {
             return new SentinelAddressEvidence(candidate, addresses).ConfirmsPeer(peer);
+        }
+
         return SentinelEndpointIdentity.EndpointComparer.Instance.Equals(Endpoint, candidate);
     }
 }

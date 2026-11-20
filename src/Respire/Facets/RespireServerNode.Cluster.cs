@@ -1,4 +1,5 @@
 using Respire.Internal;
+
 namespace Respire;
 
 public sealed partial class RespireServerNode
@@ -8,6 +9,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<RespireClusterSlotMapping[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ExecuteAsync("CLUSTER SLOTS", [], ClusterAdministrationParser.Slots, cancellationToken, observation: observation));
@@ -20,6 +22,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("CLUSTER ADDSLOTS", SlotArguments(slots), cancellationToken, observation: observation))));
@@ -32,6 +35,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("CLUSTER ADDSLOTSRANGE", RangeArguments(ranges), cancellationToken, observation: observation))));
@@ -44,6 +48,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("CLUSTER DELSLOTS", SlotArguments(slots), cancellationToken, observation: observation))));
@@ -56,6 +61,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("CLUSTER DELSLOTSRANGE", RangeArguments(ranges), cancellationToken, observation: observation))));
@@ -68,6 +74,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<RespireClusterEpochResult>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ExecuteAsync("CLUSTER BUMPEPOCH", [], ClusterAdministrationParser.Epoch, cancellationToken, NodeCallKind.Mutation, observation: observation));
@@ -80,6 +87,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<long>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ExecuteAsync("CLUSTER COUNT-FAILURE-REPORTS", [ClusterNodeId(nodeId)], AclParser.NonnegativeInteger, cancellationToken, observation: observation));
@@ -93,6 +101,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("CLUSTER FAILOVER", mode switch
@@ -111,6 +120,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("CLUSTER FORGET", [ClusterNodeId(nodeId)], cancellationToken, observation: observation))));
@@ -123,6 +133,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<byte[][]>.Start();
         var observation = owner.Observation;
+
         try
         {
             ValidateClusterSlot(slot);
@@ -137,10 +148,16 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             ValidateEndpoint(endpoint, allowUnixSocket: false);
-            if (busPort is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(busPort));
+
+            if (busPort is < 1 or > 65535)
+            {
+                throw new ArgumentOutOfRangeException(nameof(busPort));
+            }
+
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("CLUSTER MEET", busPort.HasValue
                 ? [endpoint.Host, endpoint.Port, busPort.Value] : [endpoint.Host, endpoint.Port], cancellationToken, observation: observation))));
         }
@@ -152,6 +169,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<RespireClusterNode[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ExecuteAsync("CLUSTER REPLICAS", [ClusterNodeId(nodeId)], ClusterAdministrationParser.Replicas, cancellationToken, observation: observation));
@@ -164,6 +182,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("CLUSTER REPLICATE", [ClusterNodeId(nodeId)], cancellationToken, observation: observation))));
@@ -177,6 +196,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("CLUSTER RESET", mode switch
@@ -194,6 +214,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("CLUSTER SAVECONFIG", [], cancellationToken, observation: observation))));
@@ -206,6 +227,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             ArgumentOutOfRangeException.ThrowIfNegative(epoch);
@@ -220,6 +242,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             ValidateClusterSlot(slot);
@@ -231,9 +254,17 @@ public sealed partial class RespireServerNode
                 RespireClusterSlotState.Stable => "STABLE",
                 _ => throw InvalidClusterOption(nameof(state)),
             };
+
             if (state != RespireClusterSlotState.Stable)
+            {
                 return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("CLUSTER SETSLOT", [slot, token, ClusterNodeId(nodeId)], cancellationToken, observation: observation))));
-            if (nodeId is not null) throw new ArgumentException("Stable does not accept a node ID.", nameof(nodeId));
+            }
+
+            if (nodeId is not null)
+            {
+                throw new ArgumentException("Stable does not accept a node ID.", nameof(nodeId));
+            }
+
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("CLUSTER SETSLOT", [slot, token], cancellationToken, observation: observation))));
         }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -244,6 +275,7 @@ public sealed partial class RespireServerNode
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
+
         try
         {
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("CLUSTER FLUSHSLOTS", [], cancellationToken, observation: observation))));
@@ -254,9 +286,15 @@ public sealed partial class RespireServerNode
     private static string ClusterNodeId(string? nodeId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(nodeId);
+
         foreach (var character in nodeId)
+        {
             if (char.IsWhiteSpace(character))
+            {
                 throw new ArgumentException("Node ID must not contain whitespace.", nameof(nodeId));
+            }
+        }
+
         return nodeId;
     }
 
@@ -265,34 +303,54 @@ public sealed partial class RespireServerNode
 
     private static void ValidateClusterSlot(int slot)
     {
-        if (slot is < 0 or >= 16384) throw new ArgumentOutOfRangeException(nameof(slot), "Slot must be between 0 and 16383.");
+        if (slot is < 0 or >= 16384)
+        {
+            throw new ArgumentOutOfRangeException(nameof(slot), "Slot must be between 0 and 16383.");
+        }
     }
 
     private static RespireValue[] SlotArguments(ReadOnlySpan<int> slots)
     {
-        if (slots.IsEmpty) throw new ArgumentException("At least one slot is required.", nameof(slots));
+        if (slots.IsEmpty)
+        {
+            throw new ArgumentException("At least one slot is required.", nameof(slots));
+        }
+
         var arguments = new RespireValue[slots.Length];
+
         for (var index = 0; index < slots.Length; index++)
         {
             ValidateClusterSlot(slots[index]);
             arguments[index] = slots[index];
         }
+
         return arguments;
     }
 
     private static RespireValue[] RangeArguments(ReadOnlySpan<RespireClusterSlotRange> ranges)
     {
-        if (ranges.IsEmpty) throw new ArgumentException("At least one range is required.", nameof(ranges));
+        if (ranges.IsEmpty)
+        {
+            throw new ArgumentException("At least one range is required.", nameof(ranges));
+        }
+
         var arguments = new RespireValue[checked(ranges.Length * 2)];
+
         for (var index = 0; index < ranges.Length; index++)
         {
             var range = ranges[index];
             ValidateClusterSlot(range.Start);
             ValidateClusterSlot(range.End);
-            if (range.Start > range.End) throw new ArgumentException("Slot range must not be reversed.", nameof(ranges));
+
+            if (range.Start > range.End)
+            {
+                throw new ArgumentException("Slot range must not be reversed.", nameof(ranges));
+            }
+
             arguments[index * 2] = range.Start;
             arguments[index * 2 + 1] = range.End;
         }
+
         return arguments;
     }
 }

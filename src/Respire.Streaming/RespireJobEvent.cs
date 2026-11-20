@@ -20,21 +20,56 @@ public sealed class RespireJobEvent
     }
 
     /// <summary>The event stream ID to persist after processing this event.</summary>
-    public RespireStreamId Id { get; }
+    public RespireStreamId Id
+    {
+        get;
+    }
+
     /// <summary>The application job ID, or empty for queue-control events; use EntryId to distinguish reuse.</summary>
-    public string JobId { get; }
+    public string JobId
+    {
+        get;
+    }
+
     /// <summary>The ready-stream entry ID, or 0-0 for queue controls or a flow parent failed without execution.</summary>
-    public RespireStreamId EntryId { get; }
+    public RespireStreamId EntryId
+    {
+        get;
+    }
+
     /// <summary>The fenced delivery count, or zero for queue controls or a flow parent failed without execution.</summary>
-    public long Attempt { get; }
+    public long Attempt
+    {
+        get;
+    }
+
     /// <summary>One of progress, completed, dead-letter, cancelled, paused, or resumed.</summary>
-    public string Kind { get; }
+    public string Kind
+    {
+        get;
+    }
+
     /// <summary>Progress from 0 through 100, or null for terminal events.</summary>
-    public int? Percent { get; }
+    public int? Percent
+    {
+        get;
+    }
+
     /// <summary>Dead-letter reason, or null for progress and successful completion.</summary>
-    public string? Reason { get; }
+    public string? Reason
+    {
+        get;
+    }
+
     /// <summary>The logical retained flow-state key, or null for an ordinary job or progress event.</summary>
-    public string? FlowKey { get; }
+    public string? FlowKey
+    {
+        get;
+    }
+
     /// <summary>The logical retained batch-state key for a member's terminal event, or null otherwise.</summary>
-    public string? BatchKey { get; }
+    public string? BatchKey
+    {
+        get;
+    }
 }
