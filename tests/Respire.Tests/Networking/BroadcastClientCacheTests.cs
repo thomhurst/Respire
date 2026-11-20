@@ -22,7 +22,8 @@ public class BroadcastClientCacheTests
         await using var server = new FakeRespServer(Hello, FakeRespServer.OkReply, Old);
 #pragma warning disable RESP010 // Each broadcast scenario owns and disposes its client to isolate tracking prefixes and cache state.
         await using var client = await RespireClient.ConnectAsync(Options(server,
-            prefix ? ["hot:"] : []) with { MaxInflightCommands = 1 });
+            prefix ? ["hot:"] : []) with
+        { MaxInflightCommands = 1 });
 #pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("hot:key")).IsEqualTo("old");
         await Assert.That(await client.GetStringAsync("hot:key")).IsEqualTo("old");
@@ -99,7 +100,11 @@ public class BroadcastClientCacheTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (command != "GET hot:key") return false;
+            if (command != "GET hot:key")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -151,7 +156,8 @@ public class BroadcastClientCacheTests
         };
         await Assert.That(() => RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("localhost", 1)], ClientSideCache = cache,
+            Endpoints = [new("localhost", 1)],
+            ClientSideCache = cache,
         })).ThrowsExactly<RespireConfigurationException>();
     }
 
@@ -160,8 +166,10 @@ public class BroadcastClientCacheTests
     {
         await Assert.That(() => RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("localhost", 1)], UseCluster = true,
-            MaxInflightCommands = 1, ClientSideCache = Broadcast([]),
+            Endpoints = [new("localhost", 1)],
+            UseCluster = true,
+            MaxInflightCommands = 1,
+            ClientSideCache = Broadcast([]),
         })).ThrowsExactly<RespireConfigurationException>();
     }
 
@@ -169,6 +177,7 @@ public class BroadcastClientCacheTests
     public async Task PrefixMatchingHandlesUnicodeAndLongKeysWithoutChangingBinaryIdentity()
     {
         var cache = new ClientSideCacheCoordinator(Broadcast(["é:", "long:"]));
+
         foreach (RespireKey key in new RespireKey[] { "é:键", "long:" + new string('x', 1000) })
         {
             var token = cache.BeginRead(in key);
@@ -195,6 +204,7 @@ public class BroadcastClientCacheTests
         var prefixes = Enumerable.Range(0, 256).Where(value => value % 3 == 0).Reverse()
             .Select(value => new RespireKey(new byte[] { (byte)value })).ToArray();
         var cache = new ClientSideCacheCoordinator(Broadcast(prefixes).ValidateAndSnapshot());
+
         for (var value = 0; value < 256; value++)
         {
             RespireKey key = new byte[] { (byte)value, 0, 255 };
@@ -203,6 +213,7 @@ public class BroadcastClientCacheTests
             cache.CompleteRead(in token, in response, allowInsert: true);
             await Assert.That(cache.TryGet(in key, out _)).IsEqualTo(value % 3 == 0);
         }
+
         RespireKey empty = RespireKey.Empty;
         var emptyRead = cache.BeginRead(in empty);
         var emptyResponse = RespValue.BulkString("value");

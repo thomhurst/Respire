@@ -17,11 +17,18 @@ internal static class RawCommandKeyLayouts
 {
     internal enum MutationKind : byte
     {
-        Unknown, ReadOnly, LayoutKeys, FirstArgument, SecondArgument, IndirectKeys,
+        Unknown,
+        ReadOnly,
+        LayoutKeys,
+        FirstArgument,
+        SecondArgument,
+        IndirectKeys,
     }
+
     internal readonly record struct KeyRouting(bool Known, int Index)
     {
         internal const int NoKeyIndex = -1;
+
         internal static KeyRouting NoKeys => new(true, NoKeyIndex);
     }
 
@@ -29,15 +36,34 @@ internal static class RawCommandKeyLayouts
 
     internal enum LayoutKind : byte
     {
-        Unknown, None, First, FirstTwo, AfterFirst, All, Triples, Pairs, BitOp, CountedAfterName, Counted, CountedWithDestination,
-        AllExceptLast, CountedPairs, CountedAfterTimeout, StreamRead, StreamGroupRead, Migrate,
+        Unknown,
+        None,
+        First,
+        FirstTwo,
+        AfterFirst,
+        All,
+        Triples,
+        Pairs,
+        BitOp,
+        CountedAfterName,
+        Counted,
+        CountedWithDestination,
+        AllExceptLast,
+        CountedPairs,
+        CountedAfterTimeout,
+        StreamRead,
+        StreamGroupRead,
+        Migrate,
     }
+
     // Prefixable marks layouts that name every key position, so key-prefixed views may rewrite them.
     private readonly record struct Definition(LayoutKind Kind, bool Deferred, MutationKind Mutation, bool Prefixable = false);
 
     private static readonly FrozenDictionary<string, Definition> Layouts = CreateLayouts();
+
     // Test-only enumeration keeps COMMAND GETKEYS coverage aligned with the full deferred allowlist.
     internal static IEnumerable<string> DeferredOperations => Layouts.Where(pair => pair.Value.Deferred).Select(pair => pair.Key);
+
     internal static IEnumerable<(string Operation, MutationKind Mutation)> MutationClassifications
         => Layouts.Select(pair => (pair.Key, pair.Value.Mutation));
 
@@ -54,8 +80,7 @@ internal static class RawCommandKeyLayouts
         var mutation = CommandCacheMutationMetadata.Get(operation) switch
         {
             RespireCacheMutation.ReadOnly => MutationKind.ReadOnly,
-            RespireCacheMutation.Mutation or RespireCacheMutation.SingleKey or RespireCacheMutation.MultiKey
-                when kind is not (LayoutKind.Migrate or LayoutKind.StreamGroupRead) => MutationKind.LayoutKeys,
+            RespireCacheMutation.Mutation or RespireCacheMutation.SingleKey or RespireCacheMutation.MultiKey when kind is not (LayoutKind.Migrate or LayoutKind.StreamGroupRead) => MutationKind.LayoutKeys,
             _ => MutationKind.Unknown,
         };
         return new(kind, deferred, mutation, prefixable);
@@ -156,32 +181,53 @@ internal static class RawCommandKeyLayouts
         // Generated hash I/O uses catalog commands; each command names exactly one key.
         // Preserve their existing deferred support while enabling prefix rewriting.
         foreach (var operation in new[] { "HSET", "HDEL", "HGETALL", "HMGET" })
+        {
             layouts[operation] = layouts[operation] with { Prefixable = true };
+        }
+
         AddPrefixable(LayoutKind.First, "HSETEX", "HPEXPIRE");
         return layouts.ToFrozenDictionary(StringComparer.Ordinal);
 
         void Add(LayoutKind kind, params string[] operations)
         {
-            foreach (var operation in operations) layouts.Add(operation, CreateDefinition(operation, kind, deferred: true));
+            foreach (var operation in operations)
+            {
+                layouts.Add(operation, CreateDefinition(operation, kind, deferred: true));
+            }
         }
+
         void AddImmediate(LayoutKind kind, params string[] operations)
         {
-            foreach (var operation in operations) layouts.Add(operation, CreateDefinition(operation, kind, deferred: false));
+            foreach (var operation in operations)
+            {
+                layouts.Add(operation, CreateDefinition(operation, kind, deferred: false));
+            }
         }
+
         void AddPrefixable(LayoutKind kind, params string[] operations)
         {
-            foreach (var operation in operations) layouts.Add(operation, CreateDefinition(operation, kind, deferred: false, prefixable: true));
+            foreach (var operation in operations)
+            {
+                layouts.Add(operation, CreateDefinition(operation, kind, deferred: false, prefixable: true));
+            }
         }
+
         void AddMutation(LayoutKind kind, MutationKind mutation, string[] operations, bool deferred = true, bool prefixable = false)
         {
-            foreach (var operation in operations) layouts.Add(operation, new(kind, deferred, mutation, prefixable));
+            foreach (var operation in operations)
+            {
+                layouts.Add(operation, new(kind, deferred, mutation, prefixable));
+            }
         }
     }
 
     internal static KeyLayout GetDeferredLayout(string operation, ReadOnlySpan<RespireValue> args)
     {
         if (!Layouts.TryGetValue(operation, out var definition) || !definition.Deferred)
+        {
             throw new NotSupportedException($"{operation} has no supported deferred key layout. Use a typed facet or immediate execution; unknown and module commands are not guessed.");
+        }
+
         return Parse(definition.Kind, args);
     }
 
@@ -203,6 +249,7 @@ internal static class RawCommandKeyLayouts
             layout = Parse(definition.Kind, args);
             return true;
         }
+
         layout = default;
         return false;
     }
@@ -219,10 +266,21 @@ internal static class RawCommandKeyLayouts
         ClientCacheCommandMetadata metadata, in ClientCacheCommandKey args, out KeyLayout layout, bool includeReadKeys = false)
     {
         layout = default;
-        if (metadata.MutationKind is MutationKind.Unknown or MutationKind.IndirectKeys) return false;
-        if (!TryGetArgumentLayout(metadata.ArgumentLayout, in args, out layout)) return false;
+
+        if (metadata.MutationKind is MutationKind.Unknown or MutationKind.IndirectKeys)
+        {
+            return false;
+        }
+
+        if (!TryGetArgumentLayout(metadata.ArgumentLayout, in args, out layout))
+        {
+            return false;
+        }
         // An explicit MultiKey policy intentionally fences every declared key, including sources.
-        if (includeReadKeys) return true;
+        if (includeReadKeys)
+        {
+            return true;
+        }
         // Validate the full argument shape before projecting only the written destination.
         layout = metadata.MutationKind switch
         {
@@ -236,6 +294,7 @@ internal static class RawCommandKeyLayouts
     private static bool TryGetArgumentLayout(LayoutKind kind, in ClientCacheCommandKey args, out KeyLayout layout)
     {
         var length = args.ArgumentCount;
+
         switch (kind)
         {
             case LayoutKind.None:
@@ -270,7 +329,10 @@ internal static class RawCommandKeyLayouts
             case LayoutKind.CountedAfterName:
                 return TryCountedArguments(args, length, 1, allowZero: true, stride: 1, out layout);
             case LayoutKind.CountedWithDestination:
-                if (!TryCountedArguments(args, length, 1, allowZero: false, stride: 1, out layout)) return false;
+                if (!TryCountedArguments(args, length, 1, allowZero: false, stride: 1, out layout))
+                {
+                    return false;
+                }
                 layout = layout with { Extra = 0 };
                 return true;
             case LayoutKind.CountedPairs:
@@ -302,21 +364,31 @@ internal static class RawCommandKeyLayouts
             layout = Parse(definition.Kind, args);
             return true;
         }
+
         layout = default;
         return false;
     }
 
     internal static KeyRouting ValidateClusterKeys(string operation, ReadOnlySpan<RespireValue> args, bool includeKeyContext = false)
     {
-        if (!TryGetLayout(operation, args, out var layout)) return default;
+        if (!TryGetLayout(operation, args, out var layout))
+        {
+            return default;
+        }
+
         int? slot = null;
+
         for (var index = 0; index < layout.Count; index++)
+        {
             ValidateKey(args[layout.Start + index * layout.Stride], operation, ref slot, includeKeyContext);
+        }
+
         if (layout.Extra >= 0)
         {
             ValidateKey(args[layout.Extra], operation, ref slot, includeKeyContext);
             return new(true, layout.Extra);
         }
+
         return layout.Count > 0 ? new(true, layout.Start) : KeyRouting.NoKeys;
     }
 
@@ -324,8 +396,12 @@ internal static class RawCommandKeyLayouts
     {
         RespireValue.ThrowIfNull(key, "args");
         key.TryGetClusterSlot(out var current);
+
         if (slot.HasValue && slot.Value != current)
+        {
             throw RespireCrossSlotException.Create(includeKeyContext, operation, slot.Value, current, key);
+        }
+
         slot = current;
     }
 
@@ -383,7 +459,11 @@ internal static class RawCommandKeyLayouts
 
     private static KeyLayout StreamKeys(ReadOnlySpan<RespireValue> args, bool group)
     {
-        if (group) Require(args.Length >= 3 && args[0].EqualsAsciiIgnoreCase("GROUP"));
+        if (group)
+        {
+            Require(args.Length >= 3 && args[0].EqualsAsciiIgnoreCase("GROUP"));
+        }
+
         for (var index = group ? 3 : 0; index < args.Length;)
         {
             if (args[index].EqualsAsciiIgnoreCase("STREAMS"))
@@ -392,17 +472,33 @@ internal static class RawCommandKeyLayouts
                 Require(remaining >= 2 && remaining % 2 == 0);
                 return new(index + 1, remaining / 2);
             }
-            if (args[index].EqualsAsciiIgnoreCase("COUNT") || args[index].EqualsAsciiIgnoreCase("BLOCK")) index += 2;
-            else if (group && args[index].EqualsAsciiIgnoreCase("NOACK")) index++;
-            else throw new ArgumentException("Invalid stream-read options before STREAMS.", "args");
+
+            if (args[index].EqualsAsciiIgnoreCase("COUNT") || args[index].EqualsAsciiIgnoreCase("BLOCK"))
+            {
+                index += 2;
+            }
+            else if (group && args[index].EqualsAsciiIgnoreCase("NOACK"))
+            {
+                index++;
+            }
+            else
+            {
+                throw new ArgumentException("Invalid stream-read options before STREAMS.", "args");
+            }
         }
+
         throw new ArgumentException("Stream reads require STREAMS followed by keys and IDs.", "args");
     }
 
     private static KeyLayout MigrateKeys(ReadOnlySpan<RespireValue> args)
     {
         Require(args.Length >= 5);
-        if (!args[2].IsEmpty) return new(2, 1);
+
+        if (!args[2].IsEmpty)
+        {
+            return new(2, 1);
+        }
+
         for (var index = 5; index < args.Length;)
         {
             if (args[index].EqualsAsciiIgnoreCase("KEYS"))
@@ -410,11 +506,25 @@ internal static class RawCommandKeyLayouts
                 Require(index + 1 < args.Length);
                 return new(index + 1, args.Length - index - 1);
             }
-            if (args[index].EqualsAsciiIgnoreCase("COPY") || args[index].EqualsAsciiIgnoreCase("REPLACE")) index++;
-            else if (args[index].EqualsAsciiIgnoreCase("AUTH")) index += 2;
-            else if (args[index].EqualsAsciiIgnoreCase("AUTH2")) index += 3;
-            else throw new ArgumentException("Invalid MIGRATE options before KEYS.", "args");
+
+            if (args[index].EqualsAsciiIgnoreCase("COPY") || args[index].EqualsAsciiIgnoreCase("REPLACE"))
+            {
+                index++;
+            }
+            else if (args[index].EqualsAsciiIgnoreCase("AUTH"))
+            {
+                index += 2;
+            }
+            else if (args[index].EqualsAsciiIgnoreCase("AUTH2"))
+            {
+                index += 3;
+            }
+            else
+            {
+                throw new ArgumentException("Invalid MIGRATE options before KEYS.", "args");
+            }
         }
+
         return new(0, 0);
     }
 
@@ -436,11 +546,13 @@ internal static class RawCommandKeyLayouts
             LayoutKind.Triples => 3,
             _ => throw new InvalidOperationException("Not a fixed-shape key layout."),
         };
+
         if (length < stride || length % stride != 0)
         {
             layout = default;
             return false;
         }
+
         layout = new(0, length / stride, stride);
         return true;
     }
@@ -454,12 +566,16 @@ internal static class RawCommandKeyLayouts
             layout = default;
             return false;
         }
+
         layout = new(index + 1, (int)value, stride);
         return true;
     }
 
     private static void Require(bool condition)
     {
-        if (!condition) throw new ArgumentException("Arguments do not match the command's required key layout.", "args");
+        if (!condition)
+        {
+            throw new ArgumentException("Arguments do not match the command's required key layout.", "args");
+        }
     }
 }

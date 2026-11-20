@@ -22,8 +22,14 @@ public readonly record struct RespireLcsIndexResult(
 public sealed record RespireLcsOptions
 {
     /// <summary>Only return contiguous matches at least this many bytes long. Must be nonnegative; null omits MINMATCHLEN.</summary>
-    public long? MinimumMatchLength { get; init; }
+    public long? MinimumMatchLength
+    {
+        get; init;
+    }
 
     /// <summary>Include the server-reported length of each match using WITHMATCHLEN.</summary>
-    public bool IncludeMatchLength { get; init; }
+    public bool IncludeMatchLength
+    {
+        get; init;
+    }
 }

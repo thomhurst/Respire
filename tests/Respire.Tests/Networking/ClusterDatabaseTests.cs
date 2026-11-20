@@ -12,6 +12,7 @@ namespace Respire.Tests.Networking;
 public class ClusterDatabaseTests
 {
     private static readonly byte[] Hello = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
+
     internal static byte[] Info(string version = "9.0.0", string server = "valkey", string mode = "cluster", bool verbatim = false)
     {
         var body = $"# Server\r\nredis_version:7.2.4\r\nserver_name:{server}\r\nvalkey_version:{version}\r\nserver_mode:{mode}\r\n";
@@ -31,7 +32,10 @@ public class ClusterDatabaseTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new RespireConnectionOptions
             {
-                Database = 2, RequireClusterDatabaseSupport = true, Protocol = resp3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2, EnableClientTracking = resp3,
+                Database = 2,
+                RequireClusterDatabaseSupport = true,
+                Protocol = resp3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
+                EnableClientTracking = resp3,
             });
         using var pong = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
         await Assert.That(pong.AsString()).IsEqualTo("PONG");
@@ -135,6 +139,7 @@ public class ClusterDatabaseTests
 #pragma warning restore RESP010
         var pool = client.Core.DedicatedPool;
         var connection = await pool.RentAsync(CancellationToken.None);
+
         try
         {
             using var pong = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
@@ -166,7 +171,14 @@ public class ClusterDatabaseTests
     public async Task CancelledCapabilityDiscoveryDoesNotSendSelect()
     {
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var server = new FakeRespServer { SuppressReply = _ => { arrived.TrySetResult(); return true; } };
+        await using var server = new FakeRespServer
+        {
+            SuppressReply = _ =>
+            {
+                arrived.TrySetResult();
+                return true;
+            }
+        };
         using var cancellation = new CancellationTokenSource();
         var connecting = RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new RespireConnectionOptions { Database = 2, RequireClusterDatabaseSupport = true }, cancellationToken: cancellation.Token);
@@ -227,10 +239,18 @@ public class ClusterDatabaseTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await Assert.That(async () =>
         {
-            if (path == 0) await client.SetAsync("key", "value", cancellationToken: deadline.Token);
+            if (path == 0)
+            {
+                await client.SetAsync("key", "value", cancellationToken: deadline.Token);
+            }
             else if (path == 1)
+            {
                 await client.Core.Cluster!.GetDedicatedPoolAsync(ClusterHash.GetSlot("key"), deadline.Token, discovery: null, observation: default);
-            else await client.SubscribeAsync("ch", cancellationToken: deadline.Token);
+            }
+            else
+            {
+                await client.SubscribeAsync("ch", cancellationToken: deadline.Token);
+            }
         }).ThrowsExactly<RespireConfigurationException>();
         await Assert.That(owner.ReceivedCommands).IsEquivalentTo(["INFO SERVER"]);
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["INFO SERVER", "SELECT 2", "CLUSTER SLOTS"]);
@@ -258,7 +278,10 @@ public class ClusterDatabaseTests
             SuppressReply = command =>
             {
                 if (command == "INFO SERVER" && Interlocked.Increment(ref requests) == 2)
+                {
                     Info("8.0.0").CopyTo(info, 0);
+                }
+
                 return false;
             },
         };
@@ -282,7 +305,10 @@ public class ClusterDatabaseTests
         var failure = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         multiplexer.StateChanged += change =>
         {
-            if (change.Error is RespireConfigurationException) failure.TrySetResult(change);
+            if (change.Error is RespireConfigurationException)
+            {
+                failure.TrySetResult(change);
+            }
         };
         // The next physical socket sees a downgraded server at the same endpoint.
         Info("8.0.0").CopyTo(info, 0);
@@ -333,7 +359,10 @@ public class ClusterDatabaseTests
     private static RespireOptions Options(int port) => new()
     {
         Protocol = RespireProtocol.Resp2,
-        UseCluster = true, Database = 2, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", port) },
+        UseCluster = true,
+        Database = 2,
+        Connections = 1,
+        Endpoints = { new RespireEndpoint("127.0.0.1", port) },
     };
 
     private static byte[] Topology(int port) => Encoding.ASCII.GetBytes(

@@ -21,18 +21,27 @@ public sealed partial class RespireSearchClient
         {
             const string command = "FT.CONFIG GET";
             var values = new Dictionary<string, string?>(StringComparer.Ordinal);
+
             if (result.Type == RespireDataType.Map)
             {
                 RespireSearchReply.RequirePairs(result, command);
-                for (var i = 0; i < result.Count; i += 2) AddConfigurationPair(result[i], result[i + 1], values);
+
+                for (var i = 0; i < result.Count; i += 2)
+                {
+                    AddConfigurationPair(result[i], result[i + 1], values);
+                }
             }
             else if (result.Type == RespireDataType.Array)
             {
                 for (var i = 0; i < result.Count; i++)
                 {
                     var pair = result[i];
+
                     if (pair.Type != RespireDataType.Array || pair.Count != 2)
+                    {
                         throw RespireSearchReply.Unexpected(command, "an entry that is not a two-element array");
+                    }
+
                     AddConfigurationPair(pair[0], pair[1], values);
                 }
             }
@@ -62,7 +71,10 @@ public sealed partial class RespireSearchClient
         await ExecuteAsync(RespireSearchCommands.ConfigSet, [option, value], cancellationToken, result =>
         {
             if (result.Type != RespireDataType.SimpleString || result.AsString() != "OK")
+            {
                 throw RespireSearchReply.Unexpected("FT.CONFIG SET", "a value other than the simple string OK");
+            }
+
             return true;
         }).ConfigureAwait(false);
     }
@@ -71,14 +83,27 @@ public sealed partial class RespireSearchClient
         RespireResult name, RespireResult value, Dictionary<string, string?> values)
     {
         const string command = "FT.CONFIG GET";
+
         if (name.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString) || name.IsNull)
+        {
             throw RespireSearchReply.Unexpected(command, "a non-string option name");
+        }
+
         var option = name.AsString();
+
         if (option.Length == 0)
+        {
             throw RespireSearchReply.Unexpected(command, "an empty option name");
+        }
+
         if (!value.IsNull && value.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
+        {
             throw RespireSearchReply.Unexpected(command, "a non-string option value");
+        }
+
         if (!values.TryAdd(option, value.IsNull ? null : value.AsString()))
+        {
             throw RespireSearchReply.Unexpected(command, "a duplicate option name");
+        }
     }
 }

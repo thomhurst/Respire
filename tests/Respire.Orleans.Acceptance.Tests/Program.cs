@@ -22,11 +22,13 @@ internal static class Program
                 return SiloScenarios.RecoveryDeadlineExpired ? SiloScenarios.RecoveryDeadlineExitCode : 1;
             }
         }
+
         if (args is ["--child-silo", var endpoint, var serviceId, var clusterId])
         {
             await SiloScenarios.RunChildSilo(endpoint, serviceId, clusterId);
             return 0;
         }
+
         return await MicrosoftTestingPlatformApplication.RunAsync(args);
     }
 }

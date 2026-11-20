@@ -85,17 +85,30 @@ public class StandaloneStartupRetryTests
                 probes.Add(probe);
                 probe.Cleanup = () =>
                 {
-                    if (cancelCaller) caller.Cancel();
-                    else clock.Advance(timeout);
+                    if (cancelCaller)
+                    {
+                        caller.Cancel();
+                    }
+                    else
+                    {
+                        clock.Advance(timeout);
+                    }
+
                     token.IsCancellationRequested.Should().BeTrue();
                     return ValueTask.CompletedTask;
                 };
                 return Task.FromResult(container);
             }, clock);
+
         if (cancelCaller)
+        {
             (await start.Should().ThrowAsync<OperationCanceledException>()).Which.CancellationToken.Should().Be(caller.Token);
+        }
         else
+        {
             (await start.Should().ThrowAsync<TimeoutException>()).Which.InnerException.Should().BeOfType<DockerApiException>();
+        }
+
         probes.Should().ContainSingle().Which.DisposeCount.Should().Be(1);
     }
 
@@ -114,7 +127,12 @@ public class StandaloneStartupRetryTests
             var container = ContainerProbe.Create(_ => Task.FromException(failure));
             var probe = (ContainerProbe)container;
             probes.Add(probe);
-            if (probes.Count == failOnAttempt) probe.Cleanup = () => ValueTask.FromException(cleanup);
+
+            if (probes.Count == failOnAttempt)
+            {
+                probe.Cleanup = () => ValueTask.FromException(cleanup);
+            }
+
             return Task.FromResult(container);
         });
         var error = (await start.Should().ThrowAsync<AggregateException>()).Which;
@@ -162,7 +180,10 @@ public class StandaloneStartupRetryTests
             new DockerApiException(HttpStatusCode.BadRequest, JsonSerializer.Serialize(new { message })),
             new DockerApiException(HttpStatusCode.InternalServerError, message),
             new DockerApiException(HttpStatusCode.InternalServerError, "{\"message\":42}"),
-        }) await AssertNoRetryAsync(error);
+        })
+        {
+            await AssertNoRetryAsync(error);
+        }
     }
 
     [Test]
@@ -178,7 +199,12 @@ public class StandaloneStartupRetryTests
         Func<Task> start = async () => await RespireContainerFixture.StartAsync(new(), default, (_, _) =>
         {
             attempts++;
-            if (!postStart) throw expected;
+
+            if (!postStart)
+            {
+                throw expected;
+            }
+
             var container = ContainerProbe.Create(_ => Task.CompletedTask);
             probe = (ContainerProbe)container;
             probe.HostnameError = expected;
@@ -186,7 +212,11 @@ public class StandaloneStartupRetryTests
         });
         (await start.Should().ThrowAsync<DockerApiException>()).Which.Should().BeSameAs(expected);
         attempts.Should().Be(1);
-        if (postStart) probe!.DisposeCount.Should().Be(1);
+
+        if (postStart)
+        {
+            probe!.DisposeCount.Should().Be(1);
+        }
     }
 
     private static async Task AssertNoRetryAsync(Exception expected)
@@ -199,8 +229,13 @@ public class StandaloneStartupRetryTests
             return Task.FromResult(container);
         });
         Exception? actual = null;
-        try { await start(); }
+
+        try
+        {
+            await start();
+        }
         catch (Exception error) { actual = error; }
+
         actual.Should().BeSameAs(expected);
         probes.Should().ContainSingle().Which.DisposeCount.Should().Be(1);
     }

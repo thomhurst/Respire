@@ -6,7 +6,12 @@ namespace Respire.IntegrationTests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
 {
-    public enum ExecutionMode { Immediate, Batch, Transaction }
+    public enum ExecutionMode
+    {
+        Immediate,
+        Batch,
+        Transaction
+    }
 
     [Test]
     [Arguments(2, ExecutionMode.Immediate, false)]
@@ -35,6 +40,7 @@ public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
         (await Run(view, mode, l => l.PositionsAsync("list", binary), l => l.Positions("list", binary))).Should().Equal(0L, 2L, 3L);
         (await Run(view, mode, l => l.PositionsAsync("list", binary, count: 2, rank: -1, maxLength: 3), l => l.Positions("list", binary, count: 2, rank: -1, maxLength: 3))).Should().Equal(3L, 2L);
         (await Run(view, mode, l => l.PositionsAsync("list", binary, maxLength: 2), l => l.Positions("list", binary, maxLength: 2))).Should().Equal(0L);
+
         foreach (var key in new[] { "list", "missing" })
         {
             (await Run(view, mode, l => l.PositionAsync(key, "absent"), l => l.Position(key, "absent"))).Should().BeNull();
@@ -102,21 +108,50 @@ public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
         await client.Lists.RightPushAsync("list", "value");
         Func<Task>[] wrongType =
         [
-            async () => { await Run(client, mode, l => l.PositionAsync("wrong", "x"), l => l.Position("wrong", "x")); },
-            async () => { await Run(client, mode, l => l.PositionsAsync("wrong", "x"), l => l.Positions("wrong", "x")); },
-            async () => { await Run(client, mode, l => l.InsertBeforeAsync("wrong", "x", "y"), l => l.InsertBefore("wrong", "x", "y")); },
-            async () => { await Run(client, mode, l => l.InsertAfterAsync("wrong", "x", "y"), l => l.InsertAfter("wrong", "x", "y")); },
-            async () => { await Run(client, mode, l => l.SetAsync("wrong", 0, "x"), l => l.Set("wrong", 0, "x")); },
-            async () => { await Run(client, mode, l => l.LeftPushIfExistsAsync("wrong", "x"), l => l.LeftPushIfExists("wrong", "x")); },
-            async () => { await Run(client, mode, l => l.RightPushIfExistsAsync("wrong", "x"), l => l.RightPushIfExists("wrong", "x")); },
+            async () =>
+            {
+                await Run(client, mode, l => l.PositionAsync("wrong", "x"), l => l.Position("wrong", "x"));
+            },
+            async () =>
+            {
+                await Run(client, mode, l => l.PositionsAsync("wrong", "x"), l => l.Positions("wrong", "x"));
+            },
+            async () =>
+            {
+                await Run(client, mode, l => l.InsertBeforeAsync("wrong", "x", "y"), l => l.InsertBefore("wrong", "x", "y"));
+            },
+            async () =>
+            {
+                await Run(client, mode, l => l.InsertAfterAsync("wrong", "x", "y"), l => l.InsertAfter("wrong", "x", "y"));
+            },
+            async () =>
+            {
+                await Run(client, mode, l => l.SetAsync("wrong", 0, "x"), l => l.Set("wrong", 0, "x"));
+            },
+            async () =>
+            {
+                await Run(client, mode, l => l.LeftPushIfExistsAsync("wrong", "x"), l => l.LeftPushIfExists("wrong", "x"));
+            },
+            async () =>
+            {
+                await Run(client, mode, l => l.RightPushIfExistsAsync("wrong", "x"), l => l.RightPushIfExists("wrong", "x"));
+            },
         ];
+
         foreach (var command in wrongType)
         {
             var error = await command.Should().ThrowAsync<RespireServerException>();
             error.Which.Code.Should().Be("WRONGTYPE");
         }
-        Func<Task> missing = async () => { await Run(client, mode, l => l.SetAsync("missing", 0, "x"), l => l.Set("missing", 0, "x")); };
-        Func<Task> outOfRange = async () => { await Run(client, mode, l => l.SetAsync("list", 2, "x"), l => l.Set("list", 2, "x")); };
+
+        Func<Task> missing = async () =>
+        {
+            await Run(client, mode, l => l.SetAsync("missing", 0, "x"), l => l.Set("missing", 0, "x"));
+        };
+        Func<Task> outOfRange = async () =>
+        {
+            await Run(client, mode, l => l.SetAsync("list", 2, "x"), l => l.Set("list", 2, "x"));
+        };
         await missing.Should().ThrowAsync<RespireServerException>();
         await outOfRange.Should().ThrowAsync<RespireServerException>();
     }
@@ -124,15 +159,24 @@ public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
     private static async Task<T> Run<T>(IRespireClient client, ExecutionMode mode, Func<IRespireListCommands, ValueTask<T>> immediate, Func<IRespireBatchListCommands, RespirePending<T>> deferred)
     {
         if (mode == ExecutionMode.Immediate)
+        {
             return await immediate(client.Lists);
+        }
+
         using var batch = mode == ExecutionMode.Batch ? client.CreateBatch() : null;
         await using var transaction = mode == ExecutionMode.Transaction ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = deferred(queue.Lists);
+
         if (transaction is not null)
+        {
             await transaction.CommitAsync();
+        }
         else
+        {
             await batch!.TryExecuteAsync();
+        }
+
         return pending.Result;
     }
 }

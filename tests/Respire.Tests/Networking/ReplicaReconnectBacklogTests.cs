@@ -48,14 +48,22 @@ public class ReplicaReconnectBacklogTests
 #pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = null,
+            ConnectTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
             TestingStreamFactory = async (host, port, token) =>
             {
                 if (port == primary.Port && Volatile.Read(ref blockPrimary))
+                {
                     await resumePrimary.Task.WaitAsync(token);
+                }
+
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, token);
@@ -67,7 +75,11 @@ public class ReplicaReconnectBacklogTests
 #pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         await using var view = client.WithReadFrom(RespireReadFrom.ReplicaPreferred);
-        using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"])) { }
+
+        using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]))
+        {
+        }
+
         await Assert.That(router.Cursors.TryGetShared(RespireReadFrom.ReplicaPreferred, out var original)).IsTrue();
         await Assert.That(original!.Primary is not null).IsTrue();
         Volatile.Write(ref ports, [replica.Port]);
@@ -77,6 +89,7 @@ public class ReplicaReconnectBacklogTests
         var gate = SharedCursorGate(router.Cursors);
         using var cancellation = new CancellationTokenSource(Limit);
         var gateHeld = false;
+
         try
         {
             if (publishUnderGate)
@@ -85,17 +98,28 @@ public class ReplicaReconnectBacklogTests
                 await gate.WaitAsync();
                 gateHeld = true;
             }
+
             if (state != "healthy")
             {
                 Volatile.Write(ref blockPrimary, true);
                 sentinel.SuppressReply = command => command.StartsWith("SENTINEL GET-MASTER", StringComparison.Ordinal);
-                if (state == "retired") await Assert.That(client.Core.Sentinel!.Current!.TryRetire()).IsTrue();
-                else await original.Primary!.GetConnection().DisposeAsync();
+
+                if (state == "retired")
+                {
+                    await Assert.That(client.Core.Sentinel!.Current!.TryRetire()).IsTrue();
+                }
+                else
+                {
+                    await original.Primary!.GetConnection().DisposeAsync();
+                }
+
                 await Assert.That(client.Core.TryGetReadyPrimaryMultiplexer(out _)).IsFalse();
             }
+
             var pending = router.EnqueueAsync(RespireReadFrom.ReplicaPreferred,
                 static (connection, _) => new ValueTask<int>(connection.Port), cancellation.Token, default,
                 cursorRead: true).AsTask();
+
             if (publishUnderGate)
             {
                 await Assert.That(pending.IsCompleted).IsFalse();
@@ -103,16 +127,28 @@ public class ReplicaReconnectBacklogTests
                 gate.Release();
                 gateHeld = false;
             }
+
             await Assert.That(await pending.WaitAsync(Limit)).IsEqualTo(state == "healthy" ? primary.Port : replica.Port);
-            using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"])) { }
-            using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"])) { }
+
+            using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]))
+            {
+            }
+
+            using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"]))
+            {
+            }
+
             await Assert.That((state == "healthy" ? primary : replica).ReceivedCommands.Contains("SCAN 7")).IsTrue();
             await Assert.That(router.Cursors.TryGetShared(RespireReadFrom.ReplicaPreferred, out var current)).IsTrue();
             await Assert.That(ReferenceEquals(current, original)).IsEqualTo(state == "healthy");
         }
         finally
         {
-            if (gateHeld) gate.Release();
+            if (gateHeld)
+            {
+                gate.Release();
+            }
+
             await cancellation.CancelAsync();
             resumePrimary.TrySetResult();
         }
@@ -131,13 +167,20 @@ public class ReplicaReconnectBacklogTests
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = null,
+            ConnectTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
 #pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         await using var view = client.WithReadFrom(policy);
-        using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"])) { }
+
+        using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]))
+        {
+        }
+
         await Assert.That(router.Cursors.TryGetShared(policy, out var original)).IsTrue();
         var issuer = original!.Replica!.Endpoint.Port == first.Port ? first : second;
         var other = ReferenceEquals(issuer, first) ? second : first;
@@ -151,6 +194,7 @@ public class ReplicaReconnectBacklogTests
             await resume.Task.WaitAsync(token);
             return true;
         }, default, default).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(Limit);
@@ -158,8 +202,15 @@ public class ReplicaReconnectBacklogTests
             await Assert.That(fresh.IsCompleted).IsFalse();
             resume.TrySetResult();
             await head.WaitAsync(Limit);
-            using (await fresh.WaitAsync(Limit)) { }
-            using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"])) { }
+
+            using (await fresh.WaitAsync(Limit))
+            {
+            }
+
+            using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"]))
+            {
+            }
+
             await Assert.That(router.Cursors.TryGetShared(policy, out var current)).IsTrue();
             await Assert.That(ReferenceEquals(current, original)).IsTrue();
             await Assert.That(issuer.ReceivedCommands.Count(command => command == "SCAN 0")).IsEqualTo(2);
@@ -182,7 +233,10 @@ public class ReplicaReconnectBacklogTests
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = null,
+            ConnectTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
 #pragma warning restore RESP010
@@ -191,15 +245,18 @@ public class ReplicaReconnectBacklogTests
         await router.GetCursorConnectionAsync(RespireReadFrom.Replica, original, false, default, default);
         var replacement = new ReadAffinity();
         var expected = await router.GetCursorConnectionAsync(RespireReadFrom.Replica, replacement, false, default, default);
+
         if (rejectedPin)
         {
             router.Cursors.PinShared(RespireReadFrom.Replica, original);
             router.FailedReplicaCooldown = TimeSpan.FromMinutes(1);
             original.Replica!.MarkFailed();
         }
+
         var gate = SharedCursorGate(router.Cursors);
         await gate.WaitAsync();
         Task<Respire.Networking.RespireConnection> pending;
+
         try
         {
             pending = router.GetCursorConnectionAsync(RespireReadFrom.Replica, null, false, default, default,
@@ -210,6 +267,7 @@ public class ReplicaReconnectBacklogTests
             router.Cursors.PinShared(RespireReadFrom.Replica, replacement);
         }
         finally { gate.Release(); }
+
         await Assert.That(ReferenceEquals(await pending.WaitAsync(Limit), expected)).IsTrue();
         await Assert.That(router.Cursors.TryGetShared(RespireReadFrom.Replica, out var current)).IsTrue();
         await Assert.That(ReferenceEquals(current, replacement)).IsTrue();
@@ -236,9 +294,13 @@ public class ReplicaReconnectBacklogTests
 #pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
-            Protocol = RespireProtocol.Resp2, Connections = 1, ConnectTimeout = Limit,
-            CommandTimeout = commandTimeout, RetryPolicy = null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ConnectTimeout = Limit,
+            CommandTimeout = commandTimeout,
+            RetryPolicy = null,
             HedgedReads = surface == "hedged" ? new() { Delay = TimeSpan.FromMilliseconds(1) } : null,
             TestingStreamFactory = async (host, port, token) =>
             {
@@ -247,7 +309,9 @@ public class ReplicaReconnectBacklogTests
                     connecting.TrySetResult();
                     await resume.Task.WaitAsync(token);
                 }
+
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, token);
@@ -259,6 +323,7 @@ public class ReplicaReconnectBacklogTests
 #pragma warning restore RESP010
         await using var view = client.WithReadFrom(RespireReadFrom.Replica);
         var pending = ExecuteAsync((RespireClient)view, surface, "first");
+
         try
         {
             await connecting.Task.WaitAsync(Limit);
@@ -268,6 +333,7 @@ public class ReplicaReconnectBacklogTests
             await Assert.That(client.Core.ReadRouter.IsBacklogDraining).IsFalse();
         }
         finally { resume.TrySetResult(); }
+
         await Assert.That(await pending.WaitAsync(Limit)).IsEqualTo("value");
     }
 
@@ -323,7 +389,11 @@ public class ReplicaReconnectBacklogTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Replica.SuppressReply = command =>
         {
-            if (command != "GET first") return false;
+            if (command != "GET first")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -349,6 +419,7 @@ public class ReplicaReconnectBacklogTests
         await using var fixture = await Fixture.CreateAsync(timeout: dispose ? null : TimeSpan.FromMilliseconds(200));
         var pending = fixture.View.GetStringAsync("unsent").AsTask();
         await fixture.Connecting.Task.WaitAsync(Limit);
+
         if (dispose)
         {
             await fixture.Client.DisposeAsync();
@@ -358,6 +429,7 @@ public class ReplicaReconnectBacklogTests
         {
             await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
         }
+
         await Assert.That(fixture.Replica.ReceivedCommands.Contains("GET unsent")).IsFalse();
     }
 
@@ -380,11 +452,19 @@ public class ReplicaReconnectBacklogTests
         await fixture.Connecting.Task.WaitAsync(Limit);
         await WaitForDrainAsync(fixture.Client.Core.ReadRouter);
         var bytes = "borrowed"u8.ToArray();
+
         async Task SendAsync()
         {
-            if (fireAndForget) await fixture.View.ExecuteFireAndForgetAsync(RespireCommands.String.GET, [bytes]);
-            else { using var reply = await fixture.View.ExecuteAsync(RespireCommands.String.GET, [bytes]); }
+            if (fireAndForget)
+            {
+                await fixture.View.ExecuteFireAndForgetAsync(RespireCommands.String.GET, [bytes]);
+            }
+            else
+            {
+                using var reply = await fixture.View.ExecuteAsync(RespireCommands.String.GET, [bytes]);
+            }
         }
+
         var pending = SendAsync();
         Array.Fill(bytes, (byte)'x');
         fixture.Resume.TrySetResult();
@@ -407,16 +487,26 @@ public class ReplicaReconnectBacklogTests
         await fixture.Connecting.Task.WaitAsync(Limit);
         await WaitForDrainAsync(fixture.Client.Core.ReadRouter);
         fixture.Resume.TrySetResult();
-        using (await pending.WaitAsync(Limit)) { }
+
+        using (await pending.WaitAsync(Limit))
+        {
+        }
+
         fixture.Replica.ReplyOverride = (_, command) => command == "ROLE"
             ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray() : Value;
         fixture.Client.Core.ReadRouter.RoleRevalidationInterval = TimeSpan.Zero;
+
         if (fireAndForget)
+        {
             await Assert.That(async () => await fixture.View.ExecuteFireAndForgetAsync(RespireCommands.Key.SCAN, ["7"]).AsTask().WaitAsync(Limit))
                 .Throws<RespireConnectionException>();
+        }
         else
+        {
             await Assert.That(async () => await fixture.View.ExecuteAsync(RespireCommands.Key.SCAN, ["7"]).AsTask().WaitAsync(Limit))
                 .Throws<RespireConnectionException>();
+        }
+
         await Assert.That(fixture.Replica.ReceivedCommands.Contains("SCAN 7")).IsFalse();
         await Assert.That(fixture.Primary.ReceivedCommands.Any(command => command.StartsWith("SCAN ", StringComparison.Ordinal))).IsFalse();
     }
@@ -435,8 +525,12 @@ public class ReplicaReconnectBacklogTests
 #pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = null,
+            ConnectTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
             ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0 },
         });
@@ -450,10 +544,16 @@ public class ReplicaReconnectBacklogTests
             ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray() : Value;
         await Assert.That(async () => await router.GetConnectionAsync(RespireReadFrom.Replica, default, default))
             .Throws<RespireConnectionException>();
-        if (!remainsUnavailable) replica.ReplyOverride = (_, command) => command == "ROLE" ? ReplicaRole : Value;
+
+        if (!remainsUnavailable)
+        {
+            replica.ReplyOverride = (_, command) => command == "ROLE" ? ReplicaRole : Value;
+        }
+
         router.RoleRevalidationInterval = TimeSpan.FromMinutes(1);
         var first = view.GetStringAsync("first").AsTask();
         var second = view.GetStringAsync("second").AsTask();
+
         if (remainsUnavailable)
         {
             await Assert.That(async () => await first.WaitAsync(Limit)).ThrowsExactly<RespireReconnectLimitException>();
@@ -464,6 +564,7 @@ public class ReplicaReconnectBacklogTests
             await Assert.That(replica.ReceivedCommands.Contains("GET second")).IsFalse();
             return;
         }
+
         await Assert.That(await first.WaitAsync(Limit)).IsEqualTo("value");
         await Assert.That(await second.WaitAsync(Limit)).IsEqualTo("value");
         await Assert.That(replica.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(3);
@@ -484,7 +585,10 @@ public class ReplicaReconnectBacklogTests
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = null,
+            ConnectTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
 #pragma warning restore RESP010
@@ -501,10 +605,18 @@ public class ReplicaReconnectBacklogTests
         affinity.Replica!.MarkFailed();
         router.RoleRevalidationInterval = TimeSpan.Zero;
         await using var view = client.WithReadFrom(RespireReadFrom.Replica);
+
         try
         {
-            if (fireAndForget) await view.ExecuteFireAndForgetAsync(RespireCommands.Key.SCAN, ["0"]).AsTask().WaitAsync(Limit);
-            else { using var reply = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]).AsTask().WaitAsync(Limit); }
+            if (fireAndForget)
+            {
+                await view.ExecuteFireAndForgetAsync(RespireCommands.Key.SCAN, ["0"]).AsTask().WaitAsync(Limit);
+            }
+            else
+            {
+                using var reply = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]).AsTask().WaitAsync(Limit);
+            }
+
             await view.GetStringAsync("barrier");
             await Assert.That(replacement.ReceivedCommands.Contains("SCAN 0")).IsTrue();
             await Assert.That(pinnedServer.ReceivedCommands.Contains("SCAN 0")).IsFalse();
@@ -543,8 +655,11 @@ public class ReplicaReconnectBacklogTests
 #pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [],
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = null,
         });
 #pragma warning restore RESP010
         // The public view API already rejects an empty configured set. Exercise the
@@ -565,8 +680,12 @@ public class ReplicaReconnectBacklogTests
 #pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", unavailable.Port)],
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", unavailable.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = null,
+            ConnectTimeout = Limit,
         });
 #pragma warning restore RESP010
         await client.WithReadFrom(RespireReadFrom.ReplicaPreferred).GetStringAsync("fallback");
@@ -589,7 +708,9 @@ public class ReplicaReconnectBacklogTests
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", cold.Port), new("127.0.0.1", healthy.Port)],
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
 #pragma warning restore RESP010
@@ -599,6 +720,7 @@ public class ReplicaReconnectBacklogTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         rotation.SetValue(router, Array.FindIndex(endpoints, endpoint => endpoint.Port == healthy.Port) - 1);
         await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+
         if (requiredValidation)
         {
             var selection = await router.GetReplicaFromEndpointsAsync([new("127.0.0.1", cold.Port)], default, default);
@@ -607,10 +729,14 @@ public class ReplicaReconnectBacklogTests
                 .GetValue(selection.Replica)!;
             var position = 0;
             Respire.Protocol.RespParser.TryParseValue(ReplicaRole, ref position, out var role);
+
             using (role)
+            {
                 health.Record(selection.Connection, System.Diagnostics.Stopwatch.GetTimestamp()
                     - 150 * System.Diagnostics.Stopwatch.Frequency, in role);
+            }
         }
+
         cold.SuppressReply = command => command == "ROLE";
         rotation.SetValue(router, Array.FindIndex(endpoints, endpoint => endpoint.Port == cold.Port) - 1);
         var selected = await router.SelectForDispatchAsync(RespireReadFrom.Replica, default, default).AsTask().WaitAsync(Limit);
@@ -629,8 +755,11 @@ public class ReplicaReconnectBacklogTests
 #pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", cold.Port)],
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", cold.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = Limit,
         });
 #pragma warning restore RESP010
         var router = client.Core.ReadRouter;
@@ -638,7 +767,11 @@ public class ReplicaReconnectBacklogTests
         var validating = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         cold.SuppressReply = command =>
         {
-            if (command != "ROLE") return false;
+            if (command != "ROLE")
+            {
+                return false;
+            }
+
             validating.TrySetResult();
             return true;
         };
@@ -664,16 +797,28 @@ public class ReplicaReconnectBacklogTests
         var bothSockets = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         replica.ReplyOverride = (id, command) =>
         {
-            if (command != "ROLE") return Value;
+            if (command != "ROLE")
+            {
+                return Value;
+            }
+
             validated.TryAdd(id, 0);
-            if (validated.Count == 2) bothSockets.TrySetResult();
+
+            if (validated.Count == 2)
+            {
+                bothSockets.TrySetResult();
+            }
+
             return ReplicaRole;
         };
 #pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
-            Protocol = RespireProtocol.Resp2, Connections = 2, CommandTimeout = Limit,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 2,
+            CommandTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(5),
         });
 #pragma warning restore RESP010
@@ -687,14 +832,22 @@ public class ReplicaReconnectBacklogTests
         replica.GateCommand("ROLE", resumeValidation.Task);
         // This selects the other socket. Background validation must retain that selection,
         // rather than rotating back to the already validated socket.
-        try { await router.SelectForDispatchAsync(policy, default, default).AsTask().WaitAsync(Limit); }
+        try
+        {
+            await router.SelectForDispatchAsync(policy, default, default).AsTask().WaitAsync(Limit);
+        }
         finally { resumeValidation.TrySetResult(); }
+
         await bothSockets.Task.WaitAsync(Limit);
         router.RoleRevalidationInterval = TimeSpan.FromMinutes(5);
         // Wait for the ROLE response to be consumed before checking ready-only routing.
         await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+
         for (var index = 0; index < 4; index++)
+        {
             await Assert.That((await router.SelectForDispatchAsync(policy, default, default))?.Port).IsEqualTo(replica.Port);
+        }
+
         await Assert.That(replica.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(2);
     }
 
@@ -706,8 +859,11 @@ public class ReplicaReconnectBacklogTests
 #pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = Limit,
         });
 #pragma warning restore RESP010
         var router = client.Core.ReadRouter;
@@ -726,8 +882,11 @@ public class ReplicaReconnectBacklogTests
 #pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
 #pragma warning restore RESP010
@@ -736,6 +895,7 @@ public class ReplicaReconnectBacklogTests
         var pending = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
         router.NearestLatency = new((connection, _) => connection.Port == primary.Port
             ? new ValueTask<long>(pending.Task) : ValueTask.FromResult(10L));
+
         try
         {
             var selected = await router.SelectForDispatchAsync(RespireReadFrom.Nearest, default, default);
@@ -755,8 +915,11 @@ public class ReplicaReconnectBacklogTests
 #pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
 #pragma warning restore RESP010
@@ -768,18 +931,30 @@ public class ReplicaReconnectBacklogTests
             .GetValue(entry)!;
         var position = 0;
         Respire.Protocol.RespParser.TryParseValue(ReplicaRole, ref position, out var role);
+
         using (role)
+        {
             health.Record(warm, System.Diagnostics.Stopwatch.GetTimestamp()
                 - (required ? 150 : 90) * System.Diagnostics.Stopwatch.Frequency, in role);
+        }
+
         if (required)
+        {
             router.NearestLatency = new((connection, _) => ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
+        }
+
         var validating = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         replica.SuppressReply = command =>
         {
-            if (command != "ROLE") return false;
+            if (command != "ROLE")
+            {
+                return false;
+            }
+
             validating.TrySetResult();
             return true;
         };
+
         try
         {
             var selected = await router.SelectForDispatchAsync(
@@ -789,12 +964,15 @@ public class ReplicaReconnectBacklogTests
             await Assert.That(router.IsBacklogDraining).IsFalse();
         }
         finally { await replica.SendRawAsync(ReplicaRole, 0); }
+
         await router.GetConnectionAsync(RespireReadFrom.Replica, default, default).AsTask().WaitAsync(Limit);
+
         if (required)
         {
             var recovered = await router.SelectForDispatchAsync(RespireReadFrom.Nearest, default, default);
             await Assert.That(recovered?.Port).IsEqualTo(replica.Port);
         }
+
         await Assert.That(replica.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(2);
     }
 
@@ -815,9 +993,14 @@ public class ReplicaReconnectBacklogTests
 #pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            Protocol = RespireProtocol.Resp2, Connections = 1, ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
-            CommandTimeout = null, ConnectTimeout = Limit, BacklogCapacity = 2,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+            CommandTimeout = null,
+            ConnectTimeout = Limit,
+            BacklogCapacity = 2,
             TestingStreamFactory = async (host, port, token) =>
             {
                 if (port == replacement.Port)
@@ -826,7 +1009,9 @@ public class ReplicaReconnectBacklogTests
                     connecting.TrySetResult();
                     await resume.Task.WaitAsync(token);
                 }
+
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, token);
@@ -874,9 +1059,13 @@ public class ReplicaReconnectBacklogTests
 #pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            Protocol = RespireProtocol.Resp2, Connections = 1, ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
-            CommandTimeout = null, ConnectTimeout = Limit,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+            CommandTimeout = null,
+            ConnectTimeout = Limit,
         });
 #pragma warning restore RESP010
         var router = client.Core.ReadRouter;
@@ -916,7 +1105,11 @@ public class ReplicaReconnectBacklogTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Replica.SuppressReply = command =>
         {
-            if (command != "GET accepted") return false;
+            if (command != "GET accepted")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -999,9 +1192,13 @@ public class ReplicaReconnectBacklogTests
 #pragma warning disable RESP010 // This reconnect scenario owns and disposes its client to isolate backlog order, cursor pins, and replica recovery.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            Protocol = RespireProtocol.Resp2, Connections = 1, ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
-            CommandTimeout = Limit, ConnectTimeout = Limit,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+            CommandTimeout = Limit,
+            ConnectTimeout = Limit,
             CircuitBreaker = circuitOpen ? new() { MinimumFailureCount = 1, MaximumSampleCount = 1, OpenDuration = Limit } : null,
         });
 #pragma warning restore RESP010
@@ -1012,15 +1209,18 @@ public class ReplicaReconnectBacklogTests
         var pending = view.GetStringAsync("replacement").AsTask();
         await WaitForDrainAsync(client.Core.ReadRouter);
         var endpoint = new RespireEndpoint("127.0.0.1", second.Port);
+
         if (circuitOpen)
         {
             var admission = client.Core.Circuits!.Acquire(endpoint, default);
             admission.Failed(new RespireConnectionException("Offline"), default);
             admission.Dispose();
         }
+
         Volatile.Write(ref ports, [second.Port]);
         await client.Core.ReadRouter.RefreshNowAsync(default);
         await Assert.That(first.ReceivedCommands.Contains("GET replacement")).IsFalse();
+
         if (circuitOpen)
         {
             await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireCircuitOpenException>();
@@ -1037,17 +1237,23 @@ public class ReplicaReconnectBacklogTests
     private static async Task WaitForDrainAsync(ReadEndpointRouter router)
     {
         using var timeout = new CancellationTokenSource(Limit);
-        while (!router.IsBacklogDraining) await Task.Delay(1, timeout.Token);
+
+        while (!router.IsBacklogDraining)
+        {
+            await Task.Delay(1, timeout.Token);
+        }
     }
 
     private static byte[] ReplicasReply(int[] ports)
     {
         var reply = new StringBuilder($"*{ports.Length}\r\n");
+
         foreach (var port in ports)
         {
             var text = port.ToString();
             reply.Append($"*6\r\n$2\r\nip\r\n$9\r\n127.0.0.1\r\n$4\r\nport\r\n${text.Length}\r\n{text}\r\n$5\r\nflags\r\n$5\r\nslave\r\n");
         }
+
         return Encoding.ASCII.GetBytes(reply.ToString());
     }
 
@@ -1055,22 +1261,41 @@ public class ReplicaReconnectBacklogTests
     {
         switch (surface)
         {
-            case "bytes": return Encoding.UTF8.GetString((await view.GetBytesAsync(key))!);
-            case "typed": return (await view.GetAsync<string>(key))!;
+            case "bytes":
+                return Encoding.UTF8.GetString((await view.GetBytesAsync(key))!);
+            case "typed":
+                return (await view.GetAsync<string>(key))!;
             case "stream":
                 await using (var stream = await view.Strings.GetStreamAsync(key))
-                using (var reader = new StreamReader(stream!)) return await reader.ReadToEndAsync();
+                using (var reader = new StreamReader(stream!))
+                {
+                    return await reader.ReadToEndAsync();
+                }
             case "raw":
-                using (var result = await view.ExecuteAsync(RespireCommands.String.GET, key)) return result.AsString()!;
+                using (var result = await view.ExecuteAsync(RespireCommands.String.GET, key))
+                {
+                    return result.AsString()!;
+                }
             case "cursor":
-                using (var result = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"])) return result.AsString()!;
+                using (var result = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]))
+                {
+                    return result.AsString()!;
+                }
             case "function":
-                using (var result = await view.ExecuteAsync(RespireCommands.Scripting.FCALL_RO, ["read-function", 0])) return result.AsString()!;
+                using (var result = await view.ExecuteAsync(RespireCommands.Scripting.FCALL_RO, ["read-function", 0]))
+                {
+                    return result.AsString()!;
+                }
             case "script":
-                using (var result = await view.Scripts.ExecuteAsync(RespireScript.Create("return 'value'", readOnly: true))) return result.AsString()!;
+                using (var result = await view.Scripts.ExecuteAsync(RespireScript.Create("return 'value'", readOnly: true)))
+                {
+                    return result.AsString()!;
+                }
             case "fire-and-forget":
-                await view.ExecuteFireAndForgetAsync(RespireCommands.String.GET, key); return "value";
-            default: return (await view.GetStringAsync(key))!;
+                await view.ExecuteFireAndForgetAsync(RespireCommands.String.GET, key);
+                return "value";
+            default:
+                return (await view.GetStringAsync(key))!;
         }
     }
 
@@ -1083,10 +1308,15 @@ public class ReplicaReconnectBacklogTests
         TaskCompletionSource connecting, TaskCompletionSource resume) : IAsyncDisposable
     {
         internal FakeRespServer Primary => primary;
+
         internal FakeRespServer Replica => replica;
+
         internal RespireClient Client => client;
+
         internal RespireClient View => (RespireClient)client.WithReadFrom(RespireReadFrom.Replica);
+
         internal TaskCompletionSource Connecting => connecting;
+
         internal TaskCompletionSource Resume => resume;
 
         internal static async Task<Fixture> CreateAsync(int capacity = 1024, TimeSpan? timeout = null,
@@ -1099,9 +1329,15 @@ public class ReplicaReconnectBacklogTests
             var dials = 0;
             var client = RespireClient.Create(new RespireOptions
             {
-                Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
-                Protocol = RespireProtocol.Resp2, Connections = 1, BacklogCapacity = capacity, BacklogPolicy = policy,
-                ConnectTimeout = Limit, CommandTimeout = timeout, RetryPolicy = null,
+                Endpoints = [new("127.0.0.1", primary.Port)],
+                ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+                Protocol = RespireProtocol.Resp2,
+                Connections = 1,
+                BacklogCapacity = capacity,
+                BacklogPolicy = policy,
+                ConnectTimeout = Limit,
+                CommandTimeout = timeout,
+                RetryPolicy = null,
                 ReconnectPolicy = exhaust ? new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero } : null,
                 ReplicaRefreshInterval = TimeSpan.FromMilliseconds(5),
                 ClientAvailabilityZone = "local",
@@ -1112,9 +1348,15 @@ public class ReplicaReconnectBacklogTests
                     {
                         connecting.TrySetResult();
                         await resume.Task.WaitAsync(token);
-                        if (exhaust) throw new IOException("Replica is offline.");
+
+                        if (exhaust)
+                        {
+                            throw new IOException("Replica is offline.");
+                        }
                     }
+
                     var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                     try
                     {
                         await socket.ConnectAsync(host, port, token);
@@ -1123,6 +1365,7 @@ public class ReplicaReconnectBacklogTests
                     catch { socket.Dispose(); throw; }
                 },
             });
+
             try
             {
                 var fixture = new Fixture(primary, replica, client, connecting, resume);
@@ -1130,7 +1373,12 @@ public class ReplicaReconnectBacklogTests
                 // Setup must not spend the deliberately short command deadline used by the
                 // timeout test. The router selection still connects, validates and records history.
                 await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, default);
-                if (timeout is null) await fixture.View.GetStringAsync("warm");
+
+                if (timeout is null)
+                {
+                    await fixture.View.GetStringAsync("warm");
+                }
+
                 var connection = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, default);
                 await connection.DisposeAsync();
                 return fixture;

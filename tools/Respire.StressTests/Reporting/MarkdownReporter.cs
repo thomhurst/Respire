@@ -89,14 +89,19 @@ internal static class MarkdownReporter
     private static void AppendFailures(StringBuilder sb, IReadOnlyList<StressTestResult> results)
     {
         var failed = results.Where(r => r.Failed).ToList();
+
         if (failed.Count == 0)
+        {
             return;
+        }
 
         sb.AppendLine("## Failures");
         sb.AppendLine();
+
         foreach (var r in failed)
         {
             sb.AppendLine(Invariant($"- **{r.Scenario} / {r.Client}**: {r.Status}, {r.Errors:N0} errors"));
+
             foreach (var sample in r.ErrorSamples)
             {
                 sb.AppendLine($"  - `{sample}`");

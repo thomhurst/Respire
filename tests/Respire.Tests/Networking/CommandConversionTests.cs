@@ -21,7 +21,11 @@ public class CommandConversionTests
         {
             SuppressReply = command =>
             {
-                if (command != "STRLEN parked") return false;
+                if (command != "STRLEN parked")
+                {
+                    return false;
+                }
+
                 arrived.TrySetResult();
                 return true;
             },
@@ -30,7 +34,9 @@ public class CommandConversionTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
-            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            MaxInflightCommands = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             CommandTimeout = null,
         });

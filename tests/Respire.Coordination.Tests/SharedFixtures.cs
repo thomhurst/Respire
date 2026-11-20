@@ -29,7 +29,10 @@ public abstract class SharedRespireContainer : IAsyncInitializer, IAsyncDisposab
 {
     private RespireContainerFixture? _fixture;
 
-    protected abstract RespireContainerOptions Options { get; }
+    protected abstract RespireContainerOptions Options
+    {
+        get;
+    }
 
     public RespireContainerFixture Fixture =>
         _fixture ?? throw new InvalidOperationException("The shared container has not been initialized.");
@@ -49,7 +52,12 @@ public abstract class SharedRespireContainer : IAsyncInitializer, IAsyncDisposab
     {
         var fixture = _fixture;
         _fixture = null;
-        if (fixture is not null) await fixture.DisposeAsync();
+
+        if (fixture is not null)
+        {
+            await fixture.DisposeAsync();
+        }
+
         GC.SuppressFinalize(this);
     }
 }

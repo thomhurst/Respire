@@ -16,8 +16,12 @@ public class InflightRingOrderingTests
         var ring = new InflightRing(8);
         var source = new PendingResponseSource();
         await Assert.That(ring.TryEnqueue(source)).IsTrue();
+
         for (var i = 0; i < 100; i++)
+        {
             await Assert.That(ring.HasCapacitySnapshot(7)).IsTrue();
+        }
+
         await Assert.That(ring.CapacitySnapshotHeadReadsForTests).IsEqualTo(0);
         // Positive control: insufficient cached capacity really reads the consumer head.
         await Assert.That(ring.HasCapacitySnapshot(8)).IsFalse();
@@ -30,18 +34,27 @@ public class InflightRingOrderingTests
     {
         var ring = new InflightRing(8);
         var source = new PendingResponseSource();
+
         for (var i = 0; i < 8; i++)
+        {
             await Assert.That(ring.TryEnqueue(source, i + 1)).IsTrue();
+        }
+
         await Assert.That(ring.HasCapacitySnapshot(1)).IsFalse();
+
         for (var i = 0; i < 3; i++)
+        {
             await Assert.That(ring.TryDequeue(out _)).IsTrue();
+        }
 
         // Many callers may inspect capacity before taking the write gate. Their hints
         // must observe released slots without becoming writers of the producer's cache.
         Parallel.For(0, 100, _ =>
         {
             if (!ring.HasCapacitySnapshot(3) || ring.HasCapacitySnapshot(4))
+            {
                 throw new InvalidOperationException("The capacity hint lost a released slot or invented capacity.");
+            }
         });
         var positions = typeof(InflightRing).GetField("_positions", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(ring)!;
@@ -89,6 +102,7 @@ public class InflightRingOrderingTests
         {
             start.Wait(token);
             var spin = new SpinWait();
+
             for (var i = 0; i < count; i++)
             {
                 while (!ring.HasCapacitySnapshot(1) || !(i % 3 == 0
@@ -98,6 +112,7 @@ public class InflightRingOrderingTests
                     token.ThrowIfCancellationRequested();
                     spin.SpinOnce(sleep1Threshold: -1);
                 }
+
                 spin.Reset();
             }
         }, token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
@@ -105,18 +120,22 @@ public class InflightRingOrderingTests
         {
             start.Wait(token);
             var spin = new SpinWait();
+
             for (var i = 0; i < count; i++)
             {
                 PendingResponse source;
                 string? operation;
                 int retryAttempts;
+
                 while (!ring.TryDequeue(out source, out operation, out retryAttempts))
                 {
                     token.ThrowIfCancellationRequested();
                     spin.SpinOnce(sleep1Threshold: -1);
                 }
+
                 spin.Reset();
                 var expected = i % 3 == 0 ? InflightRing.DiscardSentinel : sources[i % sources.Length];
+
                 if (!ReferenceEquals(source, expected) || operation != (i % 6 == 0 ? "SET" : null)
                     || retryAttempts != (i % 3 == 0 ? i % 17 : 0)
                     || ring.CompletedWriteEnd != i + 1)
@@ -138,14 +157,21 @@ public class InflightRingOrderingTests
     {
         var ring = new InflightRing(1);
         var normal = new PendingResponseSource();
+
         for (var cycle = 0; cycle < 100; cycle++)
         {
             await Assert.That(ring.TryEnqueueDiscard("SET", 1, 3)).IsTrue();
             await Assert.That(ring.TryEnqueueDiscard("FAILED", 2, 7)).IsFalse();
+
             if (cycle % 2 == 0)
+            {
                 await Assert.That(ring.TryDequeue(out _)).IsTrue();
+            }
             else
+            {
                 await Assert.That(ring.TryDequeue(out _, out _)).IsTrue();
+            }
+
             await Assert.That(ring.TryEnqueue(normal, 3)).IsTrue();
             await Assert.That(ring.TryDequeue(out var source, out var operation, out var attempts)).IsTrue();
             await Assert.That(ReferenceEquals(source, normal)).IsTrue();
@@ -172,6 +198,7 @@ public class InflightRingOrderingTests
         var ring = new InflightRing(2);
         var first = new PendingResponseSource();
         var second = new PendingResponseSource();
+
         for (var cycle = 0; cycle < 100; cycle++)
         {
             await Assert.That(ring.HasCapacity(2)).IsTrue();

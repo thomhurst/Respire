@@ -32,19 +32,27 @@ public class BackgroundCleanupFailureTests
         var failure = new InvalidOperationException("Controlled cleanup failure.");
         var control = new InvalidOperationException("Unobserved positive control.");
         var unobserved = new ConcurrentQueue<Exception>();
+
         void OnUnobserved(object? sender, UnobservedTaskExceptionEventArgs args)
         {
             foreach (var error in args.Exception.Flatten().InnerExceptions)
+            {
                 if (ReferenceEquals(error, failure) || ReferenceEquals(error, control))
+                {
                     unobserved.Enqueue(error);
+                }
+            }
             // Only the deliberately abandoned control is suppressed. Real cleanup failures
             // remain unobserved, and unrelated tests' exceptions are never suppressed.
             if (args.Exception.InnerExceptions.Count == 1
                 && ReferenceEquals(args.Exception.InnerException, control))
+            {
                 args.SetObserved();
+            }
         }
 
         TaskScheduler.UnobservedTaskException += OnUnobserved;
+
         try
         {
             var references = await cleanup(failure).WaitAsync(TimeSpan.FromSeconds(10));
@@ -59,8 +67,12 @@ public class BackgroundCleanupFailureTests
             }
 
             await Assert.That(controlReference.IsAlive).IsFalse();
+
             foreach (var reference in references)
+            {
                 await Assert.That(reference.IsAlive).IsFalse();
+            }
+
             await Assert.That(unobserved.Any(error => ReferenceEquals(error, control))).IsTrue();
             await Assert.That(unobserved.Any(error => ReferenceEquals(error, failure))).IsFalse();
         }
@@ -103,7 +115,11 @@ public class BackgroundCleanupFailureTests
         var count = 0;
         server.ReplyOverride = (_, _) =>
         {
-            if (Interlocked.Increment(ref count) == 2) handled.TrySetResult();
+            if (Interlocked.Increment(ref count) == 2)
+            {
+                handled.TrySetResult();
+            }
+
             throw failure;
         };
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -117,6 +133,7 @@ public class BackgroundCleanupFailureTests
 
         var acceptTask = (Task)typeof(FakeRespServer)
             .GetField("_acceptTask", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!;
+
         if (failAcceptance)
         {
             var listener = (TcpListener)typeof(FakeRespServer)
@@ -124,9 +141,13 @@ public class BackgroundCleanupFailureTests
             listener.Stop();
             // Finish the non-cancellation accept failure before DisposeAsync cancels its
             // token, deterministically exercising the exceptional exit from the loop.
-            try { await acceptTask.WaitAsync(timeout.Token); }
+            try
+            {
+                await acceptTask.WaitAsync(timeout.Token);
+            }
             catch (Exception error) when (error is not OperationCanceledException) { }
         }
+
         await server.DisposeAsync().AsTask().WaitAsync(timeout.Token);
         return [new(server), new(acceptTask)];
     }
@@ -134,13 +155,17 @@ public class BackgroundCleanupFailureTests
     private sealed class FailingDisconnectLogger(Exception failure) : ILogger
     {
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
             Exception? exception, Func<TState, Exception?, string> formatter)
         {
             if (logLevel == LogLevel.Debug
                 && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
+            {
                 throw failure;
+            }
         }
     }
 }

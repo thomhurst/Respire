@@ -23,8 +23,17 @@ public class NativeResponseResetTests
         var source = Rent(shape);
         // Invalid element count injects a disposal failure without renting array storage.
         source.TrySetResult(RespValue.PooledAggregate(RespireDataType.Array, new RespValue[1], 2));
-        if (source is StringPendingResponseSource text) text.SetDirectResult("stale");
-        if (source is BytesPendingResponseSource bytes) bytes.SetDirectResult([1]);
+
+        if (source is StringPendingResponseSource text)
+        {
+            text.SetDirectResult("stale");
+        }
+
+        if (source is BytesPendingResponseSource bytes)
+        {
+            bytes.SetDirectResult([1]);
+        }
+
         try
         {
             if (poolReset)
@@ -50,7 +59,12 @@ public class NativeResponseResetTests
                          "_directResult", "_hasDirectResult", "_observation", "_observeErrors", "_duration" })
             {
                 var field = source.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
-                if (field is null) continue;
+
+                if (field is null)
+                {
+                    continue;
+                }
+
                 var empty = field.FieldType.IsValueType ? Activator.CreateInstance(field.FieldType) : null;
                 await Assert.That(field.GetValue(source)).IsEqualTo(empty);
             }
@@ -74,17 +88,25 @@ public class NativeResponseResetTests
         // Find this exact object without assuming shared pool order. Hold other rentals
         // until it is found, then verify a new command cannot see the old direct result.
         var rentals = new List<PendingResponse>();
+
         try
         {
             PendingResponse? reused = null;
+
             for (var i = 0; i <= 4096; i++)
             {
                 var candidate = Rent(shape);
                 rentals.Add(candidate);
-                if (!ReferenceEquals(candidate, source)) continue;
+
+                if (!ReferenceEquals(candidate, source))
+                {
+                    continue;
+                }
+
                 reused = candidate;
                 break;
             }
+
             await Assert.That(reused).IsNotNull();
             var pending = Consume(reused!);
             await Assert.That(pending.IsCompleted).IsFalse();
@@ -98,7 +120,11 @@ public class NativeResponseResetTests
             foreach (var rental in rentals)
             {
                 rental.TrySetResult(RespValue.SimpleString("fresh"));
-                try { await Consume(rental); }
+
+                try
+                {
+                    await Consume(rental);
+                }
                 finally { rental.ReleaseRef(); }
             }
         }
@@ -117,8 +143,16 @@ public class NativeResponseResetTests
 
     private static int ConvertFreshResponse(object state, in RespValue value)
     {
-        if (value.Type == RespireDataType.Array) return 0;
-        if (value.AsString() == "fresh") return 42;
+        if (value.Type == RespireDataType.Array)
+        {
+            return 0;
+        }
+
+        if (value.AsString() == "fresh")
+        {
+            return 42;
+        }
+
         throw new InvalidOperationException("Stale response.");
     }
 

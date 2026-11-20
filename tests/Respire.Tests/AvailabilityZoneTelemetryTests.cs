@@ -13,6 +13,7 @@ public class AvailabilityZoneTelemetryTests
     {
         var counters = new AvailabilityZoneTelemetry.Registry();
         var oversized = counters.ForZone(new string('x', 129));
+
         for (var index = 0; index < 100; index++)
         {
             var counter = counters.ForZone(new string('x', 129) + index);
@@ -22,7 +23,12 @@ public class AvailabilityZoneTelemetryTests
 
         var boundary = new string('x', 128);
         counters.ForZone(boundary).Increment();
-        for (var index = 1; index < 64; index++) counters.ForZone($"zone-{index}").Increment();
+
+        for (var index = 1; index < 64; index++)
+        {
+            counters.ForZone($"zone-{index}").Increment();
+        }
+
         await Assert.That(counters.ForZone("one-more-zone")).IsSameReferenceAs(oversized);
         var observed = counters.Observe().ToArray();
         await Assert.That(observed.Length).IsEqualTo(66);
@@ -39,7 +45,12 @@ public class AvailabilityZoneTelemetryTests
         var counters = new AvailabilityZoneTelemetry.Registry();
         var first = counters.ForZone("unknown");
         first.Increment();
-        for (var index = 1; index < 64; index++) counters.ForZone($"zone-{index}");
+
+        for (var index = 1; index < 64; index++)
+        {
+            counters.ForZone($"zone-{index}");
+        }
+
         var overflow = counters.ForZone("overflow-a");
         await Assert.That(counters.ForZone("overflow-b")).IsSameReferenceAs(overflow);
         await Assert.That(counters.ForZone("unknown")).IsSameReferenceAs(first);
@@ -57,7 +68,13 @@ public class AvailabilityZoneTelemetryTests
     private static string? Tag(Measurement<long> measurement, string name)
     {
         foreach (var tag in measurement.Tags)
-            if (tag.Key == name) return tag.Value as string;
+        {
+            if (tag.Key == name)
+            {
+                return tag.Value as string;
+            }
+        }
+
         return null;
     }
 }

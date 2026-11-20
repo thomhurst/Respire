@@ -18,11 +18,15 @@ internal static class TransportBatchDiagnostics
     {
         if (!Regex.IsMatch(revision, "^[0-9a-f]{40}$") || connections is not (1 or 2)
             || count is not (32 or 100) || launch < 1 || iterations is < 128 or > 4096)
+        {
             throw new ArgumentException("A full revision, 1/2 connections, 32/100 commands, positive launch and 128–4096 iterations are required.");
+        }
+
         Directory.CreateDirectory(directory);
         var fixture = new TransportAcceptanceBenchmarks { Connections = connections };
         var observations = new List<object>();
         await fixture.Setup().ConfigureAwait(false);
+
         try
         {
             // Warm both controls; retain normal runtime tiering and thread-pool policy.
@@ -31,6 +35,7 @@ internal static class TransportBatchDiagnostics
                 await fixture.StandaloneBatch(count).ConfigureAwait(false);
                 await ValueTaskFixtureAsync(fixture.DiagnosticClient, count).ConfigureAwait(false);
             }
+
             using var session = new DiagnosticsClient(Environment.ProcessId).StartEventPipeSession(
             [
                 new EventPipeProvider("Microsoft-Windows-DotNETRuntime", EventLevel.Verbose,
@@ -40,12 +45,17 @@ internal static class TransportBatchDiagnostics
             ], requestRundown: true, circularBufferMB: 128);
             await using var output = File.Create(Path.Combine(directory, "allocations.nettrace"));
             var copy = session.EventStream.CopyToAsync(output);
+
             try
             {
                 // Instantiate the provider after starting EventPipe, before the first boundary.
                 BatchDiagnosticEvents.Log.Boundary("ready", "start");
                 await ObserveAsync("idle-before", iterations, observations,
-                    async () => { await Task.Delay(250).ConfigureAwait(false); return 0; }).ConfigureAwait(false);
+                    async () =>
+                    {
+                        await Task.Delay(250).ConfigureAwait(false);
+                        return 0;
+                    }).ConfigureAwait(false);
 
                 var batches = new RespireBatch[iterations];
                 BatchDiagnosticEvents.Log.Boundary("construction", "start");
@@ -53,39 +63,60 @@ internal static class TransportBatchDiagnostics
                 BatchDiagnosticEvents.Log.Boundary("construction", "stop");
                 observations.Add(new { control = "construction", operations = iterations, construction });
                 // Discard faults allocate; deliberately keep disposal outside construction.
-                foreach (var batch in batches) batch.Dispose();
+                foreach (var batch in batches)
+                {
+                    batch.Dispose();
+                }
 
                 await ObserveAsync("public-task", iterations, observations, async () =>
                 {
                     var suspended = 0;
+
                     for (var i = 0; i < iterations; i++)
                     {
                         var task = fixture.StandaloneBatch(count);
-                        if (!task.IsCompleted) suspended++;
+
+                        if (!task.IsCompleted)
+                        {
+                            suspended++;
+                        }
+
                         _ = await task.ConfigureAwait(false);
                     }
+
                     return suspended;
                 }).ConfigureAwait(false);
                 await ObserveAsync("fixture-pooled-valuetask", iterations, observations, async () =>
                 {
                     var suspended = 0;
+
                     for (var i = 0; i < iterations; i++)
                     {
                         var task = ValueTaskFixtureAsync(fixture.DiagnosticClient, count);
-                        if (!task.IsCompleted) suspended++;
+
+                        if (!task.IsCompleted)
+                        {
+                            suspended++;
+                        }
+
                         _ = await task.ConfigureAwait(false);
                     }
+
                     return suspended;
                 }).ConfigureAwait(false);
 
                 var gate = new BatchReplyGate();
                 var host = Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1";
                 var port = int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379");
+
 #pragma warning disable RESP010 // One gated client is reused across all batch observations, outside measured boundaries.
                 await using (var client = await RespireClient.ConnectAsync(new RespireOptions
                 {
-                    Endpoints = [new(host, port)], Connections = connections, Protocol = RespireProtocol.Resp2,
-                    ThreadPoolMonitoring = false, TestingStreamFactory = gate.ConnectAsync,
+                    Endpoints = [new(host, port)],
+                    Connections = connections,
+                    Protocol = RespireProtocol.Resp2,
+                    ThreadPoolMonitoring = false,
+                    TestingStreamFactory = gate.ConnectAsync,
                 }).ConfigureAwait(false))
 #pragma warning restore RESP010
                 {
@@ -99,20 +130,31 @@ internal static class TransportBatchDiagnostics
                     var overlap = new RespireBatch[128];
                     var pending = new RespirePending<long>[overlap.Length];
                     var executing = new ValueTask<RespireBatchResult>[overlap.Length];
-                    for (var i = 0; i < overlap.Length; i++) overlap[i] = Create(client, count, out pending[i]);
+
+                    for (var i = 0; i < overlap.Length; i++)
+                    {
+                        overlap[i] = Create(client, count, out pending[i]);
+                    }
+
                     try
                     {
                         await ObserveAsync("gated-pool-demand", overlap.Length, observations,
                             () => RunOverlapAsync(gate, overlap, pending, executing)).ConfigureAwait(false);
                     }
-                    finally { foreach (var batch in overlap) batch.Dispose(); }
+                    finally { foreach (var batch in overlap) { batch.Dispose(); } }
+
                     await ObserveAsync("gated-direct", iterations, observations,
                         () => RunGatedAsync(client, gate, count, iterations, fixtureTask: false)).ConfigureAwait(false);
                     await ObserveAsync("gated-task", iterations, observations,
                         () => RunGatedAsync(client, gate, count, iterations, fixtureTask: true)).ConfigureAwait(false);
                 }
+
                 await ObserveAsync("idle-after", iterations, observations,
-                    async () => { await Task.Delay(250).ConfigureAwait(false); return 0; }).ConfigureAwait(false);
+                    async () =>
+                    {
+                        await Task.Delay(250).ConfigureAwait(false);
+                        return 0;
+                    }).ConfigureAwait(false);
                 await ObserveAsync("background-positive", 128, observations,
                     () => Task.Run(AllocateBackgroundControl)).ConfigureAwait(false);
                 BatchDiagnosticEvents.Log.Boundary("ready", "stop");
@@ -122,16 +164,25 @@ internal static class TransportBatchDiagnostics
                 session.Stop();
                 await copy.ConfigureAwait(false);
             }
+
             var metadata = new
             {
-                schemaVersion = 1, revision, phase, connections, count, launch, iterations,
-                processId = Environment.ProcessId, runtime = Environment.Version.ToString(),
+                schemaVersion = 1,
+                revision,
+                phase,
+                connections,
+                count,
+                launch,
+                iterations,
+                processId = Environment.ProcessId,
+                runtime = Environment.Version.ToString(),
                 fixtureAssemblySha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(TransportBatchDiagnostics).Assembly.Location))),
                 libraryAssemblySha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(RespireClient).Assembly.Location))),
                 framework = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
                 os = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
                 errorMetrics = Environment.GetEnvironmentVariable("RESPIRE_BENCH_ERRORS") ?? "disabled",
-                timestamp = DateTimeOffset.UtcNow, observations,
+                timestamp = DateTimeOffset.UtcNow,
+                observations,
                 limitations = "Allocation ticks sample types/stacks, not exact per-type bytes. Process totals include collector and controller work. Internal suspension/pool-miss counts are not instrumented; gated batches guarantee at least one incomplete reply. Diagnostic launches are separate from public timing launches.",
             };
             await File.WriteAllTextAsync(Path.Combine(directory, "metadata.json"),
@@ -157,7 +208,11 @@ internal static class TransportBatchDiagnostics
     {
         // A known worker allocation calibrates process-wide capture independently
         // of all batch activity. Its stack must never be called a transport cost.
-        for (var i = 0; i < 128; i++) GC.KeepAlive(new byte[64 * 1024]);
+        for (var i = 0; i < 128; i++)
+        {
+            GC.KeepAlive(new byte[64 * 1024]);
+        }
+
         return 0;
     }
 
@@ -166,17 +221,31 @@ internal static class TransportBatchDiagnostics
     {
         var collections = GC.CollectionCount(0) + GC.CollectionCount(1) + GC.CollectionCount(2);
         var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var i = 0; i < batches.Length; i++) batches[i] = Create(client, count, out _);
+
+        for (var i = 0; i < batches.Length; i++)
+        {
+            batches[i] = Create(client, count, out _);
+        }
+
         var bytes = GC.GetAllocatedBytesForCurrentThread() - before;
-        return new { threadBytes = bytes, bytesPerBatch = (double)bytes / batches.Length,
-            collectionsDuring = GC.CollectionCount(0) + GC.CollectionCount(1) + GC.CollectionCount(2) - collections };
+        return new
+        {
+            threadBytes = bytes,
+            bytesPerBatch = (double)bytes / batches.Length,
+            collectionsDuring = GC.CollectionCount(0) + GC.CollectionCount(1) + GC.CollectionCount(2) - collections
+        };
     }
 
     private static RespireBatch Create(RespireClient client, int count, out RespirePending<long> first)
     {
         var batch = client.CreateBatch();
         first = batch.Increment("transport-acceptance:batch");
-        for (var index = 1; index < count; index++) _ = batch.Increment("transport-acceptance:batch");
+
+        for (var index = 1; index < count; index++)
+        {
+            _ = batch.Increment("transport-acceptance:batch");
+        }
+
         return batch;
     }
 
@@ -199,27 +268,51 @@ internal static class TransportBatchDiagnostics
         int count, int iterations, bool fixtureTask)
     {
         var suspended = 0;
+
         for (var i = 0; i < iterations; i++)
         {
             using var batch = Create(client, count, out var first);
             var received = gate.Arm();
             Task<long>? task = null;
             ValueTask<RespireBatchResult> direct = default;
+
             try
             {
-                if (fixtureTask) task = TaskFixtureAsync(batch, first);
-                else direct = batch.ExecuteAsync();
+                if (fixtureTask)
+                {
+                    task = TaskFixtureAsync(batch, first);
+                }
+                else
+                {
+                    direct = batch.ExecuteAsync();
+                }
+
                 await received.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+
                 if (fixtureTask ? task!.IsCompleted : direct.IsCompleted)
+                {
                     throw new InvalidOperationException("Batch completed while its replies were held.");
+                }
+
                 suspended++;
             }
             finally { gate.Release(); }
-            if (fixtureTask) _ = await task!.ConfigureAwait(false);
-            else _ = await direct.ConfigureAwait(false);
+
+            if (fixtureTask)
+            {
+                _ = await task!.ConfigureAwait(false);
+            }
+            else
+            {
+                _ = await direct.ConfigureAwait(false);
+            }
+
             if (batch.Count != count || first.Result <= 0)
+            {
                 throw new InvalidOperationException("Gated batch lost its pending results.");
+            }
         }
+
         return suspended;
     }
 
@@ -227,20 +320,33 @@ internal static class TransportBatchDiagnostics
         RespirePending<long>[] pending, ValueTask<RespireBatchResult>[] executing)
     {
         var received = gate.Arm();
+
         try
         {
-            for (var i = 0; i < batches.Length; i++) executing[i] = batches[i].ExecuteAsync();
+            for (var i = 0; i < batches.Length; i++)
+            {
+                executing[i] = batches[i].ExecuteAsync();
+            }
+
             await received.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+
             if (executing.Any(static execution => execution.IsCompleted))
+            {
                 throw new InvalidOperationException("An overlapping batch completed while replies were held.");
+            }
         }
         finally { gate.Release(); }
+
         for (var i = 0; i < batches.Length; i++)
         {
             var result = await executing[i].ConfigureAwait(false);
+
             if (result.Count != batches[i].Count || pending[i].Result <= 0)
+            {
                 throw new InvalidOperationException("Overlapping batch lost its pending results.");
+            }
         }
+
         return batches.Length;
     }
 }

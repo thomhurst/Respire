@@ -54,14 +54,20 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
     {
         ArgumentNullException.ThrowIfNull(cacheName);
         ArgumentNullException.ThrowIfNull(lockName);
+
         if (timeout < TimeSpan.Zero && timeout != Timeout.InfiniteTimeSpan)
+        {
             throw new ArgumentOutOfRangeException(nameof(timeout));
+        }
+
         token.ThrowIfCancellationRequested();
+
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_cleanup is not null, this);
             _acquisitions++;
         }
+
         try
         {
             return await AcquireCoreAsync(cacheName, lockName, timeout, logger, token).ConfigureAwait(false);
@@ -70,7 +76,10 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
         {
             lock (_sync)
             {
-                if (--_acquisitions == 0) _acquisitionsDrained?.TrySetResult();
+                if (--_acquisitions == 0)
+                {
+                    _acquisitionsDrained?.TrySetResult();
+                }
             }
         }
     }
@@ -83,28 +92,33 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
         using var deadlineStop = new CancellationTokenSource();
         var deadline = timeout > TimeSpan.Zero ? CancelAtDeadlineAsync(waiting, timeout, deadlineStop.Token) : Task.CompletedTask;
         var started = Stopwatch.GetTimestamp();
+
         try
         {
             while (true)
             {
                 var attempt = await _coordination.TryAcquireFencedLockAsync(leaseKey, counterKey,
                     _options.LeaseDuration, waiting.Token).ConfigureAwait(false);
+
                 if (attempt.Acquired)
                 {
                     RespireFusionCacheLock? handle = null;
                     var lifetime = CancellationTokenSource.CreateLinkedTokenSource(
                         _options.ReleaseOnCallerCancellation ? token : CancellationToken.None, _shutdownToken);
+
                     try
                     {
                         token.ThrowIfCancellationRequested();
                         waiting.Token.ThrowIfCancellationRequested();
                         var keepAlive = await attempt.Lock.KeepAliveAsync(lifetime.Token).ConfigureAwait(false);
                         handle = new(this, attempt.Lock, keepAlive, lifetime, logger ?? _logger);
+
                         lock (_sync)
                         {
                             ObjectDisposedException.ThrowIf(_cleanup is not null, this);
                             _handles.Add(handle);
                         }
+
                         handle.ObserveLifetime();
                         // A late cancellation cannot hand an unobserved renewing handle to FusionCache.
                         token.ThrowIfCancellationRequested();
@@ -114,31 +128,59 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
                     }
                     catch
                     {
-                        if (handle is not null) await handle.DisposeAsync().ConfigureAwait(false);
+                        if (handle is not null)
+                        {
+                            await handle.DisposeAsync().ConfigureAwait(false);
+                        }
                         else
                         {
                             lifetime.Dispose();
                             await attempt.DisposeAsync().ConfigureAwait(false);
                         }
+
                         throw;
                     }
                 }
-                if (timeout == TimeSpan.Zero) return null;
+
+                if (timeout == TimeSpan.Zero)
+                {
+                    return null;
+                }
+
                 var delay = GetPollDelay(_options.PollInterval, Random.Shared.NextDouble());
+
                 if (timeout != Timeout.InfiniteTimeSpan)
                 {
                     var remaining = timeout - Stopwatch.GetElapsedTime(started);
-                    if (remaining <= TimeSpan.Zero) return null;
-                    if (remaining < delay) delay = remaining;
+
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        return null;
+                    }
+
+                    if (remaining < delay)
+                    {
+                        delay = remaining;
+                    }
                 }
+
                 await Task.Delay(delay, waiting.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
         {
             token.ThrowIfCancellationRequested();
-            lock (_sync) ObjectDisposedException.ThrowIf(_cleanup is not null, this);
-            if (waiting.IsCancellationRequested) return null;
+
+            lock (_sync)
+            {
+                ObjectDisposedException.ThrowIf(_cleanup is not null, this);
+            }
+
+            if (waiting.IsCancellationRequested)
+            {
+                return null;
+            }
+
             throw;
         }
         finally
@@ -158,16 +200,25 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
     public async ValueTask ReleaseLockAsync(string cacheName, string cacheInstanceId, string operationId,
         string key, string lockName, object? lockObj, ILogger? logger, CancellationToken token)
     {
-        if (lockObj is null) return;
+        if (lockObj is null)
+        {
+            return;
+        }
+
         if (lockObj is not RespireFusionCacheLock handle || !handle.BelongsTo(this))
+        {
             throw new ArgumentException("The lock handle was not acquired by this locker.", nameof(lockObj));
+        }
         // FusionCache releases from finally with the factory token; cleanup must outlive it.
         await handle.DisposeAsync().ConfigureAwait(false);
     }
 
     internal void Forget(RespireFusionCacheLock handle)
     {
-        lock (_sync) _handles.Remove(handle);
+        lock (_sync)
+        {
+            _handles.Remove(handle);
+        }
     }
 
     internal static TimeSpan GetPollDelay(TimeSpan interval, double sample)
@@ -201,7 +252,12 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
         for (var offset = 0; offset < value.Length;)
         {
             var count = Math.Min(buffer.Length / 2, value.Length - offset);
-            for (var i = 0; i < count; i++) BinaryPrimitives.WriteUInt16BigEndian(buffer[(i * 2)..], value[offset + i]);
+
+            for (var i = 0; i < count; i++)
+            {
+                BinaryPrimitives.WriteUInt16BigEndian(buffer[(i * 2)..], value[offset + i]);
+            }
+
             hash.AppendData(buffer[..(count * 2)]);
             offset += count;
         }
@@ -211,14 +267,21 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
     {
         // Chunk finite budgets above the timer limit; CancelAfter rejects those timeouts.
         var started = Stopwatch.GetTimestamp();
+
         try
         {
             while (true)
             {
                 var remaining = timeout - Stopwatch.GetElapsedTime(started);
-                if (remaining <= TimeSpan.Zero) break;
+
+                if (remaining <= TimeSpan.Zero)
+                {
+                    break;
+                }
+
                 await Task.Delay(remaining > MaximumTimerDelay ? MaximumTimerDelay : remaining, stop).ConfigureAwait(false);
             }
+
             await waiting.CancelAsync().ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
@@ -230,14 +293,20 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
         TaskCompletionSource completion;
         RespireFusionCacheLock[] handles;
         Task acquisitions;
+
         lock (_sync)
         {
-            if (_cleanup is not null) return new ValueTask(_cleanup.Task);
+            if (_cleanup is not null)
+            {
+                return new ValueTask(_cleanup.Task);
+            }
+
             completion = _cleanup = new(TaskCreationOptions.RunContinuationsAsynchronously);
             handles = [.. _handles];
             acquisitions = _acquisitions == 0 ? Task.CompletedTask
                 : (_acquisitionsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
         }
+
         _ = CompleteCleanupAsync(completion, handles, acquisitions);
         return new ValueTask(completion.Task);
     }
@@ -251,7 +320,12 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
             // their owner-checked release before the caller can close the shared client.
             await acquisitions.ConfigureAwait(false);
             var cleanup = new Task[handles.Length];
-            for (var i = 0; i < handles.Length; i++) cleanup[i] = handles[i].DisposeAsync().AsTask();
+
+            for (var i = 0; i < handles.Length; i++)
+            {
+                cleanup[i] = handles[i].DisposeAsync().AsTask();
+            }
+
             await Task.WhenAll(cleanup).ConfigureAwait(false);
             completion.TrySetResult();
         }

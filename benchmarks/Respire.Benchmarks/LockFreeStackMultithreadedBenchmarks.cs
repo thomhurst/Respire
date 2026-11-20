@@ -28,6 +28,7 @@ public class LockFreeStackMultithreadedBenchmarks
         _reservoir = new ObjectPool<PoolBenchmarkItem, PoolBenchmarkItemPolicy>(MaximumRetained);
 
         var reservoirItems = new PoolBenchmarkItem[WorkerCount];
+
         for (var i = 0; i < WorkerCount; i++)
         {
             _lockFreeStack.TryPush(new PoolBenchmarkItem());
@@ -40,6 +41,7 @@ public class LockFreeStackMultithreadedBenchmarks
         }
 
         _workers = new Thread[WorkerCount];
+
         for (var i = 0; i < WorkerCount; i++)
         {
             var workerIndex = i;
@@ -89,6 +91,7 @@ public class LockFreeStackMultithreadedBenchmarks
         }
 
         var result = 0;
+
         foreach (var workerResult in _results)
         {
             result += workerResult;
@@ -102,6 +105,7 @@ public class LockFreeStackMultithreadedBenchmarks
         while (true)
         {
             _barrier.SignalAndWait();
+
             if (_stopping)
             {
                 return;
@@ -131,6 +135,7 @@ public class LockFreeStackMultithreadedBenchmarks
     private int RunLockFreeStack()
     {
         var result = 0;
+
         for (var i = 0; i < OperationsPerWorker; i++)
         {
             if (!_lockFreeStack.TryPop(out var item))
@@ -148,6 +153,7 @@ public class LockFreeStackMultithreadedBenchmarks
     private int RunReservoir()
     {
         var result = 0;
+
         for (var i = 0; i < OperationsPerWorker; i++)
         {
             var item = _reservoir.Rent();
@@ -161,6 +167,7 @@ public class LockFreeStackMultithreadedBenchmarks
     private int RunReservoirScoped()
     {
         var result = 0;
+
         for (var i = 0; i < OperationsPerWorker; i++)
         {
             using var lease = _reservoir.RentScoped(out var item);

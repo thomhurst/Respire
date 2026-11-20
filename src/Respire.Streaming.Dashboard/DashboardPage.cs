@@ -39,25 +39,41 @@ internal static class DashboardPage
             """);
         html.Append(E(path)).Append("\">").Append(logs is null && jobGroups is null ? "Refresh snapshot" : "Return to dashboard")
             .Append("</a></div><p>Inspect deliveries and return failed work to its stream.</p></header><div class=\"layout\"><nav aria-label=\"Configured streams\"><p>Configured streams</p>");
+
         foreach (var stream in snapshot.Streams)
+        {
             html.Append("<a href=\"#stream-").Append(N(stream.Index)).Append("\">").Append(E(stream.Configuration.Name)).Append("</a>");
+        }
+
         if (logs is not null)
+        {
             html.Append("<a href=\"#job-logs\">").Append(E(logs.QueueName)).Append("</a>");
+        }
+
         html.Append("</nav><main id=\"content\">");
+
         if (logs is not null)
         {
             html.Append("<article class=\"stream\" id=\"job-logs\"><div class=\"stream-head\"><span class=\"kind\">Job logs</span><h2>")
                 .Append(E(logs.QueueName)).Append("</h2><div class=\"key\">").Append(E(logs.JobId))
                 .Append("</div></div><section class=\"section\"><h3>Retained log lines</h3>");
+
             if (logs.Lines.Length == 0)
+            {
                 html.Append("<p class=\"empty\">No retained logs for this job ID. It may not have logged yet, or its logs may have expired.</p>");
+            }
             else
             {
                 html.Append("<ol>");
+
                 foreach (var line in logs.Lines)
+                {
                     html.Append("<li><pre style=\"white-space:pre-wrap;overflow-wrap:anywhere\">").Append(E(line)).Append("</pre></li>");
+                }
+
                 html.Append("</ol>");
             }
+
             html.Append("<p class=\"note\">Newest retained lines in append order, up to the dashboard entry limit. Logs share the job ID across attempts and expire according to the worker policy.</p></section></article>");
         }
         else if (jobGroups is not null)
@@ -67,11 +83,20 @@ internal static class DashboardPage
             html.Append("</article>");
         }
         else if (snapshot.Streams.Count == 0)
+        {
             html.Append("<p class=\"notice\">No streams are configured. Add a stream to the dashboard registration to inspect its workers.</p>");
+        }
+
         foreach (var stream in snapshot.Streams)
+        {
             RenderStream(html, stream, path, tokenFieldName, requestToken);
+        }
+
         if (logs is null && jobGroups is null)
+        {
             html.Append("<footer>Snapshots are shared for two seconds. Refresh to update counts and delivery rate. Retained entries include acknowledged work.</footer>");
+        }
+
         html.Append("</main></div></body></html>");
         return html.ToString();
     }
@@ -82,15 +107,18 @@ internal static class DashboardPage
         html.Append("<article class=\"stream\" id=\"stream-").Append(N(stream.Index)).Append("\"><div class=\"stream-head\"><span class=\"kind\">")
             .Append(config.IsJobQueue ? "Job queue" : "Stream worker").Append("</span><h2>").Append(E(config.Name))
             .Append("</h2><div class=\"key\">").Append(E(config.Stream)).Append("</div>");
+
         if (stream.Error is not null)
         {
             html.Append("<p class=\"notice error\" role=\"status\">").Append(E(stream.Error)).Append("</p>");
         }
+
         html.Append("<dl class=\"stats\"><div><dt>Retained entries</dt><dd>").Append(stream.SourceUnavailable ? "—" : N(stream.Length))
             .Append("</dd></div><div><dt>Dead letters</dt><dd>").Append(config.DeadLetterStream is null || stream.DeadLettersUnavailable ? "—" : N(stream.DeadLetterLength))
             .Append("</dd></div><div><dt>Deliveries / second</dt><dd>").Append(stream.DeliveriesPerSecond?.ToString("0.00", CultureInfo.InvariantCulture) ?? "—")
             .Append("</dd></div></dl><p class=\"note\">Delivery rate for ").Append(E(config.Group))
             .Append(" over samples at least five seconds apart. It counts new group deliveries, not successful completions. Refresh after five seconds to obtain a rate.</p></div>");
+
         if (config.IsJobQueue)
         {
             html.Append("<section class=\"section\"><h3>Queue controls</h3><dl class=\"stats\"><div><dt>State</dt><dd>")
@@ -103,78 +131,147 @@ internal static class DashboardPage
             RenderJobGroups(html, stream.Index, stream.JobGroups?.Groups, stream.JobGroups?.NextCursor,
                 path, tokenFieldName, requestToken);
         }
+
         html.Append("<section class=\"section\"><h3>Consumer groups</h3>");
-        if (stream.SourceUnavailable) html.Append("<p class=\"notice\">Source inspection unavailable.</p>");
-        else if (stream.Groups.Length == 0) html.Append("<p class=\"empty\">No consumer groups exist yet. Start a worker to create its group.</p>");
+
+        if (stream.SourceUnavailable)
+        {
+            html.Append("<p class=\"notice\">Source inspection unavailable.</p>");
+        }
+        else if (stream.Groups.Length == 0)
+        {
+            html.Append("<p class=\"empty\">No consumer groups exist yet. Start a worker to create its group.</p>");
+        }
         else
         {
             html.Append("<div class=\"table-wrap\"><table><thead><tr><th scope=\"col\">Group</th><th scope=\"col\">Consumers</th><th scope=\"col\">Pending</th><th scope=\"col\">Lag</th><th scope=\"col\">Last delivered</th></tr></thead><tbody>");
+
             foreach (var group in stream.Groups)
+            {
                 html.Append("<tr><td>").Append(E(group.Name)).Append("</td><td>").Append(N(group.Consumers)).Append("</td><td>").Append(N(group.Pending))
                     .Append("</td><td>").Append(group.Lag is { } lag ? N(lag) : "—").Append("</td><td class=\"key\">").Append(E(group.LastDeliveredId.ToString())).Append("</td></tr>");
+            }
+
             html.Append("</tbody></table></div>");
         }
+
         html.Append("</section><section class=\"section\"><h3>Pending deliveries</h3><p class=\"note\">Group: ").Append(E(config.Group)).Append(". Oldest entries first; the configured entry limit applies.</p>");
+
         if (stream.SourceUnavailable)
+        {
             html.Append("<p class=\"notice\">Pending deliveries unavailable. Restore source access before retrying entries.</p>");
+        }
         else if (!stream.Groups.Any(group => group.Name == config.Group))
+        {
             html.Append("<p class=\"notice\">The configured group does not exist. Start its worker before retrying entries.</p>");
-        else if (stream.Pending.Length == 0) html.Append("<p class=\"empty\">No pending deliveries in this group.</p>");
+        }
+        else if (stream.Pending.Length == 0)
+        {
+            html.Append("<p class=\"empty\">No pending deliveries in this group.</p>");
+        }
         else
         {
             html.Append("<div class=\"table-wrap\"><table><thead><tr><th scope=\"col\">Entry</th><th scope=\"col\">Consumer</th><th scope=\"col\">Idle seconds</th><th scope=\"col\">Deliveries</th>");
-            if (config.IsJobQueue) html.Append("<th scope=\"col\">Deduplication identity</th><th scope=\"col\">Mode</th><th scope=\"col\">Checkpoint</th>");
+
+            if (config.IsJobQueue)
+            {
+                html.Append("<th scope=\"col\">Deduplication identity</th><th scope=\"col\">Mode</th><th scope=\"col\">Checkpoint</th>");
+            }
+
             html.Append("</tr></thead><tbody>");
+
             foreach (var entry in stream.Pending)
             {
                 html.Append("<tr><td class=\"key\">").Append(E(entry.Id.ToString())).Append("</td><td>").Append(E(entry.Consumer))
                     .Append("</td><td>").Append(entry.IdleTime.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)).Append("</td><td>").Append(N(entry.DeliveryCount)).Append("</td>");
+
                 if (config.IsJobQueue)
                 {
                     var policy = stream.Deduplication?.GetValueOrDefault(entry.Id);
                     html.Append("<td>").Append(E(policy?.Identity ?? "—"))
                         .Append("</td><td>").Append(E(policy?.Mode ?? "—")).Append("</td>");
                     html.Append("<td>");
+
                     if (stream.Checkpoints?.TryGetValue(entry.Id, out var checkpoint) == true && checkpoint is not null)
                     {
                         html.Append(E(checkpoint.Cursor));
-                        if (checkpoint.Percent is { } percent) html.Append(" · ").Append(N(percent)).Append('%');
+
+                        if (checkpoint.Percent is { } percent)
+                        {
+                            html.Append(" · ").Append(N(percent)).Append('%');
+                        }
                     }
-                    else html.Append('—');
+                    else
+                    {
+                        html.Append('—');
+                    }
+
                     html.Append("</td>");
                 }
+
                 html.Append("</tr>");
             }
+
             html.Append("</tbody></table></div>");
         }
+
         html.Append("</section><section class=\"section\"><h3>Dead letters</h3>");
-        if (config.DeadLetterStream is null) html.Append("<p class=\"empty\">No dead-letter stream is configured for this worker.</p>");
+
+        if (config.DeadLetterStream is null)
+        {
+            html.Append("<p class=\"empty\">No dead-letter stream is configured for this worker.</p>");
+        }
         else
         {
             html.Append("<div class=\"key muted\">").Append(E(config.DeadLetterStream)).Append("</div><p class=\"note\">Oldest entries first; the configured entry limit applies. Retry moves one entry back to the source stream for all its consumer groups.");
-            if (config.IsJobQueue) html.Append(" Job retries keep the job ID and payload, reset attempts, and remove the original expiry. Retried batch members run independently without changing the original batch or repeating its callbacks.");
+
+            if (config.IsJobQueue)
+            {
+                html.Append(" Job retries keep the job ID and payload, reset attempts, and remove the original expiry. Retried batch members run independently without changing the original batch or repeating its callbacks.");
+            }
+
             html.Append("</p>");
-            if (stream.DeadLettersUnavailable) html.Append("<p class=\"notice\">Dead-letter inspection unavailable.</p>");
-            else if (stream.DeadLetters.Length == 0) html.Append("<p class=\"empty\">No dead letters. Failed entries will appear here when workers move them to this stream.</p>");
+
+            if (stream.DeadLettersUnavailable)
+            {
+                html.Append("<p class=\"notice\">Dead-letter inspection unavailable.</p>");
+            }
+            else if (stream.DeadLetters.Length == 0)
+            {
+                html.Append("<p class=\"empty\">No dead letters. Failed entries will appear here when workers move them to this stream.</p>");
+            }
+
             foreach (var entry in stream.DeadLetters)
             {
                 html.Append("<div class=\"dead\"><div class=\"dead-head\"><span class=\"entry-id\">").Append(E(entry.Id.ToString()))
                     .Append("</span><span class=\"reason\">").Append(Preview(entry["_respire.reason"])).Append("</span></div><details><summary>Inspect fields</summary><dl class=\"fields\">");
                 var count = 0;
+
                 foreach (var field in entry.Fields)
                 {
-                    if (++count > 32) break;
+                    if (++count > 32)
+                    {
+                        break;
+                    }
+
                     html.Append("<dt>").Append(E(field.Key.Length > 256 ? field.Key[..256] + "…" : field.Key)).Append("</dt><dd>").Append(Preview(field.Value)).Append("</dd>");
                 }
+
                 html.Append("</dl><p class=\"note\">Preview shows at most 32 fields and 512 bytes per value. Actions use the complete stored entry.</p></details><div class=\"actions\">");
+
                 if (!stream.SourceUnavailable && stream.Groups.Any(group => group.Name == config.Group))
+                {
                     Form(html, stream.Index, entry.Id, "retry", "Retry entry", path, tokenFieldName, requestToken);
+                }
+
                 html.Append("<details><summary>Delete entry…</summary><p>Delete this dead letter permanently? Its payload will no longer be available here.</p>");
                 Form(html, stream.Index, entry.Id, "delete", "Permanently delete", path, tokenFieldName, requestToken);
                 html.Append("</details></div></div>");
             }
         }
+
         html.Append("</section>");
+
         if (config.IsJobQueue)
         {
             html.Append("<section class=\"section\"><h3>Job logs</h3><form method=\"get\" action=\"")
@@ -183,6 +280,7 @@ internal static class DashboardPage
                 .Append(N(stream.Index)).Append("\" name=\"jobId\" maxlength=\"4096\" required> <button type=\"submit\">View logs</button></form>")
                 .Append("<p class=\"note\">Look up retained log lines from any attempt, including completed and failed jobs.</p></section>");
         }
+
         html.Append("</article>");
     }
 
@@ -191,30 +289,42 @@ internal static class DashboardPage
         html.Append("""
             <section class="section"><h3>Batch progress</h3>
             """);
+
         if (batches is null || batches.Count == 0)
+        {
             html.Append("""<p class="empty">No batch IDs configured. Add BatchIds to this job queue's dashboard registration.</p>""");
+        }
         else
         {
             html.Append("""
                 <div class="table-wrap"><table><thead><tr><th scope="col">Batch ID</th><th scope="col">Pending</th><th scope="col">Succeeded</th><th scope="col">Failed</th><th scope="col">Cancelled</th><th scope="col">Membership</th><th scope="col">Terminal</th><th scope="col">Cancellation requested</th></tr></thead><tbody>
                 """);
+
             foreach (var batch in batches)
             {
                 html.Append("<tr><td>").Append(E(batch.Id)).Append("</td>");
+
                 if (batch.Status is not { } status)
+                {
                     html.Append("""<td colspan="7" class="notice">""").Append(batch.Unavailable
                         ? "Batch data unavailable. Check Redis permissions and the configured queue."
                         : "No retained batch data. The ID may be unknown or its state may have been removed.").Append("</td>");
+                }
                 else
+                {
                     html.Append("<td>").Append(N(status.Pending)).Append("</td><td>").Append(N(status.Succeeded))
                         .Append("</td><td>").Append(N(status.Failed)).Append("</td><td>").Append(N(status.Cancelled))
                         .Append("</td><td>").Append(status.IsSealed ? "Sealed" : "Open")
                         .Append("</td><td>").Append(status.IsCompleted ? "Yes" : "No")
                         .Append("</td><td>").Append(status.CancellationRequested ? "Yes" : "No").Append("</td>");
+                }
+
                 html.Append("</tr>");
             }
+
             html.Append("</tbody></table></div>");
         }
+
         html.Append("""
             <p class="note">Configured IDs only, in configuration order. Pending includes retries; callback jobs are excluded from counts. Terminal means sealed with no pending members and eligible callbacks published, not executed. Cancellation leaves running handlers uninterrupted. Batch state is retained until explicitly removed.</p></section>
             """);
@@ -225,26 +335,60 @@ internal static class DashboardPage
     {
         var route = path.TrimEnd('/') + "/" + N(index);
         html.Append("<section class=\"section\"><h3>Application job groups</h3><p class=\"note\">Application groups partition jobs for scheduling and admission. Redis consumer groups track stream deliveries separately.</p>");
-        if (groups is null) html.Append("<p class=\"notice\">Application job groups unavailable.</p>");
+
+        if (groups is null)
+        {
+            html.Append("<p class=\"notice\">Application job groups unavailable.</p>");
+        }
         else if (groups.Count == 0)
+        {
             html.Append("<p class=\"empty\">No grouped jobs or retained leases. This queue may be empty or contain only ungrouped jobs.</p>");
+        }
         else
         {
             html.Append("<div class=\"table-wrap\"><table><thead><tr><th scope=\"col\">Application group</th><th scope=\"col\">Queued / due</th><th scope=\"col\">Active leases</th><th scope=\"col\">Group admission</th><th scope=\"col\">Policy</th><th scope=\"col\">Control</th></tr></thead><tbody>");
+
             foreach (var group in groups)
             {
                 html.Append("<tr><td>").Append(E(group.Name)).Append("</td><td>").Append(N(group.QueuedCount)).Append(" / ")
                     .Append(N(group.ReadyCount)).Append("</td><td>").Append(N(group.ActiveCount)).Append("</td><td>");
-                if (group.IsPaused) html.Append("Paused. ");
-                if (group.IsRateLimited) html.Append("Rate limited. ");
-                if (group.IsConcurrencyLimited) html.Append("Concurrency limited. ");
-                if (group.IsEligible) html.Append("Eligible");
-                else if (!group.IsPaused && !group.IsRateLimited && !group.IsConcurrencyLimited) html.Append("No due work");
+
+                if (group.IsPaused)
+                {
+                    html.Append("Paused. ");
+                }
+
+                if (group.IsRateLimited)
+                {
+                    html.Append("Rate limited. ");
+                }
+
+                if (group.IsConcurrencyLimited)
+                {
+                    html.Append("Concurrency limited. ");
+                }
+
+                if (group.IsEligible)
+                {
+                    html.Append("Eligible");
+                }
+                else if (!group.IsPaused && !group.IsRateLimited && !group.IsConcurrencyLimited)
+                {
+                    html.Append("No due work");
+                }
+
                 html.Append("</td><td>Concurrency: ").Append(group.MaxConcurrency is { } max ? N(max) : "unlimited")
                     .Append("<br>Rate: ");
+
                 if (group.RateLimit is { } rate)
+                {
                     html.Append(N(rate.PermitLimit)).Append(" / ").Append(rate.Window.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture)).Append(" seconds (burst)");
-                else html.Append("unlimited");
+                }
+                else
+                {
+                    html.Append("unlimited");
+                }
+
                 html.Append("<br>Lease: ").Append(group.LeaseDuration.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture)).Append(" seconds</td><td>");
                 html.Append("<form method=\"post\" action=\"").Append(E(route + (group.IsPaused ? "/resume-group" : "/pause-group")))
                     .Append("\"><input type=\"hidden\" name=\"groupToken\" value=\"")
@@ -252,13 +396,18 @@ internal static class DashboardPage
                     .Append("\"><input type=\"hidden\" name=\"").Append(E(tokenFieldName)).Append("\" value=\"").Append(E(requestToken))
                     .Append("\"><button type=\"submit\">").Append(group.IsPaused ? "Resume group" : "Pause group").Append("</button></form></td></tr>");
             }
+
             html.Append("</tbody></table></div>");
         }
+
         if (cursor is not null)
+        {
             html.Append("<form method=\"post\" action=\"").Append(E(route + "/groups"))
                 .Append("\"><input type=\"hidden\" name=\"cursor\" value=\"").Append(E(cursor))
                 .Append("\"><input type=\"hidden\" name=\"").Append(E(tokenFieldName)).Append("\" value=\"").Append(E(requestToken))
                 .Append("\"><button type=\"submit\">Next groups</button></form>");
+        }
+
         html.Append("<p class=\"note\">Queued counts include delayed jobs and entries awaiting expiry cleanup. Active counts include only live leases. Eligibility is for group admission; queue-wide controls and job expiry still apply. Pause leaves in-flight work running.</p>")
             .Append("<form method=\"post\" action=\"").Append(E(route + "/groups"))
             .Append("\"><input type=\"hidden\" name=\"").Append(E(tokenFieldName)).Append("\" value=\"").Append(E(requestToken))
@@ -271,21 +420,31 @@ internal static class DashboardPage
     private static void RenderMetrics(StringBuilder html, IReadOnlyList<RespireJobMetricBucket>? buckets)
     {
         html.Append("<section class=\"section\"><h3>Completion history</h3>");
+
         if (buckets is null)
+        {
             html.Append("<p class=\"notice\">Metrics history unavailable.</p>");
+        }
         else if (buckets.Count == 0)
+        {
             html.Append("<p class=\"empty\">No retained metrics. Enable metrics on the queue workers to record terminal deliveries.</p>");
+        }
         else
         {
             html.Append("<div class=\"charts\">");
             Chart(html, buckets, false);
             Chart(html, buckets, true);
             html.Append("</div><p class=\"note\">UTC minutes; the latest minute is partial. Completed counts acknowledged jobs; failed counts terminal dead letters. Retry attempts, expired jobs and dependency failures without a delivery are excluded. Missing buckets show zero, including before recording began or while metrics were disabled.</p><details><summary>View minute counts</summary><div class=\"table-wrap\"><table><thead><tr><th scope=\"col\">Minute (UTC)</th><th scope=\"col\">Completed</th><th scope=\"col\">Failed</th></tr></thead><tbody>");
+
             foreach (var bucket in buckets)
+            {
                 html.Append("<tr><td>").Append(bucket.Minute.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture))
                     .Append("</td><td>").Append(N(bucket.Completed)).Append("</td><td>").Append(N(bucket.Failed)).Append("</td></tr>");
+            }
+
             html.Append("</tbody></table></div></details>");
         }
+
         html.Append("</section>");
     }
 
@@ -298,14 +457,19 @@ internal static class DashboardPage
             .Append("</title><path d=\"M36 10V126H474\" fill=\"none\" stroke=\"#cbd6e0\"/><text x=\"0\" y=\"18\" font-size=\"11\" fill=\"#516577\">")
             .Append(N(max)).Append("</text><text x=\"20\" y=\"130\" font-size=\"11\" fill=\"#516577\">0</text><polyline fill=\"none\" stroke=\"")
             .Append(failures ? "#9a223c" : "#135ea8").Append("\" stroke-width=\"2\" points=\"");
+
         for (var i = 0; i < buckets.Count; i++)
         {
             var value = failures ? buckets[i].Failed : buckets[i].Completed;
             html.Append((36 + 438.0 * i / Math.Max(1, buckets.Count - 1)).ToString("0.##", CultureInfo.InvariantCulture)).Append(',')
                 .Append((126 - 110.0 * value / max).ToString("0.##", CultureInfo.InvariantCulture)).Append(' ');
         }
+
         if (buckets.Count == 1)
+        {
             html.Append("474,").Append((126 - 110.0 * (failures ? buckets[0].Failed : buckets[0].Completed) / max).ToString("0.##", CultureInfo.InvariantCulture));
+        }
+
         html.Append("\"/></svg><div class=\"chart-times\"><span>").Append(buckets[0].Minute.ToString("MM-dd HH:mm", CultureInfo.InvariantCulture))
             .Append(" UTC</span><span>").Append(buckets[^1].Minute.ToString("MM-dd HH:mm", CultureInfo.InvariantCulture)).Append(" UTC</span></div></figure>");
     }
@@ -315,17 +479,27 @@ internal static class DashboardPage
         html.Append("<form method=\"post\" action=\"").Append(E(path.TrimEnd('/') + "/" + N(index) + "/" + action))
             .Append("\"><input type=\"hidden\" name=\"").Append(E(tokenFieldName)).Append("\" value=\"").Append(E(requestToken))
             .Append("\"><input type=\"hidden\" name=\"id\" value=\"").Append(E(id.ToString())).Append("\"><button type=\"submit\"");
-        if (action == "delete") html.Append(" class=\"delete\"");
+
+        if (action == "delete")
+        {
+            html.Append(" class=\"delete\"");
+        }
+
         html.Append('>').Append(label).Append("</button></form>");
     }
 
     private static string Preview(byte[]? bytes)
     {
-        if (bytes is null) return "—";
+        if (bytes is null)
+        {
+            return "—";
+        }
+
         var length = Math.Min(bytes.Length, 512);
         return E(Encoding.UTF8.GetString(bytes, 0, length)) + (bytes.Length > length ? "…" : "");
     }
 
     private static string E(string value) => HtmlEncoder.Default.Encode(value);
+
     private static string N(long value) => value.ToString(CultureInfo.InvariantCulture);
 }

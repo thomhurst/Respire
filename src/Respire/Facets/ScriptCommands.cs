@@ -33,23 +33,38 @@ public sealed class RespireScript
     }
 
     /// <summary>The Lua source text.</summary>
-    public string Source { get; }
+    public string Source
+    {
+        get;
+    }
 
     /// <summary>The lowercase SHA1 used by Redis EVALSHA.</summary>
-    public string Sha1 { get; }
+    public string Sha1
+    {
+        get;
+    }
 
     /// <summary>Whether execution uses EVALSHA_RO / EVAL_RO (Redis 7+), which reject writes.</summary>
     /// <remarks>This selects the Redis command contract; it does not select a replica connection.</remarks>
-    public bool IsReadOnly { get; }
+    public bool IsReadOnly
+    {
+        get;
+    }
 
-    internal bool IsCacheReadOnly { get; }
+    internal bool IsCacheReadOnly
+    {
+        get;
+    }
 
     /// <summary>
     /// The caller-declared retry risk of one complete execution. Defaults to
     /// <see cref="RespireCommandRetryCategory.Never"/>, including read-only scripts.
     /// </summary>
     /// <remarks>Respire cannot audit Lua source, so script execution retries only with a declared category.</remarks>
-    public RespireCommandRetryCategory RetryCategory { get; }
+    public RespireCommandRetryCategory RetryCategory
+    {
+        get;
+    }
 
     /// <summary>Returns this script with a caller-declared retry category.</summary>
     /// <remarks>
@@ -63,13 +78,20 @@ public sealed class RespireScript
     /// <exception cref="ArgumentOutOfRangeException">The category is not a defined value.</exception>
     public RespireScript WithRetryCategory(RespireCommandRetryCategory category)
     {
-        if (!Enum.IsDefined(category)) throw new ArgumentOutOfRangeException(nameof(category));
+        if (!Enum.IsDefined(category))
+        {
+            throw new ArgumentOutOfRangeException(nameof(category));
+        }
+
         return new RespireScript(Source, Sha1, IsReadOnly, IsCacheReadOnly, category);
     }
 
     internal string EvalOperation => IsReadOnly ? "EVAL_RO" : "EVAL";
+
     internal string EvalShaOperation => IsReadOnly ? "EVALSHA_RO" : "EVALSHA";
+
     internal Verb EvalVerb => IsReadOnly ? Verbs.EvalRo : Verbs.Eval;
+
     internal Verb EvalShaVerb => IsReadOnly ? Verbs.EvalShaRo : Verbs.EvalSha;
 
     /// <summary>Creates a reusable script and computes its SHA1.</summary>
@@ -110,6 +132,7 @@ public sealed class RespireScript
             // stackalloc-audit[11684c5fb1348cd7]: init: the loop writes both hex characters for each of the 20 hash bytes, all 40 chars;
             // read: new string(hex) reads the 40 written chars; failure: nothing between the writes and the read can throw.
             Span<char> hex = stackalloc char[SHA1.HashSizeInBytes * 2];
+
             for (var i = 0; i < hash.Length; i++)
             {
                 hex[i * 2] = HexDigits[hash[i] >> 4];
@@ -297,7 +320,6 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
     public ValueTask<bool[]> ExistsAsync(string sha1, CancellationToken cancellationToken)
         => ExistsAsync([sha1], cancellationToken);
 
-
     public ValueTask<RespireResult> ExecuteAsync(
         RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
         CancellationToken cancellationToken = default)
@@ -330,12 +352,15 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken, bool owned)
     {
         var borrowed = DispatchResponseSource.DecoratedObservation;
+
         if (borrowed.IsOpen)
         {
             ArgumentNullException.ThrowIfNull(script);
             return client.ExecuteScriptResultAsync(script, client.BuildScriptTailFromSpans(keys, args), cancellationToken, owned, borrowed);
         }
+
         var owner = DispatchResponseSource<RespireResult>.Start();
+
         try
         {
             ArgumentNullException.ThrowIfNull(script);
@@ -369,6 +394,7 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
         CancellationToken cancellationToken, Func<RespireResult, TResult> convert)
     {
         var owner = DispatchResponseSource<TResult>.Start();
+
         try
         {
             ArgumentNullException.ThrowIfNull(script);
@@ -384,6 +410,7 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
     public ValueTask<bool[]> ExistsAsync(ReadOnlySpan<string> sha1s, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<bool[]>.Start();
+
         try
         {
             var command = new CmdN(Verbs.ScriptExists, MapDigests(sha1s));
@@ -399,6 +426,7 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
     public ValueTask FlushAsync(RespireScriptFlushMode mode = RespireScriptFlushMode.Default, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
+
         try
         {
             var command = new Cmd(FlushVerb(mode));
@@ -420,11 +448,13 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
         }
 
         var values = new RespireValue[sha1s.Length];
+
         for (var i = 0; i < sha1s.Length; i++)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(sha1s[i]);
             values[i] = sha1s[i];
         }
+
         return values;
     }
 
@@ -454,12 +484,20 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
             static results =>
             {
                 var result = results[0];
+
                 for (var primary = 1; primary < results.Length; primary++)
                 {
                     var exists = results[primary];
+
                     if (exists.Length != result.Length)
+                    {
                         throw new RespireProtocolException("SCRIPT EXISTS returned inconsistent result lengths.");
-                    for (var i = 0; i < result.Length; i++) result[i] &= exists[i];
+                    }
+
+                    for (var i = 0; i < result.Length; i++)
+                    {
+                        result[i] &= exists[i];
+                    }
                 }
             }).ConfigureAwait(false);
         return results[0];
@@ -488,6 +526,7 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
     public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string>.Start();
+
         try
         {
             ArgumentNullException.ThrowIfNull(script);
@@ -526,8 +565,12 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
             static results =>
             {
                 for (var i = 1; i < results.Length; i++)
+                {
                     if (!string.Equals(results[0], results[i], StringComparison.Ordinal))
+                    {
                         throw new RespireProtocolException("SCRIPT LOAD returned inconsistent digests across primaries.");
+                    }
+                }
             }).ConfigureAwait(false);
         return results[0];
     }
@@ -541,21 +584,33 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
         where TCommand : struct, IRespCommand
     {
         var masters = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation).ConfigureAwait(false);
+
         if (masters.Length == 0)
+        {
             throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
+        }
+
         var responses = new Task<TResult>[masters.Length];
         var legs = RespireTelemetry.FanOutLegObservation.Create(masters.Length, observation);
+
         for (var i = 0; i < masters.Length; i++)
+        {
             responses[i] = SendAndConvertAsync(operation, masters[i], command, convert, cancellationToken, legs[i].Observation).AsTask();
+        }
         // Join every target and its reply cleanup before the caller publishes one failure, named by its own leg.
         var results = await RespireTelemetry.FanOutLegObservation.JoinAsync(responses, legs, observation).ConfigureAwait(false);
-        try { validate?.Invoke(results); }
+
+        try
+        {
+            validate?.Invoke(results);
+        }
         catch
         {
             // A cross-primary comparison failure belongs to no single node.
             observation.UseEndpoint(null);
             throw;
         }
+
         return results;
     }
 

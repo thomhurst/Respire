@@ -10,20 +10,27 @@ public partial interface IRespireBatchStreamCommands
 {
     /// <summary>Appends fields with an auto-generated id. Redis: XADD.</summary>
     RespirePending<RespireStreamId> Add(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
+
     /// <summary>Appends with id/trimming options; null when NOMKSTREAM skips an absent stream. Redis: XADD.</summary>
     RespirePending<RespireStreamId?> Add(RespireKey key, RespireStreamAddOptions options,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields);
+
     /// <summary>Number of entries. Redis: XLEN.</summary>
     RespirePending<long> Count(RespireKey key);
+
     /// <summary>Owned entries in an inclusive id range, optionally newest first. Redis: XRANGE or XREVRANGE.</summary>
     RespirePending<RespireStreamEntry[]> Range(RespireKey key, RespireStreamId? start = null,
         RespireStreamId? end = null, int? count = null, bool descending = false);
+
     /// <summary>Removes entries; returns the number removed. Redis: XDEL.</summary>
     RespirePending<long> Remove(RespireKey key, params ReadOnlySpan<RespireStreamId> ids);
+
     /// <summary>Trims by maximum length; returns the number removed. Redis: XTRIM MAXLEN.</summary>
     RespirePending<long> TrimByMaxLength(RespireKey key, long maxLength, bool approximate = false);
+
     /// <summary>Trims by MAXLEN or MINID with optional approximate work limit. Redis: XTRIM.</summary>
     RespirePending<long> Trim(RespireKey key, RespireStreamTrimOptions options);
+
     /// <summary>Acknowledges pending group entries; returns the number newly acknowledged. Redis: XACK.</summary>
     /// <remarks>An empty id list is sent to Redis and surfaces as a server error on the pending result.</remarks>
     RespirePending<long> Acknowledge(RespireKey key, string group, params ReadOnlySpan<RespireStreamId> ids);

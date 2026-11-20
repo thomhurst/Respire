@@ -30,7 +30,11 @@ public sealed class RespireChatHistoryProvider : ChatHistoryProvider
     /// <summary>Stores the filtered request and response messages only after a successful invocation.</summary>
     protected override async ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        if (context.InvokeException is not null) return;
+        if (context.InvokeException is not null)
+        {
+            return;
+        }
+
         await _store.AppendAsync(GetConversationId(context.Session), context.RequestMessages.Concat(context.ResponseMessages ?? []), cancellationToken).ConfigureAwait(false);
     }
 

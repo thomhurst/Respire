@@ -9,7 +9,10 @@ namespace Respire.Coordination.Tests;
 public class GcraRateLimiterTests
 {
     [ClassDataSource<SharedRedis74>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis74 Redis { get; init; }
+    public required SharedRedis74 Redis
+    {
+        get; init;
+    }
 
     [Test]
     [Arguments(1)]
@@ -50,8 +53,11 @@ public class GcraRateLimiterTests
         await Assert.That(sync.MetadataNames).IsEmpty();
         using var probe = await limiter.AcquireAsync(0);
         await Assert.That(probe.IsAcquired).IsTrue();
+
         using (var exists = await client.ExecuteAsync("EXISTS", [key]))
+        {
             await Assert.That(exists.AsInteger()).IsEqualTo(0);
+        }
 
         using var first = await limiter.AcquireAsync(1);
         using var denied = await limiter.AcquireAsync(3);
@@ -76,6 +82,7 @@ public class GcraRateLimiterTests
     {
         await using var client = await RespireClient.ConnectAsync(Redis.CreateOptions());
         var key = SharedRespireContainer.Key("gcra-retry");
+
         using (var original = client.Coordination.RateLimiters.Gcra(key, 3, TimeSpan.FromHours(1)))
         {
             using var lease = await original.AcquireAsync(3);
@@ -158,8 +165,12 @@ public class GcraRateLimiterTests
         using var cancellation = new CancellationTokenSource();
         var queued = limiter.AcquireAsync(1, cancellation.Token).AsTask();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (limiter.GetStatistics()!.CurrentQueuedCount != 1)
+        {
             await Task.Delay(1, deadline.Token);
+        }
+
         await cancellation.CancelAsync();
         await Assert.That(async () => await queued.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
         await Assert.That(limiter.GetStatistics()!.CurrentQueuedCount).IsEqualTo(0);

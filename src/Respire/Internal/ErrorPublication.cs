@@ -6,7 +6,10 @@ internal static class ErrorPublication
 {
     internal static void SetAttempts(ref int attempts, bool finalPublished, int value)
     {
-        if (!finalPublished) attempts = Math.Max(0, value);
+        if (!finalPublished)
+        {
+            attempts = Math.Max(0, value);
+        }
     }
 
     internal static bool TryRecordHandled(ref int attempts, bool finalPublished, out int eventAttempts)
@@ -20,16 +23,28 @@ internal static class ErrorPublication
 
     internal static bool TryAddAttempts(ref int attempts, bool finalPublished, int additionalAttempts)
     {
-        if (finalPublished) return false;
+        if (finalPublished)
+        {
+            return false;
+        }
+
         if (additionalAttempts > 0)
+        {
             attempts += Math.Min(additionalAttempts, int.MaxValue - attempts);
+        }
+
         return true;
     }
 
     internal static bool TryPublishFinal(int attempts, ref bool finalPublished, out int eventAttempts)
     {
         eventAttempts = attempts;
-        if (finalPublished) return false;
+
+        if (finalPublished)
+        {
+            return false;
+        }
+
         finalPublished = true;
         return true;
     }

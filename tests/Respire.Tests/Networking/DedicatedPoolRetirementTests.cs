@@ -20,12 +20,17 @@ public class DedicatedPoolRetirementTests
         using var registration = source.Token.Register(() =>
         {
             entered.TrySetResult();
+
             try
             {
-                if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Cancellation callback was not released.");
+                if (!release.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    throw new TimeoutException("Cancellation callback was not released.");
+                }
             }
             finally { completed.TrySetResult(); }
         });
+
         try
         {
             source.Arm(CommandDeadline.After(1));
@@ -33,6 +38,7 @@ public class DedicatedPoolRetirementTests
             await Task.Run(source.Dispose).WaitAsync(TimeSpan.FromSeconds(5));
         }
         finally { release.Set(); }
+
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
@@ -42,7 +48,11 @@ public class DedicatedPoolRetirementTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply)
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var pool = CreatePool(server);
         var borrowed = await pool.RentAsync(CancellationToken.None);
@@ -76,7 +86,11 @@ public class DedicatedPoolRetirementTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireConnectionOptions { Database = 1 }, null);
@@ -94,7 +108,11 @@ public class DedicatedPoolRetirementTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var pool = CreatePool(server);
         var connection = await pool.RentAsync(CancellationToken.None);
@@ -131,7 +149,12 @@ public class DedicatedPoolRetirementTests
         await using var server = new FakeRespServer(count, FakeRespServer.PongReply);
         await using var pool = CreatePool(server);
         var connections = new RespireConnection[count];
-        for (var i = 0; i < count; i++) connections[i] = await pool.RentAsync(CancellationToken.None);
+
+        for (var i = 0; i < count; i++)
+        {
+            connections[i] = await pool.RentAsync(CancellationToken.None);
+        }
+
         var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var returns = connections.Select(connection => Task.Run(async () =>
         {
@@ -141,12 +164,24 @@ public class DedicatedPoolRetirementTests
         var stop = Task.Run(async () =>
         {
             await start.Task;
-            if (dispose) await pool.DisposeAsync();
-            else await pool.RetireAsync();
+
+            if (dispose)
+            {
+                await pool.DisposeAsync();
+            }
+            else
+            {
+                await pool.RetireAsync();
+            }
         });
         start.SetResult();
         await Task.WhenAll(returns.Append(stop)).WaitAsync(TimeSpan.FromSeconds(5));
-        foreach (var connection in connections) await Assert.That(connection.IsConnected).IsFalse();
+
+        foreach (var connection in connections)
+        {
+            await Assert.That(connection.IsConnected).IsFalse();
+        }
+
         await pool.RetireAsync();
         await pool.DisposeAsync();
         await Assert.That(async () => await pool.RentAsync(CancellationToken.None)).ThrowsExactly<ObjectDisposedException>();
@@ -181,10 +216,15 @@ public class DedicatedPoolRetirementTests
                 PushHandler = (in Respire.Protocol.RespValue _) =>
                 {
                     entered.TrySetResult();
-                    if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Test did not release receive callback.");
+
+                    if (!release.Wait(TimeSpan.FromSeconds(5)))
+                    {
+                        throw new TimeoutException("Test did not release receive callback.");
+                    }
                 },
             }, null);
         var connection = await pool.RentAsync(CancellationToken.None);
+
         try
         {
             await server.SendRawAsync(">2\r\n+notice\r\n+value\r\n"u8.ToArray());
@@ -243,15 +283,24 @@ public class DedicatedPoolRetirementTests
     {
         internal readonly InvalidOperationException Failure = new("Test disconnect failure.");
         internal bool ReportedFailure;
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
             Exception? exception, Func<TState, Exception?, string> formatter)
         {
             // Throw only after physical DisposeAsync has completed resource cleanup.
             if (logLevel == LogLevel.Debug && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
+            {
                 throw Failure;
-            if (logLevel == LogLevel.Warning && ReferenceEquals(exception, Failure)) ReportedFailure = true;
+            }
+
+            if (logLevel == LogLevel.Warning && ReferenceEquals(exception, Failure))
+            {
+                ReportedFailure = true;
+            }
         }
     }
 

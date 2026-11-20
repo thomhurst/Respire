@@ -96,7 +96,12 @@ public class ContainerStartRetryTests
             var failure = ApiError(ListenFailure);
             failures.Add(failure);
             var container = ContainerProbe.Create(_ => Task.FromException(failure));
-            if (failures.Count == 2) ((ContainerProbe)container).Cleanup = () => ValueTask.FromException(cleanup);
+
+            if (failures.Count == 2)
+            {
+                ((ContainerProbe)container).Cleanup = () => ValueTask.FromException(cleanup);
+            }
+
             return container;
         }, [6379]);
         var error = (await start.Should().ThrowAsync<AggregateException>()).Which;
@@ -113,8 +118,13 @@ public class ContainerStartRetryTests
             return container;
         }, [containerPort]);
         Exception? actual = null;
-        try { await start(); }
+
+        try
+        {
+            await start();
+        }
         catch (Exception error) { actual = error; }
+
         actual.Should().BeSameAs(expected);
         probes.Should().ContainSingle().Which.DisposeCount.Should().Be(1);
     }

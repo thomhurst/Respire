@@ -48,10 +48,15 @@ public sealed class VersionedServerFixture : IAsyncInitializer, IAsyncDisposable
         var cli = redis ? "redis-cli" : "valkey-cli";
         List<string> arguments = [redis ? "redis-server" : "valkey-server", "--cluster-enabled", "yes",
             "--cluster-config-file", "nodes.conf", "--cluster-announce-ip", "127.0.0.1", "--appendonly", "no"];
+
         if (clusterDatabases.HasValue)
+        {
             arguments.AddRange(["--cluster-databases", clusterDatabases.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+        }
+
         var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image).WithPortBinding(RedisPort, true).WithCommand(arguments.ToArray())
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(RedisPort)).Build(), [RedisPort]);
+
         try
         {
             // Discovery must advertise the mapped client port, not the container-private port.
@@ -59,10 +64,16 @@ public sealed class VersionedServerFixture : IAsyncInitializer, IAsyncDisposable
                 container.GetMappedPublicPort(RedisPort).ToString(System.Globalization.CultureInfo.InvariantCulture)]);
             await RunAsync(container, [cli, "-e", "CLUSTER", "ADDSLOTSRANGE", "0", "16383"]);
             using var ready = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
             while (true)
             {
                 var result = await container.ExecAsync([cli, "CLUSTER", "INFO"], ready.Token);
-                if (result.Stdout.Contains("cluster_state:ok", StringComparison.Ordinal)) return container;
+
+                if (result.Stdout.Contains("cluster_state:ok", StringComparison.Ordinal))
+                {
+                    return container;
+                }
+
                 await Task.Delay(100, ready.Token);
             }
         }
@@ -76,23 +87,43 @@ public sealed class VersionedServerFixture : IAsyncInitializer, IAsyncDisposable
     private static async Task RunAsync(IContainer container, string[] command)
     {
         var result = await container.ExecAsync(command);
-        if (result.ExitCode != 0) throw new InvalidOperationException($"Cluster setup failed: {result.Stdout} {result.Stderr}");
+
+        if (result.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"Cluster setup failed: {result.Stdout} {result.Stderr}");
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
         foreach (var server in _servers.Values)
         {
-            if (!server.IsValueCreated) continue;
-            try { await (await server.Value).DisposeAsync(); }
+            if (!server.IsValueCreated)
+            {
+                continue;
+            }
+
+            try
+            {
+                await (await server.Value).DisposeAsync();
+            }
             catch { /* A failed start already surfaced in the test that requested it. */ }
         }
+
         foreach (var cluster in _clusters.Values)
         {
-            if (!cluster.IsValueCreated) continue;
-            try { await (await cluster.Value).DisposeAsync(); }
+            if (!cluster.IsValueCreated)
+            {
+                continue;
+            }
+
+            try
+            {
+                await (await cluster.Value).DisposeAsync();
+            }
             catch { /* A failed start already surfaced in the test that requested it. */ }
         }
+
         _servers.Clear();
         _clusters.Clear();
     }
@@ -114,9 +145,13 @@ public sealed class VersionedServerFixture : IAsyncInitializer, IAsyncDisposable
         public VersionedServerLease Lease()
         {
             var database = Interlocked.Increment(ref _nextDatabase);
+
             if (database >= databaseCount)
+            {
                 throw new InvalidOperationException(
                     $"{container.Image.FullName} has no free database; raise VersionedServerFixture.DatabaseCount.");
+            }
+
             return new(container.Hostname, container.GetMappedPublicPort(RedisPort), database);
         }
 

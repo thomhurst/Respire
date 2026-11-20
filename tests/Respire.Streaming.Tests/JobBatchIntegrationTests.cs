@@ -40,12 +40,14 @@ public partial class JobQueueIntegrationTests
         var callbacks = await ReadBatchJobs(client, queue);
         await Assert.That(callbacks.Select(entry => entry.GetString("_respire.job.id")))
             .IsEquivalentTo(new string?[] { "success", "complete" });
+
         foreach (var callback in callbacks)
         {
             await Assert.That(callback.GetString("_respire.job.batch_callback")).IsNotNull();
             await Assert.That(callback.GetString("_respire.job.batch")).IsNull();
             await Assert.That(callback.GetString("_respire.job.member")).IsNull();
         }
+
         await Assert.That(await queue.AddBatchJobAsync("batch", "member", "replacement")).IsFalse();
         await Assert.That((await client.Streams.ReadAsync(queue.StreamKey))[0].GetString("_respire.job.payload"))
             .IsEqualTo(original.GetString("_respire.job.payload"));
@@ -68,7 +70,12 @@ public partial class JobQueueIntegrationTests
         await using var client = await ConnectAsync();
         var queue = Queue(client);
         await queue.CreateBatchAsync(BatchCallbacks(), "batch");
-        for (var i = 0; i < 16; i++) await queue.AddBatchJobAsync("batch", "member-" + i, "payload");
+
+        for (var i = 0; i < 16; i++)
+        {
+            await queue.AddBatchJobAsync("batch", "member-" + i, "payload");
+        }
+
         await queue.SealBatchAsync("batch");
         await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
         var members = await ReadBatchJobs(client, queue);
@@ -76,8 +83,12 @@ public partial class JobQueueIntegrationTests
         var completions = await Task.WhenAll(members.Select((entry, i) =>
             CompleteBatchJob(client, queue, entry, fail && i == 0 ? "dead-letter" : "completed").AsTask()));
         await Assert.That(completions.All(result => result == 1)).IsTrue();
+
         foreach (var entry in members)
+        {
             await Assert.That(await CompleteBatchJob(client, queue, entry)).IsEqualTo(0);
+        }
+
         await queue.SealBatchAsync("batch");
         // Cancelling an already completed batch preserves its successful/failed outcome.
         await queue.CancelBatchAsync("batch");
@@ -125,11 +136,19 @@ public partial class JobQueueIntegrationTests
         await using var client = await ConnectAsync();
         var queue = Queue(client);
         await queue.CreateBatchAsync(BatchCallbacks(), "batch");
+
         for (var i = 0; i < 2; i++)
         {
-            if (cancel) await queue.CancelBatchAsync("batch");
-            else await queue.SealBatchAsync("batch");
+            if (cancel)
+            {
+                await queue.CancelBatchAsync("batch");
+            }
+            else
+            {
+                await queue.SealBatchAsync("batch");
+            }
         }
+
         var status = (await queue.GetBatchStatusAsync("batch"))!;
         await Assert.That(status.IsCompleted).IsTrue();
         await Assert.That(status.IsSealed).IsTrue();
@@ -154,6 +173,7 @@ public partial class JobQueueIntegrationTests
         var worker = provider.GetServices<IHostedService>().Single();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await worker.StartAsync(deadline.Token);
+
         try
         {
             await state.RetryEntered.Task.WaitAsync(deadline.Token);
@@ -173,6 +193,7 @@ public partial class JobQueueIntegrationTests
             await Assert.That(state.Members).IsEqualTo(fail ? 3 : 2);
             await Assert.That(state.Calls.Keys).IsEquivalentTo(new[] { "member", fail ? "failure" : "success", "complete" });
             await Assert.That(state.Calls["complete"]).IsEqualTo(1);
+
             if (fail)
             {
                 var dead = (await client.Streams.ReadAsync(queue.DeadLetterStreamKey)).Single();
@@ -197,8 +218,14 @@ public partial class JobQueueIntegrationTests
         await using var provider = BatchWorker(client, state);
         var worker = provider.GetServices<IHostedService>().Single();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        if (!inFlight) await queue.CancelBatchAsync("batch");
+
+        if (!inFlight)
+        {
+            await queue.CancelBatchAsync("batch");
+        }
+
         await worker.StartAsync(deadline.Token);
+
         try
         {
             if (inFlight)
@@ -208,6 +235,7 @@ public partial class JobQueueIntegrationTests
                 await Assert.That((await queue.GetBatchStatusAsync("batch"))!.Pending).IsEqualTo(2);
                 state.Release.TrySetResult();
             }
+
             await UntilAsync(async () => (await client.Streams.ReadAsync(queue.EventsStreamKey))
                 .Any(entry => entry.GetString("kind") == "completed" && entry.GetString("job_id") == "complete"), deadline.Token);
             var status = (await queue.GetBatchStatusAsync("batch"))!;
@@ -222,6 +250,7 @@ public partial class JobQueueIntegrationTests
             await Assert.That(state.Calls.ContainsKey("success")).IsFalse();
             await Assert.That(await client.Streams.CountAsync(queue.DeadLetterStreamKey)).IsEqualTo(0);
             await using var events = queue.ReadEventsAsync(cancellationToken: deadline.Token).GetAsyncEnumerator();
+
             for (var i = 0; i < 4; i++)
             {
                 await Assert.That(await events.MoveNextAsync()).IsTrue();
@@ -253,8 +282,12 @@ public partial class JobQueueIntegrationTests
             [RespireJobQueue<string>.ConsumerGroup, "other", member.Id.Value, 1])).IsEqualTo(-1);
         await Assert.That(await client.Scripts.ExecuteIntegerAsync(script, keys,
             [RespireJobQueue<string>.ConsumerGroup, "batch-consumer", member.Id.Value, 1])).IsEqualTo(0);
+
         using (await client.ExecuteAsync("XCLAIM", [queue.StreamKey, RespireJobQueue<string>.ConsumerGroup,
-            "batch-consumer", 0, member.Id.Value])) { }
+            "batch-consumer", 0, member.Id.Value]))
+        {
+        }
+
         await Assert.That(await client.Scripts.ExecuteIntegerAsync(script, keys,
             [RespireJobQueue<string>.ConsumerGroup, "batch-consumer", member.Id.Value, 1])).IsEqualTo(-1);
         await queue.CancelBatchAsync("batch");
@@ -283,12 +316,20 @@ public partial class JobQueueIntegrationTests
         await queue.SealBatchAsync("batch");
         await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
         var member = (await ReadBatchJobs(client, queue)).Single();
+
         using (await client.ExecuteAsync("XCLAIM", [queue.StreamKey, RespireJobQueue<string>.ConsumerGroup,
-            "batch-consumer", 0, member.Id.Value])) { }
+            "batch-consumer", 0, member.Id.Value]))
+        {
+        }
+
         await Assert.That(await CompleteBatchJob(client, queue, member, delete: delete)).IsEqualTo(0);
         await Assert.That((await queue.GetBatchStatusAsync("batch"))!.Pending).IsEqualTo(1);
+
         await using (var recovered = await ConnectAsync(protocol))
+        {
             await Assert.That(await CompleteBatchJob(recovered, queue, member, attempt: 2, delete: delete)).IsEqualTo(1);
+        }
+
         await Assert.That(await CompleteBatchJob(client, queue, member, attempt: 2, delete: delete)).IsEqualTo(0);
         await Assert.That((await queue.GetBatchStatusAsync("batch"))!.Succeeded).IsEqualTo(1);
         await Assert.That((await ReadBatchJobs(client, queue)).Length).IsEqualTo(2);
@@ -304,12 +345,18 @@ public partial class JobQueueIntegrationTests
     public async Task DeniedBatchFinalizationRollsBackCountsCallbacksAndEvents(string denied, bool delete)
     {
         await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
+
         if (delete)
         {
             var info = await admin.Server.InfoAsync("server");
             var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
-            if (Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]) < new Version(8, 2)) return;
+
+            if (Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]) < new Version(8, 2))
+            {
+                return;
+            }
         }
+
         var queue = Queue(admin);
         await queue.CreateBatchAsync(BatchCallbacks(), "batch");
         await queue.AddBatchJobAsync("batch", "member", "payload");
@@ -318,10 +365,12 @@ public partial class JobQueueIntegrationTests
         var member = (await ReadBatchJobs(admin, queue)).Single();
         var username = "batch-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">batch-password", "~*", "+@all", "-" + denied]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = username, Password = "batch-password" });
+                with
+            { Username = username, Password = "batch-password" });
             await Assert.That(async () => await CompleteBatchJob(restricted, queue, member, delete: delete))
                 .Throws<RespireServerException>();
             var status = (await queue.GetBatchStatusAsync("batch"))!;
@@ -344,7 +393,12 @@ public partial class JobQueueIntegrationTests
         await using var client = await ConnectAsync();
         var queue = Queue(client);
         await queue.CreateBatchAsync(batchId: "count");
-        for (var i = 0; i < 256; i++) await queue.AddBatchJobAsync("count", i.ToString(), "");
+
+        for (var i = 0; i < 256; i++)
+        {
+            await queue.AddBatchJobAsync("count", i.ToString(), "");
+        }
+
         await Assert.That(async () => await queue.AddBatchJobAsync("count", "overflow", ""))
             .Throws<RespireServerException>();
         await Assert.That(await queue.AddBatchJobAsync("count", "0", "replacement")).IsFalse();
@@ -386,15 +440,46 @@ public partial class JobQueueIntegrationTests
 
     public sealed class BatchHandlerState
     {
-        public bool Retry { get; init; }
-        public bool Fail { get; init; }
-        public bool HoldFirst { get; init; }
-        public bool HoldRetry { get; init; }
+        public bool Retry
+        {
+            get; init;
+        }
+
+        public bool Fail
+        {
+            get; init;
+        }
+
+        public bool HoldFirst
+        {
+            get; init;
+        }
+
+        public bool HoldRetry
+        {
+            get; init;
+        }
         public int Members;
-        public ConcurrentDictionary<string, int> Calls { get; } = new();
-        public TaskCompletionSource FirstEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource RetryEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ConcurrentDictionary<string, int> Calls
+        {
+            get;
+        } = new();
+
+        public TaskCompletionSource FirstEntered
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource RetryEntered
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     public sealed class BatchHandler(BatchHandlerState state) : IRespireStreamHandler<RespireJob<string>>
@@ -402,13 +487,32 @@ public partial class JobQueueIntegrationTests
         public async ValueTask<RespireStreamWorkerResult> HandleAsync(RespireJob<string> job, CancellationToken cancellationToken)
         {
             state.Calls.AddOrUpdate(job.Id, 1, (_, count) => count + 1);
-            if (job.Id != "member") return RespireStreamWorkerResult.Ack;
+
+            if (job.Id != "member")
+            {
+                return RespireStreamWorkerResult.Ack;
+            }
+
             var attempt = Interlocked.Increment(ref state.Members);
             state.FirstEntered.TrySetResult();
-            if (state.HoldFirst) await state.Release.Task.WaitAsync(cancellationToken);
-            if (state.Retry && attempt == 1) return job.RetryAfter(TimeSpan.FromMilliseconds(20));
+
+            if (state.HoldFirst)
+            {
+                await state.Release.Task.WaitAsync(cancellationToken);
+            }
+
+            if (state.Retry && attempt == 1)
+            {
+                return job.RetryAfter(TimeSpan.FromMilliseconds(20));
+            }
+
             state.RetryEntered.TrySetResult();
-            if (state.HoldRetry) await state.Release.Task.WaitAsync(cancellationToken);
+
+            if (state.HoldRetry)
+            {
+                await state.Release.Task.WaitAsync(cancellationToken);
+            }
+
             return state.Fail ? job.RetryAfter(TimeSpan.Zero) : RespireStreamWorkerResult.Ack;
         }
     }

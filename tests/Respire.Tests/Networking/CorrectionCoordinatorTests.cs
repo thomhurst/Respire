@@ -22,14 +22,22 @@ public class CorrectionCoordinatorTests
         var releases = 0;
         var fence = new CorrectionFence(Identity, (identity, _, acknowledge) =>
         {
-            if (identity != Identity) throw new InvalidOperationException("The physical identity changed.");
+            if (identity != Identity)
+            {
+                throw new InvalidOperationException("The physical identity changed.");
+            }
+
             fences++;
             acknowledge();
             return retirementFails ? ValueTask.FromException(new ObjectDisposedException("retirement")) : ValueTask.CompletedTask;
         });
         var succeeded = await client.Core.Corrections.EnqueueFencedAsync(fence, _ =>
         {
-            if (!fence.IsAcknowledged) throw new InvalidOperationException("Release overtook its fence.");
+            if (!fence.IsAcknowledged)
+            {
+                throw new InvalidOperationException("Release overtook its fence.");
+            }
+
             return ++releases < 3 ? ValueTask.FromException(new RespireServerException("ERR retry release")) : ValueTask.CompletedTask;
         }, Limit, new(Limit, TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2)),
             (_, _) => throw new InvalidOperationException("Unexpected abandonment.")).WaitAsync(Limit);
@@ -68,13 +76,25 @@ public class CorrectionCoordinatorTests
         string? reason = null;
         var fence = new CorrectionFence(Identity, async (_, token, _) =>
         {
-            if (unanswered) await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            if (unanswered)
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+
             throw new RespireServerException("NOPERM fence rejected");
         });
         var succeeded = await client.Core.Corrections.EnqueueFencedAsync(fence,
-            _ => { releases++; return ValueTask.CompletedTask; }, TimeSpan.FromMilliseconds(10),
+            _ =>
+            {
+                releases++;
+                return ValueTask.CompletedTask;
+            }, TimeSpan.FromMilliseconds(10),
             new(TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero),
-            (actualStage, actualReason) => { stage = actualStage; reason = actualReason; }).WaitAsync(Limit);
+            (actualStage, actualReason) =>
+            {
+                stage = actualStage;
+                reason = actualReason;
+            }).WaitAsync(Limit);
         await Assert.That(succeeded).IsFalse();
         await Assert.That(fence.IsAcknowledged).IsFalse();
         await Assert.That(releases).IsEqualTo(0);
@@ -97,7 +117,11 @@ public class CorrectionCoordinatorTests
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
         });
         var cleanup = client.Core.Corrections.EnqueueFencedAsync(fence,
-            _ => { releases++; return ValueTask.CompletedTask; }, Limit,
+            _ =>
+            {
+                releases++;
+                return ValueTask.CompletedTask;
+            }, Limit,
             new(Limit, TimeSpan.Zero, TimeSpan.Zero), (_, value) => reason = value);
         await entered.Task.WaitAsync(Limit);
         await client.DisposeAsync();
@@ -117,10 +141,20 @@ public class CorrectionCoordinatorTests
     {
 #pragma warning disable RESP010 // Test-owned client controls terminal disposal versus retryable cleanup failures.
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 1)] });
+
 #pragma warning restore RESP010
-        if (failure == 0) await client.DisposeAsync();
+        if (failure == 0)
+        {
+            await client.DisposeAsync();
+        }
+
         using var stop = new CancellationTokenSource();
-        if (failure == 1) stop.Cancel();
+
+        if (failure == 1)
+        {
+            stop.Cancel();
+        }
+
         Exception error = failure switch
         {
             0 or 5 => new ObjectDisposedException("client"),
@@ -140,7 +174,8 @@ public class CorrectionCoordinatorTests
 #pragma warning disable RESP010 // Test-owned client bounds the overdue fence without authorizing a dependent correction.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], ConnectTimeout = TimeSpan.FromMilliseconds(10),
+            Endpoints = [new("127.0.0.1", 1)],
+            ConnectTimeout = TimeSpan.FromMilliseconds(10),
         });
 #pragma warning restore RESP010
         var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -155,6 +190,7 @@ public class CorrectionCoordinatorTests
         var correction = CorrectionCoordinator.ConvergeAsync(Identity, fence,
             (_, _) => ++sends == 1 ? pending.Task : Task.CompletedTask,
             TimeSpan.FromMilliseconds(10), TimeSpan.MaxValue).AsTask();
+
         try
         {
             var token = await entered.Task.WaitAsync(Limit);
@@ -167,7 +203,11 @@ public class CorrectionCoordinatorTests
         {
             releaseFence.TrySetResult();
             pending.TrySetResult();
-            try { await correction.WaitAsync(Limit); }
+
+            try
+            {
+                await correction.WaitAsync(Limit);
+            }
             catch (OperationCanceledException) { }
         }
     }
@@ -177,14 +217,23 @@ public class CorrectionCoordinatorTests
     {
         var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sends = 0;
-        var fence = new CorrectionFence(Identity, (_, _, acknowledge) => { acknowledge(); return ValueTask.CompletedTask; });
+        var fence = new CorrectionFence(Identity, (_, _, acknowledge) =>
+        {
+            acknowledge();
+            return ValueTask.CompletedTask;
+        });
         var retryObservedProof = false;
         var retryRetainedRoute = false;
+
         try
         {
             await CorrectionCoordinator.ConvergeAsync(Identity, fence, (ordered, identity) =>
             {
-                if (++sends == 1) return first.Task;
+                if (++sends == 1)
+                {
+                    return first.Task;
+                }
+
                 retryObservedProof = fence.IsAcknowledged;
                 retryRetainedRoute = ordered && identity == Identity with { ServerClientId = 0 };
                 return Task.CompletedTask;
@@ -200,7 +249,11 @@ public class CorrectionCoordinatorTests
     public async Task CompletedFifoPassNeedsNoFence()
     {
         var fences = 0;
-        var fence = new CorrectionFence(Identity, (_, _, _) => { fences++; throw new InvalidOperationException(); });
+        var fence = new CorrectionFence(Identity, (_, _, _) =>
+        {
+            fences++;
+            throw new InvalidOperationException();
+        });
         await CorrectionCoordinator.ConvergeAsync(Identity, fence, (_, _) => Task.CompletedTask, Limit, TimeSpan.MaxValue);
         await Assert.That(fences).IsEqualTo(0);
     }
@@ -214,11 +267,16 @@ public class CorrectionCoordinatorTests
         var created = 0;
         var sent = 0;
         var passes = 0;
+
         try
         {
             await CorrectionCoordinator.ConvergeAsync(Identity, 0, (_, identity) =>
             {
-                if (identity != Identity) throw new InvalidOperationException("Fence identity changed.");
+                if (identity != Identity)
+                {
+                    throw new InvalidOperationException("Fence identity changed.");
+                }
+
                 created++;
                 return new CorrectionFence(identity, (_, _, acknowledge) =>
                 {
@@ -247,13 +305,24 @@ public class CorrectionCoordinatorTests
         var fence = new CorrectionFence(Identity, (identity, _, acknowledge) =>
         {
             identities.Add(identity);
-            if (identities.Count == 1) return ValueTask.FromException(new IOException("unacknowledged"));
+
+            if (identities.Count == 1)
+            {
+                return ValueTask.FromException(new IOException("unacknowledged"));
+            }
+
             acknowledge();
             return ValueTask.CompletedTask;
         });
         var succeeded = await client.Core.Corrections.EnqueueFencedAsync(fence,
-            _ => { releases++; return ValueTask.CompletedTask; }, Limit,
-            new(Limit, TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2)), (_, _) => { }).WaitAsync(Limit);
+            _ =>
+            {
+                releases++;
+                return ValueTask.CompletedTask;
+            }, Limit,
+            new(Limit, TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2)), (_, _) =>
+            {
+            }).WaitAsync(Limit);
         await Assert.That(succeeded).IsTrue();
         await Assert.That(identities.Count).IsEqualTo(2);
         await Assert.That(identities.All(identity => identity == Identity)).IsTrue();
@@ -279,10 +348,15 @@ public class CorrectionCoordinatorTests
         var sends = 0;
         var rejected = new RespireServerException("NOPERM rejected");
         var fence = new CorrectionFence(Identity, (_, _, _) => ValueTask.FromException(rejected));
+
         try
         {
             var error = await Assert.That(async () => await CorrectionCoordinator.ConvergeAsync(Identity, fence,
-                (_, _) => { sends++; return pending.Task; }, TimeSpan.FromMilliseconds(1), TimeSpan.MaxValue))
+                (_, _) =>
+                {
+                    sends++;
+                    return pending.Task;
+                }, TimeSpan.FromMilliseconds(1), TimeSpan.MaxValue))
                 .Throws<RespireServerException>();
             await Assert.That(error).IsSameReferenceAs(rejected);
             await Assert.That(sends).IsEqualTo(1);

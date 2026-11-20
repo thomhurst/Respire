@@ -81,11 +81,13 @@ public class ProviderScenarios(RedisTestContainer redis)
         entries[3].Status = entries[5].Status = entries[9].Status = SiloStatus.Active;
         entries[3].ProxyPort = 0;
         var version = (await table.ReadAll()).Version;
+
         foreach (var entry in entries)
         {
             Assert.True(await table.InsertRow(entry, version.Next()));
             version = (await table.ReadRow(entry.SiloAddress)).Version;
         }
+
         var gateways = await new RedisGatewayListProvider(table, Options.Create(new GatewayOptions())).GetGateways();
         Assert.Equal(2, gateways.Count);
         Assert.Contains(entries[5].SiloAddress.ToGatewayUri(), gateways);
@@ -165,7 +167,11 @@ public class ProviderScenarios(RedisTestContainer redis)
         var contenders = Enumerable.Range(2, 16).Select(value => new GrainState<int> { State = value, ETag = original.ETag }).ToArray();
         var outcomes = await Task.WhenAll(contenders.Select(async state =>
         {
-            try { await storage.WriteStateAsync("integer", grainId, state); return true; }
+            try
+            {
+                await storage.WriteStateAsync("integer", grainId, state);
+                return true;
+            }
             catch (InconsistentStateException) { return false; }
         }));
         Assert.Equal(1, outcomes.Count(static success => success));
@@ -300,7 +306,12 @@ public class ProviderScenarios(RedisTestContainer redis)
             StartAt = Reminder().StartAt,
             Period = TimeSpan.FromMinutes(1)
         }).ToArray();
-        foreach (var reminder in reminders) await table.UpsertRow(reminder);
+
+        foreach (var reminder in reminders)
+        {
+            await table.UpsertRow(reminder);
+        }
+
         var second = Reminder();
         second.GrainId = reminders[0].GrainId;
         second.ReminderName = "second";
@@ -308,6 +319,7 @@ public class ProviderScenarios(RedisTestContainer redis)
         Assert.Equal(new[] { "first", "second" }, (await table.ReadRows(second.GrainId)).Reminders.Select(static row => row.ReminderName).Order().ToArray());
         Assert.Empty((await table.ReadRows(GrainId.Create("acceptance", "missing"))).Reminders);
         var all = reminders.Append(second).ToArray();
+
         foreach (var (begin, end) in new[]
         {
             (0u, uint.MaxValue / 2), (uint.MaxValue / 2, uint.MaxValue),
@@ -336,8 +348,12 @@ public class ProviderScenarios(RedisTestContainer redis)
         var read = Assert.Single((await table.ReadRows(reminder.GrainId)).Reminders);
         Assert.Contains(read.ETag, tags);
         Assert.False(await table.RemoveRow(reminder.GrainId, reminder.ReminderName, oldETag));
+
         foreach (var tag in tags.Where(tag => tag != read.ETag))
+        {
             Assert.False(await table.RemoveRow(reminder.GrainId, reminder.ReminderName, tag));
+        }
+
         Assert.True(await table.RemoveRow(reminder.GrainId, reminder.ReminderName, read.ETag));
     });
 
@@ -359,13 +375,16 @@ public class ProviderScenarios(RedisTestContainer redis)
         };
         await using var shim = RespireConnectionMultiplexer.Create(shimOptions);
         using var control = await ConnectionMultiplexer.ConnectAsync(controlOptions);
+
         if (controlOptions.Protocol is not null)
         {
             var clientInfo = (string)(await control.GetDatabase().ExecuteAsync("CLIENT", "INFO"))!;
             Assert.Contains($"resp={(int)shimOptions.Protocol}", clientInfo.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         }
+
         _control = control;
         _shim = shim;
+
         foreach (var connection in new IConnectionMultiplexer[] { control, shim })
         {
             _cluster = new ClusterOptions { ServiceId = Guid.NewGuid().ToString("N"), ClusterId = Guid.NewGuid().ToString("N") };

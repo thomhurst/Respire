@@ -22,9 +22,18 @@ public class RateLimiterUpdateWireTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 var count = Interlocked.Increment(ref acquisitions);
-                if (count == 2) received.TrySetResult();
+
+                if (count == 2)
+                {
+                    received.TrySetResult();
+                }
+
                 return count <= 2;
             },
             ReplyOverride = (_, command) => command.StartsWith("EVAL ", StringComparison.Ordinal)
@@ -38,6 +47,7 @@ public class RateLimiterUpdateWireTests
         var second = limiter.AcquireAsync(1, cancellation.Token).AsTask();
         // Both commands must reach the server before either reply: the update gate does not serialize readers.
         await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
         if (cancel)
         {
             await cancellation.CancelAsync();
@@ -45,6 +55,7 @@ public class RateLimiterUpdateWireTests
             await Assert.That(async () => await second).Throws<OperationCanceledException>();
             await Assert.That(limiter.IdleDuration).IsNull();
         }
+
         var update = factory.UpdateAsync(limiter, RespireRateLimit.TokenBucket(20, 5, TimeSpan.FromMinutes(2))).AsTask();
         var later = limiter.AcquireAsync().AsTask();
         await Assert.That(update.IsCompleted).IsFalse();
@@ -53,19 +64,23 @@ public class RateLimiterUpdateWireTests
         await server.SendRawAsync(Accepted.Concat(Accepted).ToArray());
         await update.WaitAsync(TimeSpan.FromSeconds(10));
         using var after = await later.WaitAsync(TimeSpan.FromSeconds(10));
+
         if (!cancel)
         {
             (await first).Dispose();
             (await second).Dispose();
         }
+
         var commands = server.ReceivedArguments;
         await Assert.That(commands.Count).IsEqualTo(4);
+
         for (var i = 0; i < 2; i++)
         {
             await Assert.That(Encoding.UTF8.GetString(commands[i][4])).IsEqualTo("10");
             await Assert.That(Encoding.UTF8.GetString(commands[i][5])).IsEqualTo("60000");
             await Assert.That(Encoding.UTF8.GetString(commands[i][6])).IsEqualTo("2");
         }
+
         await Assert.That(Encoding.UTF8.GetString(commands[2][0])).IsEqualTo("EVAL");
         await Assert.That(Encoding.UTF8.GetString(commands[3][4])).IsEqualTo("20");
         await Assert.That(Encoding.UTF8.GetString(commands[3][5])).IsEqualTo("120000");
@@ -81,7 +96,11 @@ public class RateLimiterUpdateWireTests
         {
             SuppressReply = _ =>
             {
-                if (Interlocked.Increment(ref calls) != 1) return false;
+                if (Interlocked.Increment(ref calls) != 1)
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -115,7 +134,11 @@ public class RateLimiterUpdateWireTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(Accepted)
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
@@ -127,14 +150,25 @@ public class RateLimiterUpdateWireTests
         var factory = client.Coordination.RateLimiters;
         await using var limiter = factory.Gcra("key", 2, TimeSpan.FromHours(1));
         var first = migrationSubmitted ? null : limiter.AcquireAsync().AsTask();
-        if (first is not null) await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        if (first is not null)
+        {
+            await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+
         var update = factory.UpdateAsync(limiter, RespireRateLimit.Gcra(3, TimeSpan.FromHours(1))).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var later = limiter.AcquireAsync().AsTask();
         await Assert.That(later.IsCompleted).IsFalse();
 
-        if (asyncDispose) await limiter.DisposeAsync();
-        else limiter.Dispose();
+        if (asyncDispose)
+        {
+            await limiter.DisposeAsync();
+        }
+        else
+        {
+            limiter.Dispose();
+        }
 
         try
         {
@@ -147,13 +181,17 @@ public class RateLimiterUpdateWireTests
         {
             // Disposal must not abandon the registered command or let migration overtake its reply.
             await server.SendRawAsync(migrationSubmitted ? ":1\r\n"u8.ToArray() : Accepted);
+
             if (first is not null)
             {
                 (await first.WaitAsync(TimeSpan.FromSeconds(10))).Dispose();
                 await Assert.That(async () => await update.WaitAsync(TimeSpan.FromSeconds(10)))
                     .Throws<ObjectDisposedException>();
             }
-            else await update.WaitAsync(TimeSpan.FromSeconds(10));
+            else
+            {
+                await update.WaitAsync(TimeSpan.FromSeconds(10));
+            }
         }
     }
 
@@ -174,7 +212,12 @@ public class RateLimiterUpdateWireTests
         await using var limiter = factory.Gcra("key", 2, TimeSpan.FromHours(1), queueLimit: 3);
         var queued = limiter.AcquireAsync().AsTask();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (limiter.GetStatistics()!.CurrentQueuedCount != 1) await Task.Delay(1, deadline.Token);
+
+        while (limiter.GetStatistics()!.CurrentQueuedCount != 1)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         await Assert.That(async () => await factory.UpdateAsync(limiter, RespireRateLimit.Gcra(3, TimeSpan.FromHours(1))))
             .Throws<RespireServerException>();
         await Assert.That(queued.IsCompleted).IsFalse();

@@ -26,9 +26,11 @@ public class RateLimitingIntegrationTests(RedisTestContainer redis)
         await using var firstRedis = await RespireClient.ConnectAsync(redis.ConnectionString);
         await using var secondRedis = await RespireClient.ConnectAsync(redis.ConnectionString);
         var key = $"http:{Guid.NewGuid():N}";
+
         void Configure(RateLimiterOptions options, RespireClient client)
         {
             var limiters = new RespireCoordination(client).RateLimiters;
+
             switch (algorithm)
             {
                 case "fixed":
@@ -66,6 +68,7 @@ public class RateLimitingIntegrationTests(RedisTestContainer redis)
         await using var firstRedis = await RespireClient.ConnectAsync(redis.ConnectionString);
         await using var secondRedis = await RespireClient.ConnectAsync(redis.ConnectionString);
         var prefix = $"http:users:{Guid.NewGuid():N}:";
+
         void Configure(RateLimiterOptions options, RespireClient client)
         {
             var limiters = new RespireCoordination(client).RateLimiters;

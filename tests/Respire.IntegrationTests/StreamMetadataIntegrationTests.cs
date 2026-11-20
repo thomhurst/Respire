@@ -89,7 +89,12 @@ public class StreamMetadataIntegrationTests(RedisTestContainer fixture)
             async () => await view.Streams.SetLastIdAsync("events", "3-0", maxDeletedId: "invalid"),
             async () => await view.Streams.SetLastIdAsync("missing", "3-0"),
         ];
-        foreach (var operation in invalid) await operation.Should().ThrowAsync<RespireServerException>();
+
+        foreach (var operation in invalid)
+        {
+            await operation.Should().ThrowAsync<RespireServerException>();
+        }
+
         await view.SetAsync("wrong-type", "value");
         Func<Task> wrongType = async () => await view.Streams.SetLastIdAsync("wrong-type", "3-0");
         await wrongType.Should().ThrowAsync<RespireServerException>();

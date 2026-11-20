@@ -12,13 +12,22 @@ public sealed partial class RespireClient
         ResponseConverter<TState, TResult> converter, bool transferOwnership = false, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
-        if (!observation.IsEmpty) return ConvertResponseCoreAsync(operation, command, ct, state, converter, transferOwnership, observation);
+        if (!observation.IsEmpty)
+        {
+            return ConvertResponseCoreAsync(operation, command, ct, state, converter, transferOwnership, observation);
+        }
         // A transferred reply would hand the caller a value the cache still owns.
         if (!transferOwnership && TryGetCachedQuery(operation, in command, out var cache, out var query)
             && cache.TryGetHit(in query, out var hit))
+        {
             return ConvertCachedHit(state, converter, in hit);
+        }
+
         if (TryGetNativeDispatchConnection(operation, in command, out var connection))
+        {
             return connection.SendNativeConvertedAsync(in command, ct, operation, state, converter, transferOwnership);
+        }
+
         return DispatchResponseSource<TResult>.Run(
             (Client: this, Operation: operation, Command: command, Token: ct, State: state,
                 Converter: converter, Transfer: transferOwnership),
@@ -29,12 +38,22 @@ public sealed partial class RespireClient
     internal ValueTask<string?> StringOrNullUnhookedAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
-        if (!observation.IsEmpty) return StringOrNullCoreAsync(operation, command, ct, observation);
+        if (!observation.IsEmpty)
+        {
+            return StringOrNullCoreAsync(operation, command, ct, observation);
+        }
+
         if (TryGetCachedQuery(operation, in command, out var cache, out var query)
             && cache.TryGetStringHit(in query, out var hit))
+        {
             return new ValueTask<string?>(hit);
+        }
+
         if (TryGetNativeDispatchConnection(operation, in command, out var connection))
+        {
             return connection.SendNativeStringAsync(in command, ct, operation);
+        }
+
         return DispatchResponseSource<string?>.Run((Client: this, Operation: operation, Command: command, Token: ct),
             static (state, observation) => state.Client.StringOrNullCoreAsync(state.Operation, state.Command, state.Token, observation));
     }
@@ -42,12 +61,22 @@ public sealed partial class RespireClient
     private ValueTask<byte[]?> BytesOrNullUnhookedAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
-        if (!observation.IsEmpty) return BytesOrNullCoreAsync(operation, command, ct, observation);
+        if (!observation.IsEmpty)
+        {
+            return BytesOrNullCoreAsync(operation, command, ct, observation);
+        }
+
         if (TryGetCachedQuery(operation, in command, out var cache, out var query)
             && cache.TryGetHit(in query, out var hit))
+        {
             return new ValueTask<byte[]?>(ResponseReader.BytesOrNull(in hit));
+        }
+
         if (TryGetNativeDispatchConnection(operation, in command, out var connection))
+        {
             return connection.SendNativeBytesAsync(in command, ct, operation);
+        }
+
         return DispatchResponseSource<byte[]?>.Run((Client: this, Operation: operation, Command: command, Token: ct),
             static (state, observation) => state.Client.BytesOrNullCoreAsync(state.Operation, state.Command, state.Token, observation));
     }
@@ -63,13 +92,19 @@ public sealed partial class RespireClient
 
     internal RespireValue PreflightKey(in RespireKey key)
     {
-        try { return Key(in key); }
+        try
+        {
+            return Key(in key);
+        }
         catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     internal RespireKey PreflightResolveKey(RespireKey key)
     {
-        try { return ResolveKey(key); }
+        try
+        {
+            return ResolveKey(key);
+        }
         catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
@@ -96,7 +131,10 @@ public sealed partial class RespireClient
     private static ValueTask<TResult> ConvertCachedHit<TState, TResult>(
         TState state, ResponseConverter<TState, TResult> converter, in RespValue hit)
     {
-        try { return new ValueTask<TResult>(converter(state, in hit)); }
+        try
+        {
+            return new ValueTask<TResult>(converter(state, in hit));
+        }
         catch (Exception error)
         {
             ErrorObservation.FinishFinal(default, error);
@@ -113,13 +151,18 @@ public sealed partial class RespireClient
         // generation-bound owner, including the logical cache mutation fence.
         var core = _core;
         RespireEndpoint? endpoint = null;
+
         try
         {
             if (core.CommandRetries is not null || core.Cluster is not null || core.Sentinel is not null || core.Circuits is not null
                 || core.ClientCache is not null || command is IStreamingRespCommand
                 || ScriptingEngineInfo.IsScriptingCommand(operation)
                 || !CanUseDirectReplySource(operation, in command)
-                || !core.TryGetReadyPrimaryMultiplexer(out var multiplexer)) return false;
+                || !core.TryGetReadyPrimaryMultiplexer(out var multiplexer))
+            {
+                return false;
+            }
+
             ObjectDisposedException.ThrowIf(core.Disposed, this);
             endpoint = multiplexer.ActiveConnectionEndpoint;
             connection = (UsesPrimaryBacklog ? SelectPrimaryBacklogConnection(default) : multiplexer.GetConnection())!;

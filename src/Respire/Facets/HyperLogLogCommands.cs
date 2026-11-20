@@ -53,7 +53,6 @@ internal sealed class HyperLogLogCommands(RespireClient client) : IRespireHyperL
     public ValueTask<bool> MergeAsync(RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken)
         => MergeAsync(destination, [sourceKey], cancellationToken);
 
-
     public ValueTask<bool> AddAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
         => AddAsync(key, values, CancellationToken.None);
 

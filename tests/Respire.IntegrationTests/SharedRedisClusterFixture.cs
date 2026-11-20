@@ -29,13 +29,18 @@ public class SharedRedisClusterFixture(string image, bool loadBloomModule) : IAs
     {
         var first = node * 5461;
         var last = node == 2 ? 16383 : first + 5460;
+
         lock (_reservedSlots)
         {
             for (var index = 0; ; index++)
             {
                 var tag = index.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 var slot = ClusterHash.GetSlot(tag);
-                if (slot >= first && slot <= last && _reservedSlots.Add(slot)) return tag;
+
+                if (slot >= first && slot <= last && _reservedSlots.Add(slot))
+                {
+                    return tag;
+                }
             }
         }
     }
@@ -43,7 +48,12 @@ public class SharedRedisClusterFixture(string image, bool loadBloomModule) : IAs
     public async ValueTask DisposeAsync()
     {
         var cluster = Interlocked.Exchange(ref _cluster, null);
-        if (cluster is not null) await cluster.DisposeAsync();
+
+        if (cluster is not null)
+        {
+            await cluster.DisposeAsync();
+        }
+
         GC.SuppressFinalize(this);
     }
 }

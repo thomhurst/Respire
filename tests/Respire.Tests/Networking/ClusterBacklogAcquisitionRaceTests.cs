@@ -42,23 +42,44 @@ public class ClusterBacklogAcquisitionRaceTests
             await client.ExecuteFireAndForgetAsync("SHUTDOWN", "NOSAVE");
             return "OK";
         }
+
         if (surface == "stream")
         {
             await using var stream = await client.Strings.GetStreamAsync("{race}key");
             using var reader = new StreamReader(stream!);
             return await reader.ReadToEndAsync();
         }
+
         return (await client.GetStringAsync("{race}key"))!;
     }
 
     private sealed class Fixture(FakeRespServer server, RespireClient client,
         TaskCompletionSource connecting, TaskCompletionSource resume, Action enableGate) : IAsyncDisposable
     {
-        internal FakeRespServer Server { get; } = server;
-        internal RespireClient Client { get; } = client;
-        internal TaskCompletionSource Connecting { get; } = connecting;
-        internal TaskCompletionSource Resume { get; } = resume;
-        internal bool RaceInjected { get; private set; }
+        internal FakeRespServer Server
+        {
+            get;
+        } = server;
+
+        internal RespireClient Client
+        {
+            get;
+        } = client;
+
+        internal TaskCompletionSource Connecting
+        {
+            get;
+        } = connecting;
+
+        internal TaskCompletionSource Resume
+        {
+            get;
+        } = resume;
+
+        internal bool RaceInjected
+        {
+            get; private set;
+        }
 
         internal void ArmAcquisitionRace()
         {
@@ -66,7 +87,11 @@ public class ClusterBacklogAcquisitionRaceTests
             var connection = router.GetMultiplexer(new("127.0.0.1", Server.Port)).GetConnection();
             router.BacklogAdmissionCheckedForTests = shouldBacklog =>
             {
-                if (shouldBacklog) throw new InvalidOperationException("The precheck must first see a connected route.");
+                if (shouldBacklog)
+                {
+                    throw new InvalidOperationException("The precheck must first see a connected route.");
+                }
+
                 router.BacklogAdmissionCheckedForTests = null;
                 enableGate();
 #pragma warning disable CA1849, RESP009 // Synchronously inject disconnect between the precheck snapshot and initial acquisition.
@@ -87,6 +112,7 @@ public class ClusterBacklogAcquisitionRaceTests
                     _ => command.StartsWith("GET ", StringComparison.Ordinal) ? "$5\r\nvalue\r\n"u8.ToArray() : null,
                 },
             };
+
             try
             {
                 var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -95,9 +121,15 @@ public class ClusterBacklogAcquisitionRaceTests
 #pragma warning disable RESP010 // Each test owns an isolated transport and a deterministic disconnect gate.
                 var client = await RespireClient.ConnectAsync(new RespireOptions
                 {
-                    UseCluster = true, AllowAdmin = true, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-                    Protocol = surface == "tracked" ? RespireProtocol.Resp3 : RespireProtocol.Resp2, Password = "test",
-                    CommandTimeout = Limit, ConnectTimeout = Limit, RetryPolicy = null,
+                    UseCluster = true,
+                    AllowAdmin = true,
+                    Endpoints = [new("127.0.0.1", server.Port)],
+                    Connections = 1,
+                    Protocol = surface == "tracked" ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
+                    Password = "test",
+                    CommandTimeout = Limit,
+                    ConnectTimeout = Limit,
+                    RetryPolicy = null,
                     ClientSideCache = surface == "tracked" ? new() : null,
                     ReadFrom = surface == "hedged" ? RespireReadFrom.PrimaryPreferred : RespireReadFrom.Primary,
                     HedgedReads = surface == "hedged" ? new() : null,
@@ -109,7 +141,9 @@ public class ClusterBacklogAcquisitionRaceTests
                             connecting.TrySetResult();
                             await resume.Task.WaitAsync(token);
                         }
+
                         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                         try
                         {
                             await socket.ConnectAsync(host, port, token);

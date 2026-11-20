@@ -23,6 +23,7 @@ namespace Respire.Internal;
 internal sealed partial class SentinelRouter
 {
     private static readonly TimeSpan NotificationShutdownTimeout = TimeSpan.FromSeconds(10);
+
     private ValueTask ObserveSentinelEventAsync(RespireEndpoint sentinel, SentinelEvent sentinelEvent,
         string? malformedSwitch, CancellationToken cancellationToken)
     {
@@ -55,44 +56,70 @@ internal sealed partial class SentinelRouter
                     var arrivedDuring = Current;
                     hint = hint.CaptureObservationContext(arrivedDuring is null ? null
                         : new(arrivedDuring.Endpoint, arrivedDuring.ValidatedPeer), _discovery.EpochEvidence);
+
                     if (hint.OldPrimary is { } announcedSource && arrivedDuring?.ValidatedPeer is { } peer
                         && SameEndpoint(arrivedDuring.Endpoint, announcedSource))
+                    {
                         hint = hint.WithSourceAddresses(announcedSource, [SentinelEndpointIdentity.NormalizeHost(peer.Host)]);
+                    }
+
                     QueueNotificationRediscovery(in hint);
+
                     if (sentinelEvent.OldPrimary is { } source && arrivedDuring is not null
                         && !SameEndpoint(arrivedDuring.Endpoint, source))
+                    {
                         StartSwitchSourceResolution(hint, arrivedDuring, cancellationToken);
+                    }
                 }
                 return ValueTask.CompletedTask;
         }
+
         return ValueTask.CompletedTask;
     }
 
     private async Task ResolveAndRetireSwitchSourceAsync(SentinelHint hint, Generation arrivedDuring,
         CancellationToken cancellationToken, SentinelNotificationCoalescer.SourceResolution? resolution = null)
     {
-        lock (_gate) resolution ??= _coalescer.BeginSourceResolution(in hint);
+        lock (_gate)
+        {
+            resolution ??= _coalescer.BeginSourceResolution(in hint);
+        }
+
         try
         {
             var oldPrimary = hint.OldPrimary!.Value;
             var addresses = await Monitoring.ResolveAddressesAsync(oldPrimary.Host, cancellationToken).ConfigureAwait(false);
-            if (addresses is null) return;
+
+            if (addresses is null)
+            {
+                return;
+            }
 
             // I/O collects facts only. The reducer decides whether target aliases
             // disqualify these addresses as evidence of a demoted source.
             var targets = ImmutableArray.CreateBuilder<SentinelAddressEvidence>();
+
             if (!IPAddress.TryParse(oldPrimary.Host, out _))
             {
                 foreach (var target in hint.Targets)
                 {
-                    if (target.Port != oldPrimary.Port || IPAddress.TryParse(target.Host, out _)) continue;
+                    if (target.Port != oldPrimary.Port || IPAddress.TryParse(target.Host, out _))
+                    {
+                        continue;
+                    }
+
                     var targetAddresses = await Monitoring.ResolveAddressesAsync(target.Host, cancellationToken).ConfigureAwait(false);
                     targets.Add(new(target, targetAddresses));
                 }
             }
+
             lock (_gate)
             {
-                if (_disposed || cancellationToken.IsCancellationRequested) return;
+                if (_disposed || cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 var transition = _coalescer.Transition(new(SentinelNotificationEventKind.SourceResolved,
                     ResolutionId: resolution.Id, AddressEvidence: new(oldPrimary, addresses), TargetAddresses: targets.ToImmutable()),
                     new(CurrentEvidence: CaptureGenerationEvidence(Current),
@@ -103,12 +130,14 @@ internal sealed partial class SentinelRouter
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
         {
-            SafeLog(error, static (logger, error)
-                => logger.SentinelSwitchPrimaryRetirementFailed(error));
+            SafeLog(error, static (logger, error) => logger.SentinelSwitchPrimaryRetirementFailed(error));
         }
         finally
         {
-            lock (_gate) _coalescer.EndSourceResolution(resolution);
+            lock (_gate)
+            {
+                _coalescer.EndSourceResolution(resolution);
+            }
         }
     }
 
@@ -118,7 +147,11 @@ internal sealed partial class SentinelRouter
     {
         lock (_gate)
         {
-            if (_disposed) return;
+            if (_disposed)
+            {
+                return;
+            }
+
             var evidence = _coalescer.BeginSourceResolution(in hint);
             Background.TryStart(SentinelWorkKind.SourceResolution,
                 () => ResolveAndRetireSwitchSourceAsync(hint, arrivedDuring, cancellationToken, evidence));
@@ -139,8 +172,15 @@ internal sealed partial class SentinelRouter
     /// </remarks>
     private void SafeLog<TState>(TState state, Action<ILogger, TState> log)
     {
-        if (core.Logger is not { } logger) return;
-        try { log(logger, state); }
+        if (core.Logger is not { } logger)
+        {
+            return;
+        }
+
+        try
+        {
+            log(logger, state);
+        }
         catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
         {
             RespireTelemetry.RecordSentinelGuardedLoggingFailure();
@@ -152,14 +192,24 @@ internal sealed partial class SentinelRouter
         var initialSubscription = startupVersion > 0;
         SafeLog((sentinel, initialSubscription), static (logger, state) =>
         {
-            if (state.initialSubscription) logger.SentinelMonitorEstablished(state.sentinel);
-            else logger.SentinelDeliveryGap(state.sentinel);
+            if (state.initialSubscription)
+            {
+                logger.SentinelMonitorEstablished(state.sentinel);
+            }
+            else
+            {
+                logger.SentinelDeliveryGap(state.sentinel);
+            }
         });
         // Only first-subscription gaps can be covered by a discovery begun after attachment.
         // Reconnect and overflow gaps remain independent, mandatory rediscovery hints.
         lock (_gate)
         {
-            if (_disposed || cancellationToken.IsCancellationRequested) return;
+            if (_disposed || cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
             QueueNotificationRediscovery(SentinelHint.FromGap(sentinel) with
             {
                 StartupSubscriptionVersion = startupVersion,
@@ -183,7 +233,11 @@ internal sealed partial class SentinelRouter
     {
         lock (_gate)
         {
-            if (_disposed) return;
+            if (_disposed)
+            {
+                return;
+            }
+
             var current = Current;
             var observed = hint.CaptureObservationContext(current is null ? null
                 : new(current.Endpoint, current.ValidatedPeer), _discovery.EpochEvidence);
@@ -200,6 +254,7 @@ internal sealed partial class SentinelRouter
             while (!_lifetime.IsCancellationRequested)
             {
                 SentinelNotificationTransition transition;
+
                 lock (_gate)
                 {
                     transition = _coalescer.Transition(new(SentinelNotificationEventKind.PrepareAttempt),
@@ -207,7 +262,12 @@ internal sealed partial class SentinelRouter
                             CurrentEvidence: CaptureGenerationEvidence(Current)));
                     ApplyNotificationTransitionLocked(in transition);
                 }
-                if (transition.Action == SentinelNotificationAction.Stop) return;
+
+                if (transition.Action == SentinelNotificationAction.Stop)
+                {
+                    return;
+                }
+
                 if (transition.Action == SentinelNotificationAction.RetryAfter)
                 {
                     // Minimum spacing survives worker completion and cannot be interrupted
@@ -218,6 +278,7 @@ internal sealed partial class SentinelRouter
 
                 Generation? validated = null;
                 Exception? failure = null;
+
                 try
                 {
                     validated = await GetGenerationAsync(_lifetime.Token, forceDiscovery: true,
@@ -229,20 +290,40 @@ internal sealed partial class SentinelRouter
                 // Logger callbacks run before reconciliation and outside the gate. A callback
                 // may allow another publication; capture Current only after it has returned.
                 int loggedFailures;
-                lock (_gate) loggedFailures = _coalescer.State.GetOutcomeLogCount(failure is null);
-                if (failure is not null)
-                    SafeLog((error: failure, attempt: loggedFailures), static (logger, state) =>
-                    {
-                        if (state.attempt == 1) logger.SentinelNotificationFirstDiscoveryFailure(state.attempt, state.error);
-                        else logger.SentinelNotificationRepeatedDiscoveryFailure(state.attempt, state.error);
-                    });
-                else if (loggedFailures > 0)
-                    SafeLog(loggedFailures, static (logger, count) => logger.SentinelNotificationDiscoveryRecovered(count));
 
-                Task notification;
                 lock (_gate)
                 {
-                    if (_disposed) return;
+                    loggedFailures = _coalescer.State.GetOutcomeLogCount(failure is null);
+                }
+
+                if (failure is not null)
+                {
+                    SafeLog((error: failure, attempt: loggedFailures), static (logger, state) =>
+                    {
+                        if (state.attempt == 1)
+                        {
+                            logger.SentinelNotificationFirstDiscoveryFailure(state.attempt, state.error);
+                        }
+                        else
+                        {
+                            logger.SentinelNotificationRepeatedDiscoveryFailure(state.attempt, state.error);
+                        }
+                    });
+                }
+                else if (loggedFailures > 0)
+                {
+                    SafeLog(loggedFailures, static (logger, count) => logger.SentinelNotificationDiscoveryRecovered(count));
+                }
+
+                Task notification;
+
+                lock (_gate)
+                {
+                    if (_disposed)
+                    {
+                        return;
+                    }
+
                     var current = Current;
                     transition = _coalescer.Transition(new(failure is null
                         ? SentinelNotificationEventKind.AttemptSucceeded : SentinelNotificationEventKind.AttemptFailed),
@@ -254,8 +335,15 @@ internal sealed partial class SentinelRouter
                     notification = _pendingNotification.Task;
                 }
 
-                if (transition.Action == SentinelNotificationAction.Stop) return;
-                if (transition.Action != SentinelNotificationAction.RetryAfter || transition.Delay <= TimeSpan.Zero) continue;
+                if (transition.Action == SentinelNotificationAction.Stop)
+                {
+                    return;
+                }
+
+                if (transition.Action != SentinelNotificationAction.RetryAfter || transition.Delay <= TimeSpan.Zero)
+                {
+                    continue;
+                }
 
                 await WaitForNotificationRetryAsync(transition, notification).ConfigureAwait(false);
             }
@@ -270,13 +358,16 @@ internal sealed partial class SentinelRouter
             await Task.Delay(transition.Delay, Clock, _lifetime.Token).ConfigureAwait(false);
             return;
         }
+
         using var retry = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         var delay = Task.Delay(transition.Delay, Clock, retry.Token);
+
         if (await Task.WhenAny(delay, notification).ConfigureAwait(false) == notification)
         {
             await retry.CancelAsync().ConfigureAwait(false);
             return;
         }
+
         await delay.ConfigureAwait(false);
     }
 
@@ -285,11 +376,24 @@ internal sealed partial class SentinelRouter
     private void ApplyNotificationTransitionLocked(in SentinelNotificationTransition transition)
     {
         if (transition.ReplacePendingSignal)
+        {
             _pendingNotification = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (transition.State.Pending is not null) _pendingNotification.TrySetResult();
+        }
+
+        if (transition.State.Pending is not null)
+        {
+            _pendingNotification.TrySetResult();
+        }
+
         if (!_disposed && Current is { } generation && ReferenceEquals(transition.RetireGeneration, generation.Identity))
+        {
             Invalidate(generation);
-        if (transition.Action == SentinelNotificationAction.Stop) _notificationRediscovery = null;
+        }
+
+        if (transition.Action == SentinelNotificationAction.Stop)
+        {
+            _notificationRediscovery = null;
+        }
     }
 
     private void ApplyQueuedNotificationTransitionLocked(in SentinelNotificationTransition transition)
@@ -300,12 +404,18 @@ internal sealed partial class SentinelRouter
         // TryStart refuses only after Stop. Disposal marks the reducer disposed and
         // stops background registration under this same gate, so RunNext cannot be refused.
         if (transition.Action == SentinelNotificationAction.RunNext)
+        {
             _notificationRediscovery = Background.TryStart(SentinelWorkKind.Rediscovery, RediscoverFromNotificationAsync);
+        }
     }
 
     private static SentinelGenerationEvidence? CaptureGenerationEvidence(Generation? generation)
     {
-        if (generation is null) return null;
+        if (generation is null)
+        {
+            return null;
+        }
+
         var peers = generation.Multiplexer.CaptureSentinelPeers();
         return new(generation.Identity, generation.Endpoint, generation.ValidatedPeer, generation.IsRetired,
             peers.Peers, peers.ConfirmedPeer);

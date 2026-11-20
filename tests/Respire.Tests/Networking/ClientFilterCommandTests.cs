@@ -34,7 +34,9 @@ public class ClientFilterCommandTests
 #pragma warning disable RESP010 // This filter scenario owns its client and admin permissions against an isolated scripted server.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -54,16 +56,41 @@ public class ClientFilterCommandTests
             8 => new RespireClientFilterOptions { ExcludedLibraryName = "" },
             _ => new RespireClientFilterOptions { ExcludedLibraryVersion = "" },
         };
-        if (grouped) options = ClientFilterTestOptions.Group(options);
-        await Assert.That(() => { _ = client.Server.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
-        await Assert.That(() => { _ = handle.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
+
+        if (grouped)
+        {
+            options = ClientFilterTestOptions.Group(options);
+        }
+
+        await Assert.That(() =>
+        {
+            _ = client.Server.KillClientsAsync(options);
+        }).ThrowsExactly<ArgumentException>();
+        await Assert.That(() =>
+        {
+            _ = handle.KillClientsAsync(options);
+        }).ThrowsExactly<ArgumentException>();
         await Assert.That(() => batch.Server.KillClients(options)).ThrowsExactly<ArgumentException>();
         await Assert.That(() => tx.Server.KillClients(options)).ThrowsExactly<ArgumentException>();
         var invalid = new RespireClientFilterOptions { Ids = [0] };
-        if (grouped) invalid = ClientFilterTestOptions.Group(invalid);
-        await Assert.That(() => { _ = client.Server.ClientsAsync(invalid, default); }).ThrowsExactly<ArgumentOutOfRangeException>();
-        await Assert.That(() => { _ = client.Server.ClientsOnAllNodesAsync(invalid, default); }).ThrowsExactly<ArgumentOutOfRangeException>();
-        await Assert.That(() => { _ = handle.ClientsAsync(invalid); }).ThrowsExactly<ArgumentOutOfRangeException>();
+
+        if (grouped)
+        {
+            invalid = ClientFilterTestOptions.Group(invalid);
+        }
+
+        await Assert.That(() =>
+        {
+            _ = client.Server.ClientsAsync(invalid, default);
+        }).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(() =>
+        {
+            _ = client.Server.ClientsOnAllNodesAsync(invalid, default);
+        }).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(() =>
+        {
+            _ = handle.ClientsAsync(invalid);
+        }).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(() => batch.Server.Clients(invalid)).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(() => tx.Server.Clients(invalid)).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo(["CLIENT ID"]);
@@ -78,16 +105,22 @@ public class ClientFilterCommandTests
 #pragma warning disable RESP010 // This filter scenario owns its client and admin permissions against an isolated scripted server.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
+
 #pragma warning restore RESP010
         foreach (var filter in new RespireClientFilterOptions[]
         {
             new() { AllowUnfilteredKill = true }, new() { AllowUnfilteredKill = true, SkipMe = false },
             new() { Type = RespireClientType.Replica }, new() { ExcludedType = RespireClientType.Replica },
         })
+        {
             await client.Server.KillClientsAsync(grouped ? ClientFilterTestOptions.Group(filter) : filter);
+        }
+
         await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo([
             "CLIENT KILL SKIPME yes", "CLIENT KILL SKIPME no", "CLIENT KILL TYPE slave", "CLIENT KILL NOT-TYPE slave"]);
     }
@@ -115,7 +148,9 @@ public class ClientFilterCommandTests
 #pragma warning disable RESP010 // This filter scenario owns its client and admin permissions against an isolated scripted server.
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -124,16 +159,43 @@ public class ClientFilterCommandTests
         long[] excluded = [44, 45];
         var options = new RespireClientFilterOptions
         {
-            Type = RespireClientType.Normal, Ids = ids, User = "default", Address = "remote:1", LocalAddress = "local:2",
-            SkipMe = false, MaximumAgeSeconds = 3, Name = "worker", IdleSeconds = 4, Flags = "N", LibraryName = "lib",
-            LibraryVersion = "1", Database = 0, Capabilities = "r", Ip = "127.0.0.1", ExcludedType = RespireClientType.Primary,
-            ExcludedIds = excluded, ExcludedUser = "other", ExcludedAddress = "remote:3", ExcludedLocalAddress = "local:4",
-            ExcludedName = "admin", ExcludedFlags = "b", ExcludedLibraryName = "otherlib", ExcludedLibraryVersion = "2",
-            ExcludedDatabase = 1, ExcludedCapabilities = "x", ExcludedIp = "127.0.0.2",
+            Type = RespireClientType.Normal,
+            Ids = ids,
+            User = "default",
+            Address = "remote:1",
+            LocalAddress = "local:2",
+            SkipMe = false,
+            MaximumAgeSeconds = 3,
+            Name = "worker",
+            IdleSeconds = 4,
+            Flags = "N",
+            LibraryName = "lib",
+            LibraryVersion = "1",
+            Database = 0,
+            Capabilities = "r",
+            Ip = "127.0.0.1",
+            ExcludedType = RespireClientType.Primary,
+            ExcludedIds = excluded,
+            ExcludedUser = "other",
+            ExcludedAddress = "remote:3",
+            ExcludedLocalAddress = "local:4",
+            ExcludedName = "admin",
+            ExcludedFlags = "b",
+            ExcludedLibraryName = "otherlib",
+            ExcludedLibraryVersion = "2",
+            ExcludedDatabase = 1,
+            ExcludedCapabilities = "x",
+            ExcludedIp = "127.0.0.2",
         };
-        if (grouped) options = ClientFilterTestOptions.Group(options);
+
+        if (grouped)
+        {
+            options = ClientFilterTestOptions.Group(options);
+        }
+
         RespireServerClientInfo[] rows;
         long killed;
+
         if (execution == 0)
         {
             rows = await client.Server.ClientsAsync(options, default);
@@ -154,10 +216,20 @@ public class ClientFilterCommandTests
             var pendingKill = queue.Server.KillClients(options);
             ids[0] = 999;
             excluded[0] = 998;
-            if (execution == 1) await batch.ExecuteAsync(); else await tx.CommitAsync();
+
+            if (execution == 1)
+            {
+                await batch.ExecuteAsync();
+            }
+            else
+            {
+                await tx.CommitAsync();
+            }
+
             rows = pendingRows.Result;
             killed = pendingKill.Result;
         }
+
         await Assert.That(rows.Length).IsEqualTo(1);
         await Assert.That(rows[0].Id).IsEqualTo(42);
         await Assert.That(rows[0].Attributes["future"]).IsEqualTo("kept");
@@ -176,7 +248,9 @@ public class ClientFilterCommandTests
 #pragma warning disable RESP010 // This filter scenario owns its client and admin permissions against an isolated scripted server.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -190,24 +264,34 @@ public class ClientFilterCommandTests
             (new() { IdleSeconds = -1 }, "IdleSeconds"), (new() { Database = -1 }, "Database"),
             (new() { ExcludedDatabase = -1 }, "ExcludedDatabase"),
         ];
+
         foreach (var (flatOptions, property) in invalid)
         {
             var options = grouped ? ClientFilterTestOptions.Group(flatOptions) : flatOptions;
-            var error = await Assert.That(() => { _ = client.Server.ClientsAsync(options, default); })
+            var error = await Assert.That(() =>
+                {
+                    _ = client.Server.ClientsAsync(options, default);
+                })
                 .ThrowsExactly<ArgumentOutOfRangeException>();
             var expectedProperty = property;
+
             if (grouped)
+            {
                 expectedProperty = property.StartsWith("Excluded", StringComparison.Ordinal) ? "Exclude." + property[8..] : "Include." + property;
+            }
+
             await Assert.That(error!.Message).Contains(expectedProperty);
             await Assert.That(error.ParamName).IsEqualTo("options");
             await Assert.That(async () => await client.Server.ClientsAsync(options, default)).ThrowsExactly<ArgumentOutOfRangeException>();
             await Assert.That(async () => await client.Server.KillClientsAsync(options)).ThrowsExactly<ArgumentOutOfRangeException>();
+
             foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, tx })
             {
                 await Assert.That(() => queue.Server.Clients(options)).ThrowsExactly<ArgumentOutOfRangeException>();
                 await Assert.That(() => queue.Server.KillClients(options)).ThrowsExactly<ArgumentOutOfRangeException>();
             }
         }
+
         await Assert.That(async () => await client.Server.KillClientsAsync(new())).ThrowsExactly<ArgumentException>();
         await Assert.That(() => batch.Server.KillClients(new())).ThrowsExactly<ArgumentException>();
         await Assert.That(() => tx.Server.KillClients(new())).ThrowsExactly<ArgumentException>();
@@ -223,16 +307,25 @@ public class ClientFilterCommandTests
 #pragma warning disable RESP010 // This filter scenario owns its client and admin permissions against an isolated scripted server.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var options = new RespireClientFilterOptions { Ids = [42] };
-        if (grouped) options = ClientFilterTestOptions.Group(options);
+
+        if (grouped)
+        {
+            options = ClientFilterTestOptions.Group(options);
+        }
+
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
         var handle = await client.Server.GetClientConnectionAsync();
         await Assert.That(async () => await client.Server.KillClientsAsync(options)).ThrowsExactly<NotSupportedException>();
-        await Assert.That(() => { _ = handle.KillClientsAsync(options); }).ThrowsExactly<NotSupportedException>();
+        await Assert.That(() =>
+        {
+            _ = handle.KillClientsAsync(options);
+        }).ThrowsExactly<NotSupportedException>();
         await Assert.That(() => batch.Server.KillClients(options)).ThrowsExactly<NotSupportedException>();
         await Assert.That(() => tx.Server.KillClients(options)).ThrowsExactly<NotSupportedException>();
         await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo(["CLIENT ID"]);

@@ -29,31 +29,50 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         if (options.JobEventsStream is { } events)
         {
             var eventKey = client.ResolveKey(events).ToBytes();
+
             foreach (var key in new[] { stream, options.DeadLetterStream! })
             {
                 var resolved = client.ResolveKey(key).ToBytes();
+
                 if (eventKey.AsSpan().SequenceEqual(resolved) || ClusterHash.GetSlot(eventKey) != ClusterHash.GetSlot(resolved))
+                {
                     throw new ArgumentException("Job event, source, and dead-letter streams must be distinct keys in one Cluster slot.");
+                }
             }
         }
+
         if (options.JobQueue is not null)
+        {
             JobQueueScheduling.ValidateKeys(client, JobGroupScheduling.Keys(stream));
+        }
+
         if (options.JobEventsStream is not null)
         {
             JobQueueScheduling.ValidateKeys(client, [stream, stream + ":scheduled", stream + ":followups", JobDeduplication.Key(stream)]);
             JobQueueScheduling.ValidateKeys(client, [stream, JobQueueControls.Key(stream), options.JobEventsStream, options.DeadLetterStream!]);
+
             if (options.JobQueue?.MetricsRetentionMinutes > 0)
+            {
                 JobQueueScheduling.ValidateKeys(client, [stream, options.JobEventsStream, options.DeadLetterStream!, stream + ":metrics"]);
+            }
         }
+
         if (options.DeadLetterStream is { } deadLetter)
         {
             var sourceKey = client.ResolveKey(stream).ToBytes();
             var deadLetterKey = client.ResolveKey(deadLetter).ToBytes();
+
             if (sourceKey.AsSpan().SequenceEqual(deadLetterKey))
+            {
                 throw new ArgumentException("Source and dead-letter streams must be distinct resolved keys.");
+            }
+
             if (ClusterHash.GetSlot(sourceKey) != ClusterHash.GetSlot(deadLetterKey))
+            {
                 throw new ArgumentException("Source and dead-letter streams must share a resolved Cluster slot.");
+            }
         }
+
         try
         {
             await InitializeAsync(stoppingToken).ConfigureAwait(false);
@@ -62,8 +81,12 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
         var readers = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         var consumers = new Task[options.ConsumerCount + 1];
+
         for (var i = 0; i < options.ConsumerCount; i++)
+        {
             consumers[i] = ConsumeAsync($"{_identity}-{i}", readers);
+        }
+
         consumers[^1] = PollGroupAsync(readers.Token);
         var drain = DrainConsumersAsync(consumers, readers);
         Volatile.Write(ref _consumerDrain, drain);
@@ -72,16 +95,21 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         await Task.WhenAny(_firstFailure.Task, drain).ConfigureAwait(false);
         // The fault's asynchronous continuation can lose to an already completed drain.
         // Its published state still takes precedence over clean completion.
-        if (_firstFailure.Task.IsCompleted) await _firstFailure.Task.ConfigureAwait(false);
+        if (_firstFailure.Task.IsCompleted)
+        {
+            await _firstFailure.Task.ConfigureAwait(false);
+        }
     }
 
     private async Task InitializeAsync(CancellationToken token)
     {
         var rateConfigured = false;
         var retryDelay = TimeSpan.FromSeconds(1);
+
         while (true)
         {
             token.ThrowIfCancellationRequested();
+
             try
             {
                 if (!rateConfigured && options.JobEventsStream is not null && options.JobQueue?.RateLimit is { } rate)
@@ -90,9 +118,13 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                         [rate.PermitLimit, (long)Math.Ceiling(rate.Window.TotalMilliseconds), "initialize"], token).ConfigureAwait(false);
                     rateConfigured = true;
                 }
+
                 if (options.CreateGroup)
+                {
                     await client.Streams.CreateGroupAsync(stream, group, options.GroupStart,
                         cancellationToken: token).ConfigureAwait(false);
+                }
+
                 return;
             }
             catch (Exception error) when (IsRetryableStartupError(error))
@@ -110,20 +142,30 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     {
         if (error is not (RespireConnectionException or RespireTimeoutException or TimeoutException or SocketException or IOException
             or RespireServerException { IsTransient: true }))
+        {
             return false;
+        }
         // Lazy connection setup wraps rejected AUTH, HELLO and SELECT replies in connection exceptions.
         // Exhausted reconnect limits require a new client, so retrying initialization cannot recover.
         for (Exception? cause = error; cause is not null; cause = cause.InnerException)
+        {
             if (cause is RespireAuthenticationException or RespireReconnectLimitException
                 or RespireServerException { IsTransient: false } or RespireProtocolException
                 or RespireConfigurationException or ArgumentException)
+            {
                 return false;
+            }
+        }
+
         return true;
     }
 
     private async Task DrainConsumersAsync(Task[] consumers, CancellationTokenSource readers)
     {
-        try { await Task.WhenAll(consumers).ConfigureAwait(false); }
+        try
+        {
+            await Task.WhenAll(consumers).ConfigureAwait(false);
+        }
         catch { /* ConsumeAsync has already published the first fault to the host. */ }
         finally { _telemetry.StopPolling(); readers.Dispose(); }
     }
@@ -138,21 +180,37 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 {
                     using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
                     deadline.CancelAfter(options.MetricsPollTimeout);
+
                     try
                     {
                         var groups = await client.Streams.GroupInfoAsync(stream, deadline.Token).ConfigureAwait(false);
+
                         if (!deadline.IsCancellationRequested)
                         {
                             RespireStreamGroupInfo? match = null;
+
                             foreach (var info in groups)
-                                if (info.Name == group) { match = info; break; }
+                            {
+                                if (info.Name == group)
+                                {
+                                    match = info;
+                                    break;
+                                }
+                            }
+
                             _telemetry.SetGroup(match);
                         }
-                        else _telemetry.SetGroup(null);
+                        else
+                        {
+                            _telemetry.SetGroup(null);
+                        }
                     }
                     catch { _telemetry.SetGroup(null); /* Telemetry queries must not fault consumers. */ }
                 }
-                else _telemetry.SetGroup(null);
+                else
+                {
+                    _telemetry.SetGroup(null);
+                }
                 // Delay after completion prevents overlapping queries and failure hot loops.
                 await Task.Delay(options.MetricsPollInterval, token).ConfigureAwait(false);
             }
@@ -170,6 +228,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         var recoveryClock = Stopwatch.StartNew();
         var schedulingClock = new Stopwatch();
         var followupClock = new Stopwatch();
+
         try
         {
             while (!readers.IsCancellationRequested)
@@ -182,6 +241,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                         [64, "followups"], readers.Token).ConfigureAwait(false);
                     followupClock.Restart();
                 }
+
                 if (options.JobQueue is { } queue
                     && (!schedulingClock.IsRunning || schedulingClock.Elapsed >= queue.SchedulingPollInterval))
                 {
@@ -189,8 +249,10 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                         [queue.SchedulingBatchSize], readers.Token).ConfigureAwait(false);
                     schedulingClock.Restart();
                 }
+
                 Delivery[] deliveries;
                 var recoveredBatch = false;
+
                 if (options.JobEventsStream is not null)
                 {
                     var replay = cursor.HasValue;
@@ -205,6 +267,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                     var page = await ReadPageAsync(script, arguments, readers.Token, controls: true, grouped: options.JobQueue is not null).ConfigureAwait(false);
                     _telemetry.SetPaused(page.Paused);
                     var poll = options.JobQueue?.SchedulingPollInterval ?? TimeSpan.FromSeconds(1);
+
                     if (page.Paused || page.RetryAfter > 0)
                     {
                         if (page.RetryAfter > 0)
@@ -212,31 +275,60 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                             _telemetry.RateLimited();
                             poll = TimeSpan.FromMilliseconds(Math.Min(poll.TotalMilliseconds, page.RetryAfter));
                         }
+
                         await Task.Delay(poll, readers.Token).ConfigureAwait(false);
                         continue;
                     }
-                    if (replay) cursor = page.Cursor.CompareTo(RespireStreamId.Beginning) == 0 ? (RespireStreamId?)null : page.Cursor;
+
+                    if (replay)
+                    {
+                        cursor = page.Cursor.CompareTo(RespireStreamId.Beginning) == 0 ? (RespireStreamId?)null : page.Cursor;
+                    }
+
                     if (recover)
                     {
                         // Preserve a bounded batch's scan budget while checking admission per entry.
                         // Denied admissions above neither advance the cursor nor spend this budget.
-                        if (recoveryPagesRemaining == 0) recoveryPagesRemaining = options.BatchSize;
+                        if (recoveryPagesRemaining == 0)
+                        {
+                            recoveryPagesRemaining = options.BatchSize;
+                        }
+
                         recoveryCursor = page.Cursor;
                         recoveredBatch = --recoveryPagesRemaining == 0 || recoveryCursor == RespireStreamId.Beginning;
-                        if (recoveredBatch) recoveryPagesRemaining = 0;
+
+                        if (recoveredBatch)
+                        {
+                            recoveryPagesRemaining = 0;
+                        }
                     }
+
                     deliveries = page.Deliveries;
+
                     if (deliveries.Length == 0 && !replay && !recover)
                     {
                         var wait = poll < options.ReadWait ? poll : options.ReadWait;
                         var recoveryRemaining = options.RecoveryPollInterval - recoveryClock.Elapsed;
-                        if (wait > recoveryRemaining) wait = recoveryRemaining;
+
+                        if (wait > recoveryRemaining)
+                        {
+                            wait = recoveryRemaining;
+                        }
+
                         if (options.JobQueue is not null)
                         {
                             var schedulingRemaining = poll - schedulingClock.Elapsed;
-                            if (wait > schedulingRemaining) wait = schedulingRemaining;
+
+                            if (wait > schedulingRemaining)
+                            {
+                                wait = schedulingRemaining;
+                            }
                         }
-                        if (wait > TimeSpan.Zero) await Task.Delay(wait, readers.Token).ConfigureAwait(false);
+
+                        if (wait > TimeSpan.Zero)
+                        {
+                            await Task.Delay(wait, readers.Token).ConfigureAwait(false);
+                        }
                     }
                 }
                 else if (cursor.HasValue)
@@ -260,12 +352,22 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 {
                     var remaining = options.RecoveryPollInterval - recoveryClock.Elapsed;
                     var wait = remaining < options.ReadWait ? remaining : options.ReadWait;
+
                     if (options.JobQueue is { } scheduling)
                     {
                         var schedulingRemaining = scheduling.SchedulingPollInterval - schedulingClock.Elapsed;
-                        if (wait > schedulingRemaining) wait = schedulingRemaining;
+
+                        if (wait > schedulingRemaining)
+                        {
+                            wait = schedulingRemaining;
+                        }
                     }
-                    if (wait <= TimeSpan.Zero) continue;
+
+                    if (wait <= TimeSpan.Zero)
+                    {
+                        continue;
+                    }
+
                     var entries = await client.Streams.ReadGroupOnceAsync(stream, group, consumer,
                         readOptions with { WaitFor = wait }, cancellationToken: readers.Token).ConfigureAwait(false);
                     // New group deliveries start at attempt 1 at the server read boundary.
@@ -273,22 +375,35 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                     deliveries = entries.Select(static entry => new Delivery(
                         entry.WithoutAcknowledgement(), 1)).ToArray();
                 }
+
                 foreach (var delivery in deliveries)
                 {
                     // A batch delivered during shutdown stays pending rather than starting more handlers.
-                    if (readers.IsCancellationRequested) break;
+                    if (readers.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
                     await ProcessAsync(delivery, consumer).ConfigureAwait(false);
                 }
                 // Slow recovered handlers must not make another scan due before new reads get a turn.
-                if (recoveredBatch) recoveryClock.Restart();
+                if (recoveredBatch)
+                {
+                    recoveryClock.Restart();
+                }
             }
         }
         catch (OperationCanceledException) when (readers.IsCancellationRequested) { }
         catch (Exception error)
         {
             _firstFailure.TrySetException(error);
-            try { await readers.CancelAsync().ConfigureAwait(false); }
+
+            try
+            {
+                await readers.CancelAsync().ConfigureAwait(false);
+            }
             finally { CancelHandlers(); }
+
             throw;
         }
     }
@@ -301,20 +416,30 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         using var reply = await client.Scripts.ExecuteLeaseAsync(script,
             grouped ? _groupReadKeys
                 : controls ? [stream, JobQueueControls.Key(stream), JobDeduplication.Key(stream)] : [stream], arguments, token).ConfigureAwait(false);
-        if (controls && reply.Count > 4) _hasImmediateFollowups = reply[4].AsString() == "1";
+
+        if (controls && reply.Count > 4)
+        {
+            _hasImmediateFollowups = reply[4].AsString() == "1";
+        }
+
         var rows = reply[1];
         var deliveries = new Delivery[rows.Count];
+
         for (var i = 0; i < deliveries.Length; i++)
         {
             var row = rows[i];
             var values = row[1];
             var fields = new KeyValuePair<string, byte[]>[values.Count / 2];
+
             for (var field = 0; field < fields.Length; field++)
+            {
                 fields[field] = new(values[field * 2].AsString(), values[field * 2 + 1].AsBytes());
+            }
             // No unconditional entry.AckAsync is exposed to the handler for scripted deliveries.
             deliveries[i] = new(new RespireStreamEntry(new(row[0].AsString()), fields),
                 long.Parse(row[2].AsString(), System.Globalization.CultureInfo.InvariantCulture));
         }
+
         return (new(reply[0].AsString()), deliveries, controls && reply[2].AsInteger() == 1,
             controls ? reply[3].AsInteger() : 0);
     }
@@ -322,10 +447,17 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     private async Task ProcessAsync(Delivery delivery, string consumer)
     {
         using var observation = _telemetry.Begin(delivery.Entry, options);
+
         try
         {
-            if (HasGroupLease(delivery)) await ProcessLeasedAsync(delivery, consumer, observation).ConfigureAwait(false);
-            else await ProcessAsync(delivery, consumer, observation, _handlers.Token).ConfigureAwait(false);
+            if (HasGroupLease(delivery))
+            {
+                await ProcessLeasedAsync(delivery, consumer, observation).ConfigureAwait(false);
+            }
+            else
+            {
+                await ProcessAsync(delivery, consumer, observation, _handlers.Token).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException) when (_handlers.IsCancellationRequested && !observation.CleanupFailed)
         {
@@ -339,10 +471,17 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         using var processing = CancellationTokenSource.CreateLinkedTokenSource(_handlers.Token);
         using var renewals = new CancellationTokenSource();
         Task? renewal = null;
+
         try
         {
             var duration = await RenewGroupLeaseAsync(delivery, consumer, processing.Token).ConfigureAwait(false);
-            if (duration == 0) { observation.Outcome = "stale"; return; }
+
+            if (duration == 0)
+            {
+                observation.Outcome = "stale";
+                return;
+            }
+
             renewal = RenewGroupLeaseLoopAsync(delivery, consumer, duration, processing, renewals.Token);
             await ProcessAsync(delivery, consumer, observation, processing.Token).ConfigureAwait(false);
         }
@@ -353,7 +492,14 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         finally
         {
             await renewals.CancelAsync().ConfigureAwait(false);
-            try { if (renewal is not null) await renewal.ConfigureAwait(false); }
+
+            try
+            {
+                if (renewal is not null)
+                {
+                    await renewal.ConfigureAwait(false);
+                }
+            }
             finally
             {
                 await client.Scripts.ExecuteIntegerAsync(JobGroupControls.Release, [.. JobGroupScheduling.Keys(stream)],
@@ -377,7 +523,12 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(1, duration / 3)), token).ConfigureAwait(false);
                 duration = await RenewGroupLeaseAsync(delivery, consumer, token).ConfigureAwait(false);
-                if (duration == 0) { await processing.CancelAsync().ConfigureAwait(false); return; }
+
+                if (duration == 0)
+                {
+                    await processing.CancelAsync().ConfigureAwait(false);
+                    return;
+                }
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
@@ -390,19 +541,37 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     private async Task ProcessAsync(Delivery delivery, string consumer, StreamWorkerTelemetry.Attempt observation, CancellationToken processingToken)
     {
         var checkpointKey = options.JobEventsStream is null ? null : JobCheckpoints.Key(stream, delivery.Entry);
+
         if (checkpointKey is not null && options.JobQueue is null)
+        {
             throw new InvalidOperationException("Resumable jobs require scheduling-enabled workers.");
-        if (checkpointKey is not null) JobQueueScheduling.ValidateKeys(client, [stream, checkpointKey]);
+        }
+
+        if (checkpointKey is not null)
+        {
+            JobQueueScheduling.ValidateKeys(client, [stream, checkpointKey]);
+        }
+
         if (options.DeadLetterStream is not null && delivery.Entry.Fields.Count > StreamWorkerScripts.MaximumDeadLetterFields)
+        {
             throw new InvalidOperationException("Dead-letter-enabled workers support at most 1024 field/value pairs per entry.");
+        }
+
         var totalAttempts = delivery.Attempt;
+
         if (options.JobEventsStream is { } batchEvents && delivery.Entry.GetString("_respire.job.batch") is { } batchKey)
         {
             JobQueueScheduling.ValidateKeys(client, [stream, batchKey]);
             var cancelled = await client.Scripts.ExecuteIntegerAsync(JobQueueBatches.CheckCancellation, [stream, batchKey],
                 [group, consumer, delivery.Entry.Id.Value, delivery.Attempt],
                 processingToken).ConfigureAwait(false);
-            if (cancelled == -1) { observation.Outcome = "stale"; return; }
+
+            if (cancelled == -1)
+            {
+                observation.Outcome = "stale";
+                return;
+            }
+
             if (cancelled == 1)
             {
                 var acknowledged = await client.Scripts.ExecuteIntegerAsync(CompletionScript(delivery, options.DeleteAcknowledgedEntries),
@@ -414,43 +583,65 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 return;
             }
         }
+
         if (options.JobQueue is not null)
         {
             var previous = delivery.Entry.GetString("_respire.job.attempts");
-            if (previous is not null) totalAttempts = checked(totalAttempts + long.Parse(previous, System.Globalization.CultureInfo.InvariantCulture));
+
+            if (previous is not null)
+            {
+                totalAttempts = checked(totalAttempts + long.Parse(previous, System.Globalization.CultureInfo.InvariantCulture));
+            }
+
             var expires = delivery.Entry.GetString("_respire.job.expires");
+
             if (expires is not null)
             {
                 var expiryScript = HasGroupLease(delivery) ? JobGroupControls.CheckExpiry : JobQueueScheduling.CheckExpiry;
                 var expiryKeys = LeaseFenceKeys(delivery, [stream]);
+
                 if (HasDeduplicationLifecycle(delivery))
                 {
                     expiryScript = JobDeduplication.Terminal(expiryScript, expiry: true);
                     expiryKeys = [.. expiryKeys, JobDeduplication.Key(stream)];
                 }
+
                 var live = await client.Scripts.ExecuteIntegerAsync(expiryScript, expiryKeys,
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, expires,
                         options.DeleteAcknowledgedEntries ? 1 : 0], processingToken).ConfigureAwait(false);
-                if (live != 1) { observation.Outcome = live == -1 ? "expired" : "stale"; return; }
+
+                if (live != 1)
+                {
+                    observation.Outcome = live == -1 ? "expired" : "stale";
+                    return;
+                }
             }
         }
+
         if (options.DeliveryLimit is { } limit && totalAttempts > limit)
         {
             observation.Outcome = await DeadLetterAsync(delivery, consumer, "delivery-limit", "", processingToken).ConfigureAwait(false);
             return;
         }
+
         using var runtime = checkpointKey is null ? null
             : CancellationTokenSource.CreateLinkedTokenSource(processingToken, _yielding.Token);
+
         if (runtime is not null)
         {
             if (!long.TryParse(delivery.Entry.GetString("_respire.job.runtime"),
                     System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var runtimeMilliseconds)
                 || runtimeMilliseconds <= 0 || runtimeMilliseconds > uint.MaxValue - 1)
+            {
                 throw new InvalidOperationException("Resumable jobs require a valid positive _respire.job.runtime in milliseconds.");
+            }
+
             runtime.CancelAfter(TimeSpan.FromMilliseconds(runtimeMilliseconds));
         }
+
         var handlerToken = runtime?.Token ?? processingToken;
         var scope = scopeFactory.CreateAsyncScope();
+
         try
         {
             var handler = scope.ServiceProvider.GetRequiredService<THandler>();
@@ -460,25 +651,42 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             TimeSpan? retryDelay = null;
             byte[]? jobResult = null;
             var yieldedForCancellation = false;
+
             try
             {
                 var message = deserialize(delivery.Entry);
+
                 if (options.JobEventsStream is { } events && message is IJobDelivery job)
+                {
                     job.Attach(new(client, stream, events, group, consumer, delivery.Entry.Id, delivery.Attempt,
                         delivery.Entry.GetString("_respire.job.flow"),
                         int.Parse(delivery.Entry.GetString("_respire.job.node") ?? "0", System.Globalization.CultureInfo.InvariantCulture),
                         job.Id, options.JobQueue, HasGroupLease(delivery), checkpointKey));
+                }
+
                 result = await handler.HandleAsync(message, handlerToken).ConfigureAwait(false);
+
                 if (result is not (RespireStreamWorkerResult.Ack or RespireStreamWorkerResult.Nack or RespireStreamWorkerResult.DeadLetter))
+                {
                     throw new InvalidOperationException("The stream handler returned an unknown completion result.");
+                }
+
                 if (result == RespireStreamWorkerResult.DeadLetter && options.DeadLetterStream is null)
+                {
                     throw new InvalidOperationException("DeadLetter completion requires a configured dead-letter stream.");
+                }
+
                 retryDelay = (message as IJobRetry)?.RetryDelay;
                 jobResult = (message as IJobDelivery)?.Result;
             }
             catch (OperationCanceledException) when (handlerToken.IsCancellationRequested)
             {
-                if (runtime is null) { observation.Outcome = "canceled"; return; }
+                if (runtime is null)
+                {
+                    observation.Outcome = "canceled";
+                    return;
+                }
+
                 yieldedForCancellation = true;
                 result = RespireStreamWorkerResult.Nack;
             }
@@ -506,7 +714,13 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 observation.Outcome = yielded == 1 ? "yielded" : "stale";
                 return;
             }
-            if (processingToken.IsCancellationRequested) { observation.Outcome = "canceled"; return; }
+
+            if (processingToken.IsCancellationRequested)
+            {
+                observation.Outcome = "canceled";
+                return;
+            }
+
             if (result == RespireStreamWorkerResult.Ack)
             {
                 // ConsumeAsync treats acknowledgement cancellation as expected only after
@@ -519,12 +733,21 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                     : await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
                         ? StreamWorkerScripts.AckAndDelete : StreamWorkerScripts.Ack, [stream],
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt], processingToken).ConfigureAwait(false);
-                observation.Outcome = acknowledged switch { 1 => "ack", 2 => "canceled", _ => "stale" };
+                observation.Outcome = acknowledged switch
+                {
+                    1 => "ack",
+                    2 => "canceled",
+                    _ => "stale"
+                };
             }
             else if (result == RespireStreamWorkerResult.DeadLetter)
+            {
                 observation.Outcome = await DeadLetterAsync(delivery, consumer, "explicit", "", processingToken).ConfigureAwait(false);
+            }
             else if (options.DeliveryLimit is { } deliveryLimit && totalAttempts >= deliveryLimit)
+            {
                 observation.Outcome = await DeadLetterAsync(delivery, consumer, reason, failureType, processingToken).ConfigureAwait(false);
+            }
             else if (options.JobQueue is { } queue
                 && (retryDelay ?? queue.GetRetryDelay(totalAttempts)) is { } delay)
             {
@@ -544,14 +767,21 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         }
         finally
         {
-            try { await scope.DisposeAsync().ConfigureAwait(false); }
+            try
+            {
+                await scope.DisposeAsync().ConfigureAwait(false);
+            }
             catch { observation.CleanupFailed = true; throw; }
         }
     }
 
     private async Task<string> DeadLetterAsync(Delivery delivery, string consumer, string reason, string failureType, CancellationToken processingToken)
     {
-        if (processingToken.IsCancellationRequested) return "canceled";
+        if (processingToken.IsCancellationRequested)
+        {
+            return "canceled";
+        }
+
         var completed = options.JobEventsStream is { } events
             ? await client.Scripts.ExecuteIntegerAsync(CompletionScript(delivery, false), FencedCompletionKeys(delivery, events, true),
                 [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "dead-letter", reason, failureType,
@@ -560,16 +790,30 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             : await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.DeadLetter, [stream, options.DeadLetterStream!],
             [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, reason, failureType],
             processingToken).ConfigureAwait(false);
-        if (completed == 1) _telemetry.DeadLetter(reason);
-        return completed switch { 1 => "dead-letter", 2 => "canceled", -1 => "deleted", _ => "stale" };
+
+        if (completed == 1)
+        {
+            _telemetry.DeadLetter(reason);
+        }
+
+        return completed switch
+        {
+            1 => "dead-letter",
+            2 => "canceled",
+            -1 => "deleted",
+            _ => "stale"
+        };
     }
 
     private RespireKey[] CompletionKeys(Delivery delivery, string events, bool deadLetter)
     {
         RespireKey[] keys;
         var state = delivery.Entry.GetString("_respire.job.batch") ?? delivery.Entry.GetString("_respire.job.flow");
+
         if (state is null)
+        {
             keys = deadLetter ? [stream, events, options.DeadLetterStream!] : [stream, events];
+        }
         else
         {
             JobQueueScheduling.ValidateKeys(client, options.JobQueue?.MetricsRetentionMinutes > 0
@@ -577,20 +821,31 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 : [stream, events, options.DeadLetterStream!, state]);
             keys = [stream, events, options.DeadLetterStream!, state];
         }
+
         return options.JobQueue?.MetricsRetentionMinutes > 0 ? [.. keys, stream + ":metrics"] : keys;
     }
 
     private RespireKey[] FencedCompletionKeys(Delivery delivery, string events, bool deadLetter)
     {
         var keys = LeaseFenceKeys(delivery, CompletionKeys(delivery, events, deadLetter));
-        if (HasDeduplicationLifecycle(delivery)) keys = [.. keys, JobDeduplication.Key(stream)];
+
+        if (HasDeduplicationLifecycle(delivery))
+        {
+            keys = [.. keys, JobDeduplication.Key(stream)];
+        }
+
         return JobCheckpoints.Key(stream, delivery.Entry) is { } checkpoint ? [.. keys, checkpoint] : keys;
     }
 
     private RespireScript CompletionScript(Delivery delivery, bool delete)
     {
         var script = BaseCompletionScript(delivery, delete);
-        if (HasDeduplicationLifecycle(delivery)) script = JobDeduplication.Terminal(script);
+
+        if (HasDeduplicationLifecycle(delivery))
+        {
+            script = JobDeduplication.Terminal(script);
+        }
+
         return JobCheckpoints.Key(stream, delivery.Entry) is null ? script : JobCheckpoints.Complete(script);
     }
 
@@ -599,9 +854,12 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     private RespireScript BaseCompletionScript(Delivery delivery, bool delete)
     {
         if (HasGroupLease(delivery))
+        {
             return options.JobQueue?.MetricsRetentionMinutes > 0
                 ? delete ? JobGroupControls.CompleteAndDeleteWithMetrics : JobGroupControls.CompleteWithMetrics
                 : delete ? JobGroupControls.CompleteAndDelete : JobGroupControls.Complete;
+        }
+
         return options.JobQueue?.MetricsRetentionMinutes > 0
             ? delete ? JobQueueScripts.CompleteAndDeleteWithMetrics : JobQueueScripts.CompleteWithMetrics
             : delete ? JobQueueScripts.CompleteAndDelete : JobQueueScripts.Complete;
@@ -612,27 +870,46 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         _telemetry.StopPolling();
         // BackgroundService cancels readers immediately. Handlers keep a separate token while draining.
         var stopping = base.StopAsync(cancellationToken);
-        try { await _yielding.CancelAsync().ConfigureAwait(false); }
+
+        try
+        {
+            await _yielding.CancelAsync().ConfigureAwait(false);
+        }
         catch (ObjectDisposedException) { }
+
         using var abort = cancellationToken.UnsafeRegister(static state =>
             ((RespireStreamWorker<THandler, TMessage>)state!).CancelHandlers(), this);
-        try { await stopping.ConfigureAwait(false); }
+
+        try
+        {
+            await stopping.ConfigureAwait(false);
+        }
         finally
         {
             // WaitAsync's cancellation callback can finish the wait and remove our registration first.
-            if (cancellationToken.IsCancellationRequested) CancelHandlers();
+            if (cancellationToken.IsCancellationRequested)
+            {
+                CancelHandlers();
+            }
         }
     }
 
     public override void Dispose()
     {
         _telemetry.StopPublishing();
+
         try
         {
-            try { base.Dispose(); }
+            try
+            {
+                base.Dispose();
+            }
             finally
             {
-                try { _yielding.Cancel(); }
+                try
+                {
+                    _yielding.Cancel();
+                }
                 catch (ObjectDisposedException) { }
                 finally { CancelHandlers(); }
             }
@@ -642,14 +919,21 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             try
             {
                 var running = Volatile.Read(ref _consumerDrain) ?? ExecuteTask;
+
                 if (running is not { IsCompleted: false })
                 {
                     _handlers.Dispose();
                     _yielding.Dispose();
                 }
                 else
-                    _ = running.ContinueWith(_ => { _handlers.Dispose(); _yielding.Dispose(); },
+                {
+                    _ = running.ContinueWith(_ =>
+                    {
+                        _handlers.Dispose();
+                        _yielding.Dispose();
+                    },
                         CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                }
             }
             // External teardown callbacks may block, so cancel and arrange handler cleanup first.
             finally { _telemetry.Dispose(); }
@@ -658,7 +942,10 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     private void CancelHandlers()
     {
-        try { _handlers.Cancel(); }
+        try
+        {
+            _handlers.Cancel();
+        }
         catch (ObjectDisposedException) { } // Stop/Dispose can be called after the execution task has completed.
     }
 

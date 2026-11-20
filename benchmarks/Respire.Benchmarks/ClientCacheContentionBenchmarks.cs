@@ -22,10 +22,18 @@ public class ClientCacheContentionBenchmarks
     private readonly string _hash = $"respire:cache-contention:hash:{Guid.NewGuid():N}";
     private readonly string _value = new('x', 256);
 
-    public enum Workload { DefaultSingle, CoalescedSingle, CoalescedBurst }
+    public enum Workload
+    {
+        DefaultSingle,
+        CoalescedSingle,
+        CoalescedBurst
+    }
 
     [Params(Workload.DefaultSingle, Workload.CoalescedSingle, Workload.CoalescedBurst)]
-    public Workload Scenario { get; set; }
+    public Workload Scenario
+    {
+        get; set;
+    }
 
     private int Callers => Scenario == Workload.CoalescedBurst ? 32 : 1;
     private readonly Process _process = Process.GetCurrentProcess();
@@ -43,12 +51,17 @@ public class ClientCacheContentionBenchmarks
         var cacheOptions = new RespireClientSideCacheOptions();
         var sharing = typeof(RespireClientSideCacheOptions).GetProperty("CoalesceConcurrentMisses");
         _sharingSupported = sharing is not null;
+
         if (Scenario != Workload.DefaultSingle)
         {
             if (sharing is null && Environment.GetEnvironmentVariable("RESPIRE_CONTENTION_BASELINE") != "1")
+            {
                 throw new InvalidOperationException("Candidate does not expose CoalesceConcurrentMisses.");
+            }
+
             sharing?.SetValue(cacheOptions, true);
         }
+
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint(host, port) },
@@ -60,9 +73,13 @@ public class ClientCacheContentionBenchmarks
         await _client.SetAsync(_key, _value);
         await _client.SetAsync(_secondKey, _value);
         await _client.Hashes.SetAsync(_hash, "field", _value);
+
         if (await _client.GetStringAsync(_key) != _value
             || await _client.Hashes.GetStringAsync(_hash, "field") != _value)
+        {
             throw new InvalidOperationException("Failed to prime contention benchmark values.");
+        }
+
         _process.Refresh();
         _cpuAt = _process.TotalProcessorTime;
         _startedAt = Stopwatch.GetTimestamp();
@@ -74,8 +91,12 @@ public class ClientCacheContentionBenchmarks
         _operation = nameof(GetMissBurst);
         _operations++;
         _client.ClientSideCache!.Clear();
+
         for (var i = 0; i < _pending.Length; i++)
+        {
             _pending[i] = _client.GetStringAsync(_key).AsTask();
+        }
+
         return Task.WhenAll(_pending);
     }
 
@@ -85,8 +106,12 @@ public class ClientCacheContentionBenchmarks
         _operation = nameof(GetManyMissBurst);
         _operations++;
         _client.ClientSideCache!.Clear();
+
         for (var index = 0; index < _pendingMany.Length; index++)
+        {
             _pendingMany[index] = _client.Strings.GetManyAsync(_key, _secondKey).AsTask();
+        }
+
         return Task.WhenAll(_pendingMany);
     }
 
@@ -96,8 +121,12 @@ public class ClientCacheContentionBenchmarks
         _operation = nameof(HashGetMissBurst);
         _operations++;
         _client.ClientSideCache!.Clear();
+
         for (var i = 0; i < _pending.Length; i++)
+        {
             _pending[i] = _client.Hashes.GetStringAsync(_hash, "field").AsTask();
+        }
+
         return Task.WhenAll(_pending);
     }
 
@@ -115,7 +144,10 @@ public class ClientCacheContentionBenchmarks
         _process.Refresh();
         Console.WriteLine("CACHE_CONTENTION_PROCESS_METRICS " + JsonSerializer.Serialize(new
         {
-            operation = _operation, scenario = Scenario.ToString(), callers = Callers, sharingSupported = _sharingSupported,
+            operation = _operation,
+            scenario = Scenario.ToString(),
+            callers = Callers,
+            sharingSupported = _sharingSupported,
             elapsedSeconds = Stopwatch.GetElapsedTime(_startedAt).TotalSeconds,
             cpuMilliseconds = (_process.TotalProcessorTime - _cpuAt).TotalMilliseconds,
             operations = _operations

@@ -6,18 +6,30 @@ namespace Respire;
 public sealed class RespireCrossSlotException : RespireException
 {
     /// <summary>The command rejected before I/O or enqueueing.</summary>
-    public string CommandName { get; }
+    public string CommandName
+    {
+        get;
+    }
 
     /// <summary>The slot established by an earlier key.</summary>
-    public int ExpectedSlot { get; }
+    public int ExpectedSlot
+    {
+        get;
+    }
 
     /// <summary>The different slot of the conflicting key.</summary>
-    public int ConflictingSlot { get; }
+    public int ConflictingSlot
+    {
+        get;
+    }
 
     /// <summary>The conflicting physical key as hexadecimal bytes, or null by default.</summary>
     /// <remarks>Only captured when RespireOptions.IncludeCrossSlotKeyContext is enabled.
     /// Hexadecimal is reversible and must be treated as sensitive data.</remarks>
-    public string? ConflictingKeyHex { get; }
+    public string? ConflictingKeyHex
+    {
+        get;
+    }
 
     /// <summary>Creates a local cross-slot error without key context.</summary>
     public RespireCrossSlotException(string commandName, int expectedSlot, int conflictingSlot)

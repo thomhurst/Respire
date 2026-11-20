@@ -63,17 +63,26 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                 // in this container's network namespace, including the cluster bus.
                 hostConfig.Sysctls ??= new Dictionary<string, string>();
                 hostConfig.Sysctls["net.ipv4.ip_local_reserved_ports"] = reservation;
+
                 foreach (var bindings in hostConfig.PortBindings.Values)
+                {
                     foreach (var binding in bindings)
+                    {
                         binding.HostIP = "127.0.0.1";
+                    }
+                }
             })
             .WithEntrypoint("/bin/sh", "-c")
             .WithCommand("exec tail -f /dev/null")
             .WithLabel("respire.testing.fixture", "true");
+
         foreach (var port in ports)
+        {
             builder = options.Topology == RespireContainerTopology.Standalone
                 ? builder.WithPortBinding(port, assignRandomHostPort: true)
                 : builder.WithPortBinding(port, port);
+        }
+
         return (configure?.Invoke(builder) ?? builder).Build();
     }
 
@@ -82,10 +91,18 @@ public sealed class RespireContainerFixture : IAsyncDisposable
 
     internal Task<string> ReadServerLogsAsync(CancellationToken cancellationToken)
         => ExecuteAsync(["cat", .. _ports.Select(port => $"/tmp/respire-fixture/{port}.log")], cancellationToken);
+
     /// <summary>Host-accessible data endpoints. In Sentinel mode the first endpoint is the initial primary.</summary>
-    public IReadOnlyList<RespireEndpoint> DataEndpoints { get; private set; } = Array.Empty<RespireEndpoint>();
+    public IReadOnlyList<RespireEndpoint> DataEndpoints
+    {
+        get; private set;
+    } = Array.Empty<RespireEndpoint>();
+
     /// <summary>Host-accessible Sentinel endpoints, empty for other topologies.</summary>
-    public IReadOnlyList<RespireEndpoint> SentinelEndpoints { get; private set; } = Array.Empty<RespireEndpoint>();
+    public IReadOnlyList<RespireEndpoint> SentinelEndpoints
+    {
+        get; private set;
+    } = Array.Empty<RespireEndpoint>();
 
     /// <summary>Starts a deployment and waits for its complete topology. Failure cleans up the owned container.</summary>
     public static Task<RespireContainerFixture> StartAsync(
@@ -98,26 +115,49 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         RespireContainerOptions options, CancellationToken cancellationToken,
         Func<int[], CancellationToken, Task<IContainer>>? createContainer, TimeProvider? timeProvider = null)
     {
-        if (!Enum.IsDefined(options.Server)) throw new ArgumentOutOfRangeException(nameof(options), "Unknown server family.");
-        if (!Enum.IsDefined(options.Topology)) throw new ArgumentOutOfRangeException(nameof(options), "Unknown topology.");
-        if (options.Image is not null) ArgumentException.ThrowIfNullOrWhiteSpace(options.Image);
+        if (!Enum.IsDefined(options.Server))
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Unknown server family.");
+        }
+
+        if (!Enum.IsDefined(options.Topology))
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Unknown topology.");
+        }
+
+        if (options.Image is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(options.Image);
+        }
+
         if (options.StartupTimeout <= TimeSpan.Zero || options.StartupTimeout.TotalMilliseconds > uint.MaxValue - 1)
+        {
             throw new ArgumentOutOfRangeException(nameof(options), "StartupTimeout must be finite and positive.");
+        }
+
         if (!IsSentinelInterval(options.SentinelDownAfter))
+        {
             throw new ArgumentOutOfRangeException(nameof(options), "SentinelDownAfter must be at least one millisecond and fit in 32 bits.");
+        }
+
         if (!IsSentinelInterval(options.SentinelFailoverTimeout))
+        {
             throw new ArgumentOutOfRangeException(nameof(options), "SentinelFailoverTimeout must be at least one millisecond and fit in 32 bits.");
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
         using var startupDeadline = new CancellationTokenSource(options.StartupTimeout, timeProvider ?? TimeProvider.System);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, startupDeadline.Token);
         var excludedPorts = new HashSet<int>();
         var collisions = new List<Exception>();
+
         for (var attempt = 1; ; attempt++)
         {
             RespireContainerFixture? fixture = null;
             int[] ports = [];
             var startingContainer = false;
             var containerStarted = false;
+
             try
             {
                 deadline.Token.ThrowIfCancellationRequested();
@@ -135,8 +175,12 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                 await container.StartAsync(deadline.Token).ConfigureAwait(false);
                 startingContainer = false;
                 containerStarted = true;
+
                 if (!IsLocalHost(container.Hostname))
+                {
                     throw new NotSupportedException("Container fixtures require a local Docker engine because published ports bind only to loopback.");
+                }
+
                 await fixture.InitializeAsync(deadline.Token).ConfigureAwait(false);
                 deadline.Token.ThrowIfCancellationRequested();
                 return fixture;
@@ -147,21 +191,36 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                 startupError.Data["RespireFixture.LastReadinessResponse"] = fixture?._lastReadinessResponse;
                 startupError.Data["RespireFixture.StartupAttempt"] = attempt;
                 startupError.Data["RespireFixture.SelectedPorts"] = ports.ToArray();
-                if (collisions.Count != 0) startupError.Data["RespireFixture.PreviousPortCollisions"] = collisions.ToArray();
+
+                if (collisions.Count != 0)
+                {
+                    startupError.Data["RespireFixture.PreviousPortCollisions"] = collisions.ToArray();
+                }
                 // Inspect before removal, without allowing diagnostics to hide the failure.
                 string? containerId = null;
-                try { containerId = fixture?.ContainerId; }
+
+                try
+                {
+                    containerId = fixture?.ContainerId;
+                }
                 catch (Exception) { }
+
                 startupError.Data["RespireFixture.ContainerId"] = containerId;
+
                 if (fixture is not null)
                 {
                     string? diagnostics = null;
+
                     if (containerStarted)
                     {
                         diagnostics = await ContainerStartupDiagnostics.CaptureAsync(fixture._container, ports, timeProvider).ConfigureAwait(false);
                         startupError.Data["RespireFixture.DaemonLogs"] = diagnostics;
                     }
-                    try { await fixture.DisposeAsync().ConfigureAwait(false); }
+
+                    try
+                    {
+                        await fixture.DisposeAsync().ConfigureAwait(false);
+                    }
                     catch (Exception cleanupError)
                     {
                         throw new AggregateException($"Fixture startup and cleanup both failed (container: {containerId ?? "unavailable"}).",
@@ -172,24 +231,39 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                         // Test runners receive the tail automatically, but output cannot
                         // delay container cleanup or replace the original failure.
                         if (diagnostics is not null)
+                        {
                             await ContainerStartupDiagnostics.ReportAsync(diagnostics).ConfigureAwait(false);
+                        }
                     }
                 }
                 // Cleanup is always awaited. No fresh container starts after cancellation,
                 // even when the deadline expires while removing a failed attempt.
                 if (cancellationToken.IsCancellationRequested)
+                {
                     throw new OperationCanceledException("Fixture startup was cancelled.", startupError, cancellationToken);
+                }
+
                 if (deadline.IsCancellationRequested)
+                {
                     throw new TimeoutException($"Fixture {options.Server}/{options.Topology} did not become ready within {options.StartupTimeout}; step: {fixture?._startupStep}; last reply: {fixture?._lastReadinessResponse}", startupError);
+                }
+
                 var standalone = options.Topology == RespireContainerTopology.Standalone;
+
                 if (startingContainer && attempt < MaximumStartupAttempts
                     && (standalone ? ContainerPortCollision.IsStandaloneBindCollision(startupError, ports)
                         : ContainerPortCollision.IsMatch(startupError, ports)))
                 {
                     collisions.Add(startupError);
-                    if (!standalone) excludedPorts.UnionWith(ports);
+
+                    if (!standalone)
+                    {
+                        excludedPorts.UnionWith(ports);
+                    }
+
                     continue;
                 }
+
                 throw;
             }
         }
@@ -215,11 +289,17 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         _ = await _container.ExecAsync([_cli, "-p", Number(port), "SHUTDOWN", "NOSAVE"], cancellationToken).ConfigureAwait(false);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(10));
+
         while (true)
         {
             deadline.Token.ThrowIfCancellationRequested();
             var ping = await _container.ExecAsync([_cli, "-p", Number(port), "PING"], deadline.Token).ConfigureAwait(false);
-            if (ping.ExitCode != 0 || ping.Stdout.Trim() != "PONG") return;
+
+            if (ping.ExitCode != 0 || ping.Stdout.Trim() != "PONG")
+            {
+                return;
+            }
+
             await Task.Delay(50, deadline.Token).ConfigureAwait(false);
         }
     }
@@ -243,9 +323,16 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     private void ValidateSentinelDataNode(int index)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
         if (_options.Topology != RespireContainerTopology.Sentinel)
+        {
             throw new InvalidOperationException("Data-node controls require a Sentinel fixture.");
-        if ((uint)index >= (uint)DataEndpoints.Count) throw new ArgumentOutOfRangeException(nameof(index));
+        }
+
+        if ((uint)index >= (uint)DataEndpoints.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(index));
+        }
     }
 
     private async Task InitializeAsync(CancellationToken cancellationToken)
@@ -259,19 +346,33 @@ public sealed class RespireContainerFixture : IAsyncDisposable
             RespireContainerTopology.Cluster => ClusterPrimaryCount,
             _ => 2,
         };
+
         for (var index = 0; index < dataCount; index++)
         {
             var config = BaseConfiguration(_ports[index]);
+
             if (_options.Topology == RespireContainerTopology.Cluster)
+            {
                 config += $"cluster-enabled yes\ncluster-config-file /tmp/respire-fixture/nodes-{index}.conf\ncluster-announce-ip 127.0.0.1\ncluster-port {ClusterBusPortStart + index}\ncluster-announce-bus-port {ClusterBusPortStart + index}\n";
+            }
+
             if (_options.Topology == RespireContainerTopology.Sentinel && index == 1)
+            {
                 config += $"replicaof 127.0.0.1 {_ports[0]}\nreplica-announce-ip 127.0.0.1\nreplica-announce-port {_ports[1]}\n";
+            }
+
             await StartServerAsync(index, config, sentinel: false, cancellationToken).ConfigureAwait(false);
         }
+
         if (_options.Topology == RespireContainerTopology.Cluster)
+        {
             await InitializeClusterAsync(dataCount, cancellationToken).ConfigureAwait(false);
+        }
         else if (_options.Topology == RespireContainerTopology.Sentinel)
+        {
             await InitializeSentinelAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         const string host = "127.0.0.1";
         var endpoints = _ports.Select(port => new RespireEndpoint(host, _container.GetMappedPublicPort(port))).ToArray();
         DataEndpoints = Array.AsReadOnly(endpoints[..dataCount]);
@@ -283,27 +384,37 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         // Give every fresh node a distinct epoch before gossip starts. Starting at zero
         // leaves collision resolution racing with tests that immediately migrate slots.
         for (var index = 0; index < dataCount; index++)
+        {
             await CliAsync(_ports[index], ["CLUSTER", "SET-CONFIG-EPOCH", Number(index + 1)], cancellationToken).ConfigureAwait(false);
+        }
+
         for (var index = 0; index < dataCount; index++)
         {
             var first = index * 16384 / dataCount;
             var last = (index + 1) * 16384 / dataCount - 1;
             await CliAsync(_ports[index], ["CLUSTER", "ADDSLOTSRANGE", Number(first), Number(last)], cancellationToken).ConfigureAwait(false);
+
             if (index != 0)
+            {
                 await CliAsync(_ports[0], ["CLUSTER", "MEET", "127.0.0.1", Number(_ports[index]), Number(ClusterBusPortStart + index)], cancellationToken).ConfigureAwait(false);
+            }
         }
+
         foreach (var port in _ports)
+        {
             await WaitForAsync(port, ["CLUSTER", "INFO"], text =>
             {
                 var fields = text.Split('\n', StringSplitOptions.TrimEntries);
                 return fields.Contains("cluster_state:ok", StringComparer.Ordinal)
                     && fields.Contains($"cluster_known_nodes:{dataCount}", StringComparer.Ordinal);
             }, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task InitializeSentinelAsync(CancellationToken cancellationToken)
     {
         await WaitForAsync(_ports[1], ["INFO", "replication"], text => text.Contains("master_link_status:up", StringComparison.Ordinal), cancellationToken).ConfigureAwait(false);
+
         for (var index = 2; index < _ports.Length; index++)
         {
             var config = BaseConfiguration(_ports[index]) +
@@ -312,6 +423,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                 $"sentinel announce-ip 127.0.0.1\nsentinel announce-port {_ports[index]}\n";
             await StartServerAsync(index, config, sentinel: true, cancellationToken).ConfigureAwait(false);
         }
+
         foreach (var port in _ports.Skip(2))
         {
             await WaitForAsync(port, ["SENTINEL", "CKQUORUM", SentinelServiceName], text => text.StartsWith("OK", StringComparison.Ordinal), cancellationToken).ConfigureAwait(false);
@@ -342,13 +454,19 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     {
         _startupStep = $"{_cli} {string.Join(' ', command)} on port {port}";
         var delayMilliseconds = 100;
+
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             // Sentinel CKQUORUM returns an error until its peers have been discovered.
             var result = await _container.ExecAsync([_cli, "--raw", "-p", Number(port), .. command], cancellationToken).ConfigureAwait(false);
             _lastReadinessResponse = result.Stdout + result.Stderr;
-            if (result.ExitCode == 0 && ready(result.Stdout)) return;
+
+            if (result.ExitCode == 0 && ready(result.Stdout))
+            {
+                return;
+            }
+
             await Task.Delay(delayMilliseconds, cancellationToken).ConfigureAwait(false);
             delayMilliseconds = Math.Min(delayMilliseconds * 2, MaximumReadinessDelayMilliseconds);
         }
@@ -361,15 +479,23 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         var expectedIp = false;
         var expectedPort = false;
         var healthy = false;
+
         for (var index = 0; index + 1 < fields.Length; index += 2)
         {
             switch (fields[index])
             {
-                case "ip": expectedIp = fields[index + 1] == "127.0.0.1"; break;
-                case "port": expectedPort = fields[index + 1] == Number(_ports[1]); break;
-                case "flags": healthy = fields[index + 1] == "slave"; break;
+                case "ip":
+                    expectedIp = fields[index + 1] == "127.0.0.1";
+                    break;
+                case "port":
+                    expectedPort = fields[index + 1] == Number(_ports[1]);
+                    break;
+                case "flags":
+                    healthy = fields[index + 1] == "slave";
+                    break;
             }
         }
+
         return expectedIp && expectedPort && healthy;
     }
 
@@ -382,15 +508,22 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         _lastReadinessResponse = null;
         var result = await _container.ExecAsync(command, cancellationToken).ConfigureAwait(false);
         _lastReadinessResponse = result.Stdout + result.Stderr;
+
         if (result.ExitCode != 0)
+        {
             throw new InvalidOperationException($"Fixture container {_container.Id} command {command[0]} failed ({result.ExitCode}): {result.Stdout} {result.Stderr}");
+        }
+
         return result.Stdout;
     }
 
     private static bool IsLocalHost(string host)
         => host.Equals("localhost", StringComparison.OrdinalIgnoreCase) || IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
+
     private static string Number(int value) => value.ToString(CultureInfo.InvariantCulture);
+
     private static bool IsSentinelInterval(TimeSpan value) => value.TotalMilliseconds is >= 1 and <= int.MaxValue;
+
     private static string Milliseconds(TimeSpan value) => Number((int)value.TotalMilliseconds);
 
     private static int[] ChooseLocalPorts(int count, HashSet<int> excludedPorts)
@@ -399,6 +532,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         // Keep reservations together to avoid duplicate ephemeral choices within this fixture.
         var listeners = new List<TcpListener>();
         var ports = new List<int>(count);
+
         try
         {
             while (ports.Count < count)
@@ -409,11 +543,14 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                 var port = ((IPEndPoint)listener.LocalEndpoint).Port;
                 // Retain excluded reservations too, so the next choice cannot repeat them.
                 if (!excludedPorts.Contains(port) && (port < ClusterBusPortStart || port >= ClusterBusPortStart + ClusterPrimaryCount))
+                {
                     ports.Add(port);
+                }
             }
+
             return ports.ToArray();
         }
-        finally { foreach (var listener in listeners) listener.Stop(); }
+        finally { foreach (var listener in listeners) { listener.Stop(); } }
     }
 
     /// <summary>Removes the owned container and all of its server processes. Concurrent calls share cleanup.</summary>

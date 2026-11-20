@@ -28,6 +28,7 @@ public static class Program
                 Console.Error.WriteLine("Usage: --hedged-read-latency [output-directory]");
                 return 2;
             }
+
             return await HedgedReadLatencyProbe.RunAsync(args.Length == 2 ? args[1] : "results").ConfigureAwait(false);
         }
 
@@ -40,6 +41,7 @@ public static class Program
         };
 
         StressTestOptions options;
+
         try
         {
             options = StressTestOptions.Parse(args);
@@ -92,6 +94,7 @@ public static class Program
                 var client = await ConnectAsync(clientName, redis).ConfigureAwait(false);
 
                 StressTestResult result;
+
                 try
                 {
                     result = await StressTestRunner.RunAsync(scenario, client, options).ConfigureAwait(false);
@@ -138,9 +141,11 @@ public static class Program
         var exitCode = 0;
 
         var failed = results.Where(r => r.Failed).ToList();
+
         if (failed.Count > 0)
         {
             Console.WriteLine($"FAILED: {failed.Count} pass(es) had errors or stalled:");
+
             foreach (var result in failed)
             {
                 Console.WriteLine($"  - {result.Scenario}/{result.Client}: {result.Status} ({result.Errors:N0} errors)");
@@ -152,6 +157,7 @@ public static class Program
         if (!UnobservedTaskExceptions.IsEmpty)
         {
             Console.WriteLine($"FAILED: {UnobservedTaskExceptions.Count} unobserved task exception(s):");
+
             foreach (var exception in UnobservedTaskExceptions.Take(5))
             {
                 Console.WriteLine($"  - {exception.GetBaseException()}");

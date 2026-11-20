@@ -43,9 +43,14 @@ public class IdempotencyTests(RedisTestContainer fixture)
         var store = new RespireIdempotency(client);
         var key = Guid.NewGuid().ToString("N");
         var owner = await store.TryBeginAsync(key, Ttl);
+
         foreach (var completed in new[] { false, true })
         {
-            if (completed) await store.CompleteAsync(key, owner.OwnerToken!, new byte[] { 42 });
+            if (completed)
+            {
+                await store.CompleteAsync(key, owner.OwnerToken!, new byte[] { 42 });
+            }
+
             foreach (var fingerprint in new[] { "", "different" })
             {
                 var mismatch = await store.TryBeginAsync(key, Ttl, fingerprint);
@@ -145,6 +150,7 @@ public class IdempotencyTests(RedisTestContainer fixture)
         var username = $"idempotency-{Guid.NewGuid():N}";
         const string password = "idempotency-test-password";
         await admin.Server.AclSetUserAsync(username, ["reset", "on", $">{password}", "~*", "+@all", "-acl", $"-{deniedCommand}"]);
+
         try
         {
             await using var restricted = await ConnectAsync(protocol, username, password);
@@ -153,8 +159,12 @@ public class IdempotencyTests(RedisTestContainer fixture)
             var error = await Assert.That(async () => await store.TryBeginAsync(key, Ttl, "request"))
                 .Throws<RespireServerException>();
             await Assert.That(error!.Message).Contains("NOPERM");
+
             using (var exists = await admin.ExecuteAsync("EXISTS", key))
+            {
                 await Assert.That(exists.AsInteger()).IsEqualTo(0L);
+            }
+
             await Assert.That(await TtlMilliseconds(admin, key)).IsEqualTo(-2L);
 
             await admin.Server.AclSetUserAsync(username, [$"+{deniedCommand}"]);
@@ -183,6 +193,7 @@ public class IdempotencyTests(RedisTestContainer fixture)
         var username = $"idempotency-{Guid.NewGuid():N}";
         const string password = "idempotency-test-password";
         await admin.Server.AclSetUserAsync(username, ["reset", "on", $">{password}", "~*", "+@all", "-acl", $"-{deniedCommand}"]);
+
         try
         {
             await using var restricted = await ConnectAsync(protocol, username, password);
@@ -209,8 +220,12 @@ public class IdempotencyTests(RedisTestContainer fixture)
 
             await admin.Server.AclSetUserAsync(username, [$"+{deniedCommand}"]);
             await Assert.That(await store.CompleteAsync(key, owner.OwnerToken!, payload)).IsTrue();
+
             using (var hasOwner = await admin.ExecuteAsync("HEXISTS", key, "owner"))
+            {
                 await Assert.That(hasOwner.AsInteger()).IsEqualTo(0L);
+            }
+
             var ttl = await TtlMilliseconds(admin, key);
             await Assert.That(ttl > Ttl.TotalMilliseconds && ttl <= 600_000).IsTrue();
 
@@ -246,9 +261,13 @@ public class IdempotencyTests(RedisTestContainer fixture)
         bool allowAdmin = false)
         => await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
-            Connections = 1, Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
-            Username = username, Password = password, AllowAdmin = allowAdmin,
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            Database = fixture.IsolatedDatabase,
+            Connections = 1,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
+            Username = username,
+            Password = password,
+            AllowAdmin = allowAdmin,
         });
 
     private static async Task<long> TtlMilliseconds(IRespireClient client, RespireKey key)

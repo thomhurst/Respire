@@ -34,7 +34,10 @@ public sealed class RespireFakeConnection : IAsyncDisposable
     }
 
     /// <summary>The fake server, available for deterministic clock, expectation and fault configuration.</summary>
-    public RespireFakeServer Server { get; }
+    public RespireFakeServer Server
+    {
+        get;
+    }
 
     /// <summary>The fixture-owned compatibility connection. It supports only database zero.</summary>
     public IConnectionMultiplexer Connection => _connection;
@@ -54,10 +57,16 @@ public sealed class RespireFakeConnection : IAsyncDisposable
 
     private async Task DisposeCoreAsync()
     {
-        try { await _connection.DisposeAsync().ConfigureAwait(false); }
+        try
+        {
+            await _connection.DisposeAsync().ConfigureAwait(false);
+        }
         finally
         {
-            if (_ownsServer) await Server.DisposeAsync().ConfigureAwait(false);
+            if (_ownsServer)
+            {
+                await Server.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 }

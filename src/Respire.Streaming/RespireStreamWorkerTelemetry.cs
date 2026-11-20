@@ -34,8 +34,13 @@ internal sealed class StreamWorkerTelemetry : IDisposable
     internal StreamWorkerTelemetry(string name)
     {
         _workerTag = new("respire.worker.name", name);
-        try { _source = new ActivitySource(RespireStreamWorkerTelemetry.ActivitySourceName); }
+
+        try
+        {
+            _source = new ActivitySource(RespireStreamWorkerTelemetry.ActivitySourceName);
+        }
         catch { /* A throwing ShouldListenTo callback cannot prevent startup. */ }
+
         try
         {
             _duration = _meter.CreateHistogram<double>("respire.stream.worker.processing.duration", "s",
@@ -70,7 +75,11 @@ internal sealed class StreamWorkerTelemetry : IDisposable
     {
         lock (_gate)
         {
-            if (_disposed || _pollingStopped) return;
+            if (_disposed || _pollingStopped)
+            {
+                return;
+            }
+
             _lag = info?.Lag;
             _pending = info?.Pending;
         }
@@ -88,29 +97,48 @@ internal sealed class StreamWorkerTelemetry : IDisposable
 
     private Measurement<long>[] ObservePaused()
     {
-        lock (_gate) return !_disposed && _paused.HasValue ? [new(_paused.Value, _workerTag)] : [];
+        lock (_gate)
+        {
+            return !_disposed && _paused.HasValue ? [new(_paused.Value, _workerTag)] : [];
+        }
     }
 
     internal void SetPaused(bool paused)
     {
         lock (_gate)
         {
-            if (!_disposed && !_pollingStopped) _paused = paused ? 1 : 0;
+            if (!_disposed && !_pollingStopped)
+            {
+                _paused = paused ? 1 : 0;
+            }
         }
     }
 
     internal void RateLimited()
     {
-        if (_disposed) return;
-        try { _rateLimits?.Add(1, _workerTag); }
+        if (_disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            _rateLimits?.Add(1, _workerTag);
+        }
         catch { /* Listener failures cannot change admission outcomes. */ }
     }
 
     internal void DeadLetter(string reason)
     {
-        if (_disposed) return;
+        if (_disposed)
+        {
+            return;
+        }
         // Listener callbacks must not hold the snapshot gate or delay reader cancellation.
-        try { _deadLetters?.Add(1, _workerTag, new("respire.worker.reason", reason)); }
+        try
+        {
+            _deadLetters?.Add(1, _workerTag, new("respire.worker.reason", reason));
+        }
         catch { /* Listeners cannot change completion outcomes. */ }
     }
 
@@ -118,10 +146,12 @@ internal sealed class StreamWorkerTelemetry : IDisposable
     {
         var previous = Activity.Current;
         Activity? activity = null;
+
         try
         {
             // Suppress host context throughout an attempt, including when no activity is sampled.
             Activity.Current = null;
+
             if (!_disposed && _source?.HasListeners() == true)
             {
                 // A delivery has a remote producer parent or is a new root, never the host's ambient activity.
@@ -137,37 +167,69 @@ internal sealed class StreamWorkerTelemetry : IDisposable
             // ActivityStarted can throw after Start has installed Activity.Current.
             // Never dispose the host's activity if a CurrentChanged callback fails early.
             if (!ReferenceEquals(Activity.Current, previous))
-                try { Activity.Current?.Dispose(); } catch { }
+            {
+                try
+                {
+                    Activity.Current?.Dispose();
+                }
+                catch { }
+            }
+
             RestoreCurrent(null);
         }
+
         return new Attempt(this, activity, previous);
     }
 
     private static void RestoreCurrent(Activity? previous)
     {
-        try { Activity.Current = previous; }
+        try
+        {
+            Activity.Current = previous;
+        }
         catch { /* CurrentChanged callbacks must not replace worker exceptions. */ }
     }
 
     internal sealed class Attempt(StreamWorkerTelemetry telemetry, Activity? activity, Activity? previous) : IDisposable
     {
         private readonly long _started = Stopwatch.GetTimestamp();
-        internal string Outcome { get; set; } = "error";
-        internal bool ProcessingFailed { get; set; }
-        internal bool CleanupFailed { get; set; }
+
+        internal string Outcome
+        {
+            get; set;
+        } = "error";
+
+        internal bool ProcessingFailed
+        {
+            get; set;
+        }
+
+        internal bool CleanupFailed
+        {
+            get; set;
+        }
 
         public void Dispose()
         {
             if (!telemetry._disposed)
             {
-                try { telemetry._duration?.Record(Stopwatch.GetElapsedTime(_started).TotalSeconds,
-                    telemetry._workerTag, new("respire.worker.outcome", Outcome)); }
+                try
+                {
+                    telemetry._duration?.Record(Stopwatch.GetElapsedTime(_started).TotalSeconds,
+                    telemetry._workerTag, new("respire.worker.outcome", Outcome));
+                }
                 catch { /* Listeners cannot replace handler or transport exceptions. */ }
             }
+
             try
             {
                 activity?.SetTag("respire.worker.outcome", Outcome);
-                if (ProcessingFailed || CleanupFailed || Outcome == "error") activity?.SetStatus(ActivityStatusCode.Error);
+
+                if (ProcessingFailed || CleanupFailed || Outcome == "error")
+                {
+                    activity?.SetStatus(ActivityStatusCode.Error);
+                }
+
                 activity?.Dispose();
             }
             catch { /* ActivityStopped listeners cannot change worker behavior. */ }
@@ -188,9 +250,22 @@ internal sealed class StreamWorkerTelemetry : IDisposable
     public void Dispose()
     {
         StopPublishing();
-        if (Interlocked.Exchange(ref _teardownStarted, 1) != 0) return;
+
+        if (Interlocked.Exchange(ref _teardownStarted, 1) != 0)
+        {
+            return;
+        }
         // Meter teardown may invoke listeners. Already-running callbacks can finish independently.
-        try { _meter.Dispose(); } catch { /* Ignore listener failures during teardown. */ }
-        try { _source?.Dispose(); } catch { /* Ignore tracing failures during teardown. */ }
+        try
+        {
+            _meter.Dispose();
+        }
+        catch { /* Ignore listener failures during teardown. */ }
+
+        try
+        {
+            _source?.Dispose();
+        }
+        catch { /* Ignore tracing failures during teardown. */ }
     }
 }

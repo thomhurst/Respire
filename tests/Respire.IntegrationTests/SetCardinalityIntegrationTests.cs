@@ -40,6 +40,7 @@ public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
         (await Count(client, mode, true, ["first", "second"], 2)).Should().Be(2);
         var estimate = await Count(client, mode, true, ["first", "second"], approximate: true);
         var limitedEstimate = await Count(client, mode, true, ["first", "second"], 2, approximate: true);
+
         if (fake)
         {
             estimate.Should().Be(5);
@@ -51,10 +52,12 @@ public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
             estimate.Should().BeGreaterThan(0);
             limitedEstimate.Should().BeInRange(1, 2);
         }
+
         (await Count(client, mode, true, ["missing"], approximate: true)).Should().Be(0);
         // Existing intersection counts retain their previous argument layout and behavior.
         (await client.Sets.IntersectCountAsync("first", "second")).Should().Be(1);
         await client.SetAsync("wrong-type", "value");
+
         foreach (var union in new[] { false, true })
         {
             Func<Task> read = async () => await Count(client, mode, union, ["wrong-type", "first"]);
@@ -69,7 +72,9 @@ public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
     public async Task Redis810DiscoversCountedKeysAndReportsReadOnlyCommands(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespireProtocol)protocol });
+            with
+        { Protocol = (RespireProtocol)protocol });
+
         foreach (var command in new[] { "SDIFFCARD", "SUNIONCARD" })
         {
             using var metadata = await client.ExecuteAsync("COMMAND", "INFO", command);
@@ -97,13 +102,15 @@ public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
     {
         await using var server = fake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespireProtocol)protocol };
+            with
+        { Protocol = (RespireProtocol)protocol };
         await using var watcher = await RespireClient.ConnectAsync(options);
         await using var writer = await RespireClient.ConnectAsync(options);
         var first = new RespireKey($"set-watch:{Guid.NewGuid():N}:first");
         var second = new RespireKey($"set-watch:{Guid.NewGuid():N}:second");
         await writer.Sets.AddAsync(first, "a", "b");
         await writer.Sets.AddAsync(second, "b", "c");
+
         await using (var transaction = await watcher.CreateTransactionAsync([first, second]))
         {
             (await writer.Sets.DifferenceCountAsync(first, second)).Should().Be(1);
@@ -112,6 +119,7 @@ public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
             (await transaction.CommitAsync()).Should().BeTrue();
             pending.Result.Should().Be(2);
         }
+
         await using (var transaction = await watcher.CreateTransactionAsync([first, second]))
         {
             var pending = transaction.Sets.Count(first);
@@ -131,14 +139,22 @@ public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
     {
         await using var server = fake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespireProtocol)protocol };
+            with
+        { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
+
         foreach (var command in new[] { "SDIFFCARD", "SUNIONCARD" })
         {
             foreach (var invalid in new[] { "bad", "9223372036854775808" })
             {
-                Func<Task> invalidCount = async () => { using var reply = await client.ExecuteAsync(command, invalid, "key"); };
-                Func<Task> invalidLimit = async () => { using var reply = await client.ExecuteAsync(command, "1", "key", "LIMIT", invalid); };
+                Func<Task> invalidCount = async () =>
+                {
+                    using var reply = await client.ExecuteAsync(command, invalid, "key");
+                };
+                Func<Task> invalidLimit = async () =>
+                {
+                    using var reply = await client.ExecuteAsync(command, "1", "key", "LIMIT", invalid);
+                };
                 await invalidCount.Should().ThrowAsync<RespireServerException>();
                 await invalidLimit.Should().ThrowAsync<RespireServerException>();
                 using var pong = await client.ExecuteAsync("PING");
@@ -151,16 +167,19 @@ public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
     public async Task CachedCountsInvalidateWhenEitherInputChanges()
     {
         await using var root = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
+            with
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var client = root.WithKeyPrefix($"set-count-cache:{Guid.NewGuid():N}:");
         await client.Sets.AddAsync("first", "a", "b");
         await client.Sets.AddAsync("second", "b", "c");
+
         for (var iteration = 0; iteration < 2; iteration++)
         {
             (await client.Sets.DifferenceCountAsync("first", "second")).Should().Be(1);
             (await client.Sets.UnionCountAsync("first", "second")).Should().Be(3);
             (await client.Sets.UnionCountAsync(new RespireSetUnionCountOptions(1), "first", "second")).Should().Be(1);
         }
+
         await client.Sets.AddAsync("second", "a", "d");
         (await client.Sets.DifferenceCountAsync("first", "second")).Should().Be(0);
         (await client.Sets.UnionCountAsync("first", "second")).Should().Be(4);
@@ -172,14 +191,26 @@ public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
     private static async Task<long> Count(IRespireClient client, string mode, bool union, RespireKey[] keys,
         long limit = 0, bool approximate = false)
     {
-        if (mode == "immediate") return union ? await client.Sets.UnionCountAsync(new(limit, approximate), keys)
+        if (mode == "immediate")
+        {
+            return union ? await client.Sets.UnionCountAsync(new(limit, approximate), keys)
             : await client.Sets.DifferenceCountAsync(limit, keys);
+        }
+
         using var batch = mode == "batch" ? client.CreateBatch() : null;
         await using var transaction = mode == "transaction" ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = union ? queue.Sets.UnionCount(new(limit, approximate), keys) : queue.Sets.DifferenceCount(limit, keys);
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         return pending.Result;
     }
 }

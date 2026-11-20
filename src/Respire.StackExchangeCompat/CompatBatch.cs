@@ -11,10 +11,22 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
     protected override Task<T> Send<T>(RespireCommand command, RedisValue[] arguments, CommandFlags flags, Func<RedisResult, T> convert)
     {
         if (!SupportsCommand(command))
+        {
             throw Compatibility.Unsupported($"IBatch {command.Name}");
-        if ((flags & ~CommandFlags.DemandMaster) != 0) throw Compatibility.Unsupported($"IBatch CommandFlags {flags}");
+        }
+
+        if ((flags & ~CommandFlags.DemandMaster) != 0)
+        {
+            throw Compatibility.Unsupported($"IBatch CommandFlags {flags}");
+        }
+
         var queued = new QueuedCommand<T>(command, arguments, convert, DatabaseOwner.Owner.QueuedShutdown);
-        lock (_gate) _pending.Add(queued);
+
+        lock (_gate)
+        {
+            _pending.Add(queued);
+        }
+
         return queued.Task;
     }
 
@@ -31,11 +43,19 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
     {
         lock (_gate)
         {
-            if (_pending.Count == 0) return;
+            if (_pending.Count == 0)
+            {
+                return;
+            }
+
             var commands = _pending.ToArray();
             _pending.Clear();
-            try { _ = DatabaseOwner.Owner.Run(token => ExecuteAsync(commands, token)); }
-            catch (Exception error) { foreach (var command in commands) command.Fail(error); }
+
+            try
+            {
+                _ = DatabaseOwner.Owner.Run(token => ExecuteAsync(commands, token));
+            }
+            catch (Exception error) { foreach (var command in commands) { command.Fail(error); } }
         }
     }
 
@@ -44,24 +64,38 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
         try
         {
             using var batch = DatabaseOwner.CreateNativeBatch();
+
             foreach (var command in commands)
             {
-                try { command.Enqueue(batch); }
+                try
+                {
+                    command.Enqueue(batch);
+                }
                 catch (Exception error) { command.Fail(error); }
             }
+
             await batch.TryExecuteAsync(cancellationToken).ConfigureAwait(false);
-            foreach (var command in commands) command.Complete();
+
+            foreach (var command in commands)
+            {
+                command.Complete();
+            }
         }
-        catch (Exception error) { foreach (var command in commands) command.Fail(error); }
+        catch (Exception error) { foreach (var command in commands) { command.Fail(error); } }
+
         return true;
     }
 
     internal interface IQueuedCommand
     {
         void Admit();
+
         void Enqueue(IRespireCommandQueue batch);
+
         void Complete();
+
         void Fail(Exception error);
+
         void Abort();
     }
 
@@ -104,14 +138,22 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
         public void Enqueue(IRespireCommandQueue batch)
         {
             Admit();
+
             if (!_completion.Task.IsCompleted)
+            {
                 _pending = batch.Execute(_command, _arguments.Select(static argument => argument.ToRespireValue()).ToArray());
+            }
+
             _arguments = [];
         }
 
         public void Complete()
         {
-            if (_pending is null) return;
+            if (_pending is null)
+            {
+                return;
+            }
+
             try
             {
                 using var result = _pending.Result;
@@ -127,8 +169,15 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
             RetainedTasks.Remove(_completion.Task);
             _arguments = [];
             _pending = null;
-            if (error is OperationCanceledException canceled) _completion.TrySetCanceled(canceled.CancellationToken);
-            else _completion.TrySetException(error);
+
+            if (error is OperationCanceledException canceled)
+            {
+                _completion.TrySetCanceled(canceled.CancellationToken);
+            }
+            else
+            {
+                _completion.TrySetException(error);
+            }
         }
 
         public void Abort() => Fail(new OperationCanceledException("The Redis transaction was aborted."));

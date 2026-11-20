@@ -19,11 +19,13 @@ public class DeflateValueCodecTests
         byte[] tooLarge = [4, 5];
         bool overflowed;
         long written;
+
         unsafe
         {
             fixed (byte* pointer = destination)
             {
                 using var stream = new RespireDeflateValueCodec.BoundedWriteStream(pointer + 1, 4);
+
                 if (useSpan)
                 {
                     stream.Write(first.AsSpan());
@@ -36,10 +38,12 @@ public class DeflateValueCodecTests
                     stream.Write(tooLarge, 0, tooLarge.Length);
                     stream.Write(new byte[] { 6 }, 0, 1);
                 }
+
                 overflowed = stream.Overflowed;
                 written = stream.Length;
             }
         }
+
         await Assert.That(overflowed).IsTrue();
         await Assert.That(written).IsEqualTo(3);
         await Assert.That(destination.AsSpan().SequenceEqual(new byte[] { 42, 1, 2, 3, 0, 43 })).IsTrue();
@@ -55,10 +59,16 @@ public class DeflateValueCodecTests
         var codec = new RespireDeflateValueCodec(new() { MinimumLength = 0 }, level);
         var random = new byte[65536];
         new Random(982).NextBytes(random);
+
         foreach (var input in new[] { Array.Empty<byte>(), new byte[1], new byte[4096], random })
         {
             using var reference = new MemoryStream();
-            using (var encoder = new DeflateStream(reference, level, leaveOpen: true)) encoder.Write(input);
+
+            using (var encoder = new DeflateStream(reference, level, leaveOpen: true))
+            {
+                encoder.Write(input);
+            }
+
             var compressed = reference.ToArray();
             var expected = compressed.Length < input.Length ? compressed : input;
             var frame = codec.Encode(input);

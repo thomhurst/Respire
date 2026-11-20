@@ -14,6 +14,7 @@ internal sealed class ClusterRoutingSnapshot
 {
     internal const int PageSize = 256;
     private const int PageShift = 8;
+
     internal static ulong PageBit(int slot) => 1UL << (slot >> PageShift);
     private readonly SlotRoute[][] _pages;
 
@@ -31,12 +32,36 @@ internal sealed class ClusterRoutingSnapshot
         IsComplete = complete;
     }
 
-    internal static ClusterRoutingSnapshot Empty { get; } = CreateEmpty();
-    internal ImmutableArray<RespireConnectionMultiplexer> Masters { get; }
-    internal ImmutableArray<RespireConnectionMultiplexer> ReplicaNodes { get; }
-    internal ImmutableArray<ClusterTopologyReplica> Replicas { get; }
-    internal ImmutableArray<int> MasterSlotCounts { get; }
-    internal bool IsComplete { get; }
+    internal static ClusterRoutingSnapshot Empty
+    {
+        get;
+    } = CreateEmpty();
+
+    internal ImmutableArray<RespireConnectionMultiplexer> Masters
+    {
+        get;
+    }
+
+    internal ImmutableArray<RespireConnectionMultiplexer> ReplicaNodes
+    {
+        get;
+    }
+
+    internal ImmutableArray<ClusterTopologyReplica> Replicas
+    {
+        get;
+    }
+
+    internal ImmutableArray<int> MasterSlotCounts
+    {
+        get;
+    }
+
+    internal bool IsComplete
+    {
+        get;
+    }
+
     internal SlotRoute this[int slot] => _pages[slot >> PageShift][slot & (PageSize - 1)];
 
     private static ClusterRoutingSnapshot CreateEmpty()
@@ -57,18 +82,27 @@ internal sealed class ClusterRoutingSnapshot
         if (dirtyPages == 0 && complete == IsComplete
             && masters == Masters && replicaNodes == ReplicaNodes && replicas == Replicas
             && masterSlotCounts.AsSpan().SequenceEqual(MasterSlotCounts.AsSpan()))
+        {
             return this;
+        }
+
         var pages = dirtyPages == 0 ? _pages : (SlotRoute[][])_pages.Clone();
+
         while (dirtyPages != 0)
         {
             var pageIndex = System.Numerics.BitOperations.TrailingZeroCount(dirtyPages);
             dirtyPages &= dirtyPages - 1;
             var page = new SlotRoute[PageSize];
             var start = pageIndex * PageSize;
+
             for (var offset = 0; offset < page.Length; offset++)
+            {
                 page[offset] = new(owners[start + offset], routes[start + offset]);
+            }
+
             pages[pageIndex] = page;
         }
+
         return new(pages, masters, replicaNodes, replicas,
             ImmutableCollectionsMarshal.AsImmutableArray((int[])masterSlotCounts.Clone()), complete);
     }

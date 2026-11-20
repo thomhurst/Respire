@@ -16,12 +16,14 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         using var catalog = await client.ExecuteAsync("COMMAND");
         var verified = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var metadata in Commands(catalog))
         {
             var operation = metadata[0].AsString()!.Replace('|', ' ').ToUpperInvariant();
             var words = operation.Split(' ');
             var args = BuildArguments(operation, checked((int)Math.Abs(metadata[1].AsInteger())) - words.Length);
             Respire.Commands.RawCommandKeyLayouts.KeyLayout layout;
+
             try
             {
                 layout = Respire.Commands.RawCommandKeyLayouts.GetDeferredLayout(operation, args.Select(x => (RespireValue)x).ToArray());
@@ -32,6 +34,7 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
             }
 
             verified.Add(operation).Should().BeTrue();
+
             if (layout.Count == 0 && layout.Extra < 0)
             {
                 // COMMAND GETKEYS reports an error for commands with no key arguments.
@@ -41,7 +44,12 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
 
             var selected = Enumerable.Range(0, layout.Count)
                 .Select(index => args[layout.Start + index * layout.Stride]).ToList();
-            if (layout.Extra >= 0) selected.Add(args[layout.Extra]);
+
+            if (layout.Extra >= 0)
+            {
+                selected.Add(args[layout.Extra]);
+            }
+
             RespireValue[] query = ["GETKEYS", .. words.Select(x => (RespireValue)x), .. args.Select(x => (RespireValue)x)];
             using var keys = await DiscoverKeys(client, operation, query);
             var serverKeys = Enumerable.Range(0, keys.Count).Select(index => keys[index].AsString()).ToArray();
@@ -87,7 +95,10 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
 
     private static async Task<RespireResult> DiscoverKeys(RespireClient client, string operation, RespireValue[] query)
     {
-        try { return await client.ExecuteAsync("COMMAND", query); }
+        try
+        {
+            return await client.ExecuteAsync("COMMAND", query);
+        }
         catch (RespireServerException error)
         {
             throw new InvalidOperationException($"COMMAND GETKEYS fixture failed for {operation}.", error);
@@ -100,7 +111,11 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
         {
             var command = commands[index];
             yield return command;
-            foreach (var subcommand in Commands(command[9])) yield return subcommand;
+
+            foreach (var subcommand in Commands(command[9]))
+            {
+                yield return subcommand;
+            }
         }
     }
 

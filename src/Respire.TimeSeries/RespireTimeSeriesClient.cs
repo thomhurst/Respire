@@ -131,12 +131,18 @@ public sealed partial class RespireTimeSeriesClient
     private async ValueTask<long[]> MultiAddUnhookedAsync(IReadOnlyList<RespireTimeSeriesWrite> samples, int maxBatchSize, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(samples);
-        if (samples.Count == 0) throw new ArgumentException("At least one sample is required.", nameof(samples));
+
+        if (samples.Count == 0)
+        {
+            throw new ArgumentException("At least one sample is required.", nameof(samples));
+        }
+
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBatchSize);
         // Validate and normalize every timestamp first, so invalid input never leaves earlier chunks written.
         var sampleCount = samples.Count;
         var stableSamples = new RespireTimeSeriesWrite[sampleCount];
         var validatedTimestamps = new string[sampleCount];
+
         for (var index = 0; index < sampleCount; index++)
         {
             var sample = samples[index];
@@ -150,12 +156,14 @@ public sealed partial class RespireTimeSeriesClient
         var completedChunks = 0;
         var uncertainCount = 0;
         Exception? malformedReply = null;
+
         try
         {
             while (start < sampleCount)
             {
                 var count = Math.Min(maxBatchSize, sampleCount - start);
                 var arguments = new RespireValue[checked(count * 3)];
+
                 for (var index = 0; index < count; index++)
                 {
                     var sample = stableSamples[start + index];
@@ -163,23 +171,32 @@ public sealed partial class RespireTimeSeriesClient
                     arguments[index * 3 + 1] = validatedTimestamps[start + index];
                     arguments[index * 3 + 2] = sample.Value;
                 }
+
                 cancellationToken.ThrowIfCancellationRequested();
                 uncertainCount = count;
                 using var result = await DispatchAsync(MultiAddCommand, [.. arguments], cancellationToken).ConfigureAwait(false);
+
                 if (result.Type != RespireDataType.Array || result.Count != count)
+                {
                     throw malformedReply = TimeSeriesReplyParser.UnexpectedReply();
+                }
 
                 for (var index = 0; index < count; index++)
                 {
                     var reply = result[index];
+
                     if (reply.IsError)
                     {
                         errors ??= new string?[timestamps.Length];
                         errors[start + index] = reply.ErrorMessage;
                         continue;
                     }
+
                     if (reply.Type != RespireDataType.Integer)
+                    {
                         throw malformedReply = TimeSeriesReplyParser.UnexpectedReply();
+                    }
+
                     timestamps[start + index] = reply.AsInteger();
                 }
 
@@ -195,15 +212,27 @@ public sealed partial class RespireTimeSeriesClient
         {
             var progress = new RespireTimeSeriesMultiAddProgress(sampleCount, completedChunks,
                 start, uncertainCount, timestamps, errors);
+
             if (error is OperationCanceledException canceled)
+            {
                 throw new RespireTimeSeriesMultiAddCanceledException(progress, canceled);
+            }
+
             throw new RespireTimeSeriesMultiAddInterruptedException(progress, error);
         }
-        if (errors is null) return timestamps;
+
+        if (errors is null)
+        {
+            return timestamps;
+        }
 
         var partial = new long?[timestamps.Length];
+
         for (var index = 0; index < partial.Length; index++)
+        {
             partial[index] = errors[index] is null ? timestamps[index] : null;
+        }
+
         throw new RespireTimeSeriesMultiAddException(partial, errors);
     }
 
@@ -277,7 +306,12 @@ public sealed partial class RespireTimeSeriesClient
     {
         RespireTimeSeriesRangeOptions.ValidateFilters(filters, nameof(filters));
         var arguments = new List<RespireValue>(filters.Count + (selectedLabels?.Count ?? 0) + 3);
-        if (latestPartialBucket) arguments.Add("LATEST");
+
+        if (latestPartialBucket)
+        {
+            arguments.Add("LATEST");
+        }
+
         RespireTimeSeriesRangeOptions.AppendLabelSelection(arguments, withLabels, selectedLabels);
         RespireTimeSeriesRangeOptions.AppendFilters(arguments, filters, nameof(filters));
         using var result = await DispatchAsync(MultiGetCommand, [.. arguments], cancellationToken).ConfigureAwait(false);
@@ -384,8 +418,16 @@ public sealed partial class RespireTimeSeriesClient
 
     private async ValueTask CreateRuleUnhookedAsync(RespireKey source, RespireKey destination, RespireTimeSeriesAggregation aggregation, long bucketDurationMilliseconds, long? alignTimestamp = null, CancellationToken cancellationToken = default)
     {
-        if (bucketDurationMilliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(bucketDurationMilliseconds));
-        if (alignTimestamp < 0) throw new ArgumentOutOfRangeException(nameof(alignTimestamp));
+        if (bucketDurationMilliseconds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(bucketDurationMilliseconds));
+        }
+
+        if (alignTimestamp < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(alignTimestamp));
+        }
+
         var aggregationName = RespireTimeSeriesRangeOptions.ToAggregationName(aggregation);
         RespireValue[] arguments = alignTimestamp is { } align
             ? ["AGGREGATION", aggregationName, bucketDurationMilliseconds, align]
@@ -410,7 +452,10 @@ public sealed partial class RespireTimeSeriesClient
     private ValueTask CreateRuleUnhookedAsync(RespireKey source, RespireKey destination, RespireTimeSeriesAggregation aggregation, TimeSpan bucketDuration, long? alignTimestamp, CancellationToken cancellationToken)
     {
         if (bucketDuration <= TimeSpan.Zero || bucketDuration.Ticks % TimeSpan.TicksPerMillisecond != 0)
+        {
             throw new ArgumentOutOfRangeException(nameof(bucketDuration), bucketDuration, "The bucket duration must be a positive whole number of milliseconds.");
+        }
+
         return CreateRuleUnhookedAsync(source, destination, aggregation, bucketDuration.Ticks / TimeSpan.TicksPerMillisecond, alignTimestamp, cancellationToken);
     }
 
@@ -478,7 +523,12 @@ public sealed partial class RespireTimeSeriesClient
         // TS.QUERYINDEX takes bare filter expressions, without the FILTER token.
         using var result = await DispatchAsync(QueryIndexCommand, [.. filters], cancellationToken).ConfigureAwait(false);
         var keys = new RespireKey[result.Count];
-        for (var index = 0; index < keys.Length; index++) keys[index] = new RespireKey(result[index].AsBytes());
+
+        for (var index = 0; index < keys.Length; index++)
+        {
+            keys[index] = new RespireKey(result[index].AsBytes());
+        }
+
         return keys;
     }
 
@@ -509,7 +559,11 @@ public sealed partial class RespireTimeSeriesClient
     // When a hook is configured, every caller must already be inside its operation's owner.
     private ValueTask<RespireResult> DispatchAsync(RespireCommand command, RespireValue[] arguments, CancellationToken token)
     {
-        if (token.IsCancellationRequested) return ValueTask.FromCanceled<RespireResult>(token);
+        if (token.IsCancellationRequested)
+        {
+            return ValueTask.FromCanceled<RespireResult>(token);
+        }
+
         return _client is RespireClient client && client.Core.Options.CommandHook is not null
             ? client.ExecuteOwnedCommandUnhookedAsync(command, arguments, RespireCommandFlags.None, token)
             : _client.ExecuteAsync(command, arguments, cancellationToken: token);

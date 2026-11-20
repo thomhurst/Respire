@@ -1,12 +1,12 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Respire.Internal;
 using Respire.Streaming;
 using Respire.Testing;
-using Respire.Internal;
-using System.Text;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -25,16 +25,29 @@ public partial class StreamWorkerTests
     public async Task AckUsesRegisteredViewAndFreshAsyncScopes(int protocol, bool prefix)
     {
         await using var fixture = await Fixture.CreateAsync(protocol, prefix);
-        for (var i = 0; i < 5; i++) await fixture.AddAsync(i);
+
+        for (var i = 0; i < 5; i++)
+        {
+            await fixture.AddAsync(i);
+        }
+
         await fixture.StartAsync();
-        for (var i = 0; i < 5; i++) await fixture.State.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+
+        for (var i = 0; i < 5; i++)
+        {
+            await fixture.State.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+        }
+
         await UntilAsync(async () => (await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count == 0);
         await fixture.StopAsync();
         await Assert.That(fixture.State.ScopeIds.Distinct().Count()).IsEqualTo(5);
         await Assert.That(fixture.State.DisposedScopes).IsEqualTo(5);
         await Assert.That(await fixture.Client.PingAsync()).IsGreaterThanOrEqualTo(TimeSpan.Zero);
+
         if (prefix)
+        {
             await Assert.That(await fixture.Client.Streams.CountAsync("events")).IsEqualTo(0);
+        }
     }
 
     [Test]
@@ -60,13 +73,19 @@ public partial class StreamWorkerTests
         await fixture.AddAsync(0);
         await fixture.AddAsync(1);
         await fixture.StartAsync();
-        if (failure != "deserialize") await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+
+        if (failure != "deserialize")
+        {
+            await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+        }
+
         var success = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
         await Assert.That(success.GetString("payload")).IsEqualTo("1");
         await UntilAsync(async () => (await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count == 1);
         await fixture.StopAsync();
         var pending = await fixture.View.Streams.PendingAsync("events", "workers");
         await Assert.That(state.WarningCount).IsEqualTo(failure == "nack" ? 0 : 1);
+
         foreach (var warning in state.Warnings)
         {
             var exceptionType = failure switch
@@ -80,6 +99,7 @@ public partial class StreamWorkerTests
             await Assert.That(warning.Message.Contains("private payload", StringComparison.Ordinal)).IsFalse();
             await Assert.That(warning.Exception).IsNull();
         }
+
         await Assert.That(pending.Length).IsEqualTo(1);
         await Assert.That(pending[0].DeliveryCount).IsEqualTo(1);
         await Assert.That(state.ScopeIds.Count).IsEqualTo(failure == "deserialize" ? 1 : 2);
@@ -92,20 +112,34 @@ public partial class StreamWorkerTests
     public async Task ConcurrencyAndPrefetchAreBounded(int consumers, int batch)
     {
         var release = NewSignal();
-        var state = new State { Handle = async (_, token) =>
+        var state = new State
+        {
+            Handle = async (_, token) =>
         {
             await release.Task.WaitAsync(token);
             return RespireStreamWorkerResult.Ack;
-        } };
+        }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state, options: new()
         {
-            ConsumerCount = consumers, BatchSize = batch,
+            ConsumerCount = consumers,
+            BatchSize = batch,
         });
-        for (var i = 0; i < consumers * batch + 7; i++) await fixture.AddAsync(i);
+
+        for (var i = 0; i < consumers * batch + 7; i++)
+        {
+            await fixture.AddAsync(i);
+        }
+
         try
         {
             await fixture.StartAsync();
-            for (var i = 0; i < consumers; i++) await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+
+            for (var i = 0; i < consumers; i++)
+            {
+                await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+            }
+
             await Assert.That(state.Active).IsEqualTo(consumers);
             await Assert.That(state.Peak).IsEqualTo(consumers);
             var pending = await fixture.View.Streams.PendingSummaryAsync("events", "workers");
@@ -136,9 +170,15 @@ public partial class StreamWorkerTests
         // Dispose this registration after shutdown. Disposing inside the handler
         // would join the callback that is waiting for that same handler to finish.
         CancellationTokenRegistration registration = default;
-        var state = new State { Handle = (entry, token) =>
+        var state = new State
         {
-            if (entry.GetString("payload") != "0") return ValueTask.FromResult(RespireStreamWorkerResult.Nack);
+            Handle = (entry, token) =>
+        {
+            if (entry.GetString("payload") != "0")
+            {
+                return ValueTask.FromResult(RespireStreamWorkerResult.Nack);
+            }
+
             registration = token.Register(() =>
             {
                 completion.TrySetResult(RespireStreamWorkerResult.Nack);
@@ -146,17 +186,26 @@ public partial class StreamWorkerTests
             });
             waiting.TrySetResult();
             return new(completion.Task);
-        } };
+        }
+        };
         fixture = await Fixture.CreateAsync(state: state, options: new() { BatchSize = 2 });
         await using var owned = fixture;
         await fixture.AddAsync(0);
         await fixture.AddAsync(1);
         await fixture.StartAsync();
         await waiting.Task.WaitAsync(Deadline);
+
         try
         {
-            if (dispose) fixture.Service.Dispose();
-            else await fixture.Service.StopAsync(new CancellationToken(canceled: true)).WaitAsync(Deadline);
+            if (dispose)
+            {
+                fixture.Service.Dispose();
+            }
+            else
+            {
+                await fixture.Service.StopAsync(new CancellationToken(canceled: true)).WaitAsync(Deadline);
+            }
+
             await fixture.Service.ExecuteTask!.WaitAsync(Deadline);
             await Assert.That(state.ScopeIds.Count).IsEqualTo(1);
             await Assert.That(state.DisposedScopes).IsEqualTo(1);
@@ -175,16 +224,20 @@ public partial class StreamWorkerTests
     {
         var release = NewSignal();
         CancellationToken handlerToken = default;
-        var state = new State { Handle = async (_, token) =>
+        var state = new State
+        {
+            Handle = async (_, token) =>
         {
             handlerToken = token;
             await release.Task;
             return RespireStreamWorkerResult.Ack;
-        } };
+        }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state);
         await fixture.AddAsync(0);
         await fixture.StartAsync();
         await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+
         try
         {
             using var stop = new CancellationTokenSource(Deadline);
@@ -210,16 +263,20 @@ public partial class StreamWorkerTests
     {
         var release = NewSignal();
         var canceled = NewSignal();
-        var state = new State { Handle = async (_, token) =>
+        var state = new State
+        {
+            Handle = async (_, token) =>
         {
             using var registration = token.Register(() => canceled.TrySetResult());
             await release.Task; // Deliberately ignores cancellation to prove scope lifetime.
             return RespireStreamWorkerResult.Ack;
-        } };
+        }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state);
         await fixture.AddAsync(0);
         await fixture.StartAsync();
         await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+
         try
         {
             using var stop = new CancellationTokenSource();
@@ -241,15 +298,19 @@ public partial class StreamWorkerTests
     public async Task TwoRegistrationsHaveDistinctConsumerNamesAndExistingGroupIsRetained()
     {
         var release = NewSignal();
-        var state = new State { Handle = async (_, token) =>
+        var state = new State
+        {
+            Handle = async (_, token) =>
         {
             await release.Task.WaitAsync(token);
             return RespireStreamWorkerResult.Ack;
-        } };
+        }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state, registrations: 2);
         await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
         await fixture.AddAsync(0);
         await fixture.AddAsync(1);
+
         try
         {
             await fixture.StartAsync();
@@ -280,7 +341,12 @@ public partial class StreamWorkerTests
     public async Task StartupOrReadFailureFaultsBackgroundTask(bool skipCreate)
     {
         await using var fixture = await Fixture.CreateAsync(options: new() { CreateGroup = !skipCreate });
-        if (!skipCreate) await fixture.View.SetAsync("events", "wrong type");
+
+        if (!skipCreate)
+        {
+            await fixture.View.SetAsync("events", "wrong type");
+        }
+
         await fixture.StartAsync();
         await Assert.That(async () => await fixture.Service.ExecuteTask!.WaitAsync(Deadline))
             .Throws<RespireServerException>();
@@ -306,7 +372,9 @@ public partial class StreamWorkerTests
         var release = NewSignal();
         var canceled = NewSignal();
         var parked = NewSignal();
-        var state = new State { Handle = async (entry, token) =>
+        var state = new State
+        {
+            Handle = async (entry, token) =>
         {
             if (entry.GetString("payload") == "0")
             {
@@ -319,12 +387,15 @@ public partial class StreamWorkerTests
                 // The failing ack must not cancel the host before the other handler has parked.
                 await parked.Task.WaitAsync(Deadline);
             }
+
             return RespireStreamWorkerResult.Ack;
-        } };
+        }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state, options: new() { ConsumerCount = 2 });
         using var fault = fixture.Server.InjectFault("EVALSHA", RespireFakeFault.Loading());
         await fixture.AddAsync(0);
         await fixture.AddAsync(1);
+
         try
         {
             await fixture.StartAsync();
@@ -346,12 +417,19 @@ public partial class StreamWorkerTests
     public async Task ExpectedShutdownCancellationDoesNotLogAHandlerFailure()
     {
         var canceled = NewSignal();
-        var state = new State { Handle = async (_, token) =>
+        var state = new State
         {
-            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+            Handle = async (_, token) =>
+        {
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
             finally { canceled.TrySetResult(); }
+
             return RespireStreamWorkerResult.Ack;
-        } };
+        }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state);
         await fixture.AddAsync(0);
         await fixture.StartAsync();
@@ -386,13 +464,23 @@ public partial class StreamWorkerTests
     [Arguments(3, true)]
     public async Task StableConsumerReplaysItsOwnPendingOnceBeforeNewEntries(int protocol, bool nack)
     {
-        var state = new State { Handle = (entry, _) => ValueTask.FromResult(
-            nack && entry.GetString("payload") == "0" ? RespireStreamWorkerResult.Nack : RespireStreamWorkerResult.Ack) };
+        var state = new State
+        {
+            Handle = (entry, _) => ValueTask.FromResult(
+            nack && entry.GetString("payload") == "0" ? RespireStreamWorkerResult.Nack : RespireStreamWorkerResult.Ack)
+        };
         await using var fixture = await Fixture.CreateAsync(protocol, state: state, options: new()
         {
-            ConsumerName = "stable", BatchSize = 1, ReadWait = TimeSpan.FromMilliseconds(50),
+            ConsumerName = "stable",
+            BatchSize = 1,
+            ReadWait = TimeSpan.FromMilliseconds(50),
         });
-        for (var i = 0; i < 3; i++) await fixture.AddAsync(i);
+
+        for (var i = 0; i < 3; i++)
+        {
+            await fixture.AddAsync(i);
+        }
+
         await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
         await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "stable-0", new() { Count = 1 });
         await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "other-0", new() { Count = 1 });
@@ -406,7 +494,11 @@ public partial class StreamWorkerTests
         await Assert.That(state.Deliveries.Reader.TryRead(out _)).IsFalse();
         var pending = await fixture.View.Streams.PendingAsync("events", "workers");
         await Assert.That(pending.Single(entry => entry.Consumer == "other-0").DeliveryCount).IsEqualTo(1);
-        if (nack) await Assert.That(pending.Single(entry => entry.Consumer == "stable-0").DeliveryCount).IsEqualTo(2);
+
+        if (nack)
+        {
+            await Assert.That(pending.Single(entry => entry.Consumer == "stable-0").DeliveryCount).IsEqualTo(2);
+        }
     }
 
     [Test]
@@ -440,16 +532,23 @@ public partial class StreamWorkerTests
     {
         var calls = 0;
         var clock = new RespireFakeClock();
-        var state = new State { Handle = (_, _) =>
+        var state = new State
+        {
+            Handle = (_, _) =>
         {
             if (Interlocked.Increment(ref calls) == 1)
+            {
                 return failure == "throw" ? throw new InvalidOperationException("failed")
                     : ValueTask.FromResult(RespireStreamWorkerResult.Nack);
+            }
+
             return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
-        } };
+        }
+        };
         await using var fixture = await Fixture.CreateAsync(prefix: true, state: state, clock: clock, options: new()
         {
-            MinimumIdleTime = TimeSpan.FromMilliseconds(200), RecoveryPollInterval = TimeSpan.FromMilliseconds(20),
+            MinimumIdleTime = TimeSpan.FromMilliseconds(200),
+            RecoveryPollInterval = TimeSpan.FromMilliseconds(20),
         });
         await fixture.AddAsync(0);
         await fixture.StartAsync();
@@ -471,22 +570,32 @@ public partial class StreamWorkerTests
     {
         var release = NewSignal();
         var clock = new RespireFakeClock();
-        var state = new State { Handle = async (entry, token) =>
+        var state = new State
         {
-            if (entry.GetString("payload") == "2") return RespireStreamWorkerResult.Ack;
+            Handle = async (entry, token) =>
+        {
+            if (entry.GetString("payload") == "2")
+            {
+                return RespireStreamWorkerResult.Ack;
+            }
+
             await release.Task.WaitAsync(token);
             return RespireStreamWorkerResult.Nack;
-        } };
+        }
+        };
         var pollInterval = TimeSpan.FromMilliseconds(20);
         await using var fixture = await Fixture.CreateAsync(clock: clock, state: state, options: new()
         {
-            BatchSize = 1, MinimumIdleTime = TimeSpan.FromSeconds(1), RecoveryPollInterval = pollInterval,
+            BatchSize = 1,
+            MinimumIdleTime = TimeSpan.FromSeconds(1),
+            RecoveryPollInterval = pollInterval,
         });
         await fixture.AddAsync(0);
         await fixture.AddAsync(1);
         await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
         await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "abandoned", new() { Count = 2 });
         clock.Advance(TimeSpan.FromSeconds(1));
+
         try
         {
             await fixture.StartAsync();
@@ -510,14 +619,27 @@ public partial class StreamWorkerTests
     public async Task StaleHandlerCannotAckChangedOwnerOrSameConsumerAttempt(bool sameConsumer, bool replay)
     {
         var release = NewSignal();
-        var state = new State { Handle = async (_, _) => { await release.Task; return RespireStreamWorkerResult.Ack; } };
+        var state = new State
+        {
+            Handle = async (_, _) =>
+            {
+                await release.Task;
+                return RespireStreamWorkerResult.Ack;
+            }
+        };
         await using var fixture = await Fixture.CreateAsync(state: state, options: new()
         {
-            ConsumerName = "stable", RecoveryPollInterval = TimeSpan.FromMinutes(1),
+            ConsumerName = "stable",
+            RecoveryPollInterval = TimeSpan.FromMinutes(1),
         });
         await fixture.AddAsync(0);
         await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
-        if (replay) await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "stable-0");
+
+        if (replay)
+        {
+            await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "stable-0");
+        }
+
         try
         {
             await fixture.StartAsync();
@@ -548,6 +670,7 @@ public partial class StreamWorkerTests
         await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "stable-0");
         using var fault = fixture.Server.InjectFault("EVAL", RespireFakeFault.Pause(gate, afterExecution: true),
             firstArgument: Encoding.UTF8.GetBytes(StreamWorkerScripts.ReplaySource));
+
         try
         {
             await fixture.StartAsync();
@@ -592,7 +715,8 @@ public partial class StreamWorkerTests
     public async Task InvalidRecoveryOptionsFailDuringRegistration(long idleTicks, long pollTicks)
         => await Assert.That(() => new ServiceCollection().AddRespireStreamWorker<EntryHandler>("events", "workers", new()
         {
-            MinimumIdleTime = TimeSpan.FromTicks(idleTicks), RecoveryPollInterval = TimeSpan.FromTicks(pollTicks),
+            MinimumIdleTime = TimeSpan.FromTicks(idleTicks),
+            RecoveryPollInterval = TimeSpan.FromTicks(pollTicks),
         })).Throws<ArgumentOutOfRangeException>();
 
     [Test]
@@ -601,10 +725,15 @@ public partial class StreamWorkerTests
         var clock = new RespireFakeClock();
         await using var fixture = await Fixture.CreateAsync(clock: clock, options: new()
         {
-            MinimumIdleTime = TimeSpan.FromSeconds(1), RecoveryPollInterval = TimeSpan.FromMilliseconds(20),
+            MinimumIdleTime = TimeSpan.FromSeconds(1),
+            RecoveryPollInterval = TimeSpan.FromMilliseconds(20),
         });
+
         for (var i = 1; i <= 22; i++)
+        {
             await fixture.View.Streams.AddAsync("events", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", i));
+        }
+
         await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
         await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "abandoned", new() { Count = 22 });
         clock.Advance(TimeSpan.FromSeconds(1));
@@ -622,8 +751,12 @@ public partial class StreamWorkerTests
     public async Task StartupReplayAdvancesPastDeletedPendingBody()
     {
         await using var fixture = await Fixture.CreateAsync(options: new() { ConsumerName = "stable" });
+
         for (var i = 1; i <= 2; i++)
+        {
             await fixture.View.Streams.AddAsync("events", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", i));
+        }
+
         await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
         await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "stable-0", new() { Count = 2 });
         await fixture.View.Streams.RemoveAsync("events", ["1-0"]);
@@ -649,11 +782,13 @@ public partial class StreamWorkerTests
             .AddSingleton<IRespireClient>(control).AddLogging();
         services.AddRespireStreamWorker<EntryHandler>("events", "workers", new()
         {
-            MinimumIdleTime = TimeSpan.FromMilliseconds(20), RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
+            MinimumIdleTime = TimeSpan.FromMilliseconds(20),
+            RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
         });
         await using var provider = services.BuildServiceProvider();
         var worker = provider.GetServices<IHostedService>().Single();
         await worker.StartAsync(CancellationToken.None);
+
         try
         {
             var entry = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
@@ -670,27 +805,57 @@ public partial class StreamWorkerTests
     private static async Task UntilAsync(Func<Task<bool>> condition)
     {
         using var deadline = new CancellationTokenSource(Deadline);
-        while (!await condition()) await Task.Delay(10, deadline.Token);
+
+        while (!await condition())
+        {
+            await Task.Delay(10, deadline.Token);
+        }
     }
 
     public sealed class State
     {
-        public Func<RespireStreamEntry, CancellationToken, ValueTask<RespireStreamWorkerResult>> Handle { get; set; }
-            = static (_, _) => ValueTask.FromResult(RespireStreamWorkerResult.Ack);
-        public Channel<RespireStreamEntry> Deliveries { get; } = Channel.CreateUnbounded<RespireStreamEntry>();
-        public ConcurrentBag<Guid> ScopeIds { get; } = [];
-        public TaskCompletionSource<int> Typed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Func<RespireStreamEntry, CancellationToken, ValueTask<RespireStreamWorkerResult>> Handle
+        {
+            get; set;
+        } = static (_, _) => ValueTask.FromResult(RespireStreamWorkerResult.Ack);
+
+        public Channel<RespireStreamEntry> Deliveries
+        {
+            get;
+        } = Channel.CreateUnbounded<RespireStreamEntry>();
+
+        public ConcurrentBag<Guid> ScopeIds
+        {
+            get;
+        } = [];
+
+        public TaskCompletionSource<int> Typed
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int Active;
         public int Peak;
         public int DisposedScopes;
         public int WarningCount;
-        public Func<ValueTask>? DisposeScope { get; set; }
-        public ConcurrentBag<(string Message, Exception? Exception, KeyValuePair<string, object?>[] Fields)> Warnings { get; } = [];
+
+        public Func<ValueTask>? DisposeScope
+        {
+            get; set;
+        }
+
+        public ConcurrentBag<(string Message, Exception? Exception, KeyValuePair<string, object?>[] Fields)> Warnings
+        {
+            get;
+        } = [];
     }
 
     public sealed class ScopeProbe(State state) : IAsyncDisposable
     {
-        public Guid Id { get; } = Guid.NewGuid();
+        public Guid Id
+        {
+            get;
+        } = Guid.NewGuid();
+
         public ValueTask DisposeAsync()
         {
             Interlocked.Increment(ref state.DisposedScopes);
@@ -705,10 +870,19 @@ public partial class StreamWorkerTests
             state.ScopeIds.Add(scope.Id);
             var active = Interlocked.Increment(ref state.Active);
             int peak;
-            do { peak = Volatile.Read(ref state.Peak); }
+
+            do
+            {
+                peak = Volatile.Read(ref state.Peak);
+            }
             while (peak < active && Interlocked.CompareExchange(ref state.Peak, active, peak) != peak);
+
             state.Deliveries.Writer.TryWrite(message);
-            try { return await state.Handle(message, token); }
+
+            try
+            {
+                return await state.Handle(message, token);
+            }
             finally { Interlocked.Decrement(ref state.Active); }
         }
     }
@@ -726,11 +900,17 @@ public partial class StreamWorkerTests
     private sealed class RecordingLoggerProvider(State state) : ILoggerProvider
     {
         public ILogger CreateLogger(string categoryName) => new RecordingLogger(state);
-        public void Dispose() { }
+
+        public void Dispose()
+        {
+        }
+
         private sealed class RecordingLogger(State state) : ILogger
         {
             public IDisposable? BeginScope<TState>(TState value) where TState : notnull => null;
+
             public bool IsEnabled(LogLevel logLevel) => true;
+
             public void Log<TState>(LogLevel logLevel, EventId eventId, TState value, Exception? exception,
                 Func<TState, Exception?, string> formatter)
             {
@@ -746,12 +926,36 @@ public partial class StreamWorkerTests
 
     private sealed class Fixture : IAsyncDisposable
     {
-        public required RespireFakeServer Server { get; init; }
-        public required RespireClient Client { get; init; }
-        public required IRespireClient View { get; init; }
-        public required ServiceProvider Provider { get; init; }
-        public required State State { get; init; }
-        public required BackgroundService[] Services { get; init; }
+        public required RespireFakeServer Server
+        {
+            get; init;
+        }
+
+        public required RespireClient Client
+        {
+            get; init;
+        }
+
+        public required IRespireClient View
+        {
+            get; init;
+        }
+
+        public required ServiceProvider Provider
+        {
+            get; init;
+        }
+
+        public required State State
+        {
+            get; init;
+        }
+
+        public required BackgroundService[] Services
+        {
+            get; init;
+        }
+
         public BackgroundService Service => Services[0];
 
         public static async Task<Fixture> CreateAsync(int protocol = 3, bool prefix = false, State? state = null,
@@ -768,38 +972,62 @@ public partial class StreamWorkerTests
             var collection = new ServiceCollection().AddSingleton(state).AddScoped<ScopeProbe>()
                 .AddSingleton<IRespireClient>(view);
             collection.AddLogging(logging => logging.AddProvider(new RecordingLoggerProvider(state)));
+
             for (var i = 0; i < registrations; i++)
             {
                 var registrationOptions = registrations == 1 ? options : (options ?? new()) with
                 {
                     TelemetryName = $"{options?.TelemetryName ?? "default"}-{i}",
                 };
+
                 if (typed)
+                {
                     collection.AddRespireStreamWorker<TypedHandler, int>("events", group,
                         entry => int.Parse(entry.GetString("payload")!), registrationOptions);
+                }
                 else if (deserializeFailure)
+                {
                     collection.AddRespireStreamWorker<EntryHandler, RespireStreamEntry>("events", group,
                         entry => entry.GetString("payload") == "0" ? throw new FormatException("private payload") : entry, registrationOptions);
-                else collection.AddRespireStreamWorker<EntryHandler>("events", group, registrationOptions);
+                }
+                else
+                {
+                    collection.AddRespireStreamWorker<EntryHandler>("events", group, registrationOptions);
+                }
             }
+
             var provider = collection.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
             return new Fixture
             {
-                Server = server, Client = client, View = view, Provider = provider, State = state,
+                Server = server,
+                Client = client,
+                View = view,
+                Provider = provider,
+                State = state,
                 Services = provider.GetServices<IHostedService>().Cast<BackgroundService>().ToArray(),
             };
         }
 
         public async Task AddAsync(int value) => await View.Streams.AddAsync("events", ("payload", value.ToString()));
+
         public async Task StartAsync()
         {
-            foreach (var service in Services) await service.StartAsync(CancellationToken.None);
+            foreach (var service in Services)
+            {
+                await service.StartAsync(CancellationToken.None);
+            }
         }
+
         public async Task StopAsync()
         {
             using var deadline = new CancellationTokenSource(Deadline);
-            foreach (var service in Services) await service.StopAsync(deadline.Token);
+
+            foreach (var service in Services)
+            {
+                await service.StopAsync(deadline.Token);
+            }
         }
+
         public async ValueTask DisposeAsync()
         {
             await StopAsync();

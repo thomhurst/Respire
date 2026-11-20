@@ -32,12 +32,19 @@ public partial class ErrorMetricsTests
         Type[] types = [typeof(int), typeof(string), typeof(Guid), typeof(DateTime), typeof(decimal), typeof(byte)];
         var errors = types.Select(type => typeof(GenericMetricError<>).MakeGenericType(type)).ToArray();
         using var start = new ManualResetEventSlim();
-        var pending = errors.Select(type => Task.Run(() => { start.Wait(); return cache.Get(type); })).ToArray();
+        var pending = errors.Select(type => Task.Run(() =>
+        {
+            start.Wait();
+            return cache.Get(type);
+        })).ToArray();
         start.Set();
         var names = await Task.WhenAll(pending);
         await Assert.That(names.Count(name => name != "_OTHER")).IsEqualTo(2);
+
         for (var i = 0; i < errors.Length; i++)
+        {
             await Assert.That(cache.Get(errors[i])).IsEqualTo(names[i]);
+        }
     }
 
     [Test]
@@ -45,11 +52,13 @@ public partial class ErrorMetricsTests
     {
         var cache = new ErrorTypeNameCache(1);
         var first = CacheCollectibleType(cache, "BoundedCollectibleMetricError");
+
         for (var i = 0; i < 3; i++)
         {
             GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
             GC.WaitForPendingFinalizers();
         }
+
         await Assert.That(first.Type.IsAlive).IsFalse();
         await Assert.That(first.Name).IsEqualTo("BoundedCollectibleMetricError");
         await Assert.That(cache.Get(typeof(GenericMetricError<int>))).IsEqualTo("_OTHER");
@@ -73,7 +82,11 @@ public partial class ErrorMetricsTests
             unwrap ? typeof(RespireServerException).FullName : typeof(DeclaredMetricWrapper).FullName);
         await Assert.That(item.Tags["redis.client.errors.category"]).IsEqualTo(unwrap ? "auth" : "other");
         await Assert.That(item.Tags.ContainsKey("db.response.status_code")).IsEqualTo(unwrap);
-        if (unwrap) await Assert.That(item.Tags["db.response.status_code"]).IsEqualTo("NOPERM");
+
+        if (unwrap)
+        {
+            await Assert.That(item.Tags["db.response.status_code"]).IsEqualTo("NOPERM");
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

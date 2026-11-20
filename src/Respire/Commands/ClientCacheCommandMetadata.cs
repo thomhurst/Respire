@@ -14,7 +14,10 @@ internal readonly struct ClientCacheCommandMetadata
     [Flags]
     private enum Classification : byte
     {
-        Initialized = 1, CacheableRead = 2, DisruptsTracking = 4, ClientSubcommand = 8,
+        Initialized = 1,
+        CacheableRead = 2,
+        DisruptsTracking = 4,
+        ClientSubcommand = 8,
     }
 
     // One atomic word lets copied readonly verbs share a safely published lazy classification.
@@ -27,19 +30,37 @@ internal readonly struct ClientCacheCommandMetadata
         var policy = CommandCacheMutationMetadata.Get(operation);
         var (layout, mutation) = RawCommandKeyLayouts.GetMutationMetadata(operation);
         var classification = Classification.Initialized;
-        if (ClientSideCacheCoordinator.CanCacheOperation(operation)) classification |= Classification.CacheableRead;
+
+        if (ClientSideCacheCoordinator.CanCacheOperation(operation))
+        {
+            classification |= Classification.CacheableRead;
+        }
+
         if (operation is CachingOperation or TrackingOperation or "HELLO" or "RESET" or "SELECT")
+        {
             classification |= Classification.DisruptsTracking;
-        if (operation == "CLIENT") classification |= Classification.ClientSubcommand;
+        }
+
+        if (operation == "CLIENT")
+        {
+            classification |= Classification.ClientSubcommand;
+        }
+
         _packed = (byte)policy | ((byte)classification << 8) | ((byte)layout << 16) | ((byte)mutation << 24);
     }
 
     internal RespireCacheMutation Policy => (RespireCacheMutation)(byte)_packed;
+
     internal bool IsInitialized => (_packed & ((int)Classification.Initialized << 8)) != 0;
+
     internal bool CacheableRead => (_packed & ((int)Classification.CacheableRead << 8)) != 0;
+
     internal bool DisruptsTracking => (_packed & ((int)Classification.DisruptsTracking << 8)) != 0;
+
     internal bool CheckClientSubcommand => (_packed & ((int)Classification.ClientSubcommand << 8)) != 0;
+
     internal RawCommandKeyLayouts.LayoutKind ArgumentLayout => (RawCommandKeyLayouts.LayoutKind)(byte)(_packed >> 16);
+
     internal RawCommandKeyLayouts.MutationKind MutationKind => (RawCommandKeyLayouts.MutationKind)(byte)(_packed >> 24);
 
     internal static ClientCacheCommandMetadata Get(string operation) => new(operation);

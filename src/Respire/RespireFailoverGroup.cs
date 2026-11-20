@@ -17,22 +17,37 @@ public sealed record RespireFailoverCandidate(RespireOptions Options, int Priori
 public sealed record RespireFailoverGroupOptions
 {
     /// <summary>Delay between health probe rounds. Defaults to one second.</summary>
-    public TimeSpan ProbeInterval { get; init; } = TimeSpan.FromSeconds(1);
+    public TimeSpan ProbeInterval
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(1);
 
     /// <summary>
     /// Maximum duration of one health probe. Defaults to two seconds. Probes share the candidate
     /// client's connection with application traffic, so a heavily loaded endpoint can miss probes.
     /// </summary>
-    public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(2);
+    public TimeSpan ProbeTimeout
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(2);
 
     /// <summary>Consecutive failed probes required to open an endpoint circuit. Defaults to two.</summary>
-    public int FailureThreshold { get; init; } = 2;
+    public int FailureThreshold
+    {
+        get; init;
+    } = 2;
 
     /// <summary>Time an open circuit waits before one recovery probe. Defaults to five seconds.</summary>
-    public TimeSpan CircuitOpenDuration { get; init; } = TimeSpan.FromSeconds(5);
+    public TimeSpan CircuitOpenDuration
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(5);
 
     /// <summary>Time a recovered higher-priority endpoint must stay healthy before failback. Defaults to ten seconds.</summary>
-    public TimeSpan FailbackGracePeriod { get; init; } = TimeSpan.FromSeconds(10);
+    public TimeSpan FailbackGracePeriod
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Retry settings for <see cref="RespireFailoverGroup.ExecuteAsync{T}"/>. Defaults to null, which
@@ -43,16 +58,39 @@ public sealed record RespireFailoverGroupOptions
     /// selected member after a switch. Member clients keep their own
     /// <see cref="RespireOptions.RetryPolicy"/>; a group retry starts only after a member's operation fails.
     /// </remarks>
-    public RespireRetryPolicy? RetryPolicy { get; init; }
+    public RespireRetryPolicy? RetryPolicy
+    {
+        get; init;
+    }
 
     internal void Validate()
     {
         RetryPolicy?.Validate();
-        if (!IsTimerCompatible(ProbeInterval)) throw new ArgumentOutOfRangeException(nameof(ProbeInterval));
-        if (!IsTimerCompatible(ProbeTimeout)) throw new ArgumentOutOfRangeException(nameof(ProbeTimeout));
-        if (FailureThreshold < 1) throw new ArgumentOutOfRangeException(nameof(FailureThreshold));
-        if (CircuitOpenDuration <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(CircuitOpenDuration));
-        if (FailbackGracePeriod < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(FailbackGracePeriod));
+
+        if (!IsTimerCompatible(ProbeInterval))
+        {
+            throw new ArgumentOutOfRangeException(nameof(ProbeInterval));
+        }
+
+        if (!IsTimerCompatible(ProbeTimeout))
+        {
+            throw new ArgumentOutOfRangeException(nameof(ProbeTimeout));
+        }
+
+        if (FailureThreshold < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(FailureThreshold));
+        }
+
+        if (CircuitOpenDuration <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(CircuitOpenDuration));
+        }
+
+        if (FailbackGracePeriod < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(FailbackGracePeriod));
+        }
     }
 
     // PeriodicTimer and CancellationTokenSource.CancelAfter reject periods above uint.MaxValue - 1 milliseconds.
@@ -155,9 +193,12 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     internal readonly struct TestAccess(RespireFailoverGroup group)
     {
         internal CancellationToken StopToken => group._stop.Token;
+
         internal Task ProbeAsync(int index, CancellationToken cancellationToken = default)
             => group.ProbeAsync(group._candidates[index], cancellationToken);
+
         internal CircuitSnapshot Circuit(int index) => group._candidates[index].CircuitSnapshot();
+
         internal ValueTask SelectActiveAsync() => group.SelectActiveAsync();
     }
 
@@ -228,12 +269,18 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         RespireCommandRetryCategory retryCategory, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        if (!Enum.IsDefined(retryCategory)) throw new ArgumentOutOfRangeException(nameof(retryCategory));
+
+        if (!Enum.IsDefined(retryCategory))
+        {
+            throw new ArgumentOutOfRangeException(nameof(retryCategory));
+        }
+
         if (_retries is null || retryCategory == RespireCommandRetryCategory.Never)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return operation(ActiveClient, cancellationToken);
         }
+
         return LogicalCommandRetry.RunAsync(_retries, "FAILOVER GROUP", retryCategory, commandTimeout: null,
             (Group: this, Operation: operation),
             static (state, attempt) => state.Operation(state.Group.ActiveClient, attempt.Token),
@@ -281,31 +328,48 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         var configured = new ConfiguredEndpointRegistry();
         ILogger? logger = null;
         RespireFailoverGroup? group = null;
+
         try
         {
             foreach (var candidate in candidates)
             {
-                if (candidate is null) throw new ArgumentException("Failover candidates cannot contain null entries.", nameof(candidates));
+                if (candidate is null)
+                {
+                    throw new ArgumentException("Failover candidates cannot contain null entries.", nameof(candidates));
+                }
+
                 ArgumentNullException.ThrowIfNull(candidate.Options);
                 var snapshot = candidate.Options.ValidateAndSnapshot() with
                 {
                     FailoverMaintenance = new FailoverMaintenanceWindows(),
                 };
+
                 if (snapshot.ReconnectPolicy is { MaxAttempts: not null })
                 {
                     throw new RespireConfigurationException(
                         "Failover group candidates require an unlimited reconnect policy (MaxAttempts = null) so a candidate can recover after an outage.");
                 }
+
                 var isSentinel = !string.IsNullOrWhiteSpace(snapshot.SentinelPrimaryName);
+
                 if (snapshot.Endpoints.Count == 0 || (isSentinel && snapshot.UseCluster)
                     || (!isSentinel && !snapshot.UseCluster && snapshot.Endpoints.Count != 1))
                 {
                     throw new RespireConfigurationException(
                         "Failover candidates require one endpoint in standalone mode, one or more Sentinel endpoints with a primary service name, or one or more Cluster seeds.");
                 }
+
                 var fallbackEndpoint = snapshot.Endpoints[0];
-                if (isSentinel) configured.AddSentinel(snapshot.SentinelPrimaryName!, snapshot.Endpoints);
-                else configured.AddData(snapshot.Endpoints);
+
+                if (isSentinel)
+                {
+                    configured.AddSentinel(snapshot.SentinelPrimaryName!, snapshot.Endpoints);
+                }
+                else
+                {
+                    configured.AddData(snapshot.Endpoints);
+                }
+
                 if (snapshot.ClientSideCache is not null)
                 {
                     throw new RespireConfigurationException(
@@ -318,7 +382,10 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                     snapshot.SentinelPrimaryName, snapshot.Endpoints, settings, clock));
             }
 
-            if (states.Count == 0) throw new ArgumentException("At least one failover candidate is required.", nameof(candidates));
+            if (states.Count == 0)
+            {
+                throw new ArgumentException("At least one failover candidate is required.", nameof(candidates));
+            }
 
             var created = group = new RespireFailoverGroup(states.ToArray(), settings, clock, logger);
             await Task.WhenAll(states.Select(state => created.ProbeAsync(state, cancellationToken))).ConfigureAwait(false);
@@ -326,9 +393,14 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             // later convergence is handled by each probe instead (see FindDeploymentConflict).
             foreach (var state in states)
             {
-                if (FindDeploymentConflict(state, states) is { } conflict) throw new RespireConfigurationException(conflict);
+                if (FindDeploymentConflict(state, states) is { } conflict)
+                {
+                    throw new RespireConfigurationException(conflict);
+                }
             }
+
             await group.SelectActiveAsync().ConfigureAwait(false);
+
             if (Volatile.Read(ref group._active) is null)
             {
                 throw new RespireConnectionException("Unable to connect to any failover candidate.");
@@ -340,23 +412,37 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         catch (Exception constructionError)
         {
             List<Exception>? cleanupFailures = null;
+
             foreach (var state in states)
             {
-                try { await state.Client.DisposeAsync().ConfigureAwait(false); }
+                try
+                {
+                    await state.Client.DisposeAsync().ConfigureAwait(false);
+                }
                 catch (Exception error) { (cleanupFailures ??= []).Add(error); }
             }
+
             if (group is not null)
             {
-                try { group._stop.Dispose(); }
+                try
+                {
+                    group._stop.Dispose();
+                }
                 catch (Exception error) { (cleanupFailures ??= []).Add(error); }
-                try { group._gate.Dispose(); }
+
+                try
+                {
+                    group._gate.Dispose();
+                }
                 catch (Exception error) { (cleanupFailures ??= []).Add(error); }
             }
+
             if (cleanupFailures is not null)
             {
                 cleanupFailures.Insert(0, constructionError);
                 throw new AggregateException("Failover group construction and cleanup both failed.", cleanupFailures);
             }
+
             throw;
         }
     }
@@ -379,16 +465,23 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         var comparer = RespireEndpointComparer.Instance;
         var primary = candidate.Endpoint;
         var discoveredSentinels = candidate.DiscoveredSentinels;
+
         foreach (var other in candidates)
         {
-            if (ReferenceEquals(candidate, other)) continue;
+            if (ReferenceEquals(candidate, other))
+            {
+                continue;
+            }
+
             var otherPrimary = other.Endpoint;
+
             if (candidate.IsSentinel && other.IsSentinel)
             {
                 var samePrimary = primary is { } current && otherPrimary is { } existing && comparer.Equals(current, existing);
                 var otherSentinels = other.DiscoveredSentinels;
                 var sameServiceOverlaps = string.Equals(candidate.SentinelPrimaryName, other.SentinelPrimaryName, StringComparison.Ordinal)
                     && discoveredSentinels.Any(endpoint => otherSentinels.Contains(endpoint, comparer));
+
                 if ((samePrimary || sameServiceOverlaps) && ShouldFail(candidate, other))
                 {
                     return $"Failover candidates for Sentinel service '{candidate.SentinelPrimaryName}' discovered the same primary or overlapping Sentinel endpoints.";
@@ -408,8 +501,11 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 foreach (var sentinel in other.DiscoveredSentinels)
                 {
                     if (candidate.DataEndpoints.Contains(sentinel))
+                    {
                         return $"Failover candidate data endpoint '{sentinel}' is a Sentinel discovered for service '{other.SentinelPrimaryName}'.";
+                    }
                 }
+
                 if (otherPrimary is { } existing && candidate.DataEndpoints.Contains(existing) && ShouldFail(candidate, other))
                 {
                     return $"Failover candidate data endpoint '{existing}' is the primary discovered for Sentinel service '{other.SentinelPrimaryName}'.";
@@ -417,6 +513,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             }
             // Standalone and Cluster data endpoints were checked for duplicates during configuration.
         }
+
         return null;
 
         static bool ShouldFail(CandidateState candidate, CandidateState other)
@@ -426,6 +523,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private async Task MonitorAsync()
     {
         using var timer = new PeriodicTimer(_options.ProbeInterval);
+
         try
         {
             while (await timer.WaitForNextTickAsync(_stop.Token).ConfigureAwait(false))
@@ -456,23 +554,34 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         var owner = DispatchResponseSource<bool>.Start();
         CircuitPermit permit = default;
         var outcome = CircuitOutcome.Ignored;
+
         try
         {
             // Capture before checking the window so a complete handoff between these reads is retained.
             var maintenanceGeneration = candidate.MaintenanceGeneration;
             // Maintenance keeps the existing health decision; it cannot establish initial health.
-            if (candidate.IsHealthy && candidate.HasMaintenanceWindow) return;
-            if (!candidate.TryAcquireProbe(out permit)) return;
+            if (candidate.IsHealthy && candidate.HasMaintenanceWindow)
+            {
+                return;
+            }
+
+            if (!candidate.TryAcquireProbe(out permit))
+            {
+                return;
+            }
+
             var observation = owner.Observation;
             cancellationToken.ThrowIfCancellationRequested();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(_options.ProbeTimeout);
             var started = Stopwatch.GetTimestamp();
             string conflict;
+
             try
             {
                 await candidate.ProbeAsync(timeout.Token, observation).ConfigureAwait(false);
                 var found = FindDeploymentConflict(candidate, _candidates);
+
                 if (found is null)
                 {
                     candidate.MarkHealthy(_clock.GetTimestamp());
@@ -483,6 +592,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                         Stopwatch.GetElapsedTime(started).TotalSeconds);
                     return;
                 }
+
                 conflict = found;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -495,7 +605,11 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 // A handoff can start and finish before the failed probe completes. Preserve that
                 // overlap rather than treating its stale failure as a deployment failure.
                 if (candidate.IsHealthy && (candidate.HasMaintenanceWindow
-                    || candidate.MaintenanceGeneration != maintenanceGeneration)) return;
+                    || candidate.MaintenanceGeneration != maintenanceGeneration))
+                {
+                    return;
+                }
+
                 outcome = candidate.MarkFailed(error, _clock.GetUtcNow(), _options, openCircuit: permit.ProbeSlot >= 0);
                 // Start the open period before synchronous observers can delay completion.
                 // Complete clears the permit, so the finally guard remains safe for earlier exceptions.
@@ -517,6 +631,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 candidate.TelemetryEndpoint,
                 succeeded: false,
                 Stopwatch.GetElapsedTime(started).TotalSeconds);
+
             try
             {
                 _logger?.FailoverDuplicateDeployment(candidate.TelemetryEndpoint, conflict);
@@ -525,7 +640,10 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         }
         finally
         {
-            try { candidate.CompleteProbe(ref permit, outcome); }
+            try
+            {
+                candidate.CompleteProbe(ref permit, outcome);
+            }
             finally { owner.CompleteInternal(); }
         }
     }
@@ -534,10 +652,15 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     {
         RespireFailoverSwitch? change = null;
         await _gate.WaitAsync(_stop.Token).ConfigureAwait(false);
+
         try
         {
             // Disposal clears the selection under this gate; a late monitor round must not restore it.
-            if (_disposed) return;
+            if (_disposed)
+            {
+                return;
+            }
+
             var now = _clock.GetUtcNow();
             var nowTimestamp = _clock.GetTimestamp();
             var active = _active;
@@ -550,6 +673,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
             CandidateState? selected = active;
             string? reason = null;
+
             if (active is null)
             {
                 selected = best;
@@ -572,6 +696,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                     (candidate.Priority < active.Priority
                         || candidate.Priority == active.Priority && candidate.Order < active.Order)
                     && candidate.HasCompletedFailbackGrace(_clock, nowTimestamp, _options.FailbackGracePeriod));
+
                 if (recovered is not null)
                 {
                     selected = recovered;
@@ -604,17 +729,23 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         if (change is { } switched)
         {
             RespireTelemetry.RecordFailoverSwitch(switched.PreviousEndpoint, switched.CurrentEndpoint, switched.Reason);
+
             try
             {
                 _logger?.FailoverEndpointSwitched(switched.PreviousEndpoint, switched.CurrentEndpoint, switched.Reason);
             }
             catch { /* Logging must not stop health monitoring. */ }
+
             var handlers = EndpointSwitched;
+
             if (handlers is not null)
             {
                 foreach (Action<RespireFailoverSwitch> handler in handlers.GetInvocationList())
                 {
-                    try { handler(switched); }
+                    try
+                    {
+                        handler(switched);
+                    }
                     catch (Exception error) { RecordMonitorError("handler", error); }
                 }
             }
@@ -624,10 +755,17 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private void RecordMonitorError(string source, Exception error)
     {
         RespireTelemetry.RecordFailoverMonitorError(source, error);
+
         try
         {
-            if (source == "handler") _logger?.FailoverSwitchObserverFailed(error);
-            else _logger?.FailoverMonitorFailed(error);
+            if (source == "handler")
+            {
+                _logger?.FailoverSwitchObserverFailed(error);
+            }
+            else
+            {
+                _logger?.FailoverMonitorFailed(error);
+            }
         }
         catch { /* Logging must not stop health monitoring. */ }
     }
@@ -646,6 +784,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private async Task DisposeCoreAsync()
     {
         await _gate.WaitAsync().ConfigureAwait(false);
+
         try
         {
             _disposed = true;
@@ -658,21 +797,32 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         }
 
         List<Exception>? failures = null;
+
         try
         {
             // Selection is already closed. A failing callback must not skip candidate cleanup.
-            try { await _stop.CancelAsync().ConfigureAwait(false); }
+            try
+            {
+                await _stop.CancelAsync().ConfigureAwait(false);
+            }
             catch (Exception error) { (failures ??= []).Add(error); }
 
             if (_monitor is { } monitor)
             {
-                try { await monitor.ConfigureAwait(false); }
+                try
+                {
+                    await monitor.ConfigureAwait(false);
+                }
                 catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
                 catch (Exception error) { (failures ??= []).Add(error); }
             }
+
             foreach (var candidate in _candidates)
             {
-                try { await candidate.Client.DisposeAsync().ConfigureAwait(false); }
+                try
+                {
+                    await candidate.Client.DisposeAsync().ConfigureAwait(false);
+                }
                 catch (Exception error) { (failures ??= []).Add(error); }
             }
         }
@@ -681,8 +831,16 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             _stop.Dispose();
             _gate.Dispose();
         }
-        if (failures is { Count: 1 }) throw failures[0];
-        if (failures is { Count: > 1 }) throw new AggregateException(failures);
+
+        if (failures is { Count: 1 })
+        {
+            throw failures[0];
+        }
+
+        if (failures is { Count: > 1 })
+        {
+            throw new AggregateException(failures);
+        }
     }
 
     /// <summary>Rejects configured endpoints that make two candidates share one deployment.</summary>
@@ -695,21 +853,27 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         public void AddSentinel(string service, IEnumerable<RespireEndpoint> seeds)
         {
             var normalized = new HashSet<RespireEndpoint>(seeds, RespireEndpointComparer.Instance);
+
             if (normalized.Overlaps(_dataEndpoints))
             {
                 throw new RespireConfigurationException(
                     "Failover candidates cannot reuse a Sentinel seed as a standalone or Cluster data endpoint.");
             }
+
             if (_seedsByService.TryGetValue(service, out var serviceSeeds))
             {
                 if (serviceSeeds.Overlaps(normalized))
+                {
                     throw new RespireConfigurationException("Failover candidates for the same Sentinel service cannot use overlapping seed endpoints.");
+                }
+
                 serviceSeeds.UnionWith(normalized);
             }
             else
             {
                 _seedsByService.Add(service, normalized);
             }
+
             _sentinelSeeds.UnionWith(normalized);
         }
 
@@ -723,6 +887,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                     throw new RespireConfigurationException(
                         $"Failover candidates cannot reuse Sentinel seed '{endpoint}' as a standalone or Cluster data endpoint.");
                 }
+
                 if (!_dataEndpoints.Add(endpoint))
                 {
                     throw new RespireConfigurationException(
@@ -756,22 +921,47 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         private long? _healthySince;
         private string? _lastErrorType;
 
-        public RespireClient Client { get; } = client;
+        public RespireClient Client
+        {
+            get;
+        } = client;
+
         public bool HasMaintenanceWindow => Client.Core.Options.FailoverMaintenance?.IsActive == true;
+
         public long MaintenanceGeneration => Client.Core.Options.FailoverMaintenance?.Generation ?? 0;
-        public string? SentinelPrimaryName { get; } = sentinelPrimaryName;
+
+        public string? SentinelPrimaryName
+        {
+            get;
+        } = sentinelPrimaryName;
+
         public bool IsSentinel => Client.Core.Sentinel is not null;
+
         /// <summary>Configured standalone endpoint or Cluster seeds; empty for a Sentinel candidate.</summary>
-        public HashSet<RespireEndpoint> DataEndpoints { get; } = client.Core.Sentinel is null
+        public HashSet<RespireEndpoint> DataEndpoints
+        {
+            get;
+        } = client.Core.Sentinel is null
             ? new(configuredEndpoints, RespireEndpointComparer.Instance)
             : new(RespireEndpointComparer.Instance);
+
         /// <summary>Configured and learned Sentinel endpoints; empty for a standalone or Cluster candidate.</summary>
         public RespireEndpoint[] DiscoveredSentinels => Client.Core.Sentinel?.DiscoveredEndpoints ?? [];
-        public int Priority { get; } = priority;
-        public int Order { get; } = order;
+
+        public int Priority
+        {
+            get;
+        } = priority;
+
+        public int Order
+        {
+            get;
+        } = order;
+
         public RespireEndpoint? Endpoint => Client.Core.Sentinel is { } sentinel
             ? sentinel.Current is { IsRetired: false } generation ? (RespireEndpoint?)generation.Endpoint : null
             : _fixedEndpoint;
+
         public RespireEndpoint TelemetryEndpoint => Endpoint ?? fallbackEndpoint;
 
         /// <summary>Whether this candidate is selected before <paramref name="other"/> when both are healthy.</summary>
@@ -789,25 +979,64 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 var info = await Client.ConvertUnobservedResponseAsync(
                     "CLUSTER INFO", ClusterInfoCommand, cancellationToken, 0,
                     static (int _, in RespValue value) => ClusterInspectionParser.Info(in value), observation).ConfigureAwait(false);
+
                 if (!string.Equals(info.State, "ok", StringComparison.OrdinalIgnoreCase))
+                {
                     throw new RespireConnectionException($"Cluster reports cluster_state:{info.State}.");
+                }
+
                 return;
             }
             // ROLE proves the node is still the elected primary, which a demoted node answering PING does not.
             // PING still runs afterwards so a node that reports the primary ROLE but rejects PING (for example
             // through ACL rules or a proxy) is unhealthy, as the documented health contract says.
             if (Client.Core.Sentinel is { } sentinel)
+            {
                 await sentinel.EnsureValidatedPrimaryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             await Client.ConvertUnobservedResponseAsync(
                 "PING", new RawCommand(RespCommands.Ping), cancellationToken, 0,
                 static (int _, in RespValue _) => true, observation).ConfigureAwait(false);
         }
-        public bool IsHealthy { get { lock (_gate) return _isHealthy; } }
-        public int ConsecutiveFailures { get { lock (_gate) return _consecutiveFailures; } }
-        public DateTimeOffset? CircuitOpenUntil { get { lock (_gate) return _circuitOpenUntil; } }
+
+        public bool IsHealthy
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _isHealthy;
+                }
+            }
+        }
+
+        public int ConsecutiveFailures
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _consecutiveFailures;
+                }
+            }
+        }
+
+        public DateTimeOffset? CircuitOpenUntil
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _circuitOpenUntil;
+                }
+            }
+        }
 
         public bool TryAcquireProbe(out CircuitPermit permit) => _circuit.TryAcquire(out permit, out _);
+
         public void CompleteProbe(ref CircuitPermit permit, CircuitOutcome outcome) => _circuit.Complete(ref permit, outcome);
+
         public CircuitSnapshot CircuitSnapshot() => _circuit.Snapshot();
 
         public bool HasCompletedFailbackGrace(TimeProvider clock, long now, TimeSpan gracePeriod)
@@ -840,7 +1069,11 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             lock (_gate)
             {
                 // MarkFailed clears _healthySince below the threshold too, so the grace period restarts here.
-                if (!_isHealthy || _healthySince is null) _healthySince = timestamp;
+                if (!_isHealthy || _healthySince is null)
+                {
+                    _healthySince = timestamp;
+                }
+
                 _isHealthy = true;
                 _consecutiveFailures = 0;
                 _circuitOpenUntil = null;
@@ -853,10 +1086,14 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         {
             lock (_gate)
             {
-                if (_consecutiveFailures < int.MaxValue) _consecutiveFailures++;
+                if (_consecutiveFailures < int.MaxValue)
+                {
+                    _consecutiveFailures++;
+                }
                 // Any failed probe restarts the failback grace period, even before the circuit opens.
                 _healthySince = null;
                 var opens = openCircuit || _consecutiveFailures >= options.FailureThreshold;
+
                 if (opens)
                 {
                     _isHealthy = false;
@@ -864,6 +1101,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                         ? DateTimeOffset.MaxValue
                         : now + options.CircuitOpenDuration;
                 }
+
                 _lastErrorType = error.GetType().Name;
                 return opens ? CircuitOutcome.Failure : CircuitOutcome.Ignored;
             }

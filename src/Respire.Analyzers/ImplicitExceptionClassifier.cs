@@ -14,18 +14,30 @@ internal sealed class ImplicitExceptionClassifier(
     internal bool MayThrow(IOperation operation)
     {
         if (operation is IAwaitOperation awaited && IsDefaultValueTask(awaited.Operation))
+        {
             return false;
+        }
         // Nullable<T> construction only stores its value; argument evaluation is visited separately.
         if (operation is IObjectCreationOperation { Type.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T })
+        {
             return false;
-        if (operation is IInvocationOperation
-            { TargetMethod: { Name: "GetValueOrDefault", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } })
+        }
+
+        if (operation is IInvocationOperation { TargetMethod: { Name: "GetValueOrDefault", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } })
+        {
             return false;
-        if (operation is IPropertyReferenceOperation
-            { Property: { Name: "HasValue", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } })
+        }
+
+        if (operation is IPropertyReferenceOperation { Property: { Name: "HasValue", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } })
+        {
             return false;
+        }
+
         if (_throwingOperations.TryGetValue(operation, out var cached))
+        {
             return cached;
+        }
+
         var throwing = operation is IDeconstructionAssignmentOperation or IInvocationOperation or IFunctionPointerInvocationOperation or IAwaitOperation or IPropertyReferenceOperation
             or IDynamicInvocationOperation or IArrayElementReferenceOperation or ITypeParameterObjectCreationOperation
             or IEventAssignmentOperation or IArrayCreationOperation
@@ -93,10 +105,16 @@ internal sealed class ImplicitExceptionClassifier(
     }
 
     internal static bool IsDelegateCombination(IOperation operation)
-        => operation is IBinaryOperation { OperatorMethod: null, Type.TypeKind: TypeKind.Delegate,
-                OperatorKind: BinaryOperatorKind.Add or BinaryOperatorKind.Subtract }
-            or ICompoundAssignmentOperation { OperatorMethod: null, Type.TypeKind: TypeKind.Delegate,
-                OperatorKind: BinaryOperatorKind.Add or BinaryOperatorKind.Subtract };
+        => operation is IBinaryOperation
+        {
+            OperatorMethod: null, Type.TypeKind: TypeKind.Delegate,
+            OperatorKind: BinaryOperatorKind.Add or BinaryOperatorKind.Subtract
+        }
+            or ICompoundAssignmentOperation
+        {
+            OperatorMethod: null, Type.TypeKind: TypeKind.Delegate,
+            OperatorKind: BinaryOperatorKind.Add or BinaryOperatorKind.Subtract
+        };
 
     internal bool HasEmptyDelegateOperand(IOperation operation, ulong known, ulong values)
         => IsDelegateCombination(operation) && operation switch
@@ -127,24 +145,47 @@ internal sealed class ImplicitExceptionClassifier(
     private bool EqualityMayThrow(ITypeSymbol? type, BinaryOperatorKind kind)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
         if (type is INamedTypeSymbol { IsTupleType: true } tuple)
+        {
             return tuple.TupleElements.Any(element => EqualityMayThrow(element.Type, kind));
+        }
+
         if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+        {
             return EqualityMayThrow(nullable.TypeArguments[0], kind);
-        if (type?.TypeKind is TypeKind.Dynamic or TypeKind.TypeParameter) return true;
+        }
+
+        if (type?.TypeKind is TypeKind.Dynamic or TypeKind.TypeParameter)
+        {
+            return true;
+        }
+
         if (type is null || type.SpecialType != SpecialType.None || type.TypeKind == TypeKind.Enum)
+        {
             return false;
+        }
         // Tuple equality hides its element operator calls from ChildOperations.
         var name = kind == BinaryOperatorKind.Equals ? "op_Equality" : "op_Inequality";
+
         for (var current = type as INamedTypeSymbol; current is not null; current = current.BaseType)
-            if (current.GetMembers(name).Length != 0) return true;
+        {
+            if (current.GetMembers(name).Length != 0)
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 
     private static bool ArithmeticMayThrow(BinaryOperatorKind kind, bool isChecked, ITypeSymbol? type)
     {
         if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+        {
             type = nullable.TypeArguments[0];
+        }
+
         var integral = IsIntegral(type);
         var decimalType = type?.SpecialType == SpecialType.System_Decimal;
         return kind is BinaryOperatorKind.Divide or BinaryOperatorKind.Remainder && (integral || decimalType)
@@ -153,41 +194,68 @@ internal sealed class ImplicitExceptionClassifier(
     }
 
     internal static bool IsFrameworkLength(IOperation operation)
-        => operation is IPropertyReferenceOperation { Property.Name: "Length" or "LongLength",
-            Property.ContainingType.SpecialType: SpecialType.System_Array }
+        => operation is IPropertyReferenceOperation
+        {
+            Property.Name: "Length" or "LongLength",
+            Property.ContainingType.SpecialType: SpecialType.System_Array
+        }
             or IPropertyReferenceOperation { Property.Name: "Length", Property.ContainingType.SpecialType: SpecialType.System_String };
 
     internal static string? KnownPropertyException(IOperation operation)
-        => operation is IPropertyReferenceOperation
-            { Property: { Name: "Value", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } }
+        => operation is IPropertyReferenceOperation { Property: { Name: "Value", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } }
             ? "System.InvalidOperationException" : null;
 
     internal bool IsTrivialReferenceConstruction(IOperation operation)
     {
-        if (operation is not IObjectCreationOperation { Type: INamedTypeSymbol type } creation) return false;
-        if (type.SpecialType == SpecialType.System_Object) return true;
+        if (operation is not IObjectCreationOperation { Type: INamedTypeSymbol type } creation)
+        {
+            return false;
+        }
+
+        if (type.SpecialType == SpecialType.System_Object)
+        {
+            return true;
+        }
+
         if (creation.Constructor is not { IsImplicitlyDeclared: true }
             || type.BaseType?.SpecialType != SpecialType.System_Object
-            || type.StaticConstructors.Length != 0 || type.DeclaringSyntaxReferences.Length == 0) return false;
+            || type.StaticConstructors.Length != 0 || type.DeclaringSyntaxReferences.Length == 0)
+        {
+            return false;
+        }
+
         foreach (var reference in type.DeclaringSyntaxReferences)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (reference.GetSyntax(cancellationToken) is not TypeDeclarationSyntax declaration) return false;
+
+            if (reference.GetSyntax(cancellationToken) is not TypeDeclarationSyntax declaration)
+            {
+                return false;
+            }
+
             foreach (var member in declaration.Members)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
                 if (member is BaseFieldDeclarationSyntax field && field.Declaration.Variables.Any(static variable => variable.Initializer is not null)
-                    || member is PropertyDeclarationSyntax { Initializer: not null }) return false;
+                    || member is PropertyDeclarationSyntax { Initializer: not null })
+                {
+                    return false;
+                }
             }
         }
+
         return true;
     }
 
     internal bool IsNonNegativeLength(IOperation operation)
     {
         operation = conditions.ResolveCapturedTarget(operation);
-        return IsFrameworkLength(operation) || operation.ConstantValue is { HasValue: true,
-            Value: byte or ushort or uint or ulong or sbyte and >= 0 or short and >= 0 or int and >= 0 or long and >= 0 };
+        return IsFrameworkLength(operation) || operation.ConstantValue is
+        {
+            HasValue: true,
+            Value: byte or ushort or uint or ulong or sbyte and >= 0 or short and >= 0 or int and >= 0 or long and >= 0
+        };
     }
 
     private bool CheckedShiftNarrowingMayThrow(ICompoundAssignmentOperation assignment)
@@ -207,16 +275,33 @@ internal sealed class ImplicitExceptionClassifier(
             _ => BinaryOperatorKind.None,
         };
         var type = operation.Type;
+
         if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+        {
             type = nullable.TypeArguments[0];
-        if (!IsIntegral(type) && type?.SpecialType != SpecialType.System_Decimal) return null;
+        }
+
+        if (!IsIntegral(type) && type?.SpecialType != SpecialType.System_Decimal)
+        {
+            return null;
+        }
+
         if (kind == BinaryOperatorKind.LeftShift && operation is ICompoundAssignmentOperation shift)
+        {
             return (CheckedShiftNarrowingMayThrow(shift), false);
+        }
+
         if (operation is IUnaryOperation { OperatorMethod: null, OperatorKind: UnaryOperatorKind.Minus } unary && IsIntegral(type))
+        {
             return (IntegralDividendCanOverflow(unary.Operand, type), false);
+        }
+
         if (kind is BinaryOperatorKind.Add or BinaryOperatorKind.Subtract or BinaryOperatorKind.Multiply)
+        {
             return (!(operation is IBinaryOperation binary && type?.SpecialType == SpecialType.System_Int32
                 && PromotedArithmeticFitsInt32(binary)), false);
+        }
+
         if (kind is BinaryOperatorKind.Divide or BinaryOperatorKind.Remainder)
         {
             var overflow = type?.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_IntPtr
@@ -227,20 +312,30 @@ internal sealed class ImplicitExceptionClassifier(
                 : ((ICompoundAssignmentOperation)operation).Value;
             var dividend = operation is IBinaryOperation division ? division.LeftOperand
                 : ((ICompoundAssignmentOperation)operation).Target;
+
             if (IsIntegral(type) && (!IntegralDivisionCanOverflow(divisor)
-                || !IntegralDividendCanOverflow(dividend, type))) overflow = false;
+                || !IntegralDividendCanOverflow(dividend, type)))
+            {
+                overflow = false;
+            }
+
             var constantDivisor = UnwrapDivisor(divisor).ConstantValue;
             var divideByZero = !constantDivisor.HasValue || constantDivisor.Value is null
                 || (constantDivisor.Value is char character ? character == 0 : Convert.ToDouble(constantDivisor.Value) == 0);
             return (overflow, divideByZero);
         }
+
         return null;
     }
 
     private static bool PromotedArithmeticFitsInt32(IBinaryOperation binary)
     {
         if (SmallIntegralRange(binary.LeftOperand) is not { } left
-            || SmallIntegralRange(binary.RightOperand) is not { } right) return false;
+            || SmallIntegralRange(binary.RightOperand) is not { } right)
+        {
+            return false;
+        }
+
         var range = binary.OperatorKind switch
         {
             BinaryOperatorKind.Add => (left.Min + right.Min, left.Max + right.Max),
@@ -257,10 +352,17 @@ internal sealed class ImplicitExceptionClassifier(
     {
         // Built-in implicit numeric promotion preserves the source range, including lifted operators.
         while (operand is IConversionOperation { IsImplicit: true, OperatorMethod: null, Conversion.IsUserDefined: false } conversion)
+        {
             operand = conversion.Operand;
+        }
+
         var type = operand.Type;
+
         if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+        {
             type = nullable.TypeArguments[0];
+        }
+
         return type?.SpecialType switch
         {
             SpecialType.System_SByte => (sbyte.MinValue, sbyte.MaxValue),
@@ -283,16 +385,22 @@ internal sealed class ImplicitExceptionClassifier(
         };
         // Native integers may have either width in a portable compilation.
         var alternateMinimum = type?.SpecialType == SpecialType.System_IntPtr ? long.MinValue : minimum;
+
         if (SmallIntegralRange(dividend) is { } range)
+        {
             return minimum >= range.Min && minimum <= range.Max
                 || alternateMinimum >= range.Min && alternateMinimum <= range.Max;
+        }
+
         dividend = UnwrapDivisor(dividend);
+
         if (dividend.ConstantValue is { HasValue: true, Value: { } value }
             && value is sbyte or byte or short or ushort or int or uint or long or ulong or char)
         {
             var constant = value is char character ? character : Convert.ToDecimal(value);
             return constant == minimum || constant == alternateMinimum;
         }
+
         return true;
     }
 
@@ -317,12 +425,23 @@ internal sealed class ImplicitExceptionClassifier(
     {
         divisor = UnwrapDivisor(divisor);
         var type = divisor.Type;
+
         if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+        {
             type = nullable.TypeArguments[0];
+        }
+
         if (type?.SpecialType is SpecialType.System_Byte or SpecialType.System_UInt16 or SpecialType.System_Char
-            or SpecialType.System_UInt32 or SpecialType.System_UInt64 or SpecialType.System_UIntPtr) return false;
+            or SpecialType.System_UInt32 or SpecialType.System_UInt64 or SpecialType.System_UIntPtr)
+        {
+            return false;
+        }
+
         if (IsIntegral(type) && divisor.ConstantValue is { HasValue: true, Value: { } value })
+        {
             return Convert.ToDecimal(value) == -1;
+        }
+
         return true;
     }
 
@@ -332,7 +451,10 @@ internal sealed class ImplicitExceptionClassifier(
         while (divisor is IConversionOperation { Conversion.IsUserDefined: false, OperatorMethod: null } conversion
             && (conversion.IsImplicit || conversion.Type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
                 && SymbolEqualityComparer.Default.Equals(nullable.TypeArguments[0], conversion.Operand.Type)))
+        {
             divisor = conversion.Operand;
+        }
+
         return divisor;
     }
 
@@ -343,14 +465,23 @@ internal sealed class ImplicitExceptionClassifier(
     internal bool HasValidConstantIndexes(IArrayElementReferenceOperation operation)
     {
         if (conditions.ResolveCapturedTarget(operation.ArrayReference) is not IArrayCreationOperation creation
-            || creation.DimensionSizes.Length != operation.Indices.Length) return false;
+            || creation.DimensionSizes.Length != operation.Indices.Length)
+        {
+            return false;
+        }
+
         for (var dimension = 0; dimension < operation.Indices.Length; dimension++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
             if (ConstantIntegral(operation.Indices[dimension]) is not { } index
                 || ConstantIntegral(creation.DimensionSizes[dimension]) is not { } length
-                || index < 0 || index >= length) return false;
+                || index < 0 || index >= length)
+            {
+                return false;
+            }
         }
+
         return true;
     }
 
@@ -374,15 +505,20 @@ internal sealed class ImplicitExceptionClassifier(
                         or SpecialType.System_Int64 or SpecialType.System_UInt64
                         or SpecialType.System_Single or SpecialType.System_Double or SpecialType.System_Decimal;
 
-    internal static bool IsStringOnlyConcatenation(IOperation operation)
-        => operation switch
+    internal static bool IsStringOnlyConcatenation(IOperation operation) => operation switch
+    {
+        IBinaryOperation
         {
-            IBinaryOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String,
-                OperatorMethod: null } binary => IsStringOrNull(binary.LeftOperand) && IsStringOrNull(binary.RightOperand),
-            ICompoundAssignmentOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String,
-                OperatorMethod: null } assignment => IsStringOrNull(assignment.Value),
-            _ => false,
-        };
+            OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String,
+            OperatorMethod: null
+        } binary => IsStringOrNull(binary.LeftOperand) && IsStringOrNull(binary.RightOperand),
+        ICompoundAssignmentOperation
+        {
+            OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String,
+            OperatorMethod: null
+        } assignment => IsStringOrNull(assignment.Value),
+        _ => false,
+    };
 
     private static bool IsStringOrNull(IOperation operation)
         => operation.Type?.SpecialType == SpecialType.System_String
@@ -390,34 +526,55 @@ internal sealed class ImplicitExceptionClassifier(
 
     internal bool IsBoxing(IConversionOperation operation)
         => operation.Operand.ConstantValue is not { HasValue: true, Value: null }
-            && operation.Operand is not IDefaultValueOperation
-                { Type: INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } }
+            && operation.Operand is not IDefaultValueOperation { Type: INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } }
             && operation.Operand.Type is { } source && operation.Type is { } destination
             && ((CSharpCompilation)semanticModel.Compilation).ClassifyConversion(source, destination).IsBoxing;
 
     private bool ConversionMayThrow(IConversionOperation operation)
     {
         if (operation.OperatorMethod is not null || IsBoxing(operation))
+        {
             return true;
+        }
+
         if (operation.IsTryCast || operation.ConstantValue.HasValue || operation.Conversion.IsIdentity)
+        {
             return false;
+        }
+
         if (operation.Operand.Type is not { } source || operation.Type is not { } destination)
+        {
             return false;
+        }
         // Classify the types, not the cast syntax: an explicit cast can still use
         // a safe widening or reference conversion.
         var conversion = ((CSharpCompilation)semanticModel.Compilation).ClassifyConversion(source, destination);
+
         if (conversion.IsImplicit)
+        {
             return conversion.IsDynamic;
+        }
+
         if (conversion.IsUnboxing || conversion.IsReference || conversion.IsDynamic)
+        {
             return true;
+        }
+
         if (source is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullableSource)
         {
             if (destination is not INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T })
+            {
                 return true;
+            }
+
             source = nullableSource.TypeArguments[0];
         }
+
         if (destination is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullableDestination)
+        {
             destination = nullableDestination.TypeArguments[0];
+        }
+
         return (operation.IsChecked || IsCheckedContext(operation.Syntax)) && IsIntegral(destination)
             || source.SpecialType == SpecialType.System_Decimal
             || destination.SpecialType == SpecialType.System_Decimal;
@@ -426,18 +583,41 @@ internal sealed class ImplicitExceptionClassifier(
     internal (bool InvalidCast, bool NullReference, bool InvalidOperation, bool Overflow)? ConversionExceptions(IConversionOperation operation)
     {
         if (operation.Operand.Type is not { } source || operation.Type is not { } destination || IsBoxing(operation))
+        {
             return null;
+        }
+
         var conversion = ((CSharpCompilation)semanticModel.Compilation).ClassifyConversion(source, destination);
+
         if (conversion.IsUserDefined || conversion.IsDynamic)
+        {
             return null;
+        }
+
         var nullableDestination = destination is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T };
+
         if (conversion.IsUnboxing)
+        {
             return (true, !nullableDestination, false, false);
+        }
+
         if (conversion.IsReference)
+        {
             return (true, false, false, false);
+        }
+
         var nullableSource = source is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T };
-        if (nullableSource) source = ((INamedTypeSymbol)source).TypeArguments[0];
-        if (nullableDestination) destination = ((INamedTypeSymbol)destination).TypeArguments[0];
+
+        if (nullableSource)
+        {
+            source = ((INamedTypeSymbol)source).TypeArguments[0];
+        }
+
+        if (nullableDestination)
+        {
+            destination = ((INamedTypeSymbol)destination).TypeArguments[0];
+        }
+
         var numeric = ((CSharpCompilation)semanticModel.Compilation).ClassifyConversion(source, destination);
         var overflow = !numeric.IsImplicit && ((operation.IsChecked || IsCheckedContext(operation.Syntax)) && IsIntegral(destination)
             || source.SpecialType == SpecialType.System_Decimal && IsIntegral(destination)
@@ -453,17 +633,26 @@ internal sealed class ImplicitExceptionClassifier(
         foreach (var ancestor in syntax.AncestorsAndSelf())
         {
             if (ancestor is CheckedExpressionSyntax expression)
+            {
                 return expression.Keyword.IsKind(SyntaxKind.CheckedKeyword);
+            }
+
             if (ancestor is CheckedStatementSyntax statement)
+            {
                 return statement.Keyword.IsKind(SyntaxKind.CheckedKeyword);
+            }
         }
+
         return ((CSharpCompilation)semanticModel.Compilation).Options.CheckOverflow;
     }
 
     private static bool IsIntegral(ITypeSymbol? type)
     {
         if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+        {
             type = nullable.TypeArguments[0];
+        }
+
         return type?.TypeKind == TypeKind.Enum
             || type?.SpecialType is SpecialType.System_SByte or SpecialType.System_Byte
             or SpecialType.System_Int16 or SpecialType.System_UInt16 or SpecialType.System_Char

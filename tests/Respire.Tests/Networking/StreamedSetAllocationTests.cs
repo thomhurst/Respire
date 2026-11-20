@@ -31,13 +31,24 @@ public sealed class StreamedSetAllocationTests
         using var reader = new RespireConnection.StreamPayloadReader(source, source.Length);
         // Reader, pooled buffer and the first completed Task are outside this boundary.
         var first = reader.StartRead(CancellationToken.None);
-        if (!first.IsCompletedSuccessfully) throw new InvalidOperationException("Exact MemoryStream fill suspended.");
+
+        if (!first.IsCompletedSuccessfully)
+        {
+            throw new InvalidOperationException("Exact MemoryStream fill suspended.");
+        }
+
         long allocated = 0;
+
         for (var index = 1; index < chunks; index++)
         {
             var before = GC.GetAllocatedBytesForCurrentThread();
             var fill = reader.StartRead(CancellationToken.None);
-            if (!fill.IsCompletedSuccessfully) throw new InvalidOperationException("Exact MemoryStream fill suspended.");
+
+            if (!fill.IsCompletedSuccessfully)
+            {
+                throw new InvalidOperationException("Exact MemoryStream fill suspended.");
+            }
+
 #pragma warning disable RESP009 // The successful-completion guard makes this read nonblocking and keeps the allocation probe on its measuring thread.
             var chunk = fill.Result;
 #pragma warning restore RESP009
@@ -45,9 +56,13 @@ public sealed class StreamedSetAllocationTests
             var anchor = recreateTaskControl ? Task.FromResult(chunk) : null;
             allocated += GC.GetAllocatedBytesForCurrentThread() - before;
             GC.KeepAlive(anchor);
+
             if (chunk.Length != RespireConnection.StreamChunkSize)
+            {
                 throw new InvalidOperationException("Unexpected exact MemoryStream chunk.");
+            }
         }
+
         return allocated;
     }
 
@@ -99,10 +114,19 @@ public sealed class StreamedSetAllocationTests
         var first = reader.StartRead(CancellationToken.None);
         await first;
         using var cancellation = new CancellationTokenSource();
-        if (disposeSource) source.Dispose();
-        else cancellation.Cancel();
+
+        if (disposeSource)
+        {
+            source.Dispose();
+        }
+        else
+        {
+            cancellation.Cancel();
+        }
+
         var failed = reader.StartRead(cancellation.Token);
         await Assert.That(ReferenceEquals(first, failed)).IsFalse();
+
         if (disposeSource)
         {
             var error = await Assert.That(async () => await failed).Throws<ObjectDisposedException>();
@@ -116,6 +140,7 @@ public sealed class StreamedSetAllocationTests
             await Assert.That(reader.UnknownPositionReadError).IsNull();
             await Assert.That(source.Position).IsEqualTo(RespireConnection.StreamChunkSize);
         }
+
         await Assert.That(reader.ConsumedPrefix.Length).IsEqualTo(0);
         await Assert.That(reader.IsComplete).IsFalse();
     }
@@ -137,6 +162,7 @@ public sealed class StreamedSetAllocationTests
     private static long MeasureFinalFrameWaits(int count, bool allocateControl)
     {
         long allocated = 0;
+
         for (var index = 0; index < count; index++)
         {
             var write = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -146,15 +172,24 @@ public sealed class StreamedSetAllocationTests
             var anchor = allocateControl ? new byte[37] : null;
             allocated += GC.GetAllocatedBytesForCurrentThread() - before;
             GC.KeepAlive(anchor);
-            if (pending.IsCompleted) throw new InvalidOperationException("The final write wait did not suspend.");
+
+            if (pending.IsCompleted)
+            {
+                throw new InvalidOperationException("The final write wait did not suspend.");
+            }
+
             var awaiter = pending.GetAwaiter();
             awaiter.UnsafeOnCompleted(() => completed.TrySetResult());
             write.SetResult();
+
             if (!completed.Task.Wait(TimeSpan.FromSeconds(10)))
+            {
                 throw new TimeoutException("The final write wait did not complete.");
+            }
             // Consume on the measured thread so the pooled box returns to that thread's cache.
             awaiter.GetResult();
         }
+
         return allocated;
     }
 
@@ -184,37 +219,57 @@ public sealed class StreamedSetAllocationTests
     private static long MeasureStarts(RespireConnection connection, SemaphoreSlim gate, int count, bool allocateControl)
     {
         long allocated = 0;
+
         for (var index = 0; index < count; index++)
         {
             using var source = new MemoryStream("a"u8.ToArray());
             var command = new StreamedSetCommand("allocation", source, 1, default, RespireSetWhen.Always);
             var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            if (!gate.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Upload gate did not become available.");
+
+            if (!gate.Wait(TimeSpan.FromSeconds(10)))
+            {
+                throw new TimeoutException("Upload gate did not become available.");
+            }
+
             var before = GC.GetAllocatedBytesForCurrentThread();
             ValueTask<RespValue> pending;
+
             try
             {
                 pending = connection.SendAsync(in command, commandName: "SET");
                 var anchor = allocateControl ? new byte[2048] : null;
                 allocated += GC.GetAllocatedBytesForCurrentThread() - before;
                 GC.KeepAlive(anchor);
+
                 if (pending.IsCompleted)
+                {
                     throw new InvalidOperationException("The upload did not suspend at admission.");
+                }
             }
             finally { gate.Release(); }
             // Holding the upload gate forces suspension before source reads and transport work.
             // Completion and GetResult stay outside the counter; GetResult returns the pooled
             // box on this initiating thread instead of via ValueTask.AsTask on a worker.
             var awaiter = pending.GetAwaiter();
+
             if (!awaiter.IsCompleted)
             {
                 awaiter.UnsafeOnCompleted(() => completed.TrySetResult());
+
                 if (!completed.Task.Wait(TimeSpan.FromSeconds(10)))
+                {
                     throw new TimeoutException("The suspended upload did not complete.");
+                }
             }
+
             using var reply = awaiter.GetResult();
-            if (reply.AsString() != "OK") throw new InvalidOperationException("Unexpected upload reply.");
+
+            if (reply.AsString() != "OK")
+            {
+                throw new InvalidOperationException("Unexpected upload reply.");
+            }
         }
+
         return allocated;
     }
 }

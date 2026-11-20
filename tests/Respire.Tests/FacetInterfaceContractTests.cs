@@ -14,19 +14,32 @@ public class FacetInterfaceContractTests
     {
         var sourceRoot = Path.Combine(CommandRouteOwnership.FindRepository(), "src");
         var violations = new List<string>();
+
         foreach (var file in Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories))
         {
             if (Path.GetRelativePath(sourceRoot, file).Split(Path.DirectorySeparatorChar)
-                .Any(part => part is "bin" or "obj")) continue;
+                .Any(part => part is "bin" or "obj"))
+            {
+                continue;
+            }
+
             var source = File.ReadAllText(file);
-            if (!source.Contains("interface") || !source.Contains("NotSupportedException")) continue;
+
+            if (!source.Contains("interface") || !source.Contains("NotSupportedException"))
+            {
+                continue;
+            }
+
             var root = CSharpSyntaxTree.ParseText(source).GetRoot();
+
             foreach (var contract in root.DescendantNodes().OfType<InterfaceDeclarationSyntax>()
                 .Where(contract => contract.Modifiers.Any(SyntaxKind.PublicKeyword)))
             {
                 if (contract.DescendantNodes().OfType<ObjectCreationExpressionSyntax>()
                     .Any(creation => creation.Type.ToString().Split('.').Last() == nameof(NotSupportedException)))
+                {
                     violations.Add($"{Path.GetRelativePath(sourceRoot, file)}: {contract.Identifier}");
+                }
             }
         }
 

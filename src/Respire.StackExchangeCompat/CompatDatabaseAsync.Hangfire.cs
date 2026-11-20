@@ -33,14 +33,13 @@ internal abstract partial class CompatDatabaseAsync
             : Send(RespireCommands.String.MGET, keys.Select(Key).ToArray(), flags, Values);
     }
 
-    public Task<long> StringIncrementAsync(RedisKey key, long value, CommandFlags flags)
-        => value switch
-        {
-            1 => Send(RespireCommands.String.INCR, [Key(key)], flags, static result => (long)result),
-            -1 => Send(RespireCommands.String.DECR, [Key(key)], flags, static result => (long)result),
-            >= 0 => Send(RespireCommands.String.INCRBY, [Key(key), value], flags, static result => (long)result),
-            _ => Send(RespireCommands.String.DECRBY, [Key(key), unchecked(-value)], flags, static result => (long)result),
-        };
+    public Task<long> StringIncrementAsync(RedisKey key, long value, CommandFlags flags) => value switch
+    {
+        1 => Send(RespireCommands.String.INCR, [Key(key)], flags, static result => (long)result),
+        -1 => Send(RespireCommands.String.DECR, [Key(key)], flags, static result => (long)result),
+        >= 0 => Send(RespireCommands.String.INCRBY, [Key(key), value], flags, static result => (long)result),
+        _ => Send(RespireCommands.String.DECRBY, [Key(key), unchecked(-value)], flags, static result => (long)result),
+    };
 
     public Task<long> StringDecrementAsync(RedisKey key, long value, CommandFlags flags)
         => StringIncrementAsync(key, unchecked(-value), flags);
@@ -88,14 +87,21 @@ internal abstract partial class CompatDatabaseAsync
     public Task<long> SortedSetAddAsync(RedisKey key, RedisSortedSetEntry[] values, CommandFlags flags)
     {
         ArgumentNullException.ThrowIfNull(values);
-        if (values.Length == 0) return Task.FromResult(0L);
+
+        if (values.Length == 0)
+        {
+            return Task.FromResult(0L);
+        }
+
         var arguments = new RedisValue[1 + values.Length * 2];
         arguments[0] = Key(key);
+
         for (var index = 0; index < values.Length; index++)
         {
             arguments[1 + index * 2] = Score(values[index].Score);
             arguments[2 + index * 2] = Value(values[index].Element);
         }
+
         return Send(RespireCommands.SortedSet.ZADD, arguments, flags, static result => (long)result);
     }
 
@@ -149,23 +155,45 @@ internal abstract partial class CompatDatabaseAsync
                 _ => exclude,
             };
         }
+
         RedisValue[] arguments = [Key(key), Bound(start, exclude, Exclude.Start), Bound(stop, exclude, Exclude.Stop)];
-        if (scores) arguments = [.. arguments, "WITHSCORES"];
-        if (skip != 0 || take != -1) arguments = [.. arguments, "LIMIT", skip, take];
+
+        if (scores)
+        {
+            arguments = [.. arguments, "WITHSCORES"];
+        }
+
+        if (skip != 0 || take != -1)
+        {
+            arguments = [.. arguments, "LIMIT", skip, take];
+        }
+
         return arguments;
     }
 
     private static RedisValue Bound(double score, Exclude exclude, Exclude edge)
     {
-        if ((exclude & ~Exclude.Both) != 0) throw new ArgumentOutOfRangeException(nameof(exclude));
+        if ((exclude & ~Exclude.Both) != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(exclude));
+        }
+
         var value = Score(score);
         return (exclude & edge) != 0 ? "(" + (string?)value : value;
     }
 
     private static RedisValue Score(double score)
     {
-        if (double.IsPositiveInfinity(score)) return "+inf";
-        if (double.IsNegativeInfinity(score)) return "-inf";
+        if (double.IsPositiveInfinity(score))
+        {
+            return "+inf";
+        }
+
+        if (double.IsNegativeInfinity(score))
+        {
+            return "-inf";
+        }
+
         return score.ToString("R", CultureInfo.InvariantCulture);
     }
 
@@ -174,14 +202,21 @@ internal abstract partial class CompatDatabaseAsync
         var values = ((RedisResult[])result)!;
         // RESP3 score ranges contain nested [member, score] pairs; RESP2 and ZSCAN are flat.
         if (values.Length != 0 && values[0].Resp2Type == ResultType.Array)
+        {
             return values.Select(static pair =>
             {
                 var entry = ((RedisResult[])pair)!;
                 return new RedisSortedSetEntry(Scalar(entry[0]), (double)entry[1]);
             }).ToArray();
+        }
+
         var entries = new RedisSortedSetEntry[values.Length / 2];
+
         for (var index = 0; index < entries.Length; index++)
+        {
             entries[index] = new RedisSortedSetEntry(Scalar(values[index * 2]), (double)values[index * 2 + 1]);
+        }
+
         return entries;
     }
 
@@ -190,16 +225,37 @@ internal abstract partial class CompatDatabaseAsync
 
     internal CompatSortedSetScan Scan(RedisKey key, RedisValue pattern, int pageSize, long cursor, int pageOffset, CommandFlags flags)
     {
-        if (this is CompatTransaction) throw Compatibility.Unsupported("SortedSetScan on ITransaction; enumerate outside the transaction");
-        if (pageSize <= 0) throw new ArgumentOutOfRangeException(nameof(pageSize));
-        if (pageOffset < 0) throw new ArgumentOutOfRangeException(nameof(pageOffset));
-        if ((flags & CommandFlags.FireAndForget) != 0) throw Compatibility.Unsupported("SortedSetScan FireAndForget");
+        if (this is CompatTransaction)
+        {
+            throw Compatibility.Unsupported("SortedSetScan on ITransaction; enumerate outside the transaction");
+        }
+
+        if (pageSize <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pageSize));
+        }
+
+        if (pageOffset < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pageOffset));
+        }
+
+        if ((flags & CommandFlags.FireAndForget) != 0)
+        {
+            throw Compatibility.Unsupported("SortedSetScan FireAndForget");
+        }
+
         var savedKey = Key(key);
         var savedPattern = pattern.IsNullOrEmpty ? RedisValue.Null : Value(pattern);
         return new CompatSortedSetScan(DatabaseOwner, pageSize, cursor, pageOffset, next =>
         {
             RedisValue[] arguments = [savedKey, unchecked((ulong)next).ToString(CultureInfo.InvariantCulture)];
-            if (!savedPattern.IsNull && savedPattern != "*") arguments = [.. arguments, "MATCH", savedPattern];
+
+            if (!savedPattern.IsNull && savedPattern != "*")
+            {
+                arguments = [.. arguments, "MATCH", savedPattern];
+            }
+
             arguments = [.. arguments, "COUNT", pageSize];
             return Send(RespireCommands.SortedSet.ZSCAN, arguments, flags, static result =>
             {

@@ -56,14 +56,46 @@ public partial class LifecycleLoggingTests
 
     private static object SampleLogValue(Type type, int index)
     {
-        if (type == typeof(string)) return $"value-{index}";
-        if (type == typeof(int)) return 10 + index;
-        if (type == typeof(long)) return 100L + index;
-        if (type == typeof(double)) return 1.25 + index;
-        if (type == typeof(bool)) return index % 2 == 0;
-        if (type == typeof(TimeSpan)) return TimeSpan.FromMilliseconds(25 + index);
-        if (type == typeof(RespireEndpoint)) return new RespireEndpoint($"redis-{index}.example", 6379 + index);
-        if (type.IsEnum) return Enum.GetValues(type).GetValue(0)!;
+        if (type == typeof(string))
+        {
+            return $"value-{index}";
+        }
+
+        if (type == typeof(int))
+        {
+            return 10 + index;
+        }
+
+        if (type == typeof(long))
+        {
+            return 100L + index;
+        }
+
+        if (type == typeof(double))
+        {
+            return 1.25 + index;
+        }
+
+        if (type == typeof(bool))
+        {
+            return index % 2 == 0;
+        }
+
+        if (type == typeof(TimeSpan))
+        {
+            return TimeSpan.FromMilliseconds(25 + index);
+        }
+
+        if (type == typeof(RespireEndpoint))
+        {
+            return new RespireEndpoint($"redis-{index}.example", 6379 + index);
+        }
+
+        if (type.IsEnum)
+        {
+            return Enum.GetValues(type).GetValue(0)!;
+        }
+
         throw new InvalidOperationException($"Add a logging contract sample for {type}.");
     }
 }

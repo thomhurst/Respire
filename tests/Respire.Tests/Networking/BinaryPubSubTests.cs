@@ -53,10 +53,20 @@ public class BinaryPubSubTests
         using var cancellation = new CancellationTokenSource();
         var pending = client.SubscribeAsync("stalled", cancellationToken: cancellation.Token).AsTask();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen < 2) await Task.Delay(10, deadline.Token);
+
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+
         await cancellation.CancelAsync();
         await Assert.That(async () => await pending).Throws<OperationCanceledException>();
-        while (server.CommandsSeen < 3) await Task.Delay(10, deadline.Token);
+
+        while (server.CommandsSeen < 3)
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+
         await Assert.That(server.ReceivedArguments[2][1].SequenceEqual(expected)).IsTrue();
         await Assert.That(server.ReceivedConnectionIds[2]).IsNotEqualTo(server.ReceivedConnectionIds[0]);
         await subscription.DisposeAsync();
@@ -75,7 +85,12 @@ public class BinaryPubSubTests
         byte[] input = [0xff, 0, (byte)':', (byte)'{', (byte)'x', (byte)'}', (byte)'*'];
         var expected = input.ToArray();
         RespireChannel channel = new RespireChannel(input).WithKind(kind);
-        var verb = kind switch { RespireSubscriptionKind.Pattern => "PSUBSCRIBE", RespireSubscriptionKind.Sharded => "SSUBSCRIBE", _ => "SUBSCRIBE" };
+        var verb = kind switch
+        {
+            RespireSubscriptionKind.Pattern => "PSUBSCRIBE",
+            RespireSubscriptionKind.Sharded => "SSUBSCRIBE",
+            _ => "SUBSCRIBE"
+        };
         await using var server = new FakeRespServer(Confirmation(verb.ToLowerInvariant(), expected));
         await using var client = CreateClient(server.Port);
         await using var subscription = await client.SubscribeAsync(channel);
@@ -97,6 +112,7 @@ public class BinaryPubSubTests
         await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
         await Assert.That(retained.Channel.Bytes.Span.SequenceEqual(concrete)).IsTrue();
         await Assert.That(retained.Payload.Span.SequenceEqual(payload)).IsTrue();
+
         if (kind == RespireSubscriptionKind.Pattern)
         {
             await Assert.That(retained.Pattern!.Value.Bytes.Span.SequenceEqual(expected)).IsTrue();
@@ -106,6 +122,7 @@ public class BinaryPubSubTests
             await Assert.That(retained.Pattern).IsNull();
             await Assert.That(retained.Channel.Bytes.Equals(subscription.Targets[0].Bytes)).IsTrue();
         }
+
         await subscription.DisposeAsync();
         await Assert.That(server.ReceivedArguments[^1][1].SequenceEqual(expected)).IsTrue();
         await Assert.That(Encoding.ASCII.GetString(server.ReceivedArguments[^1][0])).IsEqualTo(verb.Replace("SUBSCRIBE", "UNSUBSCRIBE"));
@@ -178,12 +195,14 @@ public class BinaryPubSubTests
     {
         using var stream = new MemoryStream();
         stream.Write(Encoding.ASCII.GetBytes($"{(push ? '>' : '*')}{values.Length}\r\n"));
+
         foreach (var value in values)
         {
             stream.Write(Encoding.ASCII.GetBytes($"${value.Length}\r\n"));
             stream.Write(value);
             stream.Write("\r\n"u8);
         }
+
         return stream.ToArray();
     }
 }

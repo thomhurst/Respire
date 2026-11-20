@@ -19,6 +19,7 @@ public partial class SentinelRoutingTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var probe = new SentinelMonitorProbe { DisposeClient = () => new(release.Task) };
         router.Monitoring.ClientFactory = _ => probe.Client;
+
         try
         {
             await client.PingAsync();
@@ -61,12 +62,18 @@ public partial class SentinelRoutingTests
         var clock = new FenceClock();
         router.ShutdownClock = clock;
         Task[] background = [];
+
         try
         {
             await client.PingAsync();
             await SentinelTestSetup.WaitForStartupAsync(client);
             var original = router.Current!;
-            router.HostResolver = (host, _) => { queries.Enqueue(host); started.TrySetResult(); return release.Task; };
+            router.HostResolver = (host, _) =>
+            {
+                queries.Enqueue(host);
+                started.TrySetResult();
+                return release.Task;
+            };
             sentinel.SuppressReply = command => command.StartsWith("SENTINEL GET-MASTER");
             var text = $"mymaster old.alias {primary.Port} new.alias {primary.Port}";
             probe.Messages.Writer.TryWrite(new("+switch-master", null,
@@ -104,6 +111,7 @@ public partial class SentinelRoutingTests
         var failure = new TimeoutException("monitor cleanup failed");
         var probe = new SentinelMonitorProbe { DisposeClient = () => ValueTask.FromException(failure) };
         client.Core.Sentinel!.Monitoring.ClientFactory = _ => probe.Client;
+
         try
         {
             await client.PingAsync();
@@ -142,6 +150,7 @@ public partial class SentinelRoutingTests
         router.Monitoring.ClientFactory = _ => probe.Client;
         var clock = new FenceClock();
         router.ShutdownClock = clock;
+
         try
         {
             await client.PingAsync();
@@ -174,22 +183,33 @@ public partial class SentinelRoutingTests
         var router = client.Core.Sentinel!;
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var probe = new SentinelMonitorProbe();
-        if (stalledUnsubscribe) probe.DisposeSubscription = () => new(release.Task);
-        else probe.DisposeClient = () => new(release.Task);
+
+        if (stalledUnsubscribe)
+        {
+            probe.DisposeSubscription = () => new(release.Task);
+        }
+        else
+        {
+            probe.DisposeClient = () => new(release.Task);
+        }
+
         router.Monitoring.ClientFactory = _ => probe.Client;
         var clock = new FenceClock();
         router.ShutdownClock = clock;
         Task[] background = [];
+
         try
         {
             await client.PingAsync();
             await SentinelTestSetup.WaitForStartupAsync(client);
+
             if (stalledUnsubscribe)
             {
                 probe.Messages.Writer.TryComplete();
                 await probe.SubscriptionCleanup.Task.WaitAsync(Limit);
                 await Assert.That(probe.ClientCleanup.Task.IsCompleted).IsFalse();
             }
+
             var disposal = client.DisposeAsync().AsTask();
             await probe.ClientCleanup.Task.WaitAsync(Limit);
             await probe.SubscriptionCleanup.Task.WaitAsync(Limit);
@@ -222,6 +242,7 @@ public partial class SentinelRoutingTests
             DisposeSubscription = () => ValueTask.FromException(second),
         };
         client.Core.Sentinel!.Monitoring.ClientFactory = _ => probe.Client;
+
         try
         {
             await client.PingAsync();
@@ -253,6 +274,7 @@ public partial class SentinelRoutingTests
         var clock = new FenceClock();
         router.ShutdownClock = clock;
         Task[] background = [];
+
         try
         {
             await client.PingAsync();

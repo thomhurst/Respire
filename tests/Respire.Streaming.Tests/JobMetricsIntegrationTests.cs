@@ -55,31 +55,62 @@ public partial class JobQueueIntegrationTests
     {
         await using var client = await ConnectAsync();
         var queue = Queue(client);
-        if (grouped) await queue.SetGroupOptionsAsync("a", new() { MaxConcurrency = 2 });
+
+        if (grouped)
+        {
+            await queue.SetGroupOptionsAsync("a", new() { MaxConcurrency = 2 });
+        }
+
         for (var i = 0; i < 20; i++)
         {
             if (grouped)
+            {
                 await queue.EnqueueScheduledAsync("job-" + i, i % 2 == 0 ? "ok" : "fail", new() { Group = "a" });
+            }
             else
+            {
                 await queue.EnqueueAsync("job-" + i, i % 2 == 0 ? "ok" : "fail");
+            }
         }
+
         ServiceProvider Provider(string consumer)
         {
             var services = new ServiceCollection().AddSingleton<IRespireClient>(client);
             services.AddRespireJobQueue<MetricsHandler, string>("test", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
-                new() { ConsumerName = consumer, ConsumerCount = 2, DeliveryLimit = 2, DeleteAcknowledgedEntries = delete,
-                    ReadWait = TimeSpan.FromMilliseconds(10), RecoveryPollInterval = TimeSpan.FromMilliseconds(10) },
-                new() { MetricsRetentionMinutes = retention, RetryBackoff = TimeSpan.Zero,
-                    SchedulingPollInterval = TimeSpan.FromMilliseconds(10) });
+                new()
+                {
+                    ConsumerName = consumer,
+                    ConsumerCount = 2,
+                    DeliveryLimit = 2,
+                    DeleteAcknowledgedEntries = delete,
+                    ReadWait = TimeSpan.FromMilliseconds(10),
+                    RecoveryPollInterval = TimeSpan.FromMilliseconds(10)
+                },
+                new()
+                {
+                    MetricsRetentionMinutes = retention,
+                    RetryBackoff = TimeSpan.Zero,
+                    SchedulingPollInterval = TimeSpan.FromMilliseconds(10)
+                });
             return services.BuildServiceProvider();
         }
+
         await using var first = Provider("first");
         await using var second = Provider("second");
         var workers = new[] { first.GetRequiredService<IHostedService>(), second.GetRequiredService<IHostedService>() };
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        foreach (var worker in workers) await worker.StartAsync(deadline.Token);
-        try { await UntilAsync(async () => await client.Streams.CountAsync(queue.EventsStreamKey) == 20, deadline.Token); }
-        finally { foreach (var worker in workers) await worker.StopAsync(deadline.Token); }
+
+        foreach (var worker in workers)
+        {
+            await worker.StartAsync(deadline.Token);
+        }
+
+        try
+        {
+            await UntilAsync(async () => await client.Streams.CountAsync(queue.EventsStreamKey) == 20, deadline.Token);
+        }
+        finally { foreach (var worker in workers) { await worker.StopAsync(deadline.Token); } }
+
         var buckets = await RespireJobMetrics.ReadAsync(client, queue.StreamKey);
         await Assert.That(buckets.Count).IsEqualTo(retention);
         await Assert.That(buckets.Sum(b => b.Completed)).IsEqualTo(retention == 0 ? 0 : 10);
@@ -105,8 +136,13 @@ public partial class JobQueueIntegrationTests
         var worker = provider.GetRequiredService<IHostedService>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await worker.StartAsync(deadline.Token);
-        try { await UntilAsync(async () => (await queue.GetFlowResultsAsync("flow")).All(r => r.Status == "completed"), deadline.Token); }
+
+        try
+        {
+            await UntilAsync(async () => (await queue.GetFlowResultsAsync("flow")).All(r => r.Status == "completed"), deadline.Token);
+        }
         finally { await worker.StopAsync(deadline.Token); }
+
         await Assert.That((await RespireJobMetrics.ReadAsync(client, queue.StreamKey)).Sum(b => b.Completed)).IsEqualTo(2);
     }
 
@@ -120,8 +156,16 @@ public partial class JobQueueIntegrationTests
         var queue = Queue(client);
         await queue.CreateBatchAsync(new() { OnComplete = new("callback", "ok") }, "batch");
         await queue.AddBatchJobAsync("batch", "member", "ok");
-        if (cancel) await queue.CancelBatchAsync("batch");
-        else await queue.SealBatchAsync("batch");
+
+        if (cancel)
+        {
+            await queue.CancelBatchAsync("batch");
+        }
+        else
+        {
+            await queue.SealBatchAsync("batch");
+        }
+
         var services = new ServiceCollection().AddSingleton<IRespireClient>(client);
         services.AddRespireJobQueue<MetricsHandler, string>("test", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
             new() { ReadWait = TimeSpan.FromMilliseconds(10) }, new() { MetricsRetentionMinutes = 3 });
@@ -129,8 +173,13 @@ public partial class JobQueueIntegrationTests
         var worker = provider.GetRequiredService<IHostedService>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await worker.StartAsync(deadline.Token);
-        try { await UntilAsync(async () => await client.Streams.CountAsync(queue.EventsStreamKey) == 2, deadline.Token); }
+
+        try
+        {
+            await UntilAsync(async () => await client.Streams.CountAsync(queue.EventsStreamKey) == 2, deadline.Token);
+        }
         finally { await worker.StopAsync(deadline.Token); }
+
         var status = (await queue.GetBatchStatusAsync("batch"))!;
         await Assert.That(status.IsCompleted).IsTrue();
         await Assert.That(status.Cancelled).IsEqualTo(cancel ? 1 : 0);
@@ -150,8 +199,16 @@ public partial class JobQueueIntegrationTests
         var queue = Queue(client);
         await queue.CreateBatchAsync(batchId: "batch");
         await queue.AddBatchJobAsync("batch", "member", "ok");
-        if (cancel) await queue.CancelBatchAsync("batch");
-        else await queue.SealBatchAsync("batch");
+
+        if (cancel)
+        {
+            await queue.CancelBatchAsync("batch");
+        }
+        else
+        {
+            await queue.SealBatchAsync("batch");
+        }
+
         await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
         var member = (await ReadBatchJobs(client, queue)).Single();
         RespireKey[] keys = [queue.StreamKey, queue.EventsStreamKey, queue.DeadLetterStreamKey,
@@ -196,12 +253,19 @@ public partial class JobQueueIntegrationTests
         using var before = await admin.Scripts.ExecuteAsync(snapshot, [metricsKey], []);
         var username = "cancel-metrics-" + Guid.NewGuid().ToString("N");
         var permissions = new List<RespireValue> { "on", ">metrics-test", "~*", "+@all" };
-        if (failure is not ("wrong-type" or "retention")) permissions.Add("-" + failure);
+
+        if (failure is not ("wrong-type" or "retention"))
+        {
+            permissions.Add("-" + failure);
+        }
+
         await admin.Server.AclSetUserAsync(username, permissions.ToArray());
+
         try
         {
             await using var limited = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = username, Password = "metrics-test" });
+                with
+            { Username = username, Password = "metrics-test" });
             var script = JobScript(delete ? "CompleteAndDeleteWithMetrics" : "CompleteWithMetrics");
             RespireKey[] keys = [queue.StreamKey, queue.EventsStreamKey, queue.DeadLetterStreamKey,
                 member.GetString("_respire.job.batch")!, metricsKey];
@@ -276,13 +340,16 @@ public partial class JobQueueIntegrationTests
         var queue = Queue(client);
         var id = await PendingJobAsync(client, queue);
         var key = queue.StreamKey + ":metrics";
+
         if (existing)
+        {
             await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("""
                 local minute = math.floor(tonumber(redis.call('TIME')[1]) / 60)
                 redis.call('HSET', KEYS[1], 'retention', 3, tostring(minute % 3), cmsgpack.pack({minute, 7, 2}))
                 redis.call('PEXPIRE', KEYS[1], 10000)
                 return 1
                 """), [key], []);
+        }
         // Inject an acknowledgement error after successful event and metrics writes. Production
         // can reach this rollback when a capability-aware acknowledgement is denied by Redis.
         var source = JobScript("CompleteWithMetrics").Source.Replace(
@@ -296,12 +363,16 @@ public partial class JobQueueIntegrationTests
         await Assert.That(buckets.Sum(b => b.Completed)).IsEqualTo(existing ? 7 : 0);
         await Assert.That(buckets.Sum(b => b.Failed)).IsEqualTo(existing ? 2 : 0);
         var ttl = await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return redis.call('PTTL', KEYS[1])"), [key], []);
+
         if (existing)
         {
             await Assert.That(ttl).IsGreaterThan(0);
             await Assert.That(ttl).IsLessThanOrEqualTo(10000);
         }
-        else await Assert.That(ttl).IsEqualTo(-2);
+        else
+        {
+            await Assert.That(ttl).IsEqualTo(-2);
+        }
     }
 
     [Test]
@@ -312,6 +383,7 @@ public partial class JobQueueIntegrationTests
         var id = await PendingJobAsync(client, queue);
         RespireKey[] keys = [queue.StreamKey, queue.EventsStreamKey, queue.StreamKey + ":metrics"];
         RespireValue[] args = [RespireJobQueue<string>.ConsumerGroup, "crashed", id.Value, 1, "completed", "", "", 0, Array.Empty<byte>(), 3];
+
         foreach (var seed in new[] { "redis.call('SET', KEYS[1], 'wrong')", "redis.call('HSET', KEYS[1], 'retention', 4)" })
         {
             await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("redis.call('DEL', KEYS[1]); " + seed + "; return 1"), [keys[^1]], []);
@@ -331,6 +403,7 @@ public partial class JobQueueIntegrationTests
         var id = await PendingJobAsync(admin, queue);
         var username = "metrics-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">metrics-test", "~*", "+@all", "-" + denied]);
+
         try
         {
             await using var limited = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { Username = username, Password = "metrics-test" });

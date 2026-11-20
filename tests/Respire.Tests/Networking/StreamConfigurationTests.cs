@@ -16,7 +16,12 @@ public class StreamConfigurationTests
     public async Task ExactWireAndKeySnapshotAcrossSurfaces(int surface)
     {
         byte[][] replies = [FakeRespServer.OkReply, FakeRespServer.OkReply, FakeRespServer.OkReply];
-        if (surface == 2) replies = [FakeRespServer.OkReply, .. Enumerable.Repeat("+QUEUED\r\n"u8.ToArray(), 3), "*3\r\n+OK\r\n+OK\r\n+OK\r\n"u8.ToArray()];
+
+        if (surface == 2)
+        {
+            replies = [FakeRespServer.OkReply, .. Enumerable.Repeat("+QUEUED\r\n"u8.ToArray(), 3), "*3\r\n+OK\r\n+OK\r\n+OK\r\n"u8.ToArray()];
+        }
+
         await using var server = new FakeRespServer(replies);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var view = client.WithKeyPrefix("tenant:");
@@ -27,18 +32,39 @@ public class StreamConfigurationTests
         RespireStreamConfigurationOptions[] options = [new() { IdempotencyDurationSeconds = 1 }, new() { IdempotencyMaxSize = 10000 },
             new() { IdempotencyDurationSeconds = 86400, IdempotencyMaxSize = 1 }];
         List<RespirePending<bool>> pending = [];
+
         foreach (var option in options)
         {
-            if (queue is null) await Assert.That(await view.Streams.ConfigureAsync(key, option)).IsTrue();
-            else pending.Add(queue.Streams.Configure(key, option));
+            if (queue is null)
+            {
+                await Assert.That(await view.Streams.ConfigureAsync(key, option)).IsTrue();
+            }
+            else
+            {
+                pending.Add(queue.Streams.Configure(key, option));
+            }
         }
+
         Array.Fill(key, (byte)'x');
-        if (transaction is not null) await transaction.CommitAsync();
-        else if (batch is not null) await batch.ExecuteAsync();
-        foreach (var result in pending) await Assert.That(result.Result).IsTrue();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else if (batch is not null)
+        {
+            await batch.ExecuteAsync();
+        }
+
+        foreach (var result in pending)
+        {
+            await Assert.That(result.Result).IsTrue();
+        }
+
         var commands = server.ReceivedArguments.Where(x => Encoding.ASCII.GetString(x[0]) == "XCFGSET").ToArray();
         await Assert.That(commands.Length).IsEqualTo(3);
         string[][] tails = [["IDMP-DURATION", "1"], ["IDMP-MAXSIZE", "10000"], ["IDMP-DURATION", "86400", "IDMP-MAXSIZE", "1"]];
+
         for (var index = 0; index < commands.Length; index++)
         {
             await Assert.That(commands[index][1]).IsEquivalentTo("tenant:"u8.ToArray().Concat(new byte[] { 0, 255, 32 }), CollectionOrdering.Matching);
@@ -57,12 +83,14 @@ public class StreamConfigurationTests
         await using var transaction = client.CreateTransaction();
         RespireStreamConfigurationOptions[] invalid = [default, new() { IdempotencyDurationSeconds = 0 }, new() { IdempotencyDurationSeconds = 86401 },
             new() { IdempotencyMaxSize = 0 }, new() { IdempotencyMaxSize = 10001 }, new() { IdempotencyDurationSeconds = 1, IdempotencyMaxSize = -1 }];
+
         foreach (var options in invalid)
         {
             await Assert.That(async () => await client.Streams.ConfigureAsync("s", options)).Throws<ArgumentException>();
             await Assert.That(() => batch.Streams.Configure("s", options)).Throws<ArgumentException>();
             await Assert.That(() => transaction.Streams.Configure("s", options)).Throws<ArgumentException>();
         }
+
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.That(async () => await client.Streams.ConfigureAsync("s", new() { IdempotencyMaxSize = 1 }, cancellation.Token)).Throws<OperationCanceledException>();
@@ -104,7 +132,16 @@ public class StreamConfigurationTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
         {
-            SuppressReply = command => { if (!command.StartsWith("XCFGSET ")) return false; received.TrySetResult(); return true; },
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("XCFGSET "))
+                {
+                    return false;
+                }
+
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();

@@ -1,8 +1,8 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Respire.Internal;
-using Respire.Protocol;
 using Respire.Networking;
+using Respire.Protocol;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -17,11 +17,13 @@ public partial class ErrorMetricsTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         using var capture = new Capture();
+
         for (var index = 0; index < 10; index++)
         {
             _ = MeasureHedgeAttemptCopy(false);
             _ = MeasureHedgeAttemptCopy(true);
         }
+
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
             (MeasureHedgeAttemptCopy(false), MeasureHedgeAttemptCopy(true)));
         await Assert.That(measured.Item1).IsEqualTo(0L);
@@ -33,6 +35,7 @@ public partial class ErrorMetricsTests
     private static long MeasureHedgeAttemptCopy(bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
             var caller = DispatchResponseSource<int>.Start();
@@ -40,8 +43,13 @@ public partial class ErrorMetricsTests
             caller.Observation.CopyCompletedAttempts(0, leg.Observation);
             leg.CompleteInternal();
             caller.CompleteInternal();
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -60,6 +68,7 @@ public partial class ErrorMetricsTests
         var hedge = DispatchResponseSource<RespValue>.Start();
         var winner = hedgeWins ? hedge : original;
         var loser = hedgeWins ? original : hedge;
+
         try
         {
             caller.Observation.SetAttempts(prefix);
@@ -69,6 +78,7 @@ public partial class ErrorMetricsTests
                 nested.SetAttempts(2);
                 winner.Observation.SetAttempts(nested.Attempts);
             }
+
             winner.Observation.Retry();
             loser.Observation.SetAttempts(19);
             var winningReply = Task.FromResult(default(RespValue));
@@ -112,6 +122,7 @@ public partial class ErrorMetricsTests
         var original = DispatchResponseSource<RespValue>.Start();
         var hedge = DispatchResponseSource<RespValue>.Start();
         var caller = DispatchResponseSource<int>.Start();
+
         try
         {
             original.Observation.SetAttempts(3);
@@ -120,10 +131,20 @@ public partial class ErrorMetricsTests
             var race = CreateOwnershipRace(Task.FromException<RespValue>(expected),
                 Task.FromException<RespValue>(new IOException("optional failure")), original, hedge);
             Exception? actual = null;
-            try { _ = await ResolveOwnershipRace(race, caller.Observation, prefix); }
+
+            try
+            {
+                _ = await ResolveOwnershipRace(race, caller.Observation, prefix);
+            }
             catch (Exception error) { actual = error; }
+
             await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
-            if (cancelled) await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+
+            if (cancelled)
+            {
+                await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+            }
+
             await Assert.That(caller.Observation.Attempts).IsEqualTo(prefix == int.MaxValue ? int.MaxValue : 8);
         }
         finally

@@ -24,12 +24,22 @@ public class HostShutdownTests
         await using var redis = new RespireFakeServer();
         var logs = new ErrorLog();
         var host = BuildHost(redis, logs);
+
         await using (host as IAsyncDisposable)
         {
-            if (aliasFirst) _ = host.Services.GetRequiredService<IRespireClient>();
+            if (aliasFirst)
+            {
+                _ = host.Services.GetRequiredService<IRespireClient>();
+            }
+
             var manager = host.Services.GetRequiredService<HubLifetimeManager<ShutdownTestHub>>();
             await manager.SendAllAsync("probe", []);
-            if (!aliasFirst) _ = host.Services.GetRequiredService<IRespireClient>();
+
+            if (!aliasFirst)
+            {
+                _ = host.Services.GetRequiredService<IRespireClient>();
+            }
+
             await host.StartAsync();
             await host.StopAsync();
         }
@@ -43,6 +53,7 @@ public class HostShutdownTests
         await using var redis = new RespireFakeServer();
         var logs = new ErrorLog();
         var host = BuildHost(redis, logs);
+
         await using (host as IAsyncDisposable)
         {
             var manager = host.Services.GetRequiredService<HubLifetimeManager<ShutdownTestHub>>();
@@ -66,23 +77,42 @@ public class HostShutdownTests
 
     private sealed class ErrorLog : ILoggerProvider, ILogger
     {
-        public ConcurrentQueue<(int Id, string Message)> Events { get; } = new();
+        public ConcurrentQueue<(int Id, string Message)> Events
+        {
+            get;
+        } = new();
 
-        public TaskCompletionSource<string> SubscriptionEnded { get; } =
+        public TaskCompletionSource<string> SubscriptionEnded
+        {
+            get;
+        } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ILogger CreateLogger(string categoryName) => this;
-        public void Dispose() { }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (!IsEnabled(logLevel)) return;
+            if (!IsEnabled(logLevel))
+            {
+                return;
+            }
+
             var message = formatter(state, exception);
             Events.Enqueue((eventId.Id, message));
-            if (eventId.Id == SubscriptionEndedEventId) SubscriptionEnded.TrySetResult(message);
+
+            if (eventId.Id == SubscriptionEndedEventId)
+            {
+                SubscriptionEnded.TrySetResult(message);
+            }
         }
     }
 }

@@ -69,7 +69,12 @@ public class FakeKeyspaceServerTests
         using var keys = await client.ExecuteAsync("KEYS", "test:*");
         await Assert.That(Enumerable.Range(0, keys.Count).Select(i => keys[i].AsString())).IsEquivalentTo(expected);
         var scanned = new List<string>();
-        await foreach (var key in client.Keys.ScanAsync("test:*", countHint: 1)) scanned.Add(key);
+
+        await foreach (var key in client.Keys.ScanAsync("test:*", countHint: 1))
+        {
+            scanned.Add(key);
+        }
+
         await Assert.That(scanned).IsEquivalentTo(expected);
     }
 
@@ -129,22 +134,34 @@ public class FakeKeyspaceServerTests
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
 #pragma warning restore RESP010
         var expected = Enumerable.Range(0, 100).Select(i => $"cleanup:{i}").ToArray();
-        foreach (var key in expected) await client.SetAsync(key, "value");
+
+        foreach (var key in expected)
+        {
+            await client.SetAsync(key, "value");
+        }
+
         var seen = new List<string>();
         var cursor = "0";
         var pages = 0;
+
         do
         {
             using var page = await client.ExecuteAsync("SCAN", cursor, "COUNT", 1);
             cursor = page[0].AsString();
+
             for (var i = 0; i < page[1].Count; i++)
             {
                 var key = page[1][i].AsString();
                 seen.Add(key);
                 using var deleted = await client.ExecuteAsync("DEL", key);
             }
-            if (++pages > 256) throw new InvalidOperationException("SCAN failed to terminate.");
+
+            if (++pages > 256)
+            {
+                throw new InvalidOperationException("SCAN failed to terminate.");
+            }
         } while (cursor != "0");
+
         await Assert.That(pages).IsGreaterThan(1);
         await Assert.That(seen).IsEquivalentTo(expected);
         using var remaining = await client.ExecuteAsync("KEYS", "*");
@@ -157,8 +174,13 @@ public class FakeKeyspaceServerTests
         await using var server = new RespireFakeServer();
 #pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+
 #pragma warning restore RESP010
-        for (var i = 0; i < 100; i++) await client.SetAsync($"key:{i}", "value");
+        for (var i = 0; i < 100; i++)
+        {
+            await client.SetAsync($"key:{i}", "value");
+        }
+
         using var empty = await client.ExecuteAsync("SCAN", 0, "MATCH", "absent:*", "COUNT", 1);
         await Assert.That(empty[0].AsString()).IsNotEqualTo("0");
         await Assert.That(empty[1].Count).IsEqualTo(0);
@@ -181,7 +203,12 @@ public class FakeKeyspaceServerTests
         await prefixed.SetAsync("job", "v");
         await client.SetAsync("outside", "v");
         var found = new List<string>();
-        await foreach (var key in prefixed.Keys.ScanAsync("j*")) found.Add(key);
+
+        await foreach (var key in prefixed.Keys.ScanAsync("j*"))
+        {
+            found.Add(key);
+        }
+
         await Assert.That(found).IsEquivalentTo(new[] { "job" });
         using var end = await client.ExecuteAsync("SCAN", "18446744073709551615");
         await Assert.That(end[0].AsString()).IsEqualTo("0");
@@ -200,7 +227,10 @@ public class FakeKeyspaceServerTests
         await client.SetAsync(new string('a', 2000), "v");
         var pattern = "*" + new string('a', 1000) + "b";
         RespireValue[] args = command == "KEYS" ? [pattern] : [0, "MATCH", pattern];
-        var error = await Assert.That(async () => { using var reply = await client.ExecuteAsync(command, args); })
+        var error = await Assert.That(async () =>
+            {
+                using var reply = await client.ExecuteAsync(command, args);
+            })
             .Throws<RespireServerException>();
         await Assert.That(error!.Message).Contains("glob exceeded its work limit");
         using var keys = await client.ExecuteAsync("KEYS", "*");
@@ -226,7 +256,10 @@ public class FakeKeyspaceServerTests
 #pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 1 });
 #pragma warning restore RESP010
-        await Assert.That(async () => { using var reply = await client.ExecuteAsync(command, args.Select(a => (RespireValue)a).ToArray()); })
+        await Assert.That(async () =>
+            {
+                using var reply = await client.ExecuteAsync(command, args.Select(a => (RespireValue)a).ToArray());
+            })
             .Throws<RespireServerException>();
         using var ping = await client.ExecuteAsync("PING");
         await Assert.That(ping.AsString()).IsEqualTo("PONG");
@@ -234,7 +267,11 @@ public class FakeKeyspaceServerTests
 
     private sealed class AdvancingClock : TimeProvider
     {
-        public long Seconds { get; private set; }
+        public long Seconds
+        {
+            get; private set;
+        }
+
         public override DateTimeOffset GetUtcNow() => DateTimeOffset.FromUnixTimeSeconds(++Seconds);
     }
 }

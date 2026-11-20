@@ -27,6 +27,7 @@ public sealed partial class RespireFakeServer
     {
         ArgumentNullException.ThrowIfNull(script);
         ArgumentNullException.ThrowIfNull(handler);
+
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -36,7 +37,11 @@ public sealed partial class RespireFakeServer
 
     private RegisteredScript? FindRegisteredScript(byte[] source, bool sha)
     {
-        if (sha) return _registeredScripts.GetValueOrDefault(Encoding.ASCII.GetString(source));
+        if (sha)
+        {
+            return _registeredScripts.GetValueOrDefault(Encoding.ASCII.GetString(source));
+        }
+
         return _registeredScripts.Values.FirstOrDefault(candidate =>
             source.AsSpan().SequenceEqual(Encoding.UTF8.GetBytes(candidate.Script.Source)));
     }
@@ -44,12 +49,29 @@ public sealed partial class RespireFakeServer
     private FakeReply ExecuteScript(Connection connection, byte[][] args, bool sha)
     {
         var keyCount = Integer(args[2]);
-        if (keyCount < 0) return FakeReply.Error("ERR Number of keys can't be negative");
-        if (keyCount > args.Length - 3) return FakeReply.Error("ERR Number of keys can't be greater than number of args");
+
+        if (keyCount < 0)
+        {
+            return FakeReply.Error("ERR Number of keys can't be negative");
+        }
+
+        if (keyCount > args.Length - 3)
+        {
+            return FakeReply.Error("ERR Number of keys can't be greater than number of args");
+        }
+
         var registered = FindRegisteredScript(args[1], sha);
-        if (registered is null) return BuiltInScript(args, sha);
+
+        if (registered is null)
+        {
+            return BuiltInScript(args, sha);
+        }
+
         if (sha && !_scriptCache.Contains(registered.Script.Sha1))
+        {
             return FakeReply.Error("NOSCRIPT No matching script. Please use EVAL.");
+        }
+
         _scriptCache.Add(registered.Script.Sha1);
         var values = args.Skip(3).Select(value => new RespireValue(value.AsMemory())).ToArray();
         var count = (int)keyCount;
@@ -59,10 +81,15 @@ public sealed partial class RespireFakeServer
         var context = new RespireFakeScriptContext(command =>
         {
             var name = Token(command[0]);
+
             if (ScriptForbiddenCommands.Contains(name))
+            {
                 return FakeReply.Error($"ERR Respire.Testing does not support {name} inside a script handler");
+            }
+
             return Execute(scriptConnection, command);
         });
+
         try
         {
             return registered.Handler(context, System.Array.AsReadOnly(values[..count]),
@@ -78,7 +105,10 @@ public sealed partial class RespireFakeServer
         {
             case "LOAD" when args.Length == 3:
                 var registered = FindRegisteredScript(args[2], sha: false);
-                if (registered is null) return UnsupportedScript();
+                if (registered is null)
+                {
+                    return UnsupportedScript();
+                }
                 _scriptCache.Add(registered.Script.Sha1);
                 return FakeReply.Text(registered.Script.Sha1);
             case "EXISTS" when args.Length >= 3:

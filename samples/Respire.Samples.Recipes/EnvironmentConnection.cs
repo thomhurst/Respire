@@ -17,7 +17,11 @@ public static class EnvironmentConnection
         foreach (var name in new[] { "REDIS_URL", "VALKEY_URL" })
         {
             var value = lookup(name);
-            if (!string.IsNullOrWhiteSpace(value)) return value;
+
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
         }
 
         throw new InvalidOperationException("Set REDIS_URL or VALKEY_URL before starting the application.");

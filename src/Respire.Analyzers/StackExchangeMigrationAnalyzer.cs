@@ -35,28 +35,68 @@ public sealed class StackExchangeMigrationAnalyzer : DiagnosticAnalyzer
     {
         var method = (MethodDeclarationSyntax)context.Node;
         var calls = new List<(InvocationExpressionSyntax Syntax, IInvocationOperation Operation)>();
+
         foreach (var invocation in method.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
             context.CancellationToken.ThrowIfCancellationRequested();
-            if (context.SemanticModel.GetOperation(invocation, context.CancellationToken) is not IInvocationOperation operation) continue;
-            if (MigrationPlan.IsDatabaseSelection(operation)) ReportSelection(context, invocation, operation);
-            else if (MigrationPlan.IsDatabaseCall(operation)) calls.Add((invocation, operation));
+
+            if (context.SemanticModel.GetOperation(invocation, context.CancellationToken) is not IInvocationOperation operation)
+            {
+                continue;
+            }
+
+            if (MigrationPlan.IsDatabaseSelection(operation))
+            {
+                ReportSelection(context, invocation, operation);
+            }
+            else if (MigrationPlan.IsDatabaseCall(operation))
+            {
+                calls.Add((invocation, operation));
+            }
         }
-        if (calls.Count == 0) return;
+
+        if (calls.Count == 0)
+        {
+            return;
+        }
+
         var plan = MigrationPlan.Create(method, context.SemanticModel, context.CancellationToken);
+
         if (plan is not null)
+        {
             context.ReportDiagnostic(Diagnostic.Create(Supported, plan.Calls[0].GetLocation(), method.Identifier.ValueText));
+        }
         else
-            foreach (var call in calls) ReportManual(context, call.Syntax, call.Operation);
+        {
+            foreach (var call in calls)
+            {
+                ReportManual(context, call.Syntax, call.Operation);
+            }
+        }
     }
 
     private static void AnalyzeOutsideMethod(SyntaxNodeAnalysisContext context)
     {
         var invocation = (InvocationExpressionSyntax)context.Node;
-        if (invocation.FirstAncestorOrSelf<MethodDeclarationSyntax>() is not null) return;
-        if (context.SemanticModel.GetOperation(invocation, context.CancellationToken) is not IInvocationOperation operation) return;
-        if (MigrationPlan.IsDatabaseSelection(operation)) ReportSelection(context, invocation, operation);
-        else if (MigrationPlan.IsDatabaseCall(operation)) ReportManual(context, invocation, operation);
+
+        if (invocation.FirstAncestorOrSelf<MethodDeclarationSyntax>() is not null)
+        {
+            return;
+        }
+
+        if (context.SemanticModel.GetOperation(invocation, context.CancellationToken) is not IInvocationOperation operation)
+        {
+            return;
+        }
+
+        if (MigrationPlan.IsDatabaseSelection(operation))
+        {
+            ReportSelection(context, invocation, operation);
+        }
+        else if (MigrationPlan.IsDatabaseCall(operation))
+        {
+            ReportManual(context, invocation, operation);
+        }
     }
 
     private static void ReportSelection(SyntaxNodeAnalysisContext context, InvocationExpressionSyntax invocation, IInvocationOperation operation)

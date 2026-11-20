@@ -20,6 +20,7 @@ public class ReservedWriterTests
     public async Task SerializationLeavesThePreviouslyPublishedCountUnchanged(int leadingLength)
     {
         var buffer = new WriteBuffer(256);
+
         try
         {
             buffer.Append(new byte[leadingLength]);
@@ -83,6 +84,7 @@ public class ReservedWriterTests
         var sizeHint = command.GetWriteSizeHint();
         await Assert.That(sizeHint).IsGreaterThan(0);
         var buffer = new WriteBuffer(sizeHint + 16);
+
         try
         {
             var leadingLength = buffer.Capacity - sizeHint;
@@ -100,11 +102,15 @@ public class ReservedWriterTests
             var position = leadingLength;
             await Assert.That(RespParser.TryParseValue(buffer.WrittenMemory.Span, ref position, out var reply))
                 .IsEqualTo(RespParseStatus.Done);
+
             using (reply)
             {
                 await Assert.That(position).IsEqualTo(buffer.Count);
+
                 if (shape != 0)
+                {
                     await Assert.That(reply.AsArray()[1].AsString()).IsEqualTo("tenant:𐀀-é");
+                }
             }
         }
         finally { buffer.Release(); }
@@ -120,6 +126,7 @@ public class ReservedWriterTests
         var command = new CmdN(Verbs.MGet, arguments);
         var sizeHint = command.GetWriteSizeHint();
         var buffer = new WriteBuffer(sizeHint);
+
         try
         {
             var writer = new RespWriter(buffer, sizeHint);
@@ -128,11 +135,13 @@ public class ReservedWriterTests
             var position = 0;
             await Assert.That(RespParser.TryParseValue(buffer.WrittenMemory.Span, ref position, out var reply))
                 .IsEqualTo(RespParseStatus.Done);
+
             using (reply)
             {
                 await Assert.That(position).IsEqualTo(buffer.Count);
                 await Assert.That(buffer.Count).IsLessThanOrEqualTo(sizeHint);
                 await Assert.That(reply.AsArray().Length).IsEqualTo(arguments.Length + 1);
+
                 for (var index = 0; index < arguments.Length; index++)
                 {
                     var payload = new byte[arguments[index].GetWireLength()];
@@ -154,6 +163,7 @@ public class ReservedWriterTests
         var command = new Cmd2(Verbs.Set, "key", value);
         await Assert.That(command.GetWriteSizeHint()).IsEqualTo(0);
         var buffer = new WriteBuffer(16);
+
         try
         {
             var capacity = buffer.Capacity;
@@ -168,6 +178,7 @@ public class ReservedWriterTests
             var position = capacity - 1;
             await Assert.That(RespParser.TryParseValue(buffer.WrittenMemory.Span, ref position, out var reply))
                 .IsEqualTo(RespParseStatus.Done);
+
             using (reply)
             {
                 await Assert.That(position).IsEqualTo(buffer.Count);
@@ -181,13 +192,20 @@ public class ReservedWriterTests
     public async Task RejectedBoundsLeavePublishedBytesIntact()
     {
         var buffer = new WriteBuffer(16);
+
         try
         {
             buffer.Append("+before\r\n"u8);
             await Assert.That(() => CommandWriteSizeHint.Bulk(int.MaxValue)).ThrowsExactly<OverflowException>();
             await Assert.That(() => CommandWriteSizeHint.For(Verbs.Get, int.MaxValue)).ThrowsExactly<OverflowException>();
-            await Assert.That(() => { _ = new RespWriter(buffer, -1); }).ThrowsExactly<ArgumentOutOfRangeException>();
-            await Assert.That(() => { _ = new RespWriter(buffer, int.MaxValue); }).ThrowsExactly<InvalidOperationException>();
+            await Assert.That(() =>
+            {
+                _ = new RespWriter(buffer, -1);
+            }).ThrowsExactly<ArgumentOutOfRangeException>();
+            await Assert.That(() =>
+            {
+                _ = new RespWriter(buffer, int.MaxValue);
+            }).ThrowsExactly<InvalidOperationException>();
             await Assert.That(buffer.WrittenMemory.ToArray()).IsEquivalentTo("+before\r\n"u8.ToArray());
         }
         finally { buffer.Release(); }
@@ -199,6 +217,7 @@ public class ReservedWriterTests
     {
         var buffer = new WriteBuffer(256);
         var command = new Cmd2(Verbs.Set, "key", "value-é");
+
         try
         {
             for (var index = 0; index < 32; index++)
@@ -206,6 +225,7 @@ public class ReservedWriterTests
                 Measure(buffer, command, false);
                 Measure(buffer, command, true);
             }
+
             var measured = AllocationMeasurement.WithoutConcurrentGc(() => (
                 Actual: Measure(buffer, command, false), Control: Measure(buffer, command, true)));
             await Assert.That(measured.Actual).IsEqualTo(0);
@@ -218,14 +238,20 @@ public class ReservedWriterTests
     private static long Measure(WriteBuffer buffer, Cmd2 command, bool control)
     {
         var start = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
             buffer.Reset();
             var writer = new RespWriter(buffer, command.GetWriteSizeHint());
             command.Write(ref writer);
             writer.Complete();
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - start;
     }
 }

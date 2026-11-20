@@ -23,7 +23,11 @@ public sealed partial class RespireClient
     private static CancellationToken ArmDedicatedAcquisition(
         DedicatedAcquisitionCancellation? source, CommandDeadline deadline, CancellationToken callerToken)
     {
-        if (source is null) return callerToken;
+        if (source is null)
+        {
+            return callerToken;
+        }
+
         source.Arm(deadline);
         return source.Token;
     }
@@ -33,7 +37,10 @@ public sealed partial class RespireClient
         CommandDeadline deadline)
     {
         if (source is null || error is not OperationCanceledException cancelled
-            || cancelled.CancellationToken != source.Token || !source.IsCancellationRequested) return null;
+            || cancelled.CancellationToken != source.Token || !source.IsCancellationRequested)
+        {
+            return null;
+        }
         // A source exists only for a deadline from CreateUploadDeadline, which requires
         // CommandTimeout. The client's options are immutable for this operation.
         return callerToken.IsCancellationRequested
@@ -50,10 +57,13 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         if (observation.IsEmpty)
+        {
             return DispatchResponseSource<RespValue>.Run(
                 (Client: this, Operation: operation, Command: command, Token: cancellationToken, NoRedirect: noRedirect),
                 static (state, owner) => state.Client.SendStreamedUploadCoreAsync(
                     state.Operation, state.Command, state.Token, state.NoRedirect, owner));
+        }
+
         return SendStreamedUploadCoreAsync(operation, command, cancellationToken, noRedirect, observation);
     }
 
@@ -70,6 +80,7 @@ public sealed partial class RespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var cache = core.ClientCache;
         var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+
         try
         {
             if (mutationFence.IsRequired && typeof(TCommand) == typeof(StreamedSetCommand))
@@ -77,7 +88,9 @@ public sealed partial class RespireClient
                 var bound = Unsafe.As<TCommand, StreamedSetCommand>(ref command).WithMutationFence(mutationFence);
                 command = Unsafe.As<StreamedSetCommand, TCommand>(ref bound);
             }
+
             var started = RespireTelemetry.CaptureOperationStart(operation);
+
             if (core.Cluster is { } cluster)
             {
                 return await SendStreamedUploadClusterAsync(
@@ -93,9 +106,11 @@ public sealed partial class RespireClient
             var commandDeadline = CreateUploadDeadline();
             using var acquisitionCancellation = commandDeadline.IsSet
                 ? new DedicatedAcquisitionCancellation(cancellationToken) : null;
+
             try
             {
                 RespValue response;
+
                 for (var attempt = 0; ; attempt++)
                 {
                     var acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
@@ -103,6 +118,7 @@ public sealed partial class RespireClient
                     (pool, connection) = await core.RentDedicatedConnectionAsync(pool, acquisitionToken, observation,
                         kind: DedicatedLeaseKind.Streaming).ConfigureAwait(false);
                     acquisitionCancellation?.Disarm();
+
                     if (!telemetryStarted)
                     {
                         telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
@@ -114,17 +130,25 @@ public sealed partial class RespireClient
                         // Keep one logical span while routing advances to a replacement lease.
                         telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                     }
+
                     try
                     {
                         var route = new DedicatedStreamRoute(core, pool, connection);
+
                         if (core.Circuits is not null)
                         {
                             // A handoff can invalidate the rented lease before admission. Retry
                             // before an open source circuit rejects the replacement's upload.
                             connection.ThrowIfRetired();
-                            if (!route.IsCurrent()) throw new RespireConnectionRetiredException(connection.Host, connection.Port);
+
+                            if (!route.IsCurrent())
+                            {
+                                throw new RespireConnectionRetiredException(connection.Host, connection.Port);
+                            }
                         }
+
                         var admission = core.Circuits is not null ? AcquireCircuit(connection, cancellationToken) : default;
+
                         try
                         {
                             response = await connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
@@ -139,6 +163,7 @@ public sealed partial class RespireClient
                             throw;
                         }
                         finally { admission.Dispose(); }
+
                         break;
                     }
                     catch (RespireConnectionRetiredException error) when (attempt < ClusterRouter.RedirectLimit
@@ -152,8 +177,10 @@ public sealed partial class RespireClient
                         observation.Handled(error);
                     }
                 }
+
                 pool.Return(connection);
                 returned = true;
+
                 if (response.IsError)
                 {
                     var error = ResponseReader.ServerError(in response, operation);
@@ -168,18 +195,33 @@ public sealed partial class RespireClient
             {
                 var timeoutError = TranslateDedicatedAcquisitionCancellation(
                     ex, acquisitionCancellation, cancellationToken, operation, commandDeadline);
+
                 if (!telemetryStarted)
+                {
                     RespireTelemetry.RecordUnroutedFailure(operation, core.Options.Database,
                         started, timeoutError ?? ex, null,
                         endpoint: core.Sentinel is null ? pool?.Endpoint ?? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null);
-                telemetry.Complete(core, operation, null, timeoutError ?? ex, connection);
-                if (connection is not null && !returned)
-                {
-                    if (ex is RespireCircuitOpenException) pool!.Return(connection);
-                    else await pool!.DiscardAsync(connection).ConfigureAwait(false);
                 }
 
-                if (timeoutError is not null) throw timeoutError;
+                telemetry.Complete(core, operation, null, timeoutError ?? ex, connection);
+
+                if (connection is not null && !returned)
+                {
+                    if (ex is RespireCircuitOpenException)
+                    {
+                        pool!.Return(connection);
+                    }
+                    else
+                    {
+                        await pool!.DiscardAsync(connection).ConfigureAwait(false);
+                    }
+                }
+
+                if (timeoutError is not null)
+                {
+                    throw timeoutError;
+                }
+
                 throw;
             }
         }
@@ -217,15 +259,18 @@ public sealed partial class RespireClient
         UploadAskState asking = default;
 
         ClusterRouter.DiscoveryRound? discovery = null;
+
         try
         {
             (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(slot, acquisitionToken, discovery: null, observation: observation)
                 .ConfigureAwait(false);
+
             for (var attempt = 0; ; attempt++)
             {
                 RespireConnection? connection = null;
                 var returned = false;
                 var acquiringRedirectPool = false;
+
                 try
                 {
                     acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
@@ -235,6 +280,7 @@ public sealed partial class RespireClient
                         kind: DedicatedLeaseKind.Streaming).ConfigureAwait(false);
                     acquisitionCancellation?.Disarm();
                     telemetryConnection = connection;
+
                     if (!telemetryStarted)
                     {
                         telemetry = RespireTelemetry.StartOperation(
@@ -253,16 +299,24 @@ public sealed partial class RespireClient
                     RespValue response = default;
                     RespireServerException? serverError = null;
                     CircuitAdmission admission = default;
+
                     try
                     {
                         // ASK validates the target pool against the captured slot generation.
                         var route = new DedicatedStreamRoute(cluster, pool, connection, slot, routeVersion, asking.IsActive);
+
                         if (core.Circuits is not null)
                         {
                             connection.ThrowIfRetired();
-                            if (!route.IsCurrent()) throw new RespireConnectionRetiredException(connection.Host, connection.Port);
+
+                            if (!route.IsCurrent())
+                            {
+                                throw new RespireConnectionRetiredException(connection.Host, connection.Port);
+                            }
+
                             admission = AcquireCircuit(connection, cancellationToken);
                         }
+
                         response = await (asking.IsActive
                             ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken,
                                 operation, commandDeadline, allowStreamingConnectionReroute: false,
@@ -276,11 +330,18 @@ public sealed partial class RespireClient
                     catch (RespireServerException error) { admission.Failed(error, cancellationToken); serverError = error; }
                     catch (Exception error) { admission.Failed(error, cancellationToken); throw; }
                     finally { admission.Dispose(); }
+
                     asking = default;
+
                     if (serverError is not null || response.IsError)
                     {
                         var error = serverError ?? ResponseReader.ServerError(in response, operation);
-                        if (serverError is null) response.Dispose();
+
+                        if (serverError is null)
+                        {
+                            response.Dispose();
+                        }
+
                         if (!noRedirect && attempt < ClusterRouter.RedirectLimit
                             && ClusterRouter.CanRecover(error, slot))
                         {
@@ -301,8 +362,12 @@ public sealed partial class RespireClient
                             (pool, routeVersion, asking) = redirect;
                             // Release the source lease before invoking user-controlled replay reset.
                             // A failed reset rethrows the redirect, which only the source node received.
-                            try { ResetUploadSourceForReplay(in command, error); }
+                            try
+                            {
+                                ResetUploadSourceForReplay(in command, error);
+                            }
                             catch { observation.UseEndpoint(redirectSource); throw; }
+
                             continue;
                         }
 
@@ -317,27 +382,36 @@ public sealed partial class RespireClient
                     telemetry.Complete(core, operation, null, connection: connection);
                     return response;
                 }
-                catch (RespireConnectionRetiredException error)
-                    when (cluster.CanRetryRetirement(attempt, cancellationToken))
+                catch (RespireConnectionRetiredException error) when (cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
                     core.ClientCache?.FlushForContinuityLoss();
+
                     if (connection is not null)
                     {
                         commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
                         cluster.RecordRejection(ref discovery, connection, error);
-                        if (!returned) pool.Return(connection);
+
+                        if (!returned)
+                        {
+                            pool.Return(connection);
+                        }
                     }
+
                     observation.Handled(error);
                     acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
+
                     if (asking.IsActive && cluster.CaptureSlotVersion(slot) == routeVersion)
+                    {
                         pool = await cluster.GetRedirectDedicatedPoolAsync(
                             asking.Redirect!, asking.Source!, acquisitionToken, slot, discovery, observation).ConfigureAwait(false);
+                    }
                     else
                     {
                         asking = default;
                         (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(
                             slot, acquisitionToken, discovery, observation).ConfigureAwait(false);
                     }
+
                     continue;
                 }
                 catch (Exception ex)
@@ -346,13 +420,24 @@ public sealed partial class RespireClient
                         ex, acquisitionCancellation, cancellationToken, operation, commandDeadline);
                     discovery?.RecordCommandFailure(timeoutError ?? ex,
                         acquiringRedirectPool || connection is null, slot, noRedirect);
+
                     if (connection is not null && !returned)
                     {
-                        if (ex is RespireCircuitOpenException) pool.Return(connection);
-                        else await pool.DiscardAsync(connection).ConfigureAwait(false);
+                        if (ex is RespireCircuitOpenException)
+                        {
+                            pool.Return(connection);
+                        }
+                        else
+                        {
+                            await pool.DiscardAsync(connection).ConfigureAwait(false);
+                        }
                     }
 
-                    if (timeoutError is not null) throw timeoutError;
+                    if (timeoutError is not null)
+                    {
+                        throw timeoutError;
+                    }
+
                     throw;
                 }
             }
@@ -362,11 +447,21 @@ public sealed partial class RespireClient
         {
             var timeoutError = TranslateDedicatedAcquisitionCancellation(
                 error, acquisitionCancellation, cancellationToken, operation, commandDeadline);
+
             if (!telemetryStarted)
+            {
                 RespireTelemetry.RecordUnroutedFailure(operation, core.Options.Database, started, timeoutError ?? error);
+            }
             else
+            {
                 telemetry.Complete(core, operation, null, timeoutError ?? error, telemetryConnection);
-            if (timeoutError is not null) throw timeoutError;
+            }
+
+            if (timeoutError is not null)
+            {
+                throw timeoutError;
+            }
+
             throw;
         }
         finally { discovery?.Finish(); }
@@ -383,15 +478,26 @@ public sealed partial class RespireClient
         var pool = await cluster.GetRedirectDedicatedPoolAsync(error, source, cancellationToken, slot, discovery, observation)
             .ConfigureAwait(false);
         // MOVED and READONLY recovery can publish an owner during acquisition.
-        if (!asking) version = cluster.CaptureSlotVersion(slot);
+        if (!asking)
+        {
+            version = cluster.CaptureSlotVersion(slot);
+        }
+
         return new(pool, version, asking ? new UploadAskState(source, error) : default);
     }
 
     private static void ResetUploadSourceForReplay<TCommand>(in TCommand command, RespireServerException error)
         where TCommand : struct, IRespCommand
     {
-        if (command is not IReplayableStreamingRespCommand replayable) return;
-        try { replayable.ResetSourceForReplay(); }
+        if (command is not IReplayableStreamingRespCommand replayable)
+        {
+            return;
+        }
+
+        try
+        {
+            replayable.ResetSourceForReplay();
+        }
         catch (Exception resetError) when (resetError is not OutOfMemoryException
             and not AccessViolationException and not StackOverflowException)
         {

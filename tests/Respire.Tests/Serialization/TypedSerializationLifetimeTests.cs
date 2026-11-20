@@ -41,9 +41,14 @@ public class TypedSerializationLifetimeTests
         var lower = generated ? RespireSystemTextJsonSerializer.FromContext(new TestJsonContext(lowerOptions)) : new RespireSystemTextJsonSerializer(lowerOptions);
         var upper = generated ? RespireSystemTextJsonSerializer.FromContext(new TestJsonContext(upperOptions)) : new RespireSystemTextJsonSerializer(upperOptions);
         // Reflection-backed options remain mutable until first use, as before.
-        if (!generated) lowerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        if (!generated)
+        {
+            lowerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        }
+
         var destination = new ArrayBufferWriter<byte>();
         var payload = new SystemTextJsonSerializerTests.Payload("Ada", 36);
+
         for (var index = 0; index < 3; index++)
         {
             destination.Clear();
@@ -55,6 +60,7 @@ public class TypedSerializationLifetimeTests
             await Assert.That(Encoding.UTF8.GetString(destination.WrittenSpan)).Contains("\"Name\"");
             await Assert.That(upper.Deserialize<SystemTextJsonSerializerTests.Payload>(destination.WrittenSpan)).IsEqualTo(payload);
         }
+
         await Assert.That(() => lowerOptions.WriteIndented = true).ThrowsExactly<InvalidOperationException>();
     }
 
@@ -66,8 +72,12 @@ public class TypedSerializationLifetimeTests
 #pragma warning restore RESP010
         var first = client.Serialize(new TextPayload("first"));
         var expected = first.ToString();
+
         for (var index = 0; index < 32; index++)
+        {
             _ = client.Serialize(new TextPayload(new string('x', 4096)));
+        }
+
         await Assert.That(first.ToString()).IsEqualTo(expected);
     }
 
@@ -80,10 +90,12 @@ public class TypedSerializationLifetimeTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("localhost", 6379)], Serializer = new RespireSystemTextJsonSerializer(options),
+            Endpoints = [new("localhost", 6379)],
+            Serializer = new RespireSystemTextJsonSerializer(options),
         });
 #pragma warning restore RESP010
         converter.Nested = () => client.Serialize(new TypedSerializationAllocationTests.Payload(7)).ToString();
+
         for (var index = 0; index < 3; index++)
         {
             await Assert.That(() => client.Serialize(new Outer(-1))).ThrowsExactly<InvalidOperationException>();
@@ -104,10 +116,17 @@ public class TypedSerializationLifetimeTests
         var serializer = new RespireSystemTextJsonSerializer(options);
         var destination = new FailingDestination();
         Exception? failure = null;
+
         try
         {
-            if (typeBased) serializer.Serialize(destination, typeof(Outer), new Outer(-1));
-            else serializer.Serialize(destination, new Outer(-1));
+            if (typeBased)
+            {
+                serializer.Serialize(destination, typeof(Outer), new Outer(-1));
+            }
+            else
+            {
+                serializer.Serialize(destination, new Outer(-1));
+            }
         }
         catch (Exception exception) { failure = exception; }
 
@@ -126,10 +145,17 @@ public class TypedSerializationLifetimeTests
         var serializer = new RespireSystemTextJsonSerializer();
         var destination = new FailingDestination();
         Exception? failure = null;
+
         try
         {
-            if (typeBased) serializer.Serialize(destination, typeof(int), 42);
-            else serializer.Serialize(destination, 42);
+            if (typeBased)
+            {
+                serializer.Serialize(destination, typeof(int), 42);
+            }
+            else
+            {
+                serializer.Serialize(destination, 42);
+            }
         }
         catch (Exception exception) { failure = exception; }
 
@@ -144,12 +170,15 @@ public class TypedSerializationLifetimeTests
         private readonly ArrayBufferWriter<byte> _buffer = new();
         internal readonly IOException Failure = new("Destination failed.");
         internal int AdvanceCalls;
+
         public void Advance(int count)
         {
             AdvanceCalls++;
             throw Failure;
         }
+
         public Memory<byte> GetMemory(int sizeHint = 0) => _buffer.GetMemory(sizeHint);
+
         public Span<byte> GetSpan(int sizeHint = 0) => _buffer.GetSpan(sizeHint);
     }
 
@@ -158,6 +187,7 @@ public class TypedSerializationLifetimeTests
     private sealed class NestedConverter : JsonConverter<Outer>
     {
         internal Func<string> Nested = null!;
+
         public override Outer? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
             => throw new NotSupportedException();
 
@@ -165,7 +195,12 @@ public class TypedSerializationLifetimeTests
         {
             writer.WriteStartObject();
             writer.WriteNumber("Value", value.Value);
-            if (value.Value < 0) throw new InvalidOperationException("Converter failed after writing a prefix.");
+
+            if (value.Value < 0)
+            {
+                throw new InvalidOperationException("Converter failed after writing a prefix.");
+            }
+
             writer.WritePropertyName("Nested");
             writer.WriteRawValue(Nested());
             writer.WriteEndObject();

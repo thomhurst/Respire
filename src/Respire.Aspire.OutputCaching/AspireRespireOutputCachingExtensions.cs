@@ -1,5 +1,5 @@
-using Respire.Aspire;
 using global::Respire.OutputCaching;
+using Respire.Aspire;
 
 namespace Microsoft.Extensions.Hosting;
 

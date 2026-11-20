@@ -19,7 +19,10 @@ public class ThreadPoolMonitoringBenchmarks
     private TimeSpan _cpuAt;
 
     [Params(false, true)]
-    public bool MonitoringEnabled { get; set; }
+    public bool MonitoringEnabled
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public async Task Setup()
@@ -28,7 +31,8 @@ public class ThreadPoolMonitoringBenchmarks
         var options = new RespireOptions
         {
             Endpoints = { new RespireEndpoint(_redis.Hostname, _redis.GetMappedPublicPort(6379)) },
-            Connections = 1, CommandTimeout = TimeSpan.FromSeconds(5)
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromSeconds(5)
         };
         // The same source runs against a pinned baseline predating this option.
         var monitoring = typeof(RespireOptions).GetProperty("ThreadPoolMonitoring");
@@ -55,7 +59,12 @@ public class ThreadPoolMonitoringBenchmarks
         // These process-wide counters include background threads and BDN warmup/overhead.
         // MemoryDiagnoser remains the operation-level allocation measurement.
         ReportCounters("workload", typeof(RespireOptions).GetProperty("ThreadPoolMonitoring") is not null);
-        if (_client is not null) await _client.DisposeAsync();
+
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+        }
+
         await _redis.DisposeAsync();
         _process.Dispose();
     }
@@ -76,8 +85,13 @@ public class ThreadPoolMonitoringBenchmarks
         var cpuMs = (_process.TotalProcessorTime - _cpuAt).TotalMilliseconds;
         Console.WriteLine("THREAD_POOL_PROCESS_METRICS " + JsonSerializer.Serialize(new
         {
-            phase, MonitoringEnabled, probeSupported, elapsedSeconds = elapsed,
-            cpuMilliseconds = cpuMs, allocatedBytes = bytes, operations = _operations
+            phase,
+            MonitoringEnabled,
+            probeSupported,
+            elapsedSeconds = elapsed,
+            cpuMilliseconds = cpuMs,
+            allocatedBytes = bytes,
+            operations = _operations
         }));
     }
 }

@@ -33,7 +33,11 @@ public class TransactionDeadlineTests
         {
             SuppressReply = command =>
             {
-                if (command == "EXEC") exec.TrySetResult();
+                if (command == "EXEC")
+                {
+                    exec.TrySetResult();
+                }
+
                 return command == "EXEC" || !drainQueueReplies && command is ("MULTI" or "SET k v");
             },
         };
@@ -57,11 +61,13 @@ public class TransactionDeadlineTests
             ? watch.CommitAsync().AsTask() : CommitAsync((RespireTransaction)transaction);
         await exec.Task.WaitAsync(Limit);
         var ring = GetRing(connection);
+
         if (drainQueueReplies)
         {
             // Wait for receive processing, rather than assuming the server write was parsed.
             await WaitUntilAsync(() => ring.Count == 1);
         }
+
         await Assert.That(ring.TryPeek(out var source)).IsTrue();
         await WaitUntilAsync(() => connection.CaptureTimeoutDiagnostics(source.WriteStart, source.WriteEnd).Stage
             == RespireCommandStage.AwaitingReply);
@@ -76,6 +82,7 @@ public class TransactionDeadlineTests
         await Assert.That(error!.CommandName).IsEqualTo("MULTI/EXEC");
         await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.AwaitingReply);
         await Assert.That(pending.Error).IsSameReferenceAs(error);
+
         if (watched)
         {
             await Assert.That(connection.IsConnected).IsFalse(); // Failed WATCH leases must be discarded.
@@ -97,7 +104,16 @@ public class TransactionDeadlineTests
         await using var server = new FakeRespServer
         {
             ReplyOverride = (_, command) => command == "SET k v" ? Queued : FakeRespServer.OkReply,
-            SuppressReply = command => { if (command != "EXEC") return false; exec.TrySetResult(); return true; },
+            SuppressReply = command =>
+            {
+                if (command != "EXEC")
+                {
+                    return false;
+                }
+
+                exec.TrySetResult();
+                return true;
+            },
         };
         await using var client = await ConnectAsync(server.Port, Timeout);
         await using var transaction = client.CreateTransaction();
@@ -123,8 +139,11 @@ public class TransactionDeadlineTests
 #pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseTls = true,
-            CommandTimeout = Timeout, ConnectTimeout = Timeout,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseTls = true,
+            CommandTimeout = Timeout,
+            ConnectTimeout = Timeout,
             Endpoints = [new("127.0.0.1", port)],
         });
 #pragma warning restore RESP010
@@ -149,8 +168,18 @@ public class TransactionDeadlineTests
             ReplyOverride = (_, command) => command == "SET k v" ? Queued : FakeRespServer.OkReply,
             SuppressReply = command =>
             {
-                if (command == "CLIENT SETNAME acquisition-budget") { handshake.TrySetResult(); return true; }
-                if (command == "EXEC") { exec.TrySetResult(); return true; }
+                if (command == "CLIENT SETNAME acquisition-budget")
+                {
+                    handshake.TrySetResult();
+                    return true;
+                }
+
+                if (command == "EXEC")
+                {
+                    exec.TrySetResult();
+                    return true;
+                }
+
                 return false;
             },
         };
@@ -158,8 +187,11 @@ public class TransactionDeadlineTests
 #pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, ClientName = "acquisition-budget",
-            CommandTimeout = Timeout, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ClientName = "acquisition-budget",
+            CommandTimeout = Timeout,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
@@ -193,8 +225,19 @@ public class TransactionDeadlineTests
         {
             SuppressReply = command =>
             {
-                if (command == "MULTI") { inMulti = true; multi.TrySetResult(); return true; }
-                if (command == "EXEC") { exec.TrySetResult(); return true; }
+                if (command == "MULTI")
+                {
+                    inMulti = true;
+                    multi.TrySetResult();
+                    return true;
+                }
+
+                if (command == "EXEC")
+                {
+                    exec.TrySetResult();
+                    return true;
+                }
+
                 return false;
             },
             ReplyOverride = (_, _) => inMulti ? Queued : FakeRespServer.OkReply,
@@ -207,6 +250,7 @@ public class TransactionDeadlineTests
         var commit = transaction.CommitAsync().AsTask();
         var startedBy = Environment.TickCount64;
         await multi.Task.WaitAsync(Limit);
+
         if (!stopAtMulti)
         {
             await WaitUntilAsync(() => Environment.TickCount64 > startedBy);
@@ -214,6 +258,7 @@ public class TransactionDeadlineTests
             await server.SendRawAsync(FakeRespServer.OkReply, connectionId);
             await exec.Task.WaitAsync(Limit);
         }
+
         var connection = session.Connection;
         var ring = GetRing(connection);
         await WaitUntilAsync(() => ring.Count == 1);
@@ -239,7 +284,8 @@ public class TransactionDeadlineTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             // Setup shares this budget; allow AUTH and PREPARE to complete before
             // testing expiry at the held gate, still well below the ten-second safety limit.
             CommandTimeout = cancelCaller ? Timeout : TimeSpan.FromSeconds(2),
@@ -253,8 +299,14 @@ public class TransactionDeadlineTests
         await using var transaction = session.CreateTransaction();
         var pending = transaction.Hashes.Import("k", "schema", "v");
         using var caller = new CancellationTokenSource();
-        if (preCanceled) caller.Cancel();
+
+        if (preCanceled)
+        {
+            caller.Cancel();
+        }
+
         var commit = transaction.CommitAsync(caller.Token).AsTask();
+
         try
         {
             if (cancelCaller)
@@ -271,6 +323,7 @@ public class TransactionDeadlineTests
                 await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.WaitingForCapacity);
                 await Assert.That(pending.Error).IsSameReferenceAs(error);
             }
+
             await Assert.That(server.ReceivedCommands.Contains("MULTI")).IsFalse();
         }
         finally { gate.Dispose(); }
@@ -293,7 +346,8 @@ public class TransactionDeadlineTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Connections = 1, CommandTimeout = timeout,
+            Connections = 1,
+            CommandTimeout = timeout,
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
             Endpoints = [new("127.0.0.1", server.Port)],
         });
@@ -315,20 +369,37 @@ public class TransactionDeadlineTests
         // timer or semaphore cancellation callback can win this failure path.
         var worker = new Thread(() =>
         {
-            try { started.TrySetResult(transaction.CommitAsync(caller.Token).AsTask()); }
+            try
+            {
+                started.TrySetResult(transaction.CommitAsync(caller.Token).AsTask());
+            }
             catch (Exception error) { started.TrySetException(error); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
+
         try
         {
             using (cache.InspectForTests().SharedReadGate.EnterScope())
             {
                 worker.Start();
+
                 if (!SpinWait.SpinUntil(() => (worker.ThreadState & ThreadState.WaitSleepJoin) != 0, Limit))
+                {
                     throw new TimeoutException("Commit did not enter the held cache barrier.");
-                if (cancelCaller) caller.Cancel();
-                else Thread.Sleep(timeout + TimeSpan.FromMilliseconds(20));
+                }
+
+                if (cancelCaller)
+                {
+                    caller.Cancel();
+                }
+                else
+                {
+                    Thread.Sleep(timeout + TimeSpan.FromMilliseconds(20));
+                }
             }
+
             var commit = await started.Task.WaitAsync(Limit);
+
             if (cancelCaller)
             {
                 var error = await Assert.That(async () => await commit.WaitAsync(Limit)).Throws<RespireCommandNotSubmittedException>();
@@ -346,10 +417,19 @@ public class TransactionDeadlineTests
         finally
         {
             readReply.TrySetCanceled();
-            try { (await flight.WaitAsync(Limit)).Dispose(); }
+
+            try
+            {
+                (await flight.WaitAsync(Limit)).Dispose();
+            }
             catch (OperationCanceledException) { }
-            if (!worker.Join(Limit)) throw new TimeoutException("Commit worker did not stop.");
+
+            if (!worker.Join(Limit))
+            {
+                throw new TimeoutException("Commit worker did not stop.");
+            }
         }
+
         await Assert.That(server.ReceivedCommands.Contains("MULTI")).IsFalse();
         await Assert.That(await session.SetAsync("later", "schema", "v")).IsTrue();
     }
@@ -373,29 +453,39 @@ public class TransactionDeadlineTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 2, UseCluster = true, CommandTimeout = Timeout,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 2,
+            UseCluster = true,
+            CommandTimeout = Timeout,
             ReconnectPolicy = withReconnectPolicy ? new() : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var keys = new Dictionary<int, string>();
+
         for (var index = 0; keys.Count < 2 && index < 32; index++)
         {
             var key = "route-" + index;
             await client.GetStringAsync(key);
             keys[server.ReceivedConnectionIds[^1]] = key;
         }
+
         await Assert.That(keys.Count).IsEqualTo(2);
         var held = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (command != "CLUSTER SLOTS") return false;
+            if (command != "CLUSTER SLOTS")
+            {
+                return false;
+            }
+
             held.TrySetResult(server.ReceivedConnectionIds[^1]);
             return true;
         };
         var router = client.Core.Cluster!;
         var refresh = router.GetPrimaryEndpointsAsync(default).AsTask();
         var heldConnection = await held.Task.WaitAsync(Limit);
+
         try
         {
             // A refresh publishes only when complete. Existing connected owners remain
@@ -405,6 +495,7 @@ public class TransactionDeadlineTests
             var normal = await client.AcquireConnectionAsync(slot, default);
             var acquisition = new CommandAcquisitionScope(default,
                 CommandDeadline.After((long)Timeout.TotalMilliseconds), Timeout);
+
             try
             {
                 var timed = await client.AcquireConnectionAsync(slot, ref acquisition, observation: default);
@@ -412,6 +503,7 @@ public class TransactionDeadlineTests
                 await Assert.That(acquisition.HasCancellation).IsFalse();
             }
             finally { acquisition.Dispose(); }
+
             await using var transaction = client.CreateTransaction();
             var pending = transaction.Set(key, "v");
             await transaction.CommitAsync().AsTask().WaitAsync(Limit);
@@ -462,7 +554,9 @@ public class TransactionDeadlineTests
         // result is checked for every commit; the public API's token boundary is checked above.
         Task<(long Timed, long Untimed, long Control)> measurement;
         // Keep the test runner's ambient state outside the synchronous measurement worker.
-        using (ExecutionContext.SuppressFlow()) measurement = Task.Run(() =>
+        using (ExecutionContext.SuppressFlow())
+        {
+            measurement = Task.Run(() =>
         {
             using var completed = new ManualResetEventSlim();
             Action signal = completed.Set;
@@ -474,6 +568,8 @@ public class TransactionDeadlineTests
                 Untimed: MeasureStarts(untimed, body, completed, signal, false),
                 Control: MeasureStarts(timed, body, completed, signal, true)));
         });
+        }
+
         var measured = await measurement;
         Console.WriteLine($"Transaction admission allocations (32 commits): timed={measured.Timed}, untimed={measured.Untimed}, control={measured.Control}.");
         await Assert.That(measured.Timed).IsEqualTo(measured.Untimed);
@@ -485,24 +581,40 @@ public class TransactionDeadlineTests
         ManualResetEventSlim completed, Action signal, bool control)
     {
         long allocated = 0;
+
         for (var i = 0; i < 32; i++)
         {
             completed.Reset();
             var before = GC.GetAllocatedBytesForCurrentThread();
             var commit = connection.SendTransactionAsync(body, commandCount: 1);
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
+
             allocated += GC.GetAllocatedBytesForCurrentThread() - before;
             var awaiter = commit.GetAwaiter();
+
             if (!awaiter.IsCompleted)
             {
                 awaiter.UnsafeOnCompleted(signal);
-                if (!completed.Wait(Limit)) throw new TimeoutException("Commit allocation fixture did not reply.");
+
+                if (!completed.Wait(Limit))
+                {
+                    throw new TimeoutException("Commit allocation fixture did not reply.");
+                }
             }
+
             using var reply = awaiter.GetResult();
             var results = reply.AsArray();
+
             if (results.Length != 1 || results[0].AsString() != "OK")
+            {
                 throw new InvalidOperationException("The measured transaction did not commit SET.");
+            }
         }
+
         return allocated;
     }
 
@@ -520,7 +632,10 @@ public class TransactionDeadlineTests
         IRespireCredentialProvider? credentialProvider = null)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = timeout, UseCluster = cluster,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = timeout,
+            UseCluster = cluster,
             CredentialProvider = credentialProvider,
             Endpoints = [new("127.0.0.1", port)],
         });
@@ -543,6 +658,10 @@ public class TransactionDeadlineTests
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var limit = new CancellationTokenSource(Limit);
-        while (!condition()) await Task.Delay(1, limit.Token);
+
+        while (!condition())
+        {
+            await Task.Delay(1, limit.Token);
+        }
     }
 }

@@ -81,11 +81,18 @@ public sealed record RespireSearchVectorOptions(
     /// Additional algorithm attributes, such as <c>M</c>, <c>EF_CONSTRUCTION</c>, or <c>INITIAL_CAP</c>.
     /// Names and values are sent as given and counted automatically.
     /// </summary>
-    public IReadOnlyDictionary<string, string> Attributes { get; init; } = RespireSearchEmpty.Strings;
+    public IReadOnlyDictionary<string, string> Attributes
+    {
+        get; init;
+    } = RespireSearchEmpty.Strings;
 
     internal void AddArguments(List<RespireValue> args)
     {
-        if (Dimensions <= 0) throw new ArgumentOutOfRangeException(nameof(Dimensions));
+        if (Dimensions <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(Dimensions));
+        }
+
         ArgumentNullException.ThrowIfNull(Attributes);
         args.Add(Algorithm switch
         {
@@ -115,6 +122,7 @@ public sealed record RespireSearchVectorOptions(
             RespireSearchDistanceMetric.Cosine => "COSINE",
             _ => throw new ArgumentOutOfRangeException(nameof(DistanceMetric)),
         });
+
         foreach (var attribute in Attributes)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(attribute.Key);
@@ -138,28 +146,47 @@ public sealed record RespireSearchVectorOptions(
 public sealed record RespireSearchField(string Identifier, RespireSearchFieldType Type, string? Alias = null, bool Sortable = false, bool NoIndex = false, IReadOnlyList<string>? Options = null)
 {
     /// <summary>Typed vector schema. Only valid for <see cref="RespireSearchFieldType.Vector"/> fields.</summary>
-    public RespireSearchVectorOptions? Vector { get; init; }
+    public RespireSearchVectorOptions? Vector
+    {
+        get; init;
+    }
 
     /// <summary>Text field weight (<c>WEIGHT</c>). Only valid for text fields.</summary>
-    public double? Weight { get; init; }
+    public double? Weight
+    {
+        get; init;
+    }
 
     /// <summary>Disables stemming (<c>NOSTEM</c>). Only valid for text fields.</summary>
-    public bool NoStem { get; init; }
+    public bool NoStem
+    {
+        get; init;
+    }
 
     /// <summary>Double-metaphone matching language. Only valid for text fields.</summary>
-    public RespireSearchPhoneticMatcher? Phonetic { get; init; }
+    public RespireSearchPhoneticMatcher? Phonetic
+    {
+        get; init;
+    }
 
     /// <summary>Tag separator character (<c>SEPARATOR</c>). Only valid for tag fields.</summary>
-    public char? Separator { get; init; }
+    public char? Separator
+    {
+        get; init;
+    }
 
     /// <summary>Keeps tag case (<c>CASESENSITIVE</c>). Only valid for tag fields.</summary>
-    public bool CaseSensitive { get; init; }
+    public bool CaseSensitive
+    {
+        get; init;
+    }
 
     internal void AddArguments(List<RespireValue> args)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(Identifier);
         Validate();
         args.Add(Identifier);
+
         if (!string.IsNullOrWhiteSpace(Alias))
         {
             args.Add("AS");
@@ -179,13 +206,18 @@ public sealed record RespireSearchField(string Identifier, RespireSearchFieldTyp
 
         // Vector algorithm arguments must directly follow the VECTOR type token.
         Vector?.AddArguments(args);
+
         if (Weight is { } weight)
         {
             args.Add("WEIGHT");
             args.Add(weight.ToString("R", CultureInfo.InvariantCulture));
         }
 
-        if (NoStem) args.Add("NOSTEM");
+        if (NoStem)
+        {
+            args.Add("NOSTEM");
+        }
+
         if (Phonetic is { } phonetic)
         {
             args.Add("PHONETIC");
@@ -198,13 +230,18 @@ public sealed record RespireSearchField(string Identifier, RespireSearchFieldTyp
                 _ => throw new ArgumentOutOfRangeException(nameof(Phonetic)),
             });
         }
+
         if (Separator is { } separator)
         {
             args.Add("SEPARATOR");
             args.Add(separator.ToString());
         }
 
-        if (CaseSensitive) args.Add("CASESENSITIVE");
+        if (CaseSensitive)
+        {
+            args.Add("CASESENSITIVE");
+        }
+
         if (Options is not null)
         {
             foreach (var option in Options)
@@ -214,22 +251,38 @@ public sealed record RespireSearchField(string Identifier, RespireSearchFieldTyp
             }
         }
 
-        if (Sortable) args.Add("SORTABLE");
-        if (NoIndex) args.Add("NOINDEX");
+        if (Sortable)
+        {
+            args.Add("SORTABLE");
+        }
+
+        if (NoIndex)
+        {
+            args.Add("NOINDEX");
+        }
     }
 
     private void Validate()
     {
         var isVector = Type == RespireSearchFieldType.Vector;
         var hasRawOptions = Options is { Count: > 0 };
+
         if (isVector)
         {
             if (Vector is null && !hasRawOptions)
+            {
                 throw new ArgumentException("Vector fields require Vector options or raw algorithm Options.", nameof(Vector));
+            }
+
             if (Vector is not null && hasRawOptions)
+            {
                 throw new ArgumentException("Use either typed Vector options or raw Options for a vector field, not both.", nameof(Options));
+            }
+
             if (Sortable || NoIndex)
+            {
                 throw new ArgumentException("Vector fields cannot be SORTABLE or NOINDEX.", nameof(Sortable));
+            }
         }
         else if (Vector is not null)
         {
@@ -237,11 +290,19 @@ public sealed record RespireSearchField(string Identifier, RespireSearchFieldTyp
         }
 
         if (Type != RespireSearchFieldType.Text && (Weight is not null || NoStem || Phonetic is not null))
+        {
             throw new ArgumentException("WEIGHT, NOSTEM, and PHONETIC are only valid for text fields.", nameof(Type));
+        }
+
         if (Weight is { } weight && (double.IsNaN(weight) || double.IsInfinity(weight) || weight < 0))
+        {
             throw new ArgumentOutOfRangeException(nameof(Weight), weight, "Weight must be a finite, non-negative number.");
+        }
+
         if (Type != RespireSearchFieldType.Tag && (Separator is not null || CaseSensitive))
+        {
             throw new ArgumentException("SEPARATOR and CASESENSITIVE are only valid for tag fields.", nameof(Separator));
+        }
     }
 }
 
@@ -262,41 +323,80 @@ public enum RespireSearchPhoneticMatcher
 public sealed record RespireSearchIndexDefinition
 {
     /// <summary>Source type. Defaults to HASH.</summary>
-    public RespireSearchSource Source { get; init; } = RespireSearchSource.Hash;
+    public RespireSearchSource Source
+    {
+        get; init;
+    } = RespireSearchSource.Hash;
 
     /// <summary>Prefixes included in index.</summary>
-    public IReadOnlyList<string> Prefixes { get; init; } = [];
+    public IReadOnlyList<string> Prefixes
+    {
+        get; init;
+    } = [];
 
     /// <summary>Fields indexed by this definition.</summary>
-    public IReadOnlyList<RespireSearchField> Fields { get; init; } = [];
+    public IReadOnlyList<RespireSearchField> Fields
+    {
+        get; init;
+    } = [];
 
     /// <summary>Custom stopwords. Null uses server defaults; an empty list disables stopwords.</summary>
-    public IReadOnlyList<string>? StopWords { get; init; }
+    public IReadOnlyList<string>? StopWords
+    {
+        get; init;
+    }
 
     /// <summary>Default stemming language.</summary>
-    public string? Language { get; init; }
+    public string? Language
+    {
+        get; init;
+    }
 
     /// <summary>Document field containing its stemming language.</summary>
-    public string? LanguageField { get; init; }
+    public string? LanguageField
+    {
+        get; init;
+    }
 
     /// <summary>Default document score between zero and one, inclusive.</summary>
-    public double? Score { get; init; }
+    public double? Score
+    {
+        get; init;
+    }
 
     /// <summary>Temporary index idle lifetime in whole seconds. Expiry also deletes indexed documents.</summary>
-    public int? TemporarySeconds { get; init; }
+    public int? TemporarySeconds
+    {
+        get; init;
+    }
 
     /// <summary>Does not scan existing documents during index creation.</summary>
-    public bool SkipInitialScan { get; init; }
+    public bool SkipInitialScan
+    {
+        get; init;
+    }
 
     /// <summary>Builds a complete FT.CREATE argument list.</summary>
     internal RespireValue[] ToArguments()
     {
         ArgumentNullException.ThrowIfNull(Prefixes);
         ArgumentNullException.ThrowIfNull(Fields);
-        if (Fields.Count == 0) throw new ArgumentException("At least one schema field is required.", nameof(Fields));
+
+        if (Fields.Count == 0)
+        {
+            throw new ArgumentException("At least one schema field is required.", nameof(Fields));
+        }
+
         if (Score is { } score && (!double.IsFinite(score) || score < 0 || score > 1))
+        {
             throw new ArgumentOutOfRangeException(nameof(Score));
-        if (TemporarySeconds is <= 0) throw new ArgumentOutOfRangeException(nameof(TemporarySeconds));
+        }
+
+        if (TemporarySeconds is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(TemporarySeconds));
+        }
+
         var source = Source switch
         {
             RespireSearchSource.Hash => "HASH",
@@ -304,10 +404,12 @@ public sealed record RespireSearchIndexDefinition
             _ => throw new ArgumentOutOfRangeException(nameof(Source)),
         };
         var args = new List<RespireValue> { "ON", source };
+
         if (Prefixes.Count > 0)
         {
             args.Add("PREFIX");
             args.Add(Prefixes.Count);
+
             foreach (var prefix in Prefixes)
             {
                 ArgumentException.ThrowIfNullOrWhiteSpace(prefix);
@@ -317,28 +419,38 @@ public sealed record RespireSearchIndexDefinition
 
         RespireSearchOptionArguments.AddText(args, "LANGUAGE", Language);
         RespireSearchOptionArguments.AddText(args, "LANGUAGE_FIELD", LanguageField);
+
         if (Score is { } defaultScore)
         {
             args.Add("SCORE");
             args.Add(defaultScore.ToString("R", CultureInfo.InvariantCulture));
         }
+
         if (TemporarySeconds is { } seconds)
         {
             args.Add("TEMPORARY");
             args.Add(seconds);
         }
-        if (SkipInitialScan) args.Add("SKIPINITIALSCAN");
+
+        if (SkipInitialScan)
+        {
+            args.Add("SKIPINITIALSCAN");
+        }
+
         if (StopWords is not null)
         {
             args.Add("STOPWORDS");
             args.Add(StopWords.Count);
+
             foreach (var word in StopWords)
             {
                 ArgumentException.ThrowIfNullOrWhiteSpace(word, nameof(StopWords));
                 args.Add(word);
             }
         }
+
         args.Add("SCHEMA");
+
         foreach (var field in Fields)
         {
             ArgumentNullException.ThrowIfNull(field);

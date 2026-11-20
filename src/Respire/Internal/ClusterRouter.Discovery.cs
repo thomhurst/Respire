@@ -16,6 +16,7 @@ internal sealed partial class ClusterRouter
     private static long _nextDiscoveryEpisode;
     private readonly TimeProvider _discoveryClock;
     private readonly SharedRefreshCoordinator _sharedRefreshCoordinator;
+
     internal SharedRefreshCoordinator SharedRefreshCoordinator => _sharedRefreshCoordinator;
     // A redirect-driven refresh reuses a refresh that succeeded within the same window as the
     // MOVED debounce: both express "do not repeat discovery for one burst of redirects".
@@ -28,6 +29,7 @@ internal sealed partial class ClusterRouter
     private readonly Lock _topologyRefreshWorkerGate = new();
     private Task? _topologyRefreshWorker;
     private int _topologyRefreshStarted;
+
     /// <summary>A READONLY caller's view of the shared flight it started or joined.</summary>
     /// <param name="Flight">The flight to await through <see cref="AwaitSharedRefreshAsync"/>.</param>
     /// <param name="NeedsOwnSlotRecovery">True when the flight was started by someone else for a
@@ -41,18 +43,24 @@ internal sealed partial class ClusterRouter
             new RespireEndpoint(source.Host, source.Port), () =>
             {
                 var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
-                try { return (cancellation, discovery?.Hold()); }
+
+                try
+                {
+                    return (cancellation, discovery?.Hold());
+                }
                 catch
                 {
                     cancellation.Dispose();
                     throw;
                 }
             });
+
         if (join.Started)
         {
             _ = CompleteSharedRefreshAsync(join.Flight, () => RunReadOnlyRefreshAsync(
                 rejection, source, slot, join.Flight.Cancellation!.Token, discovery));
         }
+
         return new ReadOnlyRefreshJoin(join.Flight, join.NeedsOwnSlotRecovery);
     }
 
@@ -60,6 +68,7 @@ internal sealed partial class ClusterRouter
         SharedRefreshCoordinator.RefreshFlight flight, CancellationToken waiterToken, DiscoveryRound? discovery)
     {
         var canceled = false;
+
         try
         {
             return waiterToken.CanBeCanceled
@@ -74,9 +83,13 @@ internal sealed partial class ClusterRouter
         finally
         {
             var cancellation = _sharedRefreshCoordinator.ReleaseWaiter(flight);
+
             try
             {
-                if (cancellation is not null) await cancellation.CancelAsync().ConfigureAwait(false);
+                if (cancellation is not null)
+                {
+                    await cancellation.CancelAsync().ConfigureAwait(false);
+                }
             }
             catch (ObjectDisposedException) { }
             finally
@@ -84,7 +97,9 @@ internal sealed partial class ClusterRouter
                 // The flight owns this discovery round while its cancellation unwinds, even when this
                 // was the last waiter. Release the caller's flight state even if a callback failed.
                 if (canceled && flight.Kind == SharedRefreshCoordinator.RefreshFlightKind.ReadOnly)
+                {
                     discovery?.LeftSharedReadOnlyFlight();
+                }
             }
         }
     }
@@ -93,7 +108,11 @@ internal sealed partial class ClusterRouter
     {
         var result = false;
         Exception? failure = null;
-        try { result = await work().ConfigureAwait(false); }
+
+        try
+        {
+            result = await work().ConfigureAwait(false);
+        }
         catch (Exception error) { failure = error; }
 
         _sharedRefreshCoordinator.Complete(flight, result, failure);
@@ -104,23 +123,36 @@ internal sealed partial class ClusterRouter
         DiscoveryRound? discovery)
     {
         using var scope = BeginDiscovery(discovery);
+
         try
         {
             if (scope.Round is { HasPendingFailure: false } round)
+            {
                 round.Failed(new RespireEndpoint(source.Host, source.Port), rejection);
+            }
+
             _ = await RefreshReadOnlyOwnerCoreAsync(rejection, source, slot, cancellationToken, scope.Round)
                 .ConfigureAwait(false);
             return true;
         }
         catch (Exception error)
         {
-            if (scope.Round is { } round) round.TerminalError = error;
-            if (error is RespireConfigurationException) throw;
+            if (scope.Round is { } round)
+            {
+                round.TerminalError = error;
+            }
+
+            if (error is RespireConfigurationException)
+            {
+                throw;
+            }
+
             if (error is OperationCanceledException or RespireException or IOException)
             {
                 _logger.TryLog(error, static (logger, error) => logger.ClusterReadonlyRecoveryFailed(error));
                 return false;
             }
+
             throw;
         }
     }
@@ -131,9 +163,15 @@ internal sealed partial class ClusterRouter
         while (true)
         {
             if (!_sharedRefreshCoordinator.JoinTopology(allowRecentSuccessfulResult, out var flight, out var started))
+            {
                 return TopologyRefreshOutcome.ReusedRecent;
+            }
 
-            if (started) _ = CompleteSharedRefreshAsync(flight, RunTopologyRefreshAsync);
+            if (started)
+            {
+                _ = CompleteSharedRefreshAsync(flight, RunTopologyRefreshAsync);
+            }
+
             if (flight.Kind == SharedRefreshCoordinator.RefreshFlightKind.Topology)
             {
                 return await AwaitSharedRefreshAsync(flight, waiterToken, discovery: null).ConfigureAwait(false)
@@ -144,11 +182,15 @@ internal sealed partial class ClusterRouter
             // A READONLY flight only repairs its initiating slot. Its outcome does not answer this
             // request, so wait for it to unpublish itself and then run a full refresh. This waiter
             // also keeps the flight from being cancelled while it is the only one left.
-            try { _ = await AwaitSharedRefreshAsync(flight, waiterToken, discovery: null).ConfigureAwait(false); }
+            try
+            {
+                _ = await AwaitSharedRefreshAsync(flight, waiterToken, discovery: null).ConfigureAwait(false);
+            }
             catch (Exception error) when (!waiterToken.IsCancellationRequested)
             {
                 _logger.TryLog(error, static (logger, error) => logger.ClusterReadonlyRecoveryBeforeRefreshFailed(error));
             }
+
             allowRecentSuccessfulResult = false;
         }
     }
@@ -164,6 +206,7 @@ internal sealed partial class ClusterRouter
     private async Task<bool> RunTopologyRefreshAsync()
     {
         using var scope = BeginDiscovery(null);
+
         try
         {
             var round = scope.Round;
@@ -176,6 +219,7 @@ internal sealed partial class ClusterRouter
             var appliedPartialTopology = false;
             using var deadline = new CancellationTokenSource(MaximumTopologyRefreshDeadline, clock);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _stopDiscovery.Token);
+
             for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
             {
                 linked.Token.ThrowIfCancellationRequested();
@@ -185,18 +229,34 @@ internal sealed partial class ClusterRouter
                     candidates.Count - candidateIndex, configuredCandidateTimeout);
                 // Backoff may use at most an even share, so later candidates keep their time.
                 if (round is not null)
+                {
                     await round.BeforeCandidateAsync(candidate.Endpoint, linked.Token, budget.EvenShare).ConfigureAwait(false);
+                }
                 // Measure the I/O timeout after any backoff so the wait cannot consume it.
                 budget = GetTopologyCandidateBudget(
                     MaximumTopologyRefreshDeadline - clock.GetElapsedTime(refreshStarted),
                     candidates.Count - candidateIndex, configuredCandidateTimeout);
-                if (budget.Timeout <= TimeSpan.Zero) break;
+
+                if (budget.Timeout <= TimeSpan.Zero)
+                {
+                    break;
+                }
+
                 var node = candidate.Node;
+
                 if (node is null || node.IsRetired)
+                {
                     node = GetOrCreateNode(candidate.Endpoint, observe: false);
-                if (node.IsRetired) continue;
+                }
+
+                if (node.IsRetired)
+                {
+                    continue;
+                }
+
                 using var candidateDeadline = new CancellationTokenSource(budget.Timeout, clock);
                 using var candidateToken = CancellationTokenSource.CreateLinkedTokenSource(linked.Token, candidateDeadline.Token);
+
                 try
                 {
                     await EnsureRouteNodeConnectedAsync(node, candidateToken.Token, discovery: null, admitCircuit: false).ConfigureAwait(false);
@@ -205,13 +265,20 @@ internal sealed partial class ClusterRouter
                     var load = await TryLoadSlotsAsync(node, candidateToken.Token, keepUncoveredOwners: true,
                         expectedTopologyVersion: refreshTopologyVersion, snapshotBatch: snapshotBatch)
                         .ConfigureAwait(false);
+
                     if (load.Loaded)
                     {
                         SetSeed(node);
-                        if (load.CoversAllSlots) return true;
+
+                        if (load.CoversAllSlots)
+                        {
+                            return true;
+                        }
+
                         appliedPartialTopology = true;
                         continue;
                     }
+
                     round?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a topology.") { Endpoint = node.ActiveConnectionEndpoint });
                 }
                 catch (OperationCanceledException) when (candidateDeadline.IsCancellationRequested && !linked.IsCancellationRequested)
@@ -223,7 +290,12 @@ internal sealed partial class ClusterRouter
                     round?.FailedNode(node, error);
                 }
             }
-            if (appliedPartialTopology) return true;
+
+            if (appliedPartialTopology)
+            {
+                return true;
+            }
+
             scope.SetTerminalError(new RespireConnectionException("Redis Cluster topology refresh found no topology."));
             _logger.TryLog(candidates.Count, static (logger, count) => logger.ClusterTopologyCandidatesFailed(count));
             return false;
@@ -243,7 +315,11 @@ internal sealed partial class ClusterRouter
     internal static (TimeSpan EvenShare, TimeSpan Timeout) GetTopologyCandidateBudget(
         TimeSpan timeLeft, int candidatesLeft, TimeSpan configuredCandidateTimeout)
     {
-        if (timeLeft <= TimeSpan.Zero) return (TimeSpan.Zero, TimeSpan.Zero);
+        if (timeLeft <= TimeSpan.Zero)
+        {
+            return (TimeSpan.Zero, TimeSpan.Zero);
+        }
+
         var evenShare = TimeSpan.FromTicks(timeLeft.Ticks / Math.Max(1, candidatesLeft));
         var floor = configuredCandidateTimeout < MinimumTopologyCandidateTimeout
             ? configuredCandidateTimeout
@@ -258,6 +334,7 @@ internal sealed partial class ClusterRouter
         var candidates = new List<TopologyRefreshCandidate>();
         var seenNodes = new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);
         var seenEndpoints = new HashSet<RespireEndpoint>(RespireEndpointComparer.Instance);
+
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -266,9 +343,13 @@ internal sealed partial class ClusterRouter
             foreach (var endpoint in _seeds)
             {
                 var seed = _identities.GetOrCreate(endpoint);
+
                 if (seenNodes.Add(seed) && seenEndpoints.Add(endpoint))
+                {
                     candidates.Add(new TopologyRefreshCandidate(seed, endpoint, IsConfiguredSeed: true));
+                }
             }
+
             foreach (var master in _masters)
             {
                 if (!master.IsRetired && seenNodes.Add(master))
@@ -286,15 +367,25 @@ internal sealed partial class ClusterRouter
             {
                 foreach (var endpoint in replica.Aliases.Prepend(replica.Endpoint))
                 {
-                    if (!seenEndpoints.Add(endpoint)) continue;
+                    if (!seenEndpoints.Add(endpoint))
+                    {
+                        continue;
+                    }
+
                     var existing = _identities.TryGet(endpoint);
+
                     if (existing is null)
+                    {
                         candidates.Add(new TopologyRefreshCandidate(null, endpoint, IsConfiguredSeed: false));
+                    }
                     else if (!existing.IsRetired && seenNodes.Add(existing))
+                    {
                         candidates.Add(new TopologyRefreshCandidate(existing, endpoint, IsConfiguredSeed: false));
+                    }
                 }
             }
         }
+
         return candidates;
     }
 
@@ -314,22 +405,45 @@ internal sealed partial class ClusterRouter
         var connected = new List<TopologyRefreshCandidate>();
         var disconnectedSeeds = new List<TopologyRefreshCandidate>();
         var disconnected = new List<TopologyRefreshCandidate>();
+
         foreach (var candidate in candidates)
         {
-            if (candidate.IsConnected) connected.Add(candidate);
-            else if (candidate.IsConfiguredSeed) disconnectedSeeds.Add(candidate);
-            else disconnected.Add(candidate);
+            if (candidate.IsConnected)
+            {
+                connected.Add(candidate);
+            }
+            else if (candidate.IsConfiguredSeed)
+            {
+                disconnectedSeeds.Add(candidate);
+            }
+            else
+            {
+                disconnected.Add(candidate);
+            }
         }
 
         var ordered = new List<TopologyRefreshCandidate>(candidates.Count);
         var start = connected.Count == 0 ? 0 : random.Next(connected.Count);
-        if (connected.Count > 0) ordered.Add(connected[start]);
+
+        if (connected.Count > 0)
+        {
+            ordered.Add(connected[start]);
+        }
+
         ordered.AddRange(disconnectedSeeds);
+
         for (var offset = 1; offset < connected.Count; offset++)
+        {
             ordered.Add(connected[(start + offset) % connected.Count]);
+        }
+
         var fallbackStart = disconnected.Count == 0 ? 0 : random.Next(disconnected.Count);
+
         for (var offset = 0; offset < disconnected.Count; offset++)
+        {
             ordered.Add(disconnected[(fallbackStart + offset) % disconnected.Count]);
+        }
+
         return ordered;
     }
 
@@ -337,10 +451,18 @@ internal sealed partial class ClusterRouter
     // seed there. Create stays lazy. The volatile check keeps later calls lock-free.
     private void StartTopologyRefreshWorker()
     {
-        if (Volatile.Read(ref _topologyRefreshStarted) != 0 || _stopDiscovery.IsCancellationRequested) return;
+        if (Volatile.Read(ref _topologyRefreshStarted) != 0 || _stopDiscovery.IsCancellationRequested)
+        {
+            return;
+        }
+
         lock (_topologyRefreshWorkerGate)
         {
-            if (_topologyRefreshStarted != 0 || _stopDiscovery.IsCancellationRequested) return;
+            if (_topologyRefreshStarted != 0 || _stopDiscovery.IsCancellationRequested)
+            {
+                return;
+            }
+
             _topologyRefreshStarted = 1;
             Volatile.Write(ref _topologyRefreshWorker, Task.Run(() => _topologyRefresh.RunAsync(
                 (allowRecentResult, stop) => RefreshTopologySharedAsync(stop, allowRecentResult),
@@ -351,7 +473,11 @@ internal sealed partial class ClusterRouter
     /// <summary>Requests a full topology refresh. A forced request bypasses the recent-success window.</summary>
     internal void SignalTopologyRefresh(bool force = false)
     {
-        if (Volatile.Read(ref _disposed) != 0) return;
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
         _topologyRefresh.Request(TimeSpan.Zero, force);
     }
 
@@ -359,14 +485,22 @@ internal sealed partial class ClusterRouter
     /// first deadline, so a stream of redirects cannot postpone discovery.</summary>
     internal void SignalMovedTopologyRefresh()
     {
-        if (Volatile.Read(ref _disposed) != 0) return;
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
         _topologyRefresh.Request(ClusterTopologyRefreshScheduler.MovedDebounce);
     }
 
     /// <summary>Requests a forced refresh after a primary disconnect, at most once per spacing window.</summary>
     internal void SignalPrimaryDisconnectRefresh()
     {
-        if (Volatile.Read(ref _disposed) != 0) return;
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
         _topologyRefresh.RequestPrimaryDisconnect();
     }
 
@@ -381,14 +515,22 @@ internal sealed partial class ClusterRouter
     private readonly struct DiscoveryScope(DiscoveryRound? round, bool ownsRound) : IDisposable
     {
         internal DiscoveryRound? Round => round;
+
         // An owning scope reports only discovery failures, not subsequent application errors.
         internal void SetTerminalError(Exception error)
         {
-            if (ownsRound && round is not null) round.TerminalError = error;
+            if (ownsRound && round is not null)
+            {
+                round.TerminalError = error;
+            }
         }
+
         public void Dispose()
         {
-            if (ownsRound) round?.Finish();
+            if (ownsRound)
+            {
+                round?.Finish();
+            }
         }
     }
 
@@ -399,7 +541,11 @@ internal sealed partial class ClusterRouter
 
     internal void RecordRejection(ref DiscoveryRound? round, RespireEndpoint endpoint, Exception error)
     {
-        if (_options.ReconnectPolicy is not { } policy) return;
+        if (_options.ReconnectPolicy is not { } policy)
+        {
+            return;
+        }
+
         round ??= new DiscoveryRound(this, policy);
         round.Rejected(endpoint, error);
     }
@@ -418,7 +564,14 @@ internal sealed partial class ClusterRouter
     internal sealed class DiscoveryRound(ClusterRouter owner, RespireReconnectPolicy policy)
     {
         private readonly Lock _lifecycleGate = new();
-        private enum Lifecycle { Idle, InTransition, FinishPending, Done }
+
+        private enum Lifecycle
+        {
+            Idle,
+            InTransition,
+            FinishPending,
+            Done
+        }
         private Lifecycle _lifecycle;
         private int _sharedHolds;
         private bool _finishRequested;
@@ -428,29 +581,44 @@ internal sealed partial class ClusterRouter
             lock (_lifecycleGate)
             {
                 if (_lifecycle is Lifecycle.FinishPending or Lifecycle.Done || _finishRequested)
+                {
                     throw new DiscoveryRoundUsageException();
+                }
+
                 _sharedHolds++;
             }
+
             return new DiscoveryRoundHold(this);
         }
 
         private sealed class DiscoveryRoundHold(DiscoveryRound round) : IDisposable
         {
             private DiscoveryRound? _round = round;
+
             public void Dispose() => Interlocked.Exchange(ref _round, null)?.ReleaseHold();
         }
 
         private void ReleaseHold()
         {
             bool finish;
+
             lock (_lifecycleGate)
             {
-                if (_sharedHolds == 0) return;
+                if (_sharedHolds == 0)
+                {
+                    return;
+                }
+
                 _sharedHolds--;
                 finish = _sharedHolds == 0 && _finishRequested;
             }
-            if (finish) Finish();
+
+            if (finish)
+            {
+                Finish();
+            }
         }
+
         private void Enter(Exception? originalError = null)
         {
             lock (_lifecycleGate)
@@ -459,12 +627,18 @@ internal sealed partial class ClusterRouter
                 {
                     // Error bookkeeping must not replace the failure it is already unwinding.
                     // Reject the mutation without changing shared state or losing the original stack.
-                    if (originalError is not null) ExceptionDispatchInfo.Capture(originalError).Throw();
+                    if (originalError is not null)
+                    {
+                        ExceptionDispatchInfo.Capture(originalError).Throw();
+                    }
+
                     throw new DiscoveryRoundUsageException();
                 }
+
                 _lifecycle = Lifecycle.InTransition;
             }
         }
+
         private void Exit()
         {
             lock (_lifecycleGate)
@@ -474,8 +648,10 @@ internal sealed partial class ClusterRouter
                     _lifecycle = Lifecycle.Idle;
                     return;
                 }
+
                 _lifecycle = Lifecycle.Done;
             }
+
             CompleteFinish();
         }
 
@@ -485,13 +661,19 @@ internal sealed partial class ClusterRouter
         private Exception? _previousFailures;
         private bool _failureIsRedirect;
         private HashSet<RespireConnectionMultiplexer>? _rejectedNodes;
+
         internal bool HasRejected(RespireConnectionMultiplexer node) => _rejectedNodes?.Contains(node) == true;
+
         internal void FailedNode(RespireConnectionMultiplexer node, Exception error)
             => Failed(Endpoint(node), error, node);
         private RespireEndpoint _endpoint;
         private int _attempts;
         private long _episode;
-        internal RespireReconnectLimitException? Exhaustion { get; private set; }
+
+        internal RespireReconnectLimitException? Exhaustion
+        {
+            get; private set;
+        }
         private Exception? _terminalError;
         // Set when this round's caller was cancelled while a shared READONLY flight it had joined
         // still owned the round, including while the last-waiter cancellation unwinds.
@@ -499,18 +681,26 @@ internal sealed partial class ClusterRouter
         // by RecordCommandFailure, and both run in the round owner's own sequential async flow (the
         // await between them publishes the write). The shared flight itself never touches it.
         private bool _leftSharedReadOnlyFlight;
+
         internal void LeftSharedReadOnlyFlight() => _leftSharedReadOnlyFlight = true;
+
         internal Exception? TerminalError
         {
             get => _terminalError;
             set
             {
                 Enter(value);
-                try { _terminalError = value; }
+
+                try
+                {
+                    _terminalError = value;
+                }
                 finally { Exit(); }
             }
         }
+
         internal bool HasPendingFailure => _failure is not null;
+
         internal Exception? PendingFailure => _failure;
 
         private bool IsCancellationOwnedBySharedFlight(Exception error, CancellationToken callerToken)
@@ -520,17 +710,26 @@ internal sealed partial class ClusterRouter
         {
             // A canceled waiter does not own the result of a shared recovery flight. The
             // flight records its own terminal outcome when its work completes.
-            if (IsCancellationOwnedBySharedFlight(error, callerToken)) return;
+            if (IsCancellationOwnedBySharedFlight(error, callerToken))
+            {
+                return;
+            }
             // Retirement rejects a command before admission, including when the command's
             // redirect cap prevents another retry. Application errors after admission do not
             // change the outcome of an otherwise successful discovery episode.
-            if (discoveryPending || error is RespireConnectionRetiredException) TerminalError = error;
+            if (discoveryPending || error is RespireConnectionRetiredException)
+            {
+                TerminalError = error;
+            }
         }
 
         internal void RecordCommandFailure(Exception error, bool discoveryPending, int? commandSlot,
             bool noRedirect = false, CancellationToken callerToken = default)
         {
-            if (IsCancellationOwnedBySharedFlight(error, callerToken)) return;
+            if (IsCancellationOwnedBySharedFlight(error, callerToken))
+            {
+                return;
+            }
             // A route can reject the final send after selection succeeded. Reaching the command's
             // redirect cap ends recovery unsuccessfully even when the policy still permits retries.
             // NoRedirect and unkeyed READONLY deliberately remain ordinary command errors.
@@ -546,11 +745,16 @@ internal sealed partial class ClusterRouter
         internal void Failed(Exception error)
         {
             Enter(error);
+
             try
             {
                 _failure = error;
                 _failureIsRedirect = false;
-                if (Exhaustion is null && ReferenceEquals(_terminalError, error)) _terminalError = null;
+
+                if (Exhaustion is null && ReferenceEquals(_terminalError, error))
+                {
+                    _terminalError = null;
+                }
             }
             finally { Exit(); }
         }
@@ -562,6 +766,7 @@ internal sealed partial class ClusterRouter
             bool routingRedirect = false)
         {
             Enter(error);
+
             try
             {
                 _endpoint = endpoint;
@@ -570,8 +775,14 @@ internal sealed partial class ClusterRouter
                 // Track generation identity, not its address: a replacement at that address
                 // remains eligible. Allocate only after an actual cold-path rejection.
                 if (rejectedNode is not null)
+                {
                     (_rejectedNodes ??= new(ReferenceEqualityComparer.Instance)).Add(rejectedNode);
-                if (Exhaustion is null && ReferenceEquals(_terminalError, error)) _terminalError = null;
+                }
+
+                if (Exhaustion is null && ReferenceEquals(_terminalError, error))
+                {
+                    _terminalError = null;
+                }
             }
             finally { Exit(); }
         }
@@ -580,43 +791,79 @@ internal sealed partial class ClusterRouter
             TimeSpan? maximumDelay = null)
         {
             Enter();
+
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref owner._disposed) != 0, owner);
-                if (Exhaustion is { } exhausted) throw exhausted;
+
+                if (Exhaustion is { } exhausted)
+                {
+                    throw exhausted;
+                }
+
                 if (_failure is null)
                 {
                     _endpoint = endpoint;
                     return;
                 }
+
                 if (policy.IsExhausted(_attempts))
                 {
-                    if (_episode == 0) _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
+                    if (_episode == 0)
+                    {
+                        _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
+                    }
+
                     Exhaustion = new RespireReconnectLimitException(
                         $"Redis Cluster discovery exhausted {_attempts} fallback attempts. Check candidate endpoints and RespireOptions.ReconnectPolicy.",
-                        ConnectionFailures.Combine(_previousFailures, ConnectionFailures.AtEndpoint(_failure, _endpoint))!) { HasAmbiguousEndpoint = true };
+                        ConnectionFailures.Combine(_previousFailures, ConnectionFailures.AtEndpoint(_failure, _endpoint))!)
+                    { HasAmbiguousEndpoint = true };
                     Publish(RespireConnectionState.Disconnected, _failure, exhausted: true);
                     throw Exhaustion;
                 }
+
                 var failure = _failure;
+
                 if (policy.MaxAttempts is not null)
+                {
                     _previousFailures = ConnectionFailures.Combine(_previousFailures, ConnectionFailures.AtEndpoint(failure, _endpoint));
+                }
+
                 var immediateRedirect = _failureIsRedirect && _attempts == 0;
                 _failure = null;
                 _failureIsRedirect = false;
                 _endpoint = endpoint;
                 // Unlimited policies must not wrap the backoff index during long-lived recovery.
-                if (_attempts < int.MaxValue) _attempts++;
+                if (_attempts < int.MaxValue)
+                {
+                    _attempts++;
+                }
                 // A first MOVED/ASK consumes the shared budget but does not imply a
                 // connection failure. Only subsequent recovery starts a backoff episode.
-                if (immediateRedirect) return;
-                if (_episode == 0) _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
+                if (immediateRedirect)
+                {
+                    return;
+                }
+
+                if (_episode == 0)
+                {
+                    _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
+                }
+
                 var delay = policy.GetDelay(_attempts);
-                if (maximumDelay is { } maximum && delay > maximum) delay = maximum;
+
+                if (maximumDelay is { } maximum && delay > maximum)
+                {
+                    delay = maximum;
+                }
+
                 Publish(RespireConnectionState.Reconnecting, failure, delay);
+
                 if (delay > TimeSpan.Zero)
+                {
                     await WaitAsync(delay, cancellationToken).ConfigureAwait(false);
+                }
             }
             catch (Exception error)
             {
@@ -631,7 +878,11 @@ internal sealed partial class ClusterRouter
         private async ValueTask WaitAsync(TimeSpan delay, CancellationToken callerToken)
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(callerToken, owner._stopDiscovery.Token);
-            try { await Task.Delay(delay, owner._discoveryClock, linked.Token).ConfigureAwait(false); }
+
+            try
+            {
+                await Task.Delay(delay, owner._discoveryClock, linked.Token).ConfigureAwait(false);
+            }
             catch (OperationCanceledException error) when (callerToken.IsCancellationRequested)
             {
                 throw new OperationCanceledException(error.Message, error, callerToken);
@@ -644,30 +895,44 @@ internal sealed partial class ClusterRouter
             // Mark completion under the gate, then publish outside it exactly once.
             lock (_lifecycleGate)
             {
-                if (_lifecycle is Lifecycle.Done or Lifecycle.FinishPending) return;
+                if (_lifecycle is Lifecycle.Done or Lifecycle.FinishPending)
+                {
+                    return;
+                }
+
                 if (_sharedHolds > 0)
                 {
                     _finishRequested = true;
                     return;
                 }
+
                 if (_lifecycle == Lifecycle.InTransition)
                 {
                     _lifecycle = Lifecycle.FinishPending;
                     return;
                 }
+
                 _lifecycle = Lifecycle.Done;
             }
+
             CompleteFinish();
         }
 
         private void CompleteFinish()
         {
-            if (Exhaustion is not null || Volatile.Read(ref owner._disposed) != 0) return;
+            if (Exhaustion is not null || Volatile.Read(ref owner._disposed) != 0)
+            {
+                return;
+            }
             // Healthy immediate redirects stay silent. A failed target still needs a
             // terminal event, including ASK targets whose physical events are not observed.
             if (_episode == 0)
             {
-                if (_attempts == 0 || TerminalError is null) return;
+                if (_attempts == 0 || TerminalError is null)
+                {
+                    return;
+                }
+
                 _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
             }
             // Pending failure is retry bookkeeping, not the operation's outcome: another
@@ -701,7 +966,11 @@ internal sealed partial class ClusterRouter
     // measurement order for each episode even when observers enqueue further discovery work.
     private void StartDiscoveryPublisher()
     {
-        if (_publishingDiscovery || _discoveryNotifications is not { Count: > 0 }) return;
+        if (_publishingDiscovery || _discoveryNotifications is not { Count: > 0 })
+        {
+            return;
+        }
+
         _publishingDiscovery = true;
         ThreadPool.UnsafeQueueUserWorkItem(static router => router.PublishDiscoveryStates(), this, preferLocal: false);
     }
@@ -713,6 +982,7 @@ internal sealed partial class ClusterRouter
             while (true)
             {
                 RespireConnectionStateChange change;
+
                 lock (_discoveryNotificationsGate)
                 {
                     if (!_discoveryNotifications!.TryDequeue(out change))
@@ -720,17 +990,27 @@ internal sealed partial class ClusterRouter
                         return;
                     }
                 }
+
                 try
                 {
                     if (change.NextReconnectDelay is not null || change.ReconnectExhausted)
+                    {
                         RespireTelemetry.RecordDiscoveryReconnect(change.Endpoint, "cluster-discovery",
                             change.ReconnectAttempt, change.NextReconnectDelay, _logger);
+                    }
                 }
                 catch (Exception error) { LogDiscoveryObserverFailure(error); }
                 // Measurements describe already scheduled work. Observers may synchronously dispose
                 // the client, so the dispatcher is independent of discovery and is never joined.
-                if (Volatile.Read(ref _disposed) != 0) continue;
-                try { DiscoveryStateChanged?.Invoke(change); }
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    DiscoveryStateChanged?.Invoke(change);
+                }
                 catch (Exception error) { LogDiscoveryObserverFailure(error); }
             }
         }
@@ -745,9 +1025,13 @@ internal sealed partial class ClusterRouter
             }
         }
     }
+
     private void LogDiscoveryObserverFailure(Exception error)
     {
-        try { _logger?.ClusterDiscoveryObserverFailed(error); }
+        try
+        {
+            _logger?.ClusterDiscoveryObserverFailed(error);
+        }
         catch (Exception) { /* A user logger must not terminate the notification dispatcher. */ }
     }
 

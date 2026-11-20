@@ -16,9 +16,11 @@ public class ReliableQueueSchedulingClusterTests
         var cancellationToken = timeout.Token;
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
-            Topology = RespireContainerTopology.Cluster, Image = "redis:7.4-alpine",
+            Topology = RespireContainerTopology.Cluster,
+            Image = "redis:7.4-alpine",
         }, cancellationToken);
         await using var root = await RespireClient.ConnectAsync(fixture.CreateOptions(), cancellationToken);
+
         foreach (var prefix in new[] { "tenant:", "{tenant}:" })
         {
             var client = root.WithKeyPrefix(prefix);
@@ -79,6 +81,8 @@ public class ReliableQueueSchedulingClusterTests
         CancellationToken cancellationToken)
     {
         foreach (var suffix in new[] { "", ":due", ":receipts", ":attempts", ":dead", ":scheduled", ":scheduled-due" })
+        {
             await Assert.That(await root.Keys.ExistsAsync(queue.StreamKey + suffix, cancellationToken)).IsFalse();
+        }
     }
 }

@@ -32,7 +32,12 @@ internal static partial class CommandMetadataParser
     {
         var items = Items(in value, allowSet: true);
         var result = new string[items.Length];
-        for (var index = 0; index < items.Length; index++) result[index] = Text(in items[index]);
+
+        for (var index = 0; index < items.Length; index++)
+        {
+            result[index] = Text(in items[index]);
+        }
+
         return result;
     }
 
@@ -40,7 +45,12 @@ internal static partial class CommandMetadataParser
     {
         var items = Items(in value);
         var result = new byte[items.Length][];
-        for (var index = 0; index < items.Length; index++) result[index] = Bytes(in items[index]);
+
+        for (var index = 0; index < items.Length; index++)
+        {
+            result[index] = Bytes(in items[index]);
+        }
+
         return result;
     }
 
@@ -66,8 +76,12 @@ internal static partial class CommandMetadataParser
     {
         var items = Items(in value);
         var result = new RespireCommandInfo?[items.Length];
+
         for (var index = 0; index < items.Length; index++)
+        {
             result[index] = items[index].IsNull ? null : InfoEntry(in items[index]);
+        }
+
         return result;
     }
 
@@ -85,13 +99,19 @@ internal static partial class CommandMetadataParser
         var tips = row.Length > 7 ? Strings(in row[7]) : [];
         var specifications = row.Length > 8 ? OwnItems(Items(in row[8], allowSet: true)) : [];
         RespireCommandInfo[] subcommands = [];
+
         if (row.Length > 9)
         {
             // Redis uses an empty RESP3 set when this command has no subcommands.
             var nested = Items(in row[9], allowSet: true);
             subcommands = new RespireCommandInfo[nested.Length];
-            for (var index = 0; index < nested.Length; index++) subcommands[index] = InfoEntry(in nested[index]);
+
+            for (var index = 0; index < nested.Length; index++)
+            {
+                subcommands[index] = InfoEntry(in nested[index]);
+            }
         }
+
         return new(name, arity, flags, first, last, step, categories, tips, specifications,
             subcommands, row.Length > 10 ? OwnItems(row[10..]) : []);
     }
@@ -104,7 +124,10 @@ internal static partial class CommandMetadataParser
         var result = new RespireCommandDocumentation[commands.Length / 2];
         // Redis can repeat a name when the request repeats it. Preserve entries in reply order.
         for (var index = 0; index < result.Length; index++)
+        {
             result[index] = Documentation(Text(in commands[index * 2]), in commands[index * 2 + 1]);
+        }
+
         return result;
     }
 
@@ -120,10 +143,12 @@ internal static partial class CommandMetadataParser
         var deprecated = OptionalText(fields, "deprecated_since");
         var replaced = OptionalText(fields, "replaced_by");
         RespireCommandHistory[] history = [];
+
         if (fields.Remove("history", out var historyValue))
         {
             var items = Items(in historyValue, allowSet: true);
             history = new RespireCommandHistory[items.Length];
+
             for (var index = 0; index < items.Length; index++)
             {
                 var row = Items(in items[index]);
@@ -131,6 +156,7 @@ internal static partial class CommandMetadataParser
                 history[index] = new(Text(in row[0]), Text(in row[1]));
             }
         }
+
         var arguments = Arguments(fields);
         var subcommands = fields.Remove("subcommands", out var nested) ? Docs(in nested) : [];
         return new(name, summary, since, group, complexity, module, flags, deprecated, replaced,
@@ -139,9 +165,14 @@ internal static partial class CommandMetadataParser
 
     private static RespireCommandArgument[] Arguments(Dictionary<string, RespValue> fields)
     {
-        if (!fields.Remove("arguments", out var value)) return [];
+        if (!fields.Remove("arguments", out var value))
+        {
+            return [];
+        }
+
         var items = Items(in value);
         var result = new RespireCommandArgument[items.Length];
+
         for (var index = 0; index < items.Length; index++)
         {
             var argument = Fields(in items[index]);
@@ -158,6 +189,7 @@ internal static partial class CommandMetadataParser
             result[index] = new(name, type, display, specification, token, summary, since, deprecated,
                 flags, nested, OwnFields(argument));
         }
+
         return result;
     }
 
@@ -165,6 +197,7 @@ internal static partial class CommandMetadataParser
     {
         var items = Items(in value);
         var result = new RespireModuleInfo[items.Length];
+
         for (var index = 0; index < items.Length; index++)
         {
             var fields = Fields(in items[index]);
@@ -174,6 +207,7 @@ internal static partial class CommandMetadataParser
             var arguments = fields.Remove("args", out var argsValue) ? Keys(in argsValue) : null;
             result[index] = new(name, version, path, arguments, OwnFields(fields));
         }
+
         return result;
     }
 
@@ -183,8 +217,12 @@ internal static partial class CommandMetadataParser
         var items = value.AsArray();
         Require(items.Length % 2 == 0);
         var result = new Dictionary<string, RespValue>(items.Length / 2, StringComparer.Ordinal);
+
         for (var index = 0; index < items.Length; index += 2)
+        {
             Require(result.TryAdd(Text(in items[index]), items[index + 1]));
+        }
+
         return result;
     }
 
@@ -200,19 +238,32 @@ internal static partial class CommandMetadataParser
     private static Dictionary<string, RespireResult> OwnFields(Dictionary<string, RespValue> fields)
     {
         var result = new Dictionary<string, RespireResult>(fields.Count, StringComparer.Ordinal);
-        foreach (var (name, value) in fields) result.Add(name, RespireResult.CreateOwned(in value));
+
+        foreach (var (name, value) in fields)
+        {
+            result.Add(name, RespireResult.CreateOwned(in value));
+        }
+
         return result;
     }
 
     private static RespireResult[] OwnItems(ReadOnlySpan<RespValue> items)
     {
         var result = new RespireResult[items.Length];
-        for (var index = 0; index < items.Length; index++) result[index] = RespireResult.CreateOwned(in items[index]);
+
+        for (var index = 0; index < items.Length; index++)
+        {
+            result[index] = RespireResult.CreateOwned(in items[index]);
+        }
+
         return result;
     }
 
     private static void Require(bool condition)
     {
-        if (!condition) throw new RespireProtocolException("Unexpected command metadata or persistence reply shape.");
+        if (!condition)
+        {
+            throw new RespireProtocolException("Unexpected command metadata or persistence reply shape.");
+        }
     }
 }

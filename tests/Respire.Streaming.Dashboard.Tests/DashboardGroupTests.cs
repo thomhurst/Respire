@@ -25,6 +25,7 @@ public class DashboardGroupTests(RedisTestContainer redis)
         await queue.EnqueueAsync("ungrouped", "payload");
         await Assert.That((await RespireJobGroups.ReadAsync(client, queue.StreamKey)).Groups.Count).IsEqualTo(0);
         string[] names = ["a", "aa", "tenant:{other}:é/東京\0😀", "<script>group</script>"];
+
         foreach (var name in names)
         {
             await queue.EnqueueScheduledAsync(name + "-ready", "payload", new() { Group = name });
@@ -35,10 +36,12 @@ public class DashboardGroupTests(RedisTestContainer redis)
         await SeedLease(client, queue.StreamKey, "lease-only", true);
         var seen = new List<string>();
         string? cursor = null;
+
         do
         {
             var page = await RespireJobGroups.ReadAsync(client, queue.StreamKey, 2, cursor);
             await Assert.That(page.Groups.Count <= 2).IsTrue();
+
             foreach (var group in page.Groups)
             {
                 seen.Add(group.Name);
@@ -47,12 +50,23 @@ public class DashboardGroupTests(RedisTestContainer redis)
                 await Assert.That(group.ActiveCount).IsEqualTo(group.Name == "a" ? 1L : 0L);
                 await Assert.That(group.IsEligible).IsEqualTo(group.Name != "lease-only");
             }
+
             cursor = page.NextCursor;
-            if (seen.Count > 5) throw new InvalidOperationException("Pagination repeated a group.");
+
+            if (seen.Count > 5)
+            {
+                throw new InvalidOperationException("Pagination repeated a group.");
+            }
         } while (cursor is not null);
+
         await Assert.That(seen.Count).IsEqualTo(5);
         await Assert.That(seen.Distinct().Count()).IsEqualTo(5);
-        foreach (var name in names) await Assert.That(seen.Contains(name)).IsTrue();
+
+        foreach (var name in names)
+        {
+            await Assert.That(seen.Contains(name)).IsTrue();
+        }
+
         await Assert.That(await client.Streams.CountAsync(queue.StreamKey + ":scheduled")).IsEqualTo(8);
         var leases = await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return redis.call('ZCARD', KEYS[1])"),
             [queue.StreamKey + ":group-leases"], []);
@@ -76,7 +90,8 @@ public class DashboardGroupTests(RedisTestContainer redis)
         await Assert.That(await queue.ResumeGroupAsync("idle")).IsFalse();
         await queue.SetGroupOptionsAsync("limited", new()
         {
-            MaxConcurrency = 1, RateLimit = new() { PermitLimit = 2, Window = TimeSpan.FromHours(1) },
+            MaxConcurrency = 1,
+            RateLimit = new() { PermitLimit = 2, Window = TimeSpan.FromHours(1) },
         });
         await queue.EnqueueScheduledAsync("job", "payload", new() { Group = "limited" });
         await SeedLease(client, queue.StreamKey, "limited", false);
@@ -142,11 +157,13 @@ public class DashboardGroupTests(RedisTestContainer redis)
         await Assert.That(html).Contains("action=\"" + path + "/0/pause-group\"");
         var token = WebUtility.HtmlDecode(Regex.Match(html, "name=\"__RequestVerificationToken\" value=\"([^\"]+)\"").Groups[1].Value);
         var groupToken = Regex.Match(html, "name=\"groupToken\" value=\"([^\"]+)\"").Groups[1].Value;
+
         foreach (var action in new[] { "pause-group", "pause-group", "resume-group" })
         {
             using var response = await http.PostAsync(path + "/0/" + action, new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["groupToken"] = groupToken, ["__RequestVerificationToken"] = token,
+                ["groupToken"] = groupToken,
+                ["__RequestVerificationToken"] = token,
             }));
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await Assert.That(response.Headers.Location!.OriginalString).IsEqualTo(path + "/0/groups");
@@ -155,6 +172,7 @@ public class DashboardGroupTests(RedisTestContainer redis)
             using var updated = await http.GetAsync(path + "/");
             await Assert.That(await updated.Content.ReadAsStringAsync()).Contains(action == "pause-group" ? "Resume group" : "Pause group");
         }
+
         await Assert.That((await RespireJobGroups.GetAsync(root, stream, name)).IsPaused).IsFalse();
     }
 
@@ -218,6 +236,7 @@ public class DashboardGroupTests(RedisTestContainer redis)
         await Assert.That(lookup.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var lookupHtml = await lookup.Content.ReadAsStringAsync();
         await Assert.That(lookupHtml).Contains(Convert.ToBase64String(Encoding.UTF8.GetBytes(name)));
+
         foreach (var action in new[] { "Pause group", "Resume group" })
         {
             using var mutation = await SubmitForm(http, lookupHtml, action);
@@ -229,6 +248,7 @@ public class DashboardGroupTests(RedisTestContainer redis)
             using var refreshed = await SubmitForm(http, homeHtml, "View group", name);
             lookupHtml = await refreshed.Content.ReadAsStringAsync();
         }
+
         using var next = await SubmitForm(http, homeHtml, "Next groups");
         await Assert.That(next.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var nextHtml = await next.Content.ReadAsStringAsync();
@@ -255,7 +275,12 @@ public class DashboardGroupTests(RedisTestContainer redis)
         var action = WebUtility.HtmlDecode(Regex.Match(form, "action=\"([^\"]+)\"").Groups[1].Value);
         var values = Regex.Matches(form, "name=\"([^\"]+)\" value=\"([^\"]*)\"")
             .ToDictionary(match => WebUtility.HtmlDecode(match.Groups[1].Value), match => WebUtility.HtmlDecode(match.Groups[2].Value));
-        if (group is not null) values["group"] = group;
+
+        if (group is not null)
+        {
+            values["group"] = group;
+        }
+
         return http.PostAsync(action, new FormUrlEncodedContent(values));
     }
 
@@ -267,10 +292,12 @@ public class DashboardGroupTests(RedisTestContainer redis)
         await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
         var username = "dashboard-group-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">dashboard-group-password", "~*", "+@all", "-" + denied]);
+
         try
         {
             await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
-                with { Username = username, Password = "dashboard-group-password" });
+                with
+            { Username = username, Password = "dashboard-group-password" });
             await using var app = await DashboardSecurityTests.CreateApplication(client, jobs: true);
             using var http = app.GetTestClient();
             http.DefaultRequestHeaders.Add("X-Test-Role", "operator");
@@ -280,7 +307,8 @@ public class DashboardGroupTests(RedisTestContainer redis)
             http.DefaultRequestHeaders.Add("Cookie", page.Headers.GetValues("Set-Cookie").First().Split(';')[0]);
             using var response = await http.PostAsync("/workers/0/pause-group", new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["group"] = "tenant", ["__RequestVerificationToken"] = token,
+                ["group"] = "tenant",
+                ["__RequestVerificationToken"] = token,
             }));
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
             await Assert.That(await response.Content.ReadAsStringAsync()).Contains("Ask an administrator");
@@ -306,7 +334,8 @@ public class DashboardGroupTests(RedisTestContainer redis)
         var token = WebUtility.HtmlDecode(Regex.Match(html, "name=\"__RequestVerificationToken\" value=\"([^\"]+)\"").Groups[1].Value);
         using var response = await http.PostAsync("/workers/" + index + "/pause-group", new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            ["group"] = name, ["__RequestVerificationToken"] = token,
+            ["group"] = name,
+            ["__RequestVerificationToken"] = token,
         }));
         await Assert.That((int)response.StatusCode).IsEqualTo(status);
         await Assert.That((await RespireJobGroups.GetAsync(client, "{dash}:source", "tenant")).IsPaused).IsFalse();

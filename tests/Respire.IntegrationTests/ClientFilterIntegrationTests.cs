@@ -19,7 +19,9 @@ public class ClientFilterIntegrationTests
         var options = new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
-            Protocol = (RespireProtocol)protocol, Connections = 1, AllowAdmin = true,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
+            AllowAdmin = true,
         };
         await using var admin = await RespireClient.ConnectAsync(options);
         await using var target = await RespireClient.ConnectAsync(options);
@@ -28,19 +30,27 @@ public class ClientFilterIntegrationTests
         // would include this target for the negative LIST threshold below.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         long age;
+
         do
         {
             var info = await handle.InfoAsync(deadline.Token);
             age = long.Parse(info.Attributes["age"], System.Globalization.CultureInfo.InvariantCulture);
-            if (age < 2) await Task.Delay(25, deadline.Token);
+
+            if (age < 2)
+            {
+                await Task.Delay(25, deadline.Token);
+            }
         } while (age < 2);
+
         var matching = new RespireClientFilterOptions { Ids = [handle.Id], MaximumAgeSeconds = age };
         var tooYoung = matching with { MaximumAgeSeconds = age + 60 };
+
         if (grouped)
         {
             matching = ClientFilterTestOptions.Group(matching);
             tooYoung = ClientFilterTestOptions.Group(tooYoung);
         }
+
         (await admin.Server.ClientsAsync(matching, default)).Select(client => client.Id).Should().Equal(handle.Id);
         (await admin.Server.ClientsAsync(tooYoung, default)).Should().BeEmpty();
         (await admin.Server.KillClientsAsync(tooYoung)).Should().Be(0);
@@ -59,7 +69,9 @@ public class ClientFilterIntegrationTests
         var options = new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
-            Protocol = (RespireProtocol)protocol, Connections = 1, AllowAdmin = true,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
+            AllowAdmin = true,
         };
         await using var admin = await RespireClient.ConnectAsync(options);
         await admin.Server.AclSetUserAsync("filter-user", ["on", ">test-password", "+@all", "~*", "&*"]);
@@ -67,17 +79,25 @@ public class ClientFilterIntegrationTests
         string[] cases = ["type", "user", "address", "local-address", "name", "flags", "library", "version", "database", "capabilities", "ip",
             "excluded-type", "excluded-ids", "excluded-user", "excluded-address", "excluded-local-address", "excluded-name",
             "excluded-flags", "excluded-library", "excluded-version", "excluded-database", "excluded-capabilities", "excluded-ip"];
+
         foreach (var filter in cases)
         {
             await using var target = await RespireClient.ConnectAsync(options with
             {
-                Username = "filter-user", Password = "test-password", ClientName = "filter-target", Database = 1,
+                Username = "filter-user",
+                Password = "test-password",
+                ClientName = "filter-target",
+                Database = 1,
             });
             var targetHandle = await target.Server.GetClientConnectionAsync();
             await targetHandle.SetInfoAsync(RespireClientInfoAttribute.LibraryName, "filter-library");
             await targetHandle.SetInfoAsync(RespireClientInfoAttribute.LibraryVersion, "1.2.3");
             await targetHandle.SetNoEvictAsync(true);
-            using (var response = await target.ExecuteAsync("CLIENT", "CAPA", "redirect")) { }
+
+            using (var response = await target.ExecuteAsync("CLIENT", "CAPA", "redirect"))
+            {
+            }
+
             var info = await targetHandle.InfoAsync();
             var ip = info.Address[..info.Address.LastIndexOf(':')].Trim('[', ']');
             var baseline = new RespireClientFilterOptions { Ids = [targetHandle.Id] };
@@ -108,6 +128,7 @@ public class ClientFilterIntegrationTests
                 "excluded-ip" => (baseline with { ExcludedIp = "192.0.2.1" }, baseline with { ExcludedIp = ip }),
                 _ => throw new InvalidOperationException(filter),
             };
+
             if (filter == "excluded-capabilities")
             {
                 // A fresh client has no redirect capability; use that absence to exercise NOT-CAPA independently.
@@ -117,7 +138,10 @@ public class ClientFilterIntegrationTests
                 excludes = excludes with { Ids = [ordinaryHandle.Id] };
                 await Check(matches, excludes, ordinaryHandle.Id, filter);
             }
-            else await Check(matches, excludes, targetHandle.Id, filter);
+            else
+            {
+                await Check(matches, excludes, targetHandle.Id, filter);
+            }
         }
 
         async Task Check(RespireClientFilterOptions matches, RespireClientFilterOptions excludes, long id, string filter)
@@ -127,6 +151,7 @@ public class ClientFilterIntegrationTests
                 matches = ClientFilterTestOptions.Group(matches);
                 excludes = ClientFilterTestOptions.Group(excludes);
             }
+
             (await handle.ClientsAsync(matches)).Select(row => row.Id).Should().Equal([id], filter);
             (await handle.ClientsAsync(excludes)).Should().BeEmpty(filter);
             (await handle.KillClientsAsync(excludes)).Should().Be(0, filter);
@@ -168,7 +193,9 @@ public class ClientFilterIntegrationTests
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
-            Connections = 1, AllowAdmin = true, ClientName = "filter-admin",
+            Connections = 1,
+            AllowAdmin = true,
+            ClientName = "filter-admin",
         };
         await using var admin = await RespireClient.ConnectAsync(options);
         await using var target = await RespireClient.ConnectAsync(options with { ClientName = "filter-target" });
@@ -178,17 +205,33 @@ public class ClientFilterIntegrationTests
         var adminHandle = await admin.Server.GetClientConnectionAsync();
         var targetInfo = await targetHandle.InfoAsync();
         var valkey = image.StartsWith("valkey/", StringComparison.Ordinal);
-        if (valkey) await admin.Server.AclSetUserAsync("unused-user", ["off"]);
-        var filter = new RespireClientFilterOptions { Ids = [targetHandle.Id, survivorHandle.Id] };
+
         if (valkey)
+        {
+            await admin.Server.AclSetUserAsync("unused-user", ["off"]);
+        }
+
+        var filter = new RespireClientFilterOptions { Ids = [targetHandle.Id, survivorHandle.Id] };
+
+        if (valkey)
+        {
             filter = filter with
             {
-                Type = RespireClientType.Normal, ExcludedIds = [survivorHandle.Id], ExcludedType = RespireClientType.PubSub,
-                ExcludedName = "filter-survivor", ExcludedAddress = (await survivorHandle.InfoAsync()).Address,
-                ExcludedUser = "unused-user", ExcludedLocalAddress = "127.0.0.1:1",
-                ExcludedDatabase = 1, ExcludedLibraryName = "unused-library", ExcludedLibraryVersion = "unused-version",
-                ExcludedIp = "192.0.2.1", Name = "filter-target", Database = 0,
+                Type = RespireClientType.Normal,
+                ExcludedIds = [survivorHandle.Id],
+                ExcludedType = RespireClientType.PubSub,
+                ExcludedName = "filter-survivor",
+                ExcludedAddress = (await survivorHandle.InfoAsync()).Address,
+                ExcludedUser = "unused-user",
+                ExcludedLocalAddress = "127.0.0.1:1",
+                ExcludedDatabase = 1,
+                ExcludedLibraryName = "unused-library",
+                ExcludedLibraryVersion = "unused-version",
+                ExcludedIp = "192.0.2.1",
+                Name = "filter-target",
+                Database = 0,
             };
+        }
         else
         {
             (await adminHandle.ClientsAsync(Select(new() { Type = RespireClientType.Normal })))
@@ -198,34 +241,67 @@ public class ClientFilterIntegrationTests
             Func<Task> unsupported = async () => await adminHandle.ClientsAsync(Select(new() { ExcludedIds = [survivorHandle.Id] }));
             await unsupported.Should().ThrowAsync<RespireServerException>();
         }
+
         RespireServerClientInfo[] rows;
-        if (execution == 0) rows = await adminHandle.ClientsAsync(Select(filter));
+
+        if (execution == 0)
+        {
+            rows = await adminHandle.ClientsAsync(Select(filter));
+        }
         else
         {
             using var batch = admin.CreateBatch();
             await using var tx = admin.CreateTransaction();
             IRespireCommandQueue queue = execution == 1 ? batch : tx;
             var result = queue.Server.Clients(Select(filter));
-            if (execution == 1) await batch.ExecuteAsync(); else await tx.CommitAsync();
+
+            if (execution == 1)
+            {
+                await batch.ExecuteAsync();
+            }
+            else
+            {
+                await tx.CommitAsync();
+            }
+
             rows = result.Result;
         }
+
         rows.Select(row => row.Id).Should().BeEquivalentTo(valkey ? [targetHandle.Id] : new[] { targetHandle.Id, survivorHandle.Id });
         var kill = filter with
         {
-            Type = RespireClientType.Normal, Ids = [targetHandle.Id], User = "default", Address = targetInfo.Address,
-            LocalAddress = targetInfo.Attributes["laddr"], SkipMe = true,
+            Type = RespireClientType.Normal,
+            Ids = [targetHandle.Id],
+            User = "default",
+            Address = targetInfo.Address,
+            LocalAddress = targetInfo.Attributes["laddr"],
+            SkipMe = true,
         };
         long killed;
-        if (execution == 0) killed = await adminHandle.KillClientsAsync(Select(kill));
+
+        if (execution == 0)
+        {
+            killed = await adminHandle.KillClientsAsync(Select(kill));
+        }
         else
         {
             using var batch = admin.CreateBatch();
             await using var tx = admin.CreateTransaction();
             IRespireCommandQueue queue = execution == 1 ? batch : tx;
             var result = queue.Server.KillClients(Select(kill));
-            if (execution == 1) await batch.ExecuteAsync(); else await tx.CommitAsync();
+
+            if (execution == 1)
+            {
+                await batch.ExecuteAsync();
+            }
+            else
+            {
+                await tx.CommitAsync();
+            }
+
             killed = result.Result;
         }
+
         killed.Should().Be(1);
         (await adminHandle.ClientsAsync(Select(new() { Ids = [targetHandle.Id] }))).Should().BeEmpty();
         (await survivorHandle.InfoAsync()).Id.Should().Be(survivorHandle.Id);

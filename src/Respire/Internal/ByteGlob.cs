@@ -9,6 +9,7 @@ internal static class ByteGlob
         var offset = 0;
         var star = -1;
         var retry = 0;
+
         while (offset < value.Length)
         {
             if (position < pattern.Length && pattern[position] == (byte)'*')
@@ -17,35 +18,65 @@ internal static class ByteGlob
                 retry = offset;
                 continue;
             }
+
             var next = position;
+
             if (next < pattern.Length && MatchesToken(pattern, ref next, value[offset]))
             {
                 position = next;
                 offset++;
                 continue;
             }
-            if (star < 0 || retry == value.Length) return false;
+
+            if (star < 0 || retry == value.Length)
+            {
+                return false;
+            }
+
             position = star;
             offset = ++retry;
         }
-        while (position < pattern.Length && pattern[position] == (byte)'*') position++;
+
+        while (position < pattern.Length && pattern[position] == (byte)'*')
+        {
+            position++;
+        }
+
         return position == pattern.Length;
     }
 
     private static bool MatchesToken(ReadOnlySpan<byte> pattern, ref int position, byte value)
     {
         var token = pattern[position++];
-        if (token == (byte)'?') return true;
+
+        if (token == (byte)'?')
+        {
+            return true;
+        }
+
         if (token == (byte)'\\' && position < pattern.Length)
+        {
             return pattern[position++] == value;
-        if (token != (byte)'[') return token == value;
+        }
+
+        if (token != (byte)'[')
+        {
+            return token == value;
+        }
 
         var negate = position < pattern.Length && pattern[position] == (byte)'^';
-        if (negate) position++;
+
+        if (negate)
+        {
+            position++;
+        }
+
         var matches = false;
+
         while (position < pattern.Length && pattern[position] != (byte)']')
         {
             var start = pattern[position++];
+
             if (start == (byte)'\\' && position < pattern.Length)
             {
                 matches |= pattern[position++] == value;
@@ -61,7 +92,12 @@ internal static class ByteGlob
                 matches |= start == value;
             }
         }
-        if (position < pattern.Length) position++;
+
+        if (position < pattern.Length)
+        {
+            position++;
+        }
+
         return matches != negate;
     }
 }

@@ -45,10 +45,14 @@ internal sealed partial class HashCommands
         RespireKey key, ulong cursor = 0, string? match = null, int? countHint = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireHashScanPage>.Start();
+
         try
         {
             if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+            {
                 return owner.Attach(ValueTask.FromCanceled<RespireHashScanPage>(cancellationToken));
+            }
+
             return owner.Attach(client.ConvertResponseAsync("HSCAN", ScanFieldsCommand(client, key, cursor, match, countHint), cancellationToken,
                 client, static (RespireClient _, in RespValue reply) => ParseFieldsPage(in reply), observation: owner.Observation));
         }

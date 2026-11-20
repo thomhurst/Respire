@@ -64,10 +64,15 @@ public class SetPopManyTests
         var members = sets.PopMany("missing", 2);
         var entries = sortedSets.PopMany("missing", 2, descending: true);
         var typedEntries = sortedSets.PopMany<int>("missing", 2);
+
         if (transaction is not null)
+        {
             await transaction.CommitAsync();
+        }
         else
+        {
             await batch!.ExecuteAsync();
+        }
 
         await Assert.That(member.Result).IsNull();
         await Assert.That(entry.Result).IsNull();

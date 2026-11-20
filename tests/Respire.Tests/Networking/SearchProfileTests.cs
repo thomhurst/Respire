@@ -28,7 +28,9 @@ public class SearchProfileTests
             var search = client.Search;
             var query = new RespireSearchQuery(RespireSearchExpression.FromRaw("@title:{$term}"), new()
             {
-                WithScores = true, ReturnFields = ["title with spaces"], Dialect = 3,
+                WithScores = true,
+                ReturnFields = ["title with spaces"],
+                Dialect = 3,
                 Parameters = new Dictionary<string, RespireValue> { ["term"] = new byte[] { 0, 255, 13, 10 } },
             });
             var aggregate = new RespireSearchAggregateOptions
@@ -38,10 +40,22 @@ public class SearchProfileTests
             };
             var hybrid = new RespireHybridSearchQuery(All, "embedding", new byte[] { 0, 255, 13, 10 }, 2)
             { LoadFields = ["title with spaces"], RrfWindow = 3, TimeoutMilliseconds = 100 };
-            if (mode == "SEARCH") await search.SearchAsync("index ü", query);
-            else if (mode == "AGGREGATE") await search.AggregateAsync("index ü", All, aggregate);
-            else await search.HybridSearchAsync("index ü", hybrid);
+
+            if (mode == "SEARCH")
+            {
+                await search.SearchAsync("index ü", query);
+            }
+            else if (mode == "AGGREGATE")
+            {
+                await search.AggregateAsync("index ü", All, aggregate);
+            }
+            else
+            {
+                await search.HybridSearchAsync("index ü", hybrid);
+            }
+
             var normal = server.ReceivedArguments.Last();
+
             if (mode == "SEARCH")
             {
                 var result = await search.ProfileSearchAsync("index ü", query, limited);
@@ -59,6 +73,7 @@ public class SearchProfileTests
                 await Assert.That(result.Result.Documents[0].Id).IsEqualTo("doc");
                 await Assert.That(result.Result.Documents[0].Score).IsEqualTo(0.5);
             }
+
             var profiled = server.ReceivedArguments.Last();
             var prefix = limited ? 5 : 4;
             string[] expectedPrefix = limited ? ["FT.PROFILE", "index ü", mode, "LIMITED", "QUERY"] : ["FT.PROFILE", "index ü", mode, "QUERY"];
@@ -66,8 +81,11 @@ public class SearchProfileTests
                 expectedPrefix,
                 CollectionOrdering.Matching);
             await Assert.That(profiled.Length - prefix).IsEqualTo(normal.Length - 2);
+
             for (var i = 2; i < normal.Length; i++)
+            {
                 await Assert.That(profiled[prefix + i - 2].AsSpan().SequenceEqual(normal[i])).IsTrue();
+            }
         }
     }
 
@@ -103,6 +121,7 @@ public class SearchProfileTests
     public async Task NumericMetricsIgnoreTheCurrentCulture(int protocol)
     {
         var previous = CultureInfo.CurrentCulture;
+
         try
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
@@ -138,6 +157,7 @@ public class SearchProfileTests
             "Iterators profile", Object("Type", "TEXT", "Time", number + 0.125),
             "Result processors profile", new object[] { Object("Type", "Index", "Results processed", (long)number) },
             "Future bytes", new byte[] { 0, 255, 13, 10 });
+
         var profile = Object("Shards", new object[]
         {
             Object("Shard #2", Shard(2), "Shard #future", new object[] { "raw", "future" }),
@@ -147,18 +167,20 @@ public class SearchProfileTests
         await using var server = Server(_ => Frame(Envelope(protocol, mode, profile), protocol));
 #pragma warning disable RESP010 // This profile scenario owns its client and bounded fake profile tree.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+
 #pragma warning restore RESP010
-        async Task<RespireSearchProfileNode> ReadAsync()
-            => mode switch
-            {
-                "SEARCH" => (await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }))).Profile,
-                "AGGREGATE" => (await client.Search.ProfileAggregateAsync("idx", All)).Profile,
-                _ => (await client.Search.ProfileHybridSearchAsync("idx", Hybrid())).Profile,
-            };
+        async Task<RespireSearchProfileNode> ReadAsync() => mode switch
+        {
+            "SEARCH" => (await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }))).Profile,
+            "AGGREGATE" => (await client.Search.ProfileAggregateAsync("idx", All)).Profile,
+            _ => (await client.Search.ProfileHybridSearchAsync("idx", Hybrid())).Profile,
+        };
+
         var tree = await ReadAsync();
         var wrappers = tree.Children.Take(2).ToArray();
         await Assert.That(wrappers.Select(wrapper => wrapper.Children.Single().Name).ToArray())
             .IsEquivalentTo(["Shard #2", "Shard #1"], CollectionOrdering.Matching);
+
         for (var i = 0; i < wrappers.Length; i++)
         {
             var number = 2 - i;
@@ -172,6 +194,7 @@ public class SearchProfileTests
             await Assert.That(ReferenceEquals(shard.Properties["Iterators profile"].Items[1],
                 shard.Children[0].Properties["Type"])).IsTrue();
         }
+
         await Assert.That(wrappers[0].Properties["Shard #future"].Items[1].Scalar).IsEqualTo("future");
         await Assert.That(wrappers[1].Properties["Shard #0"].Items[1].Scalar).IsEqualTo("zero");
         await Assert.That(wrappers[1].Properties["Shard #+1"].Items[1].Scalar).IsEqualTo("signed");
@@ -210,10 +233,20 @@ public class SearchProfileTests
             await using var server = Server(_ => Frame(Envelope(protocol, mode, Profile(protocol), result), protocol));
 #pragma warning disable RESP010 // This profile scenario owns its client and bounded fake profile tree.
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+
 #pragma warning restore RESP010
-            if (mode == "SEARCH") await Assert.That((await client.Search.ProfileSearchAsync("idx", new(All))).Result.Documents.Count).IsEqualTo(0);
-            else if (mode == "AGGREGATE") await Assert.That((await client.Search.ProfileAggregateAsync("idx", All)).Result.Rows.Count).IsEqualTo(0);
-            else await Assert.That((await client.Search.ProfileHybridSearchAsync("idx", Hybrid())).Result.Documents.Count).IsEqualTo(0);
+            if (mode == "SEARCH")
+            {
+                await Assert.That((await client.Search.ProfileSearchAsync("idx", new(All))).Result.Documents.Count).IsEqualTo(0);
+            }
+            else if (mode == "AGGREGATE")
+            {
+                await Assert.That((await client.Search.ProfileAggregateAsync("idx", All)).Result.Rows.Count).IsEqualTo(0);
+            }
+            else
+            {
+                await Assert.That((await client.Search.ProfileHybridSearchAsync("idx", Hybrid())).Result.Documents.Count).IsEqualTo(0);
+            }
         }
     }
 
@@ -252,6 +285,7 @@ public class SearchProfileTests
         invalid.AddRange(["bad", new object[] { QueryResult(protocol, "SEARCH") },
             Object("Results", QueryResult(protocol, "SEARCH")), Object("Profile", Profile(protocol)),
             Object("Results", QueryResult(protocol, "SEARCH"), "Profile", Profile(protocol), "Profile", Profile(protocol))]);
+
         foreach (var reply in invalid)
         {
             await using var server = Server(_ => Frame(reply, protocol));
@@ -306,12 +340,22 @@ public class SearchProfileTests
             if (unknown)
             {
                 object raw = "1";
-                for (var i = 1; i < levels; i++) raw = new object[] { raw };
+
+                for (var i = 1; i < levels; i++)
+                {
+                    raw = new object[] { raw };
+                }
+
                 return Object("Future field", raw);
             }
+
             object value = Object("Time", 1d);
+
             for (var i = 1; i < levels; i++)
+            {
                 value = Object("Child iterator", value);
+            }
+
             return value;
         }
 
@@ -322,7 +366,12 @@ public class SearchProfileTests
 #pragma warning restore RESP010
         var accepted = await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }));
         var owned = accepted.Profile.Properties.Values.Single();
-        for (var i = 1; i < 64; i++) owned = owned.Items[unknown ? 0 : 1];
+
+        for (var i = 1; i < 64; i++)
+        {
+            owned = owned.Items[unknown ? 0 : 1];
+        }
+
         await Assert.That(owned.Scalar).IsEqualTo("1");
         var error = await Assert.That(async () => await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true })))
             .Throws<InvalidOperationException>();
@@ -357,6 +406,7 @@ public class SearchProfileTests
             "Total GIL time", "Time", "GIL-Time", "Number of reading operations",
             "Estimated number of matches", "Results processed", "Internal cursor reads",
         ];
+
         foreach (var field in fields)
         {
             var replies = new Queue<object>([Object(field, "1.25"), Object(field, "not numeric")]);
@@ -426,7 +476,10 @@ public class SearchProfileTests
             server.SuppressReply = command =>
             {
                 if (!command.StartsWith("FT.PROFILE", StringComparison.Ordinal) || Interlocked.Increment(ref requests) != 1)
+                {
                     return false;
+                }
+
                 written.TrySetResult();
                 return true;
             };
@@ -457,14 +510,26 @@ public class SearchProfileTests
 
     private static async Task RunAsync(RespireSearchClient client, string mode, CancellationToken token = default)
     {
-        if (mode == "SEARCH") await client.ProfileSearchAsync("idx", new(All, new() { WithScores = true }), cancellationToken: token);
-        else if (mode == "AGGREGATE") await client.ProfileAggregateAsync("idx", All, cancellationToken: token);
-        else await client.ProfileHybridSearchAsync("idx", Hybrid(), cancellationToken: token);
+        if (mode == "SEARCH")
+        {
+            await client.ProfileSearchAsync("idx", new(All, new() { WithScores = true }), cancellationToken: token);
+        }
+        else if (mode == "AGGREGATE")
+        {
+            await client.ProfileAggregateAsync("idx", All, cancellationToken: token);
+        }
+        else
+        {
+            await client.ProfileHybridSearchAsync("idx", Hybrid(), cancellationToken: token);
+        }
     }
 
     private static RespireHybridSearchQuery Hybrid() => new(All, "embedding", new byte[] { 1, 2 }, 1);
+
     private sealed record Fields(object?[] Values);
+
     private static Fields Object(params object?[] values) => new(values);
+
     private static object Profile(int protocol) => Object("Shards", new object[]
     {
         Object("Total profile time", protocol == 2 ? "1.25" : 1.25,
@@ -486,7 +551,12 @@ public class SearchProfileTests
     private static object Envelope(int protocol, string mode, object? profile, object? result = null)
     {
         result ??= QueryResult(protocol, mode);
-        if (mode != "HYBRID") return protocol == 2 ? new object?[] { result, profile } : Object("Results", result, "Profile", profile);
+
+        if (mode != "HYBRID")
+        {
+            return protocol == 2 ? new object?[] { result, profile } : Object("Results", result, "Profile", profile);
+        }
+
         var fields = ((Fields)result).Values;
         return protocol == 2 ? fields.Concat(new[] { profile }).ToArray() : Object([.. fields, "Profile", profile]);
     }
@@ -496,25 +566,42 @@ public class SearchProfileTests
         using var stream = new MemoryStream();
         Write(value);
         return stream.ToArray();
+
         void Text(string text) => stream.Write(Encoding.UTF8.GetBytes(text));
+
         void Write(object? item)
         {
             switch (item)
             {
-                case null: Text(protocol == 2 ? "$-1\r\n" : "_\r\n"); break;
+                case null:
+                    Text(protocol == 2 ? "$-1\r\n" : "_\r\n");
+                    break;
                 case Fields fields:
                     Text((protocol == 3 ? "%" + (fields.Values.Length / 2) : "*" + fields.Values.Length) + "\r\n");
-                    foreach (var entry in fields.Values) Write(entry);
+                    foreach (var entry in fields.Values)
+                    {
+                        Write(entry);
+                    }
                     break;
                 case object?[] array:
                     Text("*" + array.Length + "\r\n");
-                    foreach (var entry in array) Write(entry);
+                    foreach (var entry in array)
+                    {
+                        Write(entry);
+                    }
                     break;
-                case long number: Text(":" + number.ToString(CultureInfo.InvariantCulture) + "\r\n"); break;
-                case double number when protocol == 3: Text("," + number.ToString(CultureInfo.InvariantCulture) + "\r\n"); break;
+                case long number:
+                    Text(":" + number.ToString(CultureInfo.InvariantCulture) + "\r\n");
+                    break;
+                case double number when protocol == 3:
+                    Text("," + number.ToString(CultureInfo.InvariantCulture) + "\r\n");
+                    break;
                 default:
                     var bytes = item is byte[] binary ? binary : Encoding.UTF8.GetBytes(Convert.ToString(item, CultureInfo.InvariantCulture)!);
-                    Text("$" + bytes.Length + "\r\n"); stream.Write(bytes); Text("\r\n"); break;
+                    Text("$" + bytes.Length + "\r\n");
+                    stream.Write(bytes);
+                    Text("\r\n");
+                    break;
             }
         }
     }
@@ -527,6 +614,8 @@ public class SearchProfileTests
 
     private static RespireOptions Options(FakeRespServer server, int protocol) => new()
     {
-        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = (RespireProtocol)protocol, ThreadPoolMonitoring = false,
+        Endpoints = { new("127.0.0.1", server.Port) },
+        Protocol = (RespireProtocol)protocol,
+        ThreadPoolMonitoring = false,
     };
 }

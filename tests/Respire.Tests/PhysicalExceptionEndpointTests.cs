@@ -50,6 +50,7 @@ public class PhysicalExceptionEndpointTests
     public async Task RawPoolReuseDoesNotRetainPreviousEndpoint()
     {
         var pool = new PendingResponsePool(1);
+
         for (var attempt = 0; attempt < 3; attempt++)
         {
             var source = pool.Rent(throwOnError: true, commandName: "GET");
@@ -59,7 +60,10 @@ public class PhysicalExceptionEndpointTests
             var task = source.Task;
             source.TrySetResult(RespValue.Error("ERR failed"u8.ToArray()));
             source.ReleaseRef();
-            var error = await Assert.ThrowsAsync<RespireServerException>(async () => { using var value = await task; });
+            var error = await Assert.ThrowsAsync<RespireServerException>(async () =>
+            {
+                using var value = await task;
+            });
             await Assert.That(error!.Endpoint).IsEqualTo(expected);
         }
     }
@@ -74,18 +78,28 @@ public class PhysicalExceptionEndpointTests
         var completion = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
         var expected = new RespireProtocolException("bad conversion");
         Exception? actual = null;
+
         try
         {
             var converted = PooledResponseSource<Exception, long>.Create(
                 asynchronous ? new(completion.Task) : new(RespValue.Integer(1)), expected,
                 static (Exception failure, in RespValue _) => throw failure);
             var result = owner.Attach(converted);
-            if (asynchronous) completion.SetResult(RespValue.Integer(1));
+
+            if (asynchronous)
+            {
+                completion.SetResult(RespValue.Integer(1));
+            }
+
             await result;
         }
         catch (Exception error) { actual = error; }
         // Synchronous conversion throws before Attach; its caller owns Fail in that case.
-        if (!asynchronous) owner.Fail(actual!);
+        if (!asynchronous)
+        {
+            owner.Fail(actual!);
+        }
+
         await Assert.That(actual).IsSameReferenceAs(expected);
         await Assert.That(expected.Endpoint).IsEqualTo((RespireEndpoint?)Origin);
     }
@@ -117,6 +131,7 @@ public class PhysicalExceptionEndpointTests
             : new FakeRespServer(ErrorReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         RespirePending<string?> pending;
+
         if (transaction)
         {
             await using var tx = client.CreateTransaction();
@@ -129,6 +144,7 @@ public class PhysicalExceptionEndpointTests
             pending = batch.GetString("key");
             await batch.TryExecuteAsync();
         }
+
         var error = Assert.Throws<RespireServerException>(() => _ = pending.Result);
         await Assert.That(error.Endpoint).IsEqualTo((RespireEndpoint?)new RespireEndpoint("127.0.0.1", server.Port));
         await Assert.That(error.CommandName).IsEqualTo("GET");
@@ -144,6 +160,7 @@ public class PhysicalExceptionEndpointTests
             : new FakeRespServer("*0\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         RespirePending<double> pending;
+
         if (transaction)
         {
             await using var tx = client.CreateTransaction();
@@ -156,6 +173,7 @@ public class PhysicalExceptionEndpointTests
             pending = batch.Strings.Increment("key", 1.0);
             await batch.TryExecuteAsync();
         }
+
         var error = Assert.Throws<RespireProtocolException>(() => _ = pending.Result);
         await Assert.That(error.Endpoint).IsEqualTo((RespireEndpoint?)new RespireEndpoint("127.0.0.1", server.Port));
     }
@@ -182,9 +200,13 @@ public class PhysicalExceptionEndpointTests
         await using var server = new FakeRespServer("?invalid\r\n"u8.ToArray());
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         var first = await Assert.ThrowsAsync<RespireProtocolException>(async () =>
-        { using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)); });
+        {
+            using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+        });
         var next = await Assert.ThrowsAsync<RespireProtocolException>(async () =>
-        { using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)); });
+        {
+            using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+        });
         var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
         await Assert.That(first!.Endpoint).IsEqualTo((RespireEndpoint?)endpoint);
         await Assert.That(next!.Endpoint).IsEqualTo((RespireEndpoint?)endpoint);
@@ -265,20 +287,40 @@ public class PhysicalExceptionEndpointTests
         {
             case "raw":
                 var raw = new PendingResponsePool(1).Rent(throwOnError: true, commandName: "GET");
-                return (raw, async () => { using var reply = await raw.Task; });
+                return (raw, async () =>
+                {
+                    using var reply = await raw.Task;
+                }
+                );
             case "string":
                 var text = StringPendingResponseSource.Rent("GET", observeErrors: false);
-                return (text, async () => { _ = await text.Task; });
+                return (text, async () =>
+                {
+                    _ = await text.Task;
+                }
+                );
             case "bytes":
                 var bytes = BytesPendingResponseSource.Rent("GET", observeErrors: false);
-                return (bytes, async () => { _ = await bytes.Task; });
+                return (bytes, async () =>
+                {
+                    _ = await bytes.Task;
+                }
+                );
             case "stream":
                 var stream = new BulkStreamPendingResponseSource("GET", false, null);
-                return (stream, async () => { using var result = await stream.Task; });
+                return (stream, async () =>
+                {
+                    using var result = await stream.Task;
+                }
+                );
             default:
                 var converted = ConvertedPendingResponseSource<int, long>.Rent(0,
                     static (int _, in RespValue value) => (long)ResponseReader.Double(in value), false, "GET", observeErrors: false);
-                return (converted, async () => { _ = await converted.Task; });
+                return (converted, async () =>
+                {
+                    _ = await converted.Task;
+                }
+                );
         }
     }
 }

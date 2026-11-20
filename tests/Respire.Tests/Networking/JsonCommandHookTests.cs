@@ -73,21 +73,51 @@ public class JsonCommandHookTests
         {
             switch (route)
             {
-                case "get": await json.GetAsync("key", IntInfo, cancellationToken: token); break;
-                case "many": await json.GetManyAsync("key", IntInfo, default, token); break;
-                case "text": await json.GetJsonAsync("key", cancellationToken: token); break;
-                case "multi": await json.MultiGetAsync("key", IntInfo, cancellationToken: token); break;
-                case "set": await json.SetAsync("key", 1, IntInfo, cancellationToken: token); break;
-                case "set-text": await json.SetJsonAsync("key", "1", cancellationToken: token); break;
-                case "set-bytes": await json.SetJsonAsync("key", "1"u8.ToArray(), cancellationToken: token); break;
-                case "set-fpha": await json.SetAsync(RespireJsonFloatingPointType.Fp32, "key", 1, IntInfo, cancellationToken: token); break;
-                case "set-fpha-text": await json.SetJsonAsync(RespireJsonFloatingPointType.Fp32, "key", "1", cancellationToken: token); break;
-                case "set-fpha-bytes": await json.SetJsonAsync(RespireJsonFloatingPointType.Fp32, "key", "1"u8.ToArray(), cancellationToken: token); break;
-                case "merge": await json.MergeAsync("key", 1, IntInfo, cancellationToken: token); break;
-                case "multi-set": await json.MultiSetAsync([new("key", 1)], IntInfo, token); break;
-                case "delete": await json.DeleteAsync("key", cancellationToken: token); break;
-                case "forget": await json.ForgetAsync("key", cancellationToken: token); break;
-                case "memory": await json.GetMemoryUsageAsync("key", cancellationToken: token); break;
+                case "get":
+                    await json.GetAsync("key", IntInfo, cancellationToken: token);
+                    break;
+                case "many":
+                    await json.GetManyAsync("key", IntInfo, default, token);
+                    break;
+                case "text":
+                    await json.GetJsonAsync("key", cancellationToken: token);
+                    break;
+                case "multi":
+                    await json.MultiGetAsync("key", IntInfo, cancellationToken: token);
+                    break;
+                case "set":
+                    await json.SetAsync("key", 1, IntInfo, cancellationToken: token);
+                    break;
+                case "set-text":
+                    await json.SetJsonAsync("key", "1", cancellationToken: token);
+                    break;
+                case "set-bytes":
+                    await json.SetJsonAsync("key", "1"u8.ToArray(), cancellationToken: token);
+                    break;
+                case "set-fpha":
+                    await json.SetAsync(RespireJsonFloatingPointType.Fp32, "key", 1, IntInfo, cancellationToken: token);
+                    break;
+                case "set-fpha-text":
+                    await json.SetJsonAsync(RespireJsonFloatingPointType.Fp32, "key", "1", cancellationToken: token);
+                    break;
+                case "set-fpha-bytes":
+                    await json.SetJsonAsync(RespireJsonFloatingPointType.Fp32, "key", "1"u8.ToArray(), cancellationToken: token);
+                    break;
+                case "merge":
+                    await json.MergeAsync("key", 1, IntInfo, cancellationToken: token);
+                    break;
+                case "multi-set":
+                    await json.MultiSetAsync([new("key", 1)], IntInfo, token);
+                    break;
+                case "delete":
+                    await json.DeleteAsync("key", cancellationToken: token);
+                    break;
+                case "forget":
+                    await json.ForgetAsync("key", cancellationToken: token);
+                    break;
+                case "memory":
+                    await json.GetMemoryUsageAsync("key", cancellationToken: token);
+                    break;
             }
         }
     }
@@ -108,8 +138,14 @@ public class JsonCommandHookTests
         await using var client = await Connect(server, hook);
         var error = await Failure(async () =>
         {
-            if (route == "multi") await client.Json.MultiGetAsync("key", IntInfo);
-            else await client.Json.GetAsync("key", IntInfo, RespireJsonPath.JsonPath("$"));
+            if (route == "multi")
+            {
+                await client.Json.MultiGetAsync("key", IntInfo);
+            }
+            else
+            {
+                await client.Json.GetAsync("key", IntInfo, RespireJsonPath.JsonPath("$"));
+            }
         });
         await Assert.That(error is JsonException or InvalidOperationException).IsTrue();
         await Check(hook, route == "multi" ? "JSON.MGET" : "JSON.GET", RespireCommandOutcome.Failed, error);
@@ -128,7 +164,9 @@ public class JsonCommandHookTests
         hook.Before = context =>
         {
             if (context.Command == "JSON.GET")
+            {
                 nested = client.Strings.SetAsync("nested", "value").AsTask();
+            }
         };
         using var raw = await client.Json.Commands.GetPathAsync("key", ".");
         await nested!;
@@ -138,7 +176,9 @@ public class JsonCommandHookTests
         hook.Before = context =>
         {
             if (context.Command == "JSON.GET")
+            {
                 nested = client.Strings.SetAsync("nested", "value").AsTask();
+            }
         };
         await Failure(async () => await client.Json.GetAsync("key", IntInfo));
         await nested!;
@@ -161,7 +201,12 @@ public class JsonCommandHookTests
         var options = new JsonSerializerOptions { TypeInfoResolver = new DefaultJsonTypeInfoResolver(), Converters = { converter } };
         var info = (JsonTypeInfo<int>)options.GetTypeInfo(typeof(int));
         var calls = 0;
-        converter.WriteValue = (writer, value) => { calls++; writer.WriteStartArray(); throw failure; };
+        converter.WriteValue = (writer, value) =>
+        {
+            calls++;
+            writer.WriteStartArray();
+            throw failure;
+        };
         hook.Before = _ => throw new InvalidOperationException("denied");
         var baseline = server.CommandsSeen;
         await Failure(Write);
@@ -173,7 +218,17 @@ public class JsonCommandHookTests
         await Assert.That(error).IsSameReferenceAs(failure);
         await Assert.That(calls).IsEqualTo(1);
         await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
-        await Check(hook, route switch { "merge" => "JSON.MERGE", "multi-set" => "JSON.MSET", _ => "JSON.SET" }, RespireCommandOutcome.Failed, failure);
+        await Check(
+            hook,
+            route switch
+            {
+                "merge" => "JSON.MERGE",
+                "multi-set" => "JSON.MSET",
+                _ => "JSON.SET"
+            },
+            RespireCommandOutcome.Failed,
+            failure
+        );
 
         // The next call can reuse this client's serialization buffer after failure.
         // A fresh valid payload must not retain the failed converter's uncommitted array token.
@@ -222,6 +277,7 @@ public class JsonCommandHookTests
     {
         internal IRespireClient Inner = null!;
         internal readonly List<string> Methods = [];
+
         protected override object? Invoke(MethodInfo? method, object?[]? arguments)
         {
             Methods.Add(method!.Name);
@@ -232,7 +288,9 @@ public class JsonCommandHookTests
     private sealed class CallbackConverter : JsonConverter<int>
     {
         internal Action<Utf8JsonWriter, int> WriteValue = null!;
+
         public override int Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => reader.GetInt32();
+
         public override void Write(Utf8JsonWriter writer, int value, JsonSerializerOptions options) => WriteValue(writer, value);
     }
 
@@ -251,8 +309,12 @@ public class JsonCommandHookTests
 #pragma warning disable RESP010 // This JSON mutation scenario owns the client and cache entries inspected around admission.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp3,
-            Connections = 1, ThreadPoolMonitoring = false, CommandHook = hook, ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp3,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            CommandHook = hook,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -280,6 +342,7 @@ public class JsonCommandHookTests
             var read = cache.BeginRead(in cachedKey);
             cache.CompleteRead(in read, in value, allowInsert: true);
         }
+
         Task Write() => route switch
         {
             "multi-set" => client.WithKeyPrefix("tenant:").Json.MultiSetAsync([new("key", 7)], IntInfo).AsTask(),
@@ -302,18 +365,26 @@ public class JsonCommandHookTests
     private static ValueTask<RespireClient> Connect(FakeRespServer server, RespireCommandHook hook)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-            Connections = 1, ThreadPoolMonitoring = false, CommandHook = hook,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            CommandHook = hook,
         });
 
     private static async Task<Exception> Failure(Func<Task> call)
     {
-        try { await call(); }
+        try
+        {
+            await call();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure.");
     }
 
     private static byte[] Bytes(string text) => Encoding.UTF8.GetBytes(text);
+
     private static byte[] Bulk(string text) => Bytes($"${Encoding.UTF8.GetByteCount(text)}\r\n{text}\r\n");
 
     private sealed class RecordingHook : RespireCommandHook
@@ -321,14 +392,22 @@ public class JsonCommandHookTests
         internal readonly ConcurrentQueue<RespireCommandContext> Entered = new();
         internal readonly ConcurrentQueue<(RespireCommandContext Context, RespireCommandOutcome Outcome, Exception? Error)> Completed = new();
         internal Action<RespireCommandContext>? Before;
+
         public override object? OnExecuting(RespireCommandContext context)
         {
             Entered.Enqueue(context);
             Before?.Invoke(context);
             return null;
         }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
             => Completed.Enqueue((context, outcome, error));
-        internal void Reset() { Entered.Clear(); Completed.Clear(); Before = null; }
+
+        internal void Reset()
+        {
+            Entered.Clear();
+            Completed.Clear();
+            Before = null;
+        }
     }
 }

@@ -71,6 +71,7 @@ public class RetryCategoryMetadataTests
     public async Task EveryDescriptorAndBuiltInVerbHasAnIndependentDefinedCategory()
     {
         var catalog = RespireCommands.All.ToArray().ToDictionary(command => command.Name);
+
         foreach (var descriptor in catalog.Values)
         {
             await Assert.That(Enum.IsDefined(descriptor.RetryCategory)).IsTrue();
@@ -80,7 +81,11 @@ public class RetryCategoryMetadataTests
 
         foreach (var field in typeof(Verbs).GetFields(BindingFlags.Public | BindingFlags.Static))
         {
-            if (field.FieldType != typeof(Verb)) continue;
+            if (field.FieldType != typeof(Verb))
+            {
+                continue;
+            }
+
             var verb = (Verb)field.GetValue(null)!;
             var words = Encoding.ASCII.GetString(verb.Bulk).Split("\r\n")
                 .Where((_, index) => (index & 1) != 0);
@@ -89,7 +94,12 @@ public class RetryCategoryMetadataTests
             // Other fixed-option verbs absent from the catalog have no execution-specific audit.
             var expected = catalog.TryGetValue(name, out var descriptor)
                 ? descriptor.RetryCategory : RespireCommandRetryCategory.Never;
-            if (field.Name == nameof(Verbs.XAddIdempotent)) expected = RespireCommandRetryCategory.WriteChecked;
+
+            if (field.Name == nameof(Verbs.XAddIdempotent))
+            {
+                expected = RespireCommandRetryCategory.WriteChecked;
+            }
+
             await Assert.That(verb.RetryCategory).IsEqualTo(expected);
         }
     }
@@ -99,9 +109,11 @@ public class RetryCategoryMetadataTests
     {
         await Assert.That(default(RespireCommand).RetryCategory).IsEqualTo(RespireCommandRetryCategory.Never);
         await Assert.That(default(Verb).RetryCategory).IsEqualTo(RespireCommandRetryCategory.Never);
+
         foreach (var name in new[] { "GET", "SET", "INCR", "PING", "CUSTOM.GET" })
         {
             RespireCommand implicitCommand = name;
+
             foreach (var descriptor in new[]
             {
                 implicitCommand, RespireCommand.Create(name),
@@ -114,6 +126,7 @@ public class RetryCategoryMetadataTests
                 await Assert.That(descriptor.Verb.RetryCategory).IsEqualTo(RespireCommandRetryCategory.Never);
             }
         }
+
         await Assert.That(new Verb("CUSTOM.GET").RetryCategory).IsEqualTo(RespireCommandRetryCategory.Never);
         await Assert.That(CommandRetryCategoryMetadata.Get("CUSTOM_READONLY"))
             .IsEqualTo(RespireCommandRetryCategory.Never);
@@ -194,11 +207,17 @@ public class RetryCategoryMetadataTests
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
         var total = 0;
+
         for (var index = 0; index < 1_000; index++)
         {
             total += (int)command.RetryCategory + (int)verb.RetryCategory;
-            if (allocate) GC.KeepAlive(new byte[37]);
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return (GC.GetAllocatedBytesForCurrentThread() - before, total);
     }
 }

@@ -164,11 +164,18 @@ public class ClientCoreTests
         core.ConnectionStateChanged += change =>
         {
             if (change.Endpoint != endpoint)
+            {
                 return;
+            }
+
             if (change.State == RespireConnectionState.Reconnecting)
+            {
                 reconnecting.TrySetResult();
+            }
             else if (change.State == RespireConnectionState.Disconnected)
+            {
                 disconnected.TrySetResult();
+            }
         };
         core.NotifyClusterSubscriptionStateChanged(new(endpoint, RespireConnectionState.Reconnecting, null));
         await reconnecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -339,6 +346,7 @@ public class ClientCoreTests
         core.ConnectionStateChanged += change =>
         {
             var state = change.State;
+
             if (state == RespireConnectionState.Connected)
             {
                 connectedStarted.Set();

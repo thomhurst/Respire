@@ -24,21 +24,44 @@ public enum RespireContainerTopology
 public sealed record RespireContainerOptions
 {
     /// <summary>Server family. Defaults to Redis.</summary>
-    public RespireContainerServer Server { get; init; }
+    public RespireContainerServer Server
+    {
+        get; init;
+    }
+
     /// <summary>Deployment topology. Defaults to standalone.</summary>
-    public RespireContainerTopology Topology { get; init; }
+    public RespireContainerTopology Topology
+    {
+        get; init;
+    }
+
     /// <summary>Image override, including its tag or digest. It must contain the selected server and CLI binaries, /bin/sh, mkdir, and tail.</summary>
     /// <remarks>Defaults to redis:7.2-alpine or valkey/valkey:8.1-alpine. Cluster requires Redis 7+ or Valkey.</remarks>
-    public string? Image { get; init; }
+    public string? Image
+    {
+        get; init;
+    }
+
     /// <summary>Maximum total startup and readiness time, including image pull and up to two retries for recognized host-port collisions. Defaults to two minutes.</summary>
-    public TimeSpan StartupTimeout { get; init; } = TimeSpan.FromMinutes(2);
+    public TimeSpan StartupTimeout
+    {
+        get; init;
+    } = TimeSpan.FromMinutes(2);
+
     /// <summary>How long Sentinels wait for an unresponsive primary before marking it subjectively down. Defaults to five seconds.</summary>
     /// <remarks>Applies only to the Sentinel topology and is truncated to whole milliseconds. Shorter values make failover tests
     /// faster, but a heavily loaded host can then delay replies enough to trigger a failover the test did not request.</remarks>
-    public TimeSpan SentinelDownAfter { get; init; } = TimeSpan.FromSeconds(5);
+    public TimeSpan SentinelDownAfter
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(5);
+
     /// <summary>The Sentinel failover timeout. Defaults to ten seconds, instead of the server's three minutes.</summary>
     /// <remarks>Applies only to the Sentinel topology and is truncated to whole milliseconds. Sentinels retry a failed or
     /// aborted election after twice this value, and abandon a promotion that takes longer than it. The default keeps
     /// that retry within bounded test deadlines.</remarks>
-    public TimeSpan SentinelFailoverTimeout { get; init; } = TimeSpan.FromSeconds(10);
+    public TimeSpan SentinelFailoverTimeout
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(10);
 }

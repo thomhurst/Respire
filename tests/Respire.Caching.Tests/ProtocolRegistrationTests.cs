@@ -20,13 +20,26 @@ public class ProtocolRegistrationTests
     public async Task BuilderProtocol_ReachesResolvedClient(bool keyed, RespireProtocol? protocol)
     {
         var services = new ServiceCollection();
+
         void Configure(RespireOptionsBuilder options)
         {
             options.Endpoints.Add(new RespireEndpoint("127.0.0.1", 1));
-            if (protocol.HasValue) options.Protocol = protocol.Value;
+
+            if (protocol.HasValue)
+            {
+                options.Protocol = protocol.Value;
+            }
         }
-        if (keyed) services.AddKeyedRespire("protocol", Configure);
-        else services.AddRespire(Configure);
+
+        if (keyed)
+        {
+            services.AddKeyedRespire("protocol", Configure);
+        }
+        else
+        {
+            services.AddRespire(Configure);
+        }
+
         await using var provider = services.BuildServiceProvider();
         var client = keyed ? provider.GetRequiredKeyedService<RespireClient>("protocol")
             : provider.GetRequiredService<RespireClient>();

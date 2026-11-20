@@ -51,14 +51,21 @@ public sealed partial class RespireSearchClient
                 for (var i = 0; i < reply.Count - 1; i += 2)
                 {
                     if (reply[i].IsNull || reply[i].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
+                    {
                         throw RespireSearchReply.Unexpected("FT.PROFILE",
                             $"an unsupported HYBRID profile layout (type {reply.Type}, element count {reply.Count}); expected field/value pairs and one profile tail");
+                    }
                 }
+
                 return new(RespireSearchResult.ParseHybrid(reply, reply.Count - 1), RespireSearchProfileNode.Parse(reply[^1]));
             }
+
             if (reply.Type == RespireDataType.Map && TryReadProfileField(reply, "Profile", out var profile) &&
                 !TryReadProfileField(reply, "Results", out _))
+            {
                 return new(RespireSearchResult.ParseHybrid(reply), RespireSearchProfileNode.Parse(profile));
+            }
+
             var parts = ReadProfileEnvelope(reply);
             return new(RespireSearchResult.ParseHybrid(parts.Result), parts.Profile);
         }).ConfigureAwait(false);
@@ -69,10 +76,16 @@ public sealed partial class RespireSearchClient
     private static (RespireResult Result, RespireSearchProfileNode Profile) ReadProfileEnvelope(RespireResult reply)
     {
         if (reply.Type == RespireDataType.Array && reply.Count == 2)
+        {
             return (reply[0], RespireSearchProfileNode.Parse(reply[1]));
+        }
+
         if (reply.Type == RespireDataType.Map && TryReadProfileField(reply, "Results", out var result) &&
             TryReadProfileField(reply, "Profile", out var profile))
+        {
             return (result, RespireSearchProfileNode.Parse(profile));
+        }
+
         throw RespireSearchReply.Unexpected("FT.PROFILE",
             $"an invalid result/profile envelope (type {reply.Type}, element count {reply.Count})");
     }
@@ -82,15 +95,28 @@ public sealed partial class RespireSearchClient
         RespireSearchReply.RequirePairs(reply, "FT.PROFILE");
         value = default;
         var found = false;
+
         for (var i = 0; i < reply.Count; i += 2)
         {
             if (reply[i].IsNull || reply[i].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
+            {
                 throw RespireSearchReply.Unexpected("FT.PROFILE", "a non-string envelope field");
-            if (reply[i].AsString() != name) continue;
-            if (found) throw RespireSearchReply.Unexpected("FT.PROFILE", "a duplicate envelope field " + name);
+            }
+
+            if (reply[i].AsString() != name)
+            {
+                continue;
+            }
+
+            if (found)
+            {
+                throw RespireSearchReply.Unexpected("FT.PROFILE", "a duplicate envelope field " + name);
+            }
+
             value = reply[i + 1];
             found = true;
         }
+
         return found;
     }
 }

@@ -121,7 +121,12 @@ public class ByteMemorySerializationTests
     {
         await using var server = new RespireFakeServer();
         var options = server.CreateOptions();
-        if (customSerializer) options = options with { Serializer = new RejectingSerializer() };
+
+        if (customSerializer)
+        {
+            options = options with { Serializer = new RejectingSerializer() };
+        }
+
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(options);
 #pragma warning restore RESP010
@@ -185,8 +190,11 @@ public class ByteMemorySerializationTests
     private sealed class RejectingSerializer : IRespireSerializer
     {
         public void Serialize<T>(IBufferWriter<byte> destination, T value) => throw new InvalidOperationException("Serializer must be bypassed.");
+
         public void Serialize(IBufferWriter<byte> destination, Type type, object? value) => throw new InvalidOperationException("Serializer must be bypassed.");
+
         public T? Deserialize<T>(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("Serializer must be bypassed.");
+
         public object? Deserialize(Type type, ReadOnlySpan<byte> payload) => throw new InvalidOperationException("Serializer must be bypassed.");
     }
 }

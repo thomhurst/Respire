@@ -21,7 +21,10 @@ public sealed class RespireFairLock
     internal RespireFairLock(IRespireClient client, RespireKey key, RespireKey counter, RespireKey queue)
     {
         if (key == counter || key == queue || counter == queue)
+        {
             throw new ArgumentException("Lease, fencing counter and queue keys must differ.");
+        }
+
         _client = client;
         Key = key.Snapshot();
         FencingCounterKey = counter.Snapshot();
@@ -29,11 +32,22 @@ public sealed class RespireFairLock
     }
 
     /// <summary>The lease key before the client's prefix.</summary>
-    public RespireKey Key { get; }
+    public RespireKey Key
+    {
+        get;
+    }
+
     /// <summary>The persistent counter key before the client's prefix.</summary>
-    public RespireKey FencingCounterKey { get; }
+    public RespireKey FencingCounterKey
+    {
+        get;
+    }
+
     /// <summary>The expiring FIFO queue hash key before the client's prefix.</summary>
-    public RespireKey QueueKey { get; }
+    public RespireKey QueueKey
+    {
+        get;
+    }
 
     // A doubly linked list in one hash permits O(1) cancellation without scanning all waiters.
     // The whole hash expires at the latest waiter deadline, including when every client crashes.
@@ -155,32 +169,51 @@ public sealed class RespireFairLock
         cancellationToken.ThrowIfCancellationRequested();
         var milliseconds = RespireCoordination.ValidateAcquisition(Key, FencingCounterKey, duration);
         var waitMilliseconds = waitTimeout.Ticks / TimeSpan.TicksPerMillisecond;
+
         if (waitMilliseconds <= 0 || waitTimeout > TimeSpan.FromDays(24))
+        {
             throw new ArgumentOutOfRangeException(nameof(waitTimeout), "Wait timeout must be between one millisecond and 24 days.");
+        }
+
         var physicalLeaseKey = _client.ResolveKey(Key).Snapshot();
         var physicalQueueKey = _client.ResolveKey(QueueKey).Snapshot();
         var cache = CoordinationWaitAdmission.Validate(_client, physicalLeaseKey, physicalQueueKey);
         using var signal = new SemaphoreSlim(0, 1);
+
         void OnInvalidation(RespireClientCacheInvalidation invalidation)
         {
-            if ((invalidation.Reasons & ~RespireClientCacheInvalidationReason.LocalMutation) == 0) return;
-            try { signal.Release(); }
+            if ((invalidation.Reasons & ~RespireClientCacheInvalidationReason.LocalMutation) == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                signal.Release();
+            }
             catch (SemaphoreFullException) { }
             catch (ObjectDisposedException) { }
         }
+
         using var leaseSubscription = cache.SubscribeInvalidations(physicalLeaseKey, OnInvalidation, cancellationToken);
         using var queueSubscription = cache.SubscribeInvalidations(physicalQueueKey, OnInvalidation, cancellationToken);
+
         if (!leaseSubscription.Stopped.CanBeCanceled || !queueSubscription.Stopped.CanBeCanceled)
+        {
             throw new NotSupportedException("Fair lock subscriptions must expose cancellable Stopped tokens.");
+        }
+
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, leaseSubscription.Stopped, queueSubscription.Stopped);
         var owner = RespireLock.NewToken();
         var acquisitionUncertain = false;
         long started = 0;
         long previousServerTime = 0, previousDeadline = 0, previousStarted = 0;
         var transferred = false;
+
         try
         {
             var join = true;
+
             while (true)
             {
                 linked.Token.ThrowIfCancellationRequested();
@@ -194,6 +227,7 @@ public sealed class RespireFairLock
                 join = false;
                 var status = response[0].AsInteger();
                 acquisitionUncertain = status == 1;
+
                 if (status < 0)
                 {
                     // Capture the script's atomic observation before finally removes this waiter.
@@ -204,24 +238,43 @@ public sealed class RespireFairLock
                     throw new TimeoutException(FormattableString.Invariant(
                         $"The fair lock waiter {reason}. Redis TIME={serverTime}ms, deadline={deadline}ms, previous TIME={previousServerTime}ms, previous deadline={previousDeadline}ms, elapsed since previous attempt={(previousStarted == 0 ? 0 : Stopwatch.GetElapsedTime(previousStarted).TotalMilliseconds):F3}ms, queue PTTL={response[5].AsInteger()}ms, queue fields={response[6].AsInteger()}."));
                 }
+
                 if (status == 1)
                 {
                     var lease = new RespireLock(_client.Locks, Key, owner,
                         TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond), started, TimeProvider.System);
+
                     if (!long.TryParse(response[1].AsString(), NumberStyles.None, CultureInfo.InvariantCulture, out var fence) || fence <= 0)
+                    {
                         throw new RespireProtocolException("Fair lock acquisition did not return a positive Int64 fencing token.");
+                    }
+
                     linked.Token.ThrowIfCancellationRequested();
-                    if (lease.IsReleased) throw new TimeoutException("The fair lock lease expired before acquisition completed.");
+
+                    if (lease.IsReleased)
+                    {
+                        throw new TimeoutException("The fair lock lease expired before acquisition completed.");
+                    }
+
                     transferred = true;
                     return new RespireFencedLock(lease, FencingCounterKey, fence);
                 }
+
                 previousServerTime = response[3].AsInteger();
                 previousDeadline = response[4].AsInteger();
                 previousStarted = started;
-                if (status == 2) continue; // Bounded cleanup has more expired heads to remove.
+
+                if (status == 2)
+                {
+                    continue; // Bounded cleanup has more expired heads to remove.
+                }
+
                 var delay = TimeSpan.FromMilliseconds(response[2].AsInteger()) - Stopwatch.GetElapsedTime(started);
+
                 if (delay > TimeSpan.Zero)
+                {
                     _ = await signal.WaitAsync(delay, linked.Token).ConfigureAwait(false);
+                }
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested &&
@@ -236,6 +289,7 @@ public sealed class RespireFairLock
                 // Bound both owner-checked lease release and waiter removal, even when command
                 // timeouts are disabled. Lease/queue expiry remain the fallback on lost replies.
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+
                 try
                 {
                     using var ignored = await CoordinationCommandHooks.ExecuteAsync(_client, RemoveWaiter,

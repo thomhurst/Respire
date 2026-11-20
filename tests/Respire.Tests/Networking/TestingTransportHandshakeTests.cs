@@ -28,6 +28,7 @@ public class TestingTransportHandshakeTests
             },
         };
         var pending = RespireConnection.ConnectAsync("testing", 6379, options, cancellationToken: caller.Token);
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -46,22 +47,37 @@ public class TestingTransportHandshakeTests
         {
             releaseFactory.TrySetResult();
             stream.ReleaseDisposal.TrySetResult();
-            try { await using var connection = await pending.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+            try
+            {
+                await using var connection = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             catch (OperationCanceledException) { }
         }
     }
 
     private sealed class GatedDisposalStream(bool disposalFails) : MemoryStream
     {
-        internal TaskCompletionSource DisposalStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource ReleaseDisposal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource DisposalStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ReleaseDisposal
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override async ValueTask DisposeAsync()
         {
             DisposalStarted.TrySetResult();
             await ReleaseDisposal.Task;
             await base.DisposeAsync();
-            if (disposalFails) throw new IOException("Asynchronous stream cleanup failed.");
+
+            if (disposalFails)
+            {
+                throw new IOException("Asynchronous stream cleanup failed.");
+            }
         }
     }
 
@@ -81,15 +97,26 @@ public class TestingTransportHandshakeTests
             ConnectionFactory = async (_, token) =>
             {
                 entered.TrySetResult();
-                try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                }
                 catch (OperationCanceledException) when (returnsAfterCancellation) { }
+
                 return stream;
             },
         };
         var pending = RespireConnection.ConnectAsync("testing", 6379, options, cancellationToken: caller.Token);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        if (callerCancellation) caller.Cancel();
+
+        if (callerCancellation)
+        {
+            caller.Cancel();
+        }
+
         OperationCanceledException cancellation;
+
         if (callerCancellation)
         {
             cancellation = (await Assert.That(CompleteConnectionAsync).Throws<OperationCanceledException>())!;
@@ -104,10 +131,15 @@ public class TestingTransportHandshakeTests
             await Assert.That(error.InnerException is OperationCanceledException).IsTrue();
             cancellation = (OperationCanceledException)error.InnerException!;
         }
+
         await Assert.That(cancellation.CancellationToken == caller.Token).IsEqualTo(callerCancellation);
         await Assert.That(cancellation.CancellationToken.IsCancellationRequested).IsTrue();
         await Assert.That(caller.IsCancellationRequested).IsEqualTo(callerCancellation);
-        if (returnsAfterCancellation) await Assert.That(stream.CanRead).IsFalse();
+
+        if (returnsAfterCancellation)
+        {
+            await Assert.That(stream.CanRead).IsFalse();
+        }
 
         async Task CompleteConnectionAsync()
         {
@@ -135,7 +167,11 @@ public class TestingTransportHandshakeTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         using var caller = new CancellationTokenSource();
         var options = new RespireConnectionOptions
@@ -146,7 +182,12 @@ public class TestingTransportHandshakeTests
         };
         var pending = RespireConnection.ConnectAsync("127.0.0.1", server.Port, options, cancellationToken: caller.Token);
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        if (callerCancellation) caller.Cancel();
+
+        if (callerCancellation)
+        {
+            caller.Cancel();
+        }
+
         if (callerCancellation)
         {
             var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
@@ -158,12 +199,14 @@ public class TestingTransportHandshakeTests
             await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
                 .Throws<RespireTimeoutException>();
         }
+
         await server.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     private static async ValueTask<Stream> OpenStream(string host, int port, CancellationToken token, bool disposalFails)
     {
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
         try
         {
             await socket.ConnectAsync(host, port, token);

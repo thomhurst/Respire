@@ -51,7 +51,11 @@ public class SentinelCancellationTests
             var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
                 .Throws<OperationCanceledException>();
             await Assert.That(error!.CancellationToken).IsEqualTo(ownedToken ? caller.Token : unrelated.Token);
-            if (!ownedToken) await Assert.That(error).IsSameReferenceAs(original);
+
+            if (!ownedToken)
+            {
+                await Assert.That(error).IsSameReferenceAs(original);
+            }
         }
         else if (ownedToken && !primary)
         {
@@ -64,22 +68,37 @@ public class SentinelCancellationTests
         {
             var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
                 .Throws<RespireConnectionException>();
+
             if (ownedToken)
             {
                 await Assert.That(error!.InnerException is RespireTimeoutException).IsTrue();
                 await Assert.That(((RespireTimeoutException)error.InnerException!).CommandName).IsEqualTo("CONNECT");
             }
-            else await Assert.That(error!.InnerException).IsSameReferenceAs(original);
+            else
+            {
+                await Assert.That(error!.InnerException).IsSameReferenceAs(original);
+            }
         }
 
         async Task FailAsync(CancellationToken token)
         {
-            if (callerCancelled) caller.Cancel();
+            if (callerCancelled)
+            {
+                caller.Cancel();
+            }
             // Cancel the primary deadline only after discovery reaches the controlled callback.
             // A short ConnectTimeout also bounds Sentinel setup and can expire before this point.
-            else if (primary) primaryTimeout!.Cancel();
-            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+            else if (primary)
+            {
+                primaryTimeout!.Cancel();
+            }
+
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+
             original = new OperationCanceledException(ownedToken ? token : unrelated.Token);
             throw original;
         }

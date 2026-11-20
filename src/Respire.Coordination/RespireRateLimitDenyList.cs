@@ -34,7 +34,12 @@ public sealed class RespireRateLimitDenyList
     {
         ArgumentNullException.ThrowIfNull(client);
         _client = client;
-        if (key.IsEmpty) throw new ArgumentException("The deny-list key must not be empty.", nameof(key));
+
+        if (key.IsEmpty)
+        {
+            throw new ArgumentException("The deny-list key must not be empty.", nameof(key));
+        }
+
         _cacheDuration = ValidateDuration(cacheDuration ?? TimeSpan.FromSeconds(1));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(cacheCapacity);
         _cacheCapacity = cacheCapacity;
@@ -90,16 +95,21 @@ public sealed class RespireRateLimitDenyList
     {
         ArgumentException.ThrowIfNullOrEmpty(identity);
         cancellationToken.ThrowIfCancellationRequested();
+
         if (_cacheDuration == TimeSpan.Zero)
+        {
             return await ReadUncachedAsync(identity, cancellationToken).ConfigureAwait(false);
+        }
 
         PendingRead? pending;
         long generation;
         long started;
         bool ownsRead;
+
         lock (_gate)
         {
             started = _time.GetTimestamp();
+
             if (_cache.TryGetValue(identity, out var entry))
             {
                 if (_time.GetElapsedTime(entry.Started, started) < _cacheDuration)
@@ -108,9 +118,12 @@ public sealed class RespireRateLimitDenyList
                     _recency.AddLast(entry.Node);
                     return entry.Denied;
                 }
+
                 RemoveEntry(identity);
             }
+
             generation = _generation;
+
             if (_pending.TryGetValue(identity, out pending)
                 && _time.GetElapsedTime(pending.Started, started) >= _cacheDuration)
             {
@@ -118,7 +131,9 @@ public sealed class RespireRateLimitDenyList
                 _pending.Remove(identity);
                 pending = null;
             }
+
             ownsRead = pending is null;
+
             if (ownsRead)
             {
                 // Bound bookkeeping under distinct-identity floods. Excess reads remain caller-owned.
@@ -129,10 +144,17 @@ public sealed class RespireRateLimitDenyList
                 }
             }
         }
+
         if (pending is null)
+        {
             return await ReadUncachedAsync(identity, cancellationToken).ConfigureAwait(false);
+        }
         // Start outside the gate: custom clients may run synchronous code before returning a ValueTask.
-        if (ownsRead) _ = ReadAndPublishAsync(identity, pending, generation, started);
+        if (ownsRead)
+        {
+            _ = ReadAndPublishAsync(identity, pending, generation, started);
+        }
+
         return await pending.Completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -150,6 +172,7 @@ public sealed class RespireRateLimitDenyList
         {
             // Cancelling one waiter must not cancel the read used by other waiters.
             var denied = await _read(identity, CancellationToken.None).ConfigureAwait(false);
+
             lock (_gate)
             {
                 // Never republish a read that overlapped invalidation or extend freshness by network latency.
@@ -159,25 +182,42 @@ public sealed class RespireRateLimitDenyList
                     {
                         // Reads can finish out of order; expiry follows their start time, not publication or usage.
                         var now = _time.GetTimestamp();
+
                         while (_expiry.Count > 0)
                         {
                             var oldest = _expiry.Min;
-                            if (_time.GetElapsedTime(oldest.Started, now) < _cacheDuration) break;
+
+                            if (_time.GetElapsedTime(oldest.Started, now) < _cacheDuration)
+                            {
+                                break;
+                            }
+
                             RemoveEntry(oldest.Identity);
                         }
-                        if (_cache.Count >= _cacheCapacity) RemoveEntry(_recency.First!.Value);
+
+                        if (_cache.Count >= _cacheCapacity)
+                        {
+                            RemoveEntry(_recency.First!.Value);
+                        }
                     }
+
                     var added = _recency.AddLast(identity);
                     _cache.Add(identity, new Entry(denied, started, added));
                     _expiry.Add((started, identity));
                 }
+
                 RemovePending(identity, pending);
             }
+
             pending.Completion.TrySetResult(denied);
         }
         catch (Exception exception)
         {
-            lock (_gate) RemovePending(identity, pending);
+            lock (_gate)
+            {
+                RemovePending(identity, pending);
+            }
+
             pending.Completion.TrySetException(exception);
             // Observe failures even when every waiter has cancelled.
             _ = pending.Completion.Task.Exception;
@@ -187,7 +227,9 @@ public sealed class RespireRateLimitDenyList
     private void RemovePending(string identity, PendingRead pending)
     {
         if (_pending.TryGetValue(identity, out var current) && ReferenceEquals(current, pending))
+        {
             _pending.Remove(identity);
+        }
     }
 
     private void RemoveEntry(string identity)
@@ -213,7 +255,11 @@ public sealed class RespireRateLimitDenyList
         ArgumentException.ThrowIfNullOrEmpty(identity);
         cancellationToken.ThrowIfCancellationRequested();
         Invalidate();
-        try { await _write(identity, denied, cancellationToken).ConfigureAwait(false); }
+
+        try
+        {
+            await _write(identity, denied, cancellationToken).ConfigureAwait(false);
+        }
         finally { Invalidate(); }
     }
 
@@ -237,8 +283,15 @@ public sealed class RespireRateLimitDenyList
 
     private sealed class PendingRead(long started)
     {
-        public long Started { get; } = started;
-        public TaskCompletionSource<bool> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public long Started
+        {
+            get;
+        } = started;
+
+        public TaskCompletionSource<bool> Completion
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private readonly record struct Entry(bool Denied, long Started, LinkedListNode<string> Node);

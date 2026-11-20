@@ -37,7 +37,7 @@ public class MetricSelectionTests
                 CommandBlockList = mode == "blocked" ? [operation] : [],
             });
             await using var server = new FakeRespServer
-                { SuppressReply = command => command.StartsWith(operation + " ", StringComparison.Ordinal) };
+            { SuppressReply = command => command.StartsWith(operation + " ", StringComparison.Ordinal) };
             await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
             using var capture = new Capture(trace);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -47,8 +47,12 @@ public class MetricSelectionTests
                 "HGET" => client.Hashes.GetBytesAsync("key", "field", deadline.Token),
                 _ => client.Keys.DumpAsync("key", deadline.Token),
             };
+
             while (!server.ReceivedCommands.Any(command => command.StartsWith(operation + " ", StringComparison.Ordinal)))
+            {
                 await Task.Delay(1, deadline.Token);
+            }
+
             await Assert.That(Inflight(client.Core.Multiplexer.GetConnection()).TryPeek(out var head)).IsTrue();
             await Assert.That(head is BytesPendingResponseSource).IsEqualTo(!trace);
             byte[] expected = [0, 255, 97, 98];
@@ -75,13 +79,18 @@ public class MetricSelectionTests
                 CommandBlockList = mode == "blocked" ? ["GET"] : [],
             });
             await using var server = new FakeRespServer
-                { SuppressReply = command => command.StartsWith("GET ", StringComparison.Ordinal) };
+            { SuppressReply = command => command.StartsWith("GET ", StringComparison.Ordinal) };
             await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
             var connection = client.Core.Multiplexer.GetConnection();
             using var capture = new Capture(trace);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             var pending = client.SendOnPinnedConnectionAsync("GET", connection, new Cmd1(Verbs.Get, "key"), deadline.Token);
-            while (!server.ReceivedCommands.Contains("GET key")) await Task.Delay(1, deadline.Token);
+
+            while (!server.ReceivedCommands.Contains("GET key"))
+            {
+                await Task.Delay(1, deadline.Token);
+            }
+
             await Assert.That(Inflight(connection).TryPeek(out var head)).IsTrue();
             // A pooled final-error observer consumes GetResult even when command telemetry is
             // disabled. The physical response cannot be the public task's source because
@@ -130,10 +139,14 @@ public class MetricSelectionTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = groups });
         using var capture = new Capture();
+
         foreach (var group in new[] { RespireMetricGroups.Resiliency, RespireMetricGroups.ConnectionBasic,
                      RespireMetricGroups.ConnectionAdvanced, RespireMetricGroups.Command,
                      RespireMetricGroups.ClientSideCaching, RespireMetricGroups.PubSub, RespireMetricGroups.Streaming })
+        {
             await Assert.That(RespireTelemetry.IsMetricEnabled(group, RespireTelemetry.OperationDuration)).IsEqualTo((groups & group) == group);
+        }
+
         EmitCounters();
         RespireTelemetry.StartOperation("GET", "metric.example", 6379, 0).Complete("GET", "metric.example", 6379, 0);
         await Assert.That(capture.Items.Count(item => item.Name.StartsWith("redis.client.csc.", StringComparison.Ordinal)))
@@ -158,7 +171,7 @@ public class MetricSelectionTests
     public async Task AcceptedFiltersRetainCanonicalMetricLabels(string operation)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = RespireMetricGroups.Command, CommandAllowList = [operation] });
+        { Groups = RespireMetricGroups.Command, CommandAllowList = [operation] });
         using var capture = new Capture();
         var names = new MetricOperationNames();
         await Assert.That(RespireTelemetry.CaptureOperationStart(operation).MetricEnabled).IsTrue();
@@ -176,7 +189,12 @@ public class MetricSelectionTests
         using var configuration = new MetricConfigurationScope(new()
         {
             Groups = groups,
-            CommandAllowList = mode switch { "allowed" => ["GET"], "excluded" => ["SET"], _ => [] },
+            CommandAllowList = mode switch
+            {
+                "allowed" => ["GET"],
+                "excluded" => ["SET"],
+                _ => []
+            },
             CommandBlockList = mode == "blocked" ? ["get"] : [],
         });
         using var capture = new Capture();
@@ -194,15 +212,21 @@ public class MetricSelectionTests
         var block = new[] { "set" };
         using var configuration = new MetricConfigurationScope(new()
         {
-            Groups = RespireMetricGroups.Command, CommandAllowList = allow, CommandBlockList = block,
+            Groups = RespireMetricGroups.Command,
+            CommandAllowList = allow,
+            CommandBlockList = block,
         });
         allow.Clear();
         block[0] = "GET";
         var returned = (string[])RespireMetrics.Configuration.CommandAllowList;
         Array.Fill(returned, "PING");
         using var capture = new Capture();
+
         foreach (var operation in new[] { "GET", "get", "SET", "PING", "CLIENT LIST" })
+        {
             RespireTelemetry.StartOperation(operation, "metric.example", 6379, 0).Complete(operation, "metric.example", 6379, 0);
+        }
+
         var names = capture.Items.Where(item => item.Name == "db.client.operation.duration")
             .Select(item => (string)item.Tags["db.operation.name"]!).ToArray();
         await Assert.That(names).IsEquivalentTo(new[] { "GET", "GET", "CLIENT LIST" });
@@ -221,11 +245,13 @@ public class MetricSelectionTests
     public async Task InvalidNamesDoNotReplaceConfiguration(string name)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
+
         foreach (var allowList in new[] { true, false })
         {
             var options = new RespireMetricsOptions
             {
-                CommandAllowList = allowList ? [name] : [], CommandBlockList = allowList ? [] : [name],
+                CommandAllowList = allowList ? [name] : [],
+                CommandBlockList = allowList ? [] : [name],
             };
             await Assert.That(() => RespireMetrics.Configure(options)).Throws<ArgumentException>();
             await Assert.That(RespireMetrics.Configuration.Groups).IsEqualTo(RespireMetricGroups.Command);
@@ -255,66 +281,112 @@ public class MetricSelectionTests
     [Arguments("stream-read")]
     public async Task CommandSelectionIsIndependentOfTracingOnEveryExecutionPath(string kind)
     {
-        var command = kind switch { "blocking" => "BLPOP", "script" => "EVALSHA", "stream-read" => "GET", _ => "SET" };
-        var operation = kind switch { "batch" => "PIPELINE SET", "transaction" => "MULTI SET", _ => command };
-        foreach (var trace in new[] { false, true })
-        foreach (var mode in new[] { "disabled", "blocked", "enabled" })
+        var command = kind switch
         {
-            using var configuration = new MetricConfigurationScope(new()
+            "blocking" => "BLPOP",
+            "script" => "EVALSHA",
+            "stream-read" => "GET",
+            _ => "SET"
+        };
+        var operation = kind switch
+        {
+            "batch" => "PIPELINE SET",
+            "transaction" => "MULTI SET",
+            _ => command
+        };
+
+        foreach (var trace in new[] { false, true })
+        {
+            foreach (var mode in new[] { "disabled", "blocked", "enabled" })
             {
-                Groups = mode == "disabled" ? RespireMetricGroups.Default : RespireMetricGroups.Command,
-                CommandAllowList = [command], CommandBlockList = mode == "blocked" ? [command] : [],
-            });
-            var replies = kind switch
-            {
-                "transaction" => new[] { FakeRespServer.OkReply, "+QUEUED\r\n"u8.ToArray(), "+QUEUED\r\n"u8.ToArray(), "*2\r\n+OK\r\n+OK\r\n"u8.ToArray() },
-                "script" => new[] { "-NOSCRIPT No matching script\r\n"u8.ToArray(), ":1\r\n"u8.ToArray() },
-                "blocking" => new[] { "*-1\r\n"u8.ToArray() },
-                "stream-read" => new[] { "$3\r\none\r\n"u8.ToArray() },
-                _ => new[] { FakeRespServer.OkReply },
-            };
-            await using var server = new FakeRespServer(3, replies);
-            await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-            using var capture = new Capture(trace);
-            switch (kind)
-            {
-                case "immediate": await client.SetAsync("private-key", "private-payload"); break;
-                case "raw": using (await client.ExecuteAsync("SET", "private-key", "private-payload")) { } break;
-                case "fire-and-forget": await client.ExecuteFireAndForgetAsync("SET", "private-key", "private-payload"); break;
-                case "batch":
-                    var batch = client.CreateBatch();
-                    _ = batch.Set("one", "1"); _ = batch.Set("two", "2");
-                    await batch.ExecuteAsync(); break;
-                case "transaction":
-                    await using (var transaction = client.CreateTransaction())
-                    {
-                        _ = transaction.Set("one", "1"); _ = transaction.Set("two", "2");
-                        await transaction.CommitAsync();
-                    }
-                    break;
-                case "blocking": await client.Lists.LeftPopAsync("private-key", waitFor: Timeout.InfiniteTimeSpan); break;
-                case "script": using (await client.Scripts.ExecuteAsync(RespireScript.Create("return 1"))) { } break;
-                case "stream-upload":
-                    using (var stream = new MemoryStream("private-payload"u8.ToArray()))
-                        await client.Strings.SetAsync("private-key", stream, stream.Length);
-                    break;
-                case "stream-read":
-                    await using (var stream = await client.Strings.GetStreamAsync("private-key"))
-                        await stream!.CopyToAsync(Stream.Null);
-                    break;
-            }
-            // Streaming EOF wakes the reader before the receive loop invokes its diagnostic callback.
-            if (mode == "enabled") await capture.DurationRecorded.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            if (trace) await capture.ActivityStopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var measurements = capture.Items.Where(item => item.Name == "db.client.operation.duration"
-                && Equals(item.Tags.GetValueOrDefault("server.port"), server.Port)).ToArray();
-            await Assert.That(measurements.Length).IsEqualTo(mode == "enabled" ? 1 : 0);
-            await Assert.That(capture.Activities.Count(item => Equals(item.GetTagItem("server.port"), server.Port))).IsEqualTo(trace ? 1 : 0);
-            if (measurements.Length != 0)
-            {
-                await Assert.That(measurements[0].Tags["db.operation.name"]).IsEqualTo(operation);
-                await Assert.That(measurements[0].Tags.ContainsKey("db.stored_procedure.name")).IsFalse();
-                await Assert.That(measurements[0].Tags.Values.Any(value => value is string text && text.Contains("private-", StringComparison.Ordinal))).IsFalse();
+                using var configuration = new MetricConfigurationScope(new()
+                {
+                    Groups = mode == "disabled" ? RespireMetricGroups.Default : RespireMetricGroups.Command,
+                    CommandAllowList = [command],
+                    CommandBlockList = mode == "blocked" ? [command] : [],
+                });
+                var replies = kind switch
+                {
+                    "transaction" => new[] { FakeRespServer.OkReply, "+QUEUED\r\n"u8.ToArray(), "+QUEUED\r\n"u8.ToArray(), "*2\r\n+OK\r\n+OK\r\n"u8.ToArray() },
+                    "script" => new[] { "-NOSCRIPT No matching script\r\n"u8.ToArray(), ":1\r\n"u8.ToArray() },
+                    "blocking" => new[] { "*-1\r\n"u8.ToArray() },
+                    "stream-read" => new[] { "$3\r\none\r\n"u8.ToArray() },
+                    _ => new[] { FakeRespServer.OkReply },
+                };
+                await using var server = new FakeRespServer(3, replies);
+                await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+                using var capture = new Capture(trace);
+
+                switch (kind)
+                {
+                    case "immediate":
+                        await client.SetAsync("private-key", "private-payload");
+                        break;
+                    case "raw":
+                        using (await client.ExecuteAsync("SET", "private-key", "private-payload"))
+                        {
+                        }
+                        break;
+                    case "fire-and-forget":
+                        await client.ExecuteFireAndForgetAsync("SET", "private-key", "private-payload");
+                        break;
+                    case "batch":
+                        var batch = client.CreateBatch();
+                        _ = batch.Set("one", "1");
+                        _ = batch.Set("two", "2");
+                        await batch.ExecuteAsync();
+                        break;
+                    case "transaction":
+                        await using (var transaction = client.CreateTransaction())
+                        {
+                            _ = transaction.Set("one", "1");
+                            _ = transaction.Set("two", "2");
+                            await transaction.CommitAsync();
+                        }
+                        break;
+                    case "blocking":
+                        await client.Lists.LeftPopAsync("private-key", waitFor: Timeout.InfiniteTimeSpan);
+                        break;
+                    case "script":
+                        using (await client.Scripts.ExecuteAsync(RespireScript.Create("return 1")))
+                        {
+                        }
+                        break;
+                    case "stream-upload":
+                        using (var stream = new MemoryStream("private-payload"u8.ToArray()))
+                        {
+                            await client.Strings.SetAsync("private-key", stream, stream.Length);
+                        }
+                        break;
+                    case "stream-read":
+                        await using (var stream = await client.Strings.GetStreamAsync("private-key"))
+                        {
+                            await stream!.CopyToAsync(Stream.Null);
+                        }
+                        break;
+                }
+                // Streaming EOF wakes the reader before the receive loop invokes its diagnostic callback.
+                if (mode == "enabled")
+                {
+                    await capture.DurationRecorded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+
+                if (trace)
+                {
+                    await capture.ActivityStopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+
+                var measurements = capture.Items.Where(item => item.Name == "db.client.operation.duration"
+                    && Equals(item.Tags.GetValueOrDefault("server.port"), server.Port)).ToArray();
+                await Assert.That(measurements.Length).IsEqualTo(mode == "enabled" ? 1 : 0);
+                await Assert.That(capture.Activities.Count(item => Equals(item.GetTagItem("server.port"), server.Port))).IsEqualTo(trace ? 1 : 0);
+
+                if (measurements.Length != 0)
+                {
+                    await Assert.That(measurements[0].Tags["db.operation.name"]).IsEqualTo(operation);
+                    await Assert.That(measurements[0].Tags.ContainsKey("db.stored_procedure.name")).IsFalse();
+                    await Assert.That(measurements[0].Tags.Values.Any(value => value is string text && text.Contains("private-", StringComparison.Ordinal))).IsFalse();
+                }
             }
         }
     }
@@ -327,7 +399,9 @@ public class MetricSelectionTests
         var acknowledgement = aof ? "WAITAOF" : "WAIT";
         using var configuration = new MetricConfigurationScope(new()
         {
-            Groups = RespireMetricGroups.Command, CommandAllowList = ["SET", acknowledgement], CommandBlockList = [acknowledgement],
+            Groups = RespireMetricGroups.Command,
+            CommandAllowList = ["SET", acknowledgement],
+            CommandBlockList = [acknowledgement],
         });
         await using var server = new FakeRespServer(3, FakeRespServer.OkReply,
             aof ? "*2\r\n:1\r\n:1\r\n"u8.ToArray() : ":1\r\n"u8.ToArray());
@@ -335,8 +409,16 @@ public class MetricSelectionTests
         using var capture = new Capture(trace: true);
         using var batch = client.CreateBatch();
         _ = batch.Set("one", "1");
-        if (aof) await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.FromSeconds(1));
-        else await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
+
+        if (aof)
+        {
+            await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.FromSeconds(1));
+        }
+        else
+        {
+            await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
+        }
+
         await Assert.That(capture.Items.Any(item => item.Name == "db.client.operation.duration")).IsFalse();
         await Assert.That(capture.Activities.Count).IsEqualTo(1);
     }
@@ -348,9 +430,12 @@ public class MetricSelectionTests
     {
         using var configuration = new MetricConfigurationScope(new()
         {
-            Groups = RespireMetricGroups.Command, CommandAllowList = ["GET", "SET", prefix], CommandBlockList = ["SET"],
+            Groups = RespireMetricGroups.Command,
+            CommandAllowList = ["GET", "SET", prefix],
+            CommandBlockList = ["SET"],
         });
         using var capture = new Capture();
+
         foreach (var commands in new[] { new[] { "GET" }, new[] { "GET", "GET" }, new[] { "GET", "SET" }, Array.Empty<string>() })
         {
             var started = RespireTelemetry.CaptureBatchStart(prefix, commands, static command => command);
@@ -358,6 +443,7 @@ public class MetricSelectionTests
             var scope = RespireTelemetry.StartBatchOperation(prefix, commands, static command => command, 0, out var operation, started);
             scope.Complete(operation, null, 6379, 0, batchSize: commands.Length == 1 ? null : commands.Length);
         }
+
         await Assert.That(capture.Items.Count(item => item.Name == "db.client.operation.duration")).IsEqualTo(3);
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Command, CommandBlockList = [prefix] });
         await Assert.That(RespireTelemetry.CaptureBatchStart(prefix, Array.Empty<string>(), static command => command).Timestamp).IsEqualTo(0L);
@@ -385,38 +471,52 @@ public class MetricSelectionTests
     public async Task CapturedSelectionSurvivesConfigurationChangesBeforeScopeCreation(string kind)
     {
         foreach (var trace in new[] { false, true })
-        foreach (var enabled in new[] { false, true })
-        foreach (var filter in new[] { false, true })
         {
-            using var configuration = new MetricConfigurationScope(new()
+            foreach (var enabled in new[] { false, true })
             {
-                Groups = filter || enabled ? RespireMetricGroups.Command : RespireMetricGroups.None,
-                CommandBlockList = filter && !enabled ? ["GET"] : [],
-            });
-            using var capture = new Capture(trace);
-            string[] commands = ["GET", "GET"];
-            var compound = kind is not ("operation" or "unrouted-operation");
-            var prefix = kind == "unrouted-batch" ? "PIPELINE" : kind;
-            var started = compound
-                ? RespireTelemetry.CaptureBatchStart(prefix, commands, static command => command)
-                : RespireTelemetry.CaptureOperationStart("GET");
-            RespireMetrics.Configure(new()
-            {
-                Groups = filter || !enabled ? RespireMetricGroups.Command : RespireMetricGroups.None,
-                CommandBlockList = filter && enabled ? ["GET"] : [],
-            });
-            if (kind == "unrouted-operation")
-                RespireTelemetry.RecordUnroutedFailure("GET", 0, started, DisabledError);
-            else if (kind == "unrouted-batch")
-                RespireTelemetry.RecordUnroutedBatchFailure(prefix, commands, static command => command, 0, started, DisabledError);
-            else if (compound)
-                RespireTelemetry.StartBatchOperation(prefix, commands, static command => command, "metric.example", 6379, 0,
-                    out var operation, started).Complete(operation, "metric.example", 6379, 0, batchSize: commands.Length);
-            else
-                RespireTelemetry.StartOperation("GET", "metric.example", 6379, 0, started: started)
-                    .Complete("GET", "metric.example", 6379, 0);
-            await Assert.That(capture.Items.Count(item => item.Name == "db.client.operation.duration")).IsEqualTo(enabled ? 1 : 0);
-            await Assert.That(capture.Activities.Count).IsEqualTo(trace ? 1 : 0);
+                foreach (var filter in new[] { false, true })
+                {
+                    using var configuration = new MetricConfigurationScope(new()
+                    {
+                        Groups = filter || enabled ? RespireMetricGroups.Command : RespireMetricGroups.None,
+                        CommandBlockList = filter && !enabled ? ["GET"] : [],
+                    });
+                    using var capture = new Capture(trace);
+                    string[] commands = ["GET", "GET"];
+                    var compound = kind is not ("operation" or "unrouted-operation");
+                    var prefix = kind == "unrouted-batch" ? "PIPELINE" : kind;
+                    var started = compound
+                        ? RespireTelemetry.CaptureBatchStart(prefix, commands, static command => command)
+                        : RespireTelemetry.CaptureOperationStart("GET");
+                    RespireMetrics.Configure(new()
+                    {
+                        Groups = filter || !enabled ? RespireMetricGroups.Command : RespireMetricGroups.None,
+                        CommandBlockList = filter && enabled ? ["GET"] : [],
+                    });
+
+                    if (kind == "unrouted-operation")
+                    {
+                        RespireTelemetry.RecordUnroutedFailure("GET", 0, started, DisabledError);
+                    }
+                    else if (kind == "unrouted-batch")
+                    {
+                        RespireTelemetry.RecordUnroutedBatchFailure(prefix, commands, static command => command, 0, started, DisabledError);
+                    }
+                    else if (compound)
+                    {
+                        RespireTelemetry.StartBatchOperation(prefix, commands, static command => command, "metric.example", 6379, 0,
+                            out var operation, started).Complete(operation, "metric.example", 6379, 0, batchSize: commands.Length);
+                    }
+                    else
+                    {
+                        RespireTelemetry.StartOperation("GET", "metric.example", 6379, 0, started: started)
+                            .Complete("GET", "metric.example", 6379, 0);
+                    }
+
+                    await Assert.That(capture.Items.Count(item => item.Name == "db.client.operation.duration")).IsEqualTo(enabled ? 1 : 0);
+                    await Assert.That(capture.Activities.Count).IsEqualTo(trace ? 1 : 0);
+                }
+            }
         }
     }
 
@@ -440,7 +540,9 @@ public class MetricSelectionTests
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
                 Protocol = RespireProtocol.Resp2,
-                Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1, ClientName = "metric-selection",
+                Endpoints = { new("127.0.0.1", server.Port) },
+                Connections = 1,
+                ClientName = "metric-selection",
             });
 #pragma warning restore RESP010
             var acquisitions = 0;
@@ -452,21 +554,30 @@ public class MetricSelectionTests
                     RespireMetrics.Configure(new() { Groups = enabled ? RespireMetricGroups.None : RespireMetricGroups.Command });
                     return failHandshake ? "-ERR acquisition failed\r\n"u8.ToArray() : FakeRespServer.OkReply;
                 }
+
                 return command.StartsWith("BLPOP ", StringComparison.Ordinal) ? "*-1\r\n"u8.ToArray()
                     : command.StartsWith("WAIT ", StringComparison.Ordinal) ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply;
             };
             using var capture = new Capture();
+
             if (failHandshake)
+            {
                 await Assert.That(Execute).Throws<RespireConnectionException>();
+            }
             else
+            {
                 await Execute();
+            }
+
             await Assert.That(acquisitions).IsEqualTo(1);
             await Assert.That(capture.Items.Count(item => item.Name == "db.client.operation.duration")).IsEqualTo(enabled ? 1 : 0);
 
             async Task Execute()
             {
                 if (kind == "blocking")
+                {
                     await client.Lists.LeftPopAsync("private-key", waitFor: Timeout.InfiniteTimeSpan);
+                }
                 else if (kind == "stream-upload")
                 {
                     using var stream = new MemoryStream("private-payload"u8.ToArray());
@@ -510,6 +621,7 @@ public class MetricSelectionTests
                         RespireMetrics.Configure(new() { Groups = enabled ? RespireMetricGroups.None : RespireMetricGroups.Command });
                         return failHandshake ? "-ERR acquisition failed\r\n"u8.ToArray() : FakeRespServer.OkReply;
                     }
+
                     return command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray()
                         : command.StartsWith("BLPOP ", StringComparison.Ordinal) ? "*-1\r\n"u8.ToArray()
                         : command.StartsWith("EVALSHA ", StringComparison.Ordinal) ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply;
@@ -518,25 +630,46 @@ public class MetricSelectionTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
             await using var client = RespireClient.Create(new RespireOptions
             {
-                Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-                Endpoints = [new("127.0.0.1", server.Port)], ClientName = "cluster-metric-selection",
+                Protocol = RespireProtocol.Resp2,
+                UseCluster = true,
+                Connections = 1,
+                Endpoints = [new("127.0.0.1", server.Port)],
+                ClientName = "cluster-metric-selection",
             });
 #pragma warning restore RESP010
             using var capture = new Capture();
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            if (failHandshake) await Assert.That(Execute).Throws<RespireConnectionException>();
-            else await Execute();
+
+            if (failHandshake)
+            {
+                await Assert.That(Execute).Throws<RespireConnectionException>();
+            }
+            else
+            {
+                await Execute();
+            }
+
             await Assert.That(acquisitions > 0).IsTrue();
             var measurements = capture.Items.Where(item => item.Name == "db.client.operation.duration").ToArray();
             await Assert.That(measurements.Length).IsEqualTo(enabled ? 1 : 0);
+
             if (enabled)
+            {
                 await Assert.That(measurements[0].Tags["db.operation.name"])
-                    .IsEqualTo(kind switch { "blocking" => "BLPOP", "script" or "tracked-script" => "EVALSHA", _ => "SET" });
+                    .IsEqualTo(kind switch
+                    {
+                        "blocking" => "BLPOP",
+                        "script" or "tracked-script" => "EVALSHA",
+                        _ => "SET"
+                    });
+            }
 
             async Task Execute()
             {
                 if (kind == "blocking")
+                {
                     await client.Lists.LeftPopAsync("private-key", waitFor: Timeout.InfiniteTimeSpan, cancellationToken: deadline.Token);
+                }
                 else if (kind == "stream-upload")
                 {
                     using var stream = new MemoryStream("private-payload"u8.ToArray());
@@ -549,7 +682,11 @@ public class MetricSelectionTests
                     using var result = await execution.ConsumeResponseAsync();
                 }
                 else
-                    using (await client.Scripts.ExecuteAsync(RespireScript.Create("return 1"), cancellationToken: deadline.Token)) { }
+                {
+                    using (await client.Scripts.ExecuteAsync(RespireScript.Create("return 1"), cancellationToken: deadline.Token))
+                    {
+                    }
+                }
             }
         }
     }
@@ -566,67 +703,96 @@ public class MetricSelectionTests
     public async Task ClusterScriptFallbackRetainsOneLogicalMeasurement(bool readOnly, bool failFallback, bool tracked)
     {
         var script = RespireScript.Create("return 1", readOnly);
-        foreach (var trace in new[] { false, true })
-        foreach (var mode in new[] { "all", "allow-initial", "block-initial", "allow-fallback", "enable-between", "disable-between" })
-        {
-            using var configuration = new MetricConfigurationScope(new()
-            {
-                Groups = mode == "enable-between" ? RespireMetricGroups.None : RespireMetricGroups.Command,
-                CommandAllowList = mode == "allow-initial" ? [script.EvalShaOperation]
-                    : mode == "allow-fallback" ? [script.EvalOperation] : [],
-                CommandBlockList = mode == "block-initial" ? [script.EvalShaOperation] : [],
-            });
-            await using var server = new FakeRespServer(3, FakeRespServer.OkReply)
-            {
-                ReplyOverride = (_, command) =>
-                {
-                    if (command.StartsWith(script.EvalShaOperation + " ", StringComparison.Ordinal))
-                    {
-                        if (mode is "enable-between" or "disable-between")
-                            RespireMetrics.Configure(new() { Groups = mode == "enable-between" ? RespireMetricGroups.Command : RespireMetricGroups.None });
-                        return "-NOSCRIPT No matching script\r\n"u8.ToArray();
-                    }
-                    return command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray()
-                        : command.StartsWith(script.EvalOperation + " ", StringComparison.Ordinal)
-                            ? failFallback ? "-ERR script failed\r\n"u8.ToArray() : ":1\r\n"u8.ToArray()
-                            : FakeRespServer.OkReply;
-                },
-            };
-#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
-            await using var client = await RespireClient.ConnectAsync(new RespireOptions
-            {
-                Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-                Endpoints = [new("127.0.0.1", server.Port)],
-            });
-#pragma warning restore RESP010
-            using var capture = new Capture(trace);
-            if (failFallback)
-                await Assert.That(async () => { using var result = await Execute(); }).Throws<RespireServerException>();
-            else
-                using (var result = await Execute()) await Assert.That(result.AsInteger()).IsEqualTo(1L);
-            var enabled = mode is "all" or "allow-initial" or "disable-between";
-            var measurements = capture.Items.Where(item => item.Name == "db.client.operation.duration").ToArray();
-            await Assert.That(measurements.Length).IsEqualTo(enabled ? 1 : 0);
-            if (enabled)
-            {
-                await Assert.That(measurements[0].Tags["db.operation.name"]).IsEqualTo(script.EvalShaOperation);
-                await Assert.That(measurements[0].Tags.ContainsKey("error.type")).IsEqualTo(failFallback);
-            }
-            await Assert.That(capture.Activities.Count).IsEqualTo(trace ? 1 : 0);
-            if (trace)
-            {
-                var activity = capture.Activities.Single();
-                await Assert.That(activity.GetTagItem("db.operation.name")).IsEqualTo(script.EvalShaOperation);
-                await Assert.That(activity.Status == ActivityStatusCode.Error).IsEqualTo(failFallback);
-            }
-            await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith(script.EvalShaOperation + " ", StringComparison.Ordinal))).IsEqualTo(1);
-            await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith(script.EvalOperation + " ", StringComparison.Ordinal))).IsEqualTo(1);
 
-            async ValueTask<RespireResult> Execute()
+        foreach (var trace in new[] { false, true })
+        {
+            foreach (var mode in new[] { "all", "allow-initial", "block-initial", "allow-fallback", "enable-between", "disable-between" })
             {
-                if (!tracked) return await client.Scripts.ExecuteAsync(script);
-                var execution = await client.StartTrackedScriptExecutionAsync(script, [], [], default, captureSendTimestampOnly: true);
-                return await execution.ConsumeResponseAsync();
+                using var configuration = new MetricConfigurationScope(new()
+                {
+                    Groups = mode == "enable-between" ? RespireMetricGroups.None : RespireMetricGroups.Command,
+                    CommandAllowList = mode == "allow-initial" ? [script.EvalShaOperation]
+                        : mode == "allow-fallback" ? [script.EvalOperation] : [],
+                    CommandBlockList = mode == "block-initial" ? [script.EvalShaOperation] : [],
+                });
+                await using var server = new FakeRespServer(3, FakeRespServer.OkReply)
+                {
+                    ReplyOverride = (_, command) =>
+                    {
+                        if (command.StartsWith(script.EvalShaOperation + " ", StringComparison.Ordinal))
+                        {
+                            if (mode is "enable-between" or "disable-between")
+                            {
+                                RespireMetrics.Configure(new() { Groups = mode == "enable-between" ? RespireMetricGroups.Command : RespireMetricGroups.None });
+                            }
+
+                            return "-NOSCRIPT No matching script\r\n"u8.ToArray();
+                        }
+
+                        return command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray()
+                            : command.StartsWith(script.EvalOperation + " ", StringComparison.Ordinal)
+                                ? failFallback ? "-ERR script failed\r\n"u8.ToArray() : ":1\r\n"u8.ToArray()
+                                : FakeRespServer.OkReply;
+                    },
+                };
+#pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
+                await using var client = await RespireClient.ConnectAsync(new RespireOptions
+                {
+                    Protocol = RespireProtocol.Resp2,
+                    UseCluster = true,
+                    Connections = 1,
+                    Endpoints = [new("127.0.0.1", server.Port)],
+                });
+#pragma warning restore RESP010
+                using var capture = new Capture(trace);
+
+                if (failFallback)
+                {
+                    await Assert.That(async () =>
+                    {
+                        using var result = await Execute();
+                    }).Throws<RespireServerException>();
+                }
+                else
+                {
+                    using (var result = await Execute())
+                    {
+                        await Assert.That(result.AsInteger()).IsEqualTo(1L);
+                    }
+                }
+
+                var enabled = mode is "all" or "allow-initial" or "disable-between";
+                var measurements = capture.Items.Where(item => item.Name == "db.client.operation.duration").ToArray();
+                await Assert.That(measurements.Length).IsEqualTo(enabled ? 1 : 0);
+
+                if (enabled)
+                {
+                    await Assert.That(measurements[0].Tags["db.operation.name"]).IsEqualTo(script.EvalShaOperation);
+                    await Assert.That(measurements[0].Tags.ContainsKey("error.type")).IsEqualTo(failFallback);
+                }
+
+                await Assert.That(capture.Activities.Count).IsEqualTo(trace ? 1 : 0);
+
+                if (trace)
+                {
+                    var activity = capture.Activities.Single();
+                    await Assert.That(activity.GetTagItem("db.operation.name")).IsEqualTo(script.EvalShaOperation);
+                    await Assert.That(activity.Status == ActivityStatusCode.Error).IsEqualTo(failFallback);
+                }
+
+                await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith(script.EvalShaOperation + " ", StringComparison.Ordinal))).IsEqualTo(1);
+                await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith(script.EvalOperation + " ", StringComparison.Ordinal))).IsEqualTo(1);
+
+                async ValueTask<RespireResult> Execute()
+                {
+                    if (!tracked)
+                    {
+                        return await client.Scripts.ExecuteAsync(script);
+                    }
+
+                    var execution = await client.StartTrackedScriptExecutionAsync(script, [], [], default, captureSendTimestampOnly: true);
+                    return await execution.ConsumeResponseAsync();
+                }
             }
         }
     }
@@ -672,8 +838,11 @@ public class MetricSelectionTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-            Endpoints = [new("127.0.0.1", server.Port)], ClientName = "script-sampling",
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            ClientName = "script-sampling",
         });
 #pragma warning restore RESP010
         var sampled = new ConcurrentQueue<Dictionary<string, object?>>();
@@ -690,24 +859,35 @@ public class MetricSelectionTests
         };
         ActivitySource.AddActivityListener(listener);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        if (failHandshake) await Assert.That(Execute).Throws<RespireConnectionException>();
-        else await Execute();
+
+        if (failHandshake)
+        {
+            await Assert.That(Execute).Throws<RespireConnectionException>();
+        }
+        else
+        {
+            await Execute();
+        }
+
         await Assert.That(sampled.Count).IsEqualTo(1);
         await Assert.That(completed.Count).IsEqualTo(1);
         var tags = sampled.Single();
         await Assert.That(tags["db.operation.name"]).IsEqualTo("EVALSHA");
         await Assert.That(tags.ContainsKey("server.address")).IsEqualTo(!failHandshake);
         await Assert.That(tags.ContainsKey("server.port")).IsEqualTo(!failHandshake);
+
         if (!failHandshake)
         {
             await Assert.That(tags["server.address"]).IsEqualTo("127.0.0.1");
             await Assert.That(tags["server.port"]).IsEqualTo(server.Port);
         }
+
         await Assert.That(completed.Single().Status == ActivityStatusCode.Error).IsEqualTo(failHandshake);
 
         async Task Execute()
         {
             var script = RespireScript.Create("return 1");
+
             if (tracked)
             {
                 var execution = await client.StartTrackedScriptExecutionAsync(script, [], [], deadline.Token,
@@ -715,7 +895,11 @@ public class MetricSelectionTests
                 using var result = await execution.ConsumeResponseAsync();
             }
             else
-                using (await client.Scripts.ExecuteAsync(script, cancellationToken: deadline.Token)) { }
+            {
+                using (await client.Scripts.ExecuteAsync(script, cancellationToken: deadline.Token))
+                {
+                }
+            }
         }
     }
 
@@ -746,17 +930,32 @@ public class MetricSelectionTests
     {
         using var configuration = new MetricConfigurationScope(new()
         {
-            Groups = mode switch { "blocked" => RespireMetricGroups.Command, "no-listener" => RespireMetricGroups.All, _ => RespireMetricGroups.None },
+            Groups = mode switch
+            {
+                "blocked" => RespireMetricGroups.Command,
+                "no-listener" => RespireMetricGroups.All,
+                _ => RespireMetricGroups.None
+            },
             CommandBlockList = mode == "blocked" ? ["GET"] : [],
         });
         using var capture = mode == "no-listener" ? null : new Capture();
         string[] commands = ["GET", "GET"];
-        for (var i = 0; i < 20; i++) MeasureDisabled(commands);
+
+        for (var i = 0; i < 20; i++)
+        {
+            MeasureDisabled(commands);
+        }
+
         MeasurePositiveControl();
         var bytes = AllocationMeasurement.WithoutConcurrentGc(() => (MeasureDisabled(commands), MeasurePositiveControl()));
         await Assert.That(bytes.Item1).IsEqualTo(0L);
         await Assert.That(bytes.Item2 > 0).IsTrue();
-        if (capture is not null) await Assert.That(capture.Items.IsEmpty).IsTrue();
+
+        if (capture is not null)
+        {
+            await Assert.That(capture.Items.IsEmpty).IsTrue();
+        }
+
         await Assert.That(RespireTelemetry.IsOperationEnabled("GET")).IsFalse();
     }
 
@@ -764,6 +963,7 @@ public class MetricSelectionTests
     private static long MeasureDisabled(string[] commands)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1000; i++)
         {
             RespireTelemetry.RecordCacheRequest(true);
@@ -777,6 +977,7 @@ public class MetricSelectionTests
                 .Complete(operation, null, 6379, 0);
             RespireTelemetry.RecordUnroutedBatchFailure("MULTI", commands, static command => command, 0, new(1, false), DisabledError);
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -787,7 +988,12 @@ public class MetricSelectionTests
     private static long MeasurePositiveControl()
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var i = 0; i < 1000; i++) _allocationAnchor = new byte[37];
+
+        for (var i = 0; i < 1000; i++)
+        {
+            _allocationAnchor = new byte[37];
+        }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -805,20 +1011,40 @@ public class MetricSelectionTests
     {
         private readonly MeterListener _meter = new();
         private readonly ActivityListener? _activity;
-        internal ConcurrentQueue<Item> Items { get; } = new();
-        internal ConcurrentQueue<Activity> Activities { get; } = new();
-        internal TaskCompletionSource DurationRecorded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource ActivityStopped { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal ConcurrentQueue<Item> Items
+        {
+            get;
+        } = new();
+
+        internal ConcurrentQueue<Activity> Activities
+        {
+            get;
+        } = new();
+
+        internal TaskCompletionSource DurationRecorded
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ActivityStopped
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         internal Capture(bool trace = false)
         {
             _meter.InstrumentPublished = (instrument, listener) =>
             {
-                if (instrument.Meter.Name == "Respire") listener.EnableMeasurementEvents(instrument);
+                if (instrument.Meter.Name == "Respire")
+                {
+                    listener.EnableMeasurementEvents(instrument);
+                }
             };
             _meter.SetMeasurementEventCallback<long>((instrument, _, tags, _) => Add(instrument, tags));
             _meter.SetMeasurementEventCallback<double>((instrument, _, tags, _) => Add(instrument, tags));
             _meter.Start();
+
             if (trace)
             {
                 _activity = new()
@@ -838,7 +1064,11 @@ public class MetricSelectionTests
         private void Add(Instrument instrument, ReadOnlySpan<KeyValuePair<string, object?>> tags)
         {
             Items.Enqueue(new(instrument.Name, tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
-            if (instrument.Name == "db.client.operation.duration") DurationRecorded.TrySetResult();
+
+            if (instrument.Name == "db.client.operation.duration")
+            {
+                DurationRecorded.TrySetResult();
+            }
         }
 
         public void Dispose()

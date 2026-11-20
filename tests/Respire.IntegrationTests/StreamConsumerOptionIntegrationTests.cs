@@ -18,26 +18,42 @@ public class StreamConsumerOptionIntegrationTests(VersionedServerFixture fixture
         var lease = await fixture.LeaseAsync("redis:8.4-alpine");
         await using var owner = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
         var client = owner.WithKeyPrefix("tenant:");
+
         foreach (var key in new[] { "{s}:one", "{s}:two" })
         {
             await client.Streams.CreateGroupAsync(key, "g", "0");
             await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("f", "value"));
         }
+
         (RespireKey Key, RespireStreamId After)[] streams = [("{s}:one", ">"), ("{s}:two", ">")];
         var options = new RespireStreamReadOptions { NoAck = true };
         RespireStreamReadResult[] page;
-        if (surface == 0) page = await client.Streams.ReadGroupAsync(streams, "g", "c", options);
+
+        if (surface == 0)
+        {
+            page = await client.Streams.ReadGroupAsync(streams, "g", "c", options);
+        }
         else
         {
             using var batch = surface == 1 ? client.CreateBatch() : null;
             await using var transaction = surface == 2 ? client.CreateTransaction() : null;
             IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
             var pending = queue.Streams.ReadGroup(streams, "g", "c", options);
-            if (transaction is not null) await transaction.CommitAsync();
-            else await batch!.ExecuteAsync();
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
+
             page = pending.Result;
         }
+
         page.Select(row => row.Key.ToString()).Should().Equal("{s}:one", "{s}:two");
+
         foreach (var row in page)
         {
             row.Entries.Should().ContainSingle();
@@ -62,6 +78,7 @@ public class StreamConsumerOptionIntegrationTests(VersionedServerFixture fixture
         // CLAIM is deliberately tested on 8.4; the older-server recovery cases below never send it.
         var lease = await fixture.LeaseAsync("redis:8.4-alpine");
         await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
+
         foreach (var key in new[] { "one", "two" })
         {
             await client.Streams.CreateGroupAsync(key, "g", "0");
@@ -71,9 +88,11 @@ public class StreamConsumerOptionIntegrationTests(VersionedServerFixture fixture
                 key, "g", "original", TimeSpan.Zero, "1-0");
             await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "2-0" }, ("f", "new"));
         }
+
         var results = await client.Streams.ReadGroupAsync([("one", ">"), ("two", ">")], "g", "replacement",
             new RespireStreamReadOptions { ClaimMinIdle = TimeSpan.FromSeconds(5), NoAck = noAck });
         results.Should().HaveCount(2);
+
         foreach (var row in results)
         {
             row.Entries.Select(entry => entry.Id).Should().Equal((RespireStreamId)"1-0", (RespireStreamId)"2-0");
@@ -101,8 +120,12 @@ public class StreamConsumerOptionIntegrationTests(VersionedServerFixture fixture
         await using var owner = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
         var client = owner.WithKeyPrefix("tenant:");
         await client.Streams.CreateGroupAsync("events", "g", "0");
+
         foreach (var id in new[] { "1-0", "2-0", "3-0" })
+        {
             await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = id }, ("f", id));
+        }
+
         await client.Streams.ReadGroupOnceAsync("events", "g", "original", new RespireStreamReadOptions { Count = 1 });
         var claimed = await client.Streams.ClaimAsync(new RespireStreamClaimOptions
         { Force = true, IdleTime = TimeSpan.FromSeconds(10), RetryCount = 7, LastId = "2-0" },
@@ -160,7 +183,8 @@ public class StreamConsumerOptionIntegrationTests(VersionedServerFixture fixture
         var lease = await fixture.LeaseAsync("redis:8.4-alpine");
         var name = $"claim-block-{Guid.NewGuid():N}";
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(lease.ConnectionString(protocol))
-            with { Connections = 1, ClientName = name });
+            with
+        { Connections = 1, ClientName = name });
         await using var observer = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await client.Streams.CreateGroupAsync("events", "g", "0");
@@ -187,7 +211,12 @@ public class StreamConsumerOptionIntegrationTests(VersionedServerFixture fixture
             while (true)
             {
                 var clients = await observer.Server.ClientsAsync(timeout.Token);
-                if (clients.Any(connection => connection.Name == name && connection.Flags.Contains('b'))) return;
+
+                if (clients.Any(connection => connection.Name == name && connection.Flags.Contains('b')))
+                {
+                    return;
+                }
+
                 await Task.Delay(10, timeout.Token);
             }
         }

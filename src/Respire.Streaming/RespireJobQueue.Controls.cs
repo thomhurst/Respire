@@ -45,9 +45,16 @@ public sealed partial class RespireJobQueue<T>
 public sealed record RespireJobRateLimit
 {
     /// <summary>Maximum admitted delivery attempts in one window. Must be positive.</summary>
-    public int PermitLimit { get; init; } = 100;
+    public int PermitLimit
+    {
+        get; init;
+    } = 100;
+
     /// <summary>Window duration. Positive and at most Int32.MaxValue milliseconds; fractions round up.</summary>
-    public TimeSpan Window { get; init; } = TimeSpan.FromSeconds(1);
+    public TimeSpan Window
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(1);
 
     internal void Validate()
     {

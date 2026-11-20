@@ -47,8 +47,14 @@ public partial class StandaloneCircuitDispatchTests
             var pending = queue.Strings.GetString("never");
             var error = await Failure(async () =>
             {
-                if (transactional) await transaction.CommitAsync();
-                else await batch.ExecuteAsync();
+                if (transactional)
+                {
+                    await transaction.CommitAsync();
+                }
+                else
+                {
+                    await batch.ExecuteAsync();
+                }
             });
             await Assert.That(pending.Error).IsSameReferenceAs(error);
             return error;
@@ -72,7 +78,10 @@ public partial class StandaloneCircuitDispatchTests
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
             ActivityStopped = activity =>
             {
-                if (activity.OperationName == "WATCH") activities.Enqueue(activity);
+                if (activity.OperationName == "WATCH")
+                {
+                    activities.Enqueue(activity);
+                }
             },
         };
         ActivitySource.AddActivityListener(activityListener);
@@ -80,12 +89,18 @@ public partial class StandaloneCircuitDispatchTests
         meterListener.InstrumentPublished = static (instrument, listener) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
                 listener.EnableMeasurementEvents(instrument);
+            }
         };
         meterListener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
         {
             var values = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
-            if (Equals(values["db.operation.name"], "WATCH")) durations.Enqueue(values);
+
+            if (Equals(values["db.operation.name"], "WATCH"))
+            {
+                durations.Enqueue(values);
+            }
         });
         meterListener.Start();
         await using var server = QueueServer();
@@ -94,18 +109,34 @@ public partial class StandaloneCircuitDispatchTests
         {
             CircuitBreaker = state == "disabled" ? null : Options(server).CircuitBreaker,
         });
+
 #pragma warning restore RESP010
         if (state != "disabled")
         {
             var (_, clock) = await Prepare(client, server);
-            if (state is "open" or "half-open") Open(client, server);
-            if (state == "half-open") clock.Advance(TimeSpan.FromMinutes(1));
+
+            if (state is "open" or "half-open")
+            {
+                Open(client, server);
+            }
+
+            if (state == "half-open")
+            {
+                clock.Advance(TimeSpan.FromMinutes(1));
+            }
         }
+
         if (state == "server-error")
+        {
             server.ReplyOverride = (_, command) => command == "WATCH watched" ? "-ERR injected WATCH failure\r\n"u8.ToArray() : null;
+        }
 
         Exception? error = null;
-        try { await using var transaction = await client.CreateTransactionAsync(["watched"]); }
+
+        try
+        {
+            await using var transaction = await client.CreateTransactionAsync(["watched"]);
+        }
         catch (Exception failure) { error = failure; }
 
         var expectedError = state switch
@@ -145,11 +176,18 @@ public partial class StandaloneCircuitDispatchTests
         var connection = await pool.RentAsync(default);
         pool.Return(connection);
         Open(client, server);
-        if (halfOpen) clock.Advance(TimeSpan.FromMinutes(1));
+
+        if (halfOpen)
+        {
+            clock.Advance(TimeSpan.FromMinutes(1));
+        }
+
         var admission = halfOpen ? client.Core.Circuits!.Acquire(new("127.0.0.1", server.Port), default) : default;
+
         try
         {
             var commands = server.CommandsSeen;
+
             for (var attempt = 0; attempt < 3; attempt++)
             {
                 await Assert.That(await Failure(async () =>
@@ -158,6 +196,7 @@ public partial class StandaloneCircuitDispatchTests
                 })).IsTypeOf<RespireCircuitOpenException>();
                 await Assert.That(pool.CaptureRetirementState().Borrowed).IsEqualTo(0);
                 var reused = await pool.RentAsync(default);
+
                 try
                 {
                     await Assert.That(reused).IsSameReferenceAs(connection);
@@ -165,6 +204,7 @@ public partial class StandaloneCircuitDispatchTests
                 }
                 finally { pool.Return(reused); }
             }
+
             await Assert.That(server.CommandsSeen).IsEqualTo(commands);
             await Assert.That(server.ReceivedCommands.Contains("WATCH watched")).IsFalse();
             await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(halfOpen ? 1 : 0);
@@ -231,11 +271,17 @@ public partial class StandaloneCircuitDispatchTests
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(1);
         await server.SendRawAsync(Bulk("probe"));
         var deadline = Stopwatch.StartNew();
+
         while (circuit.Snapshot().ActiveProbes != 0)
         {
-            if (deadline.Elapsed > TimeSpan.FromSeconds(5)) throw new TimeoutException("Reply observer did not release its probe.");
+            if (deadline.Elapsed > TimeSpan.FromSeconds(5))
+            {
+                throw new TimeoutException("Reply observer did not release its probe.");
+            }
+
             await Task.Yield();
         }
+
         await Assert.That(circuit.Snapshot().SuccessfulProbes).IsEqualTo(1);
         using var response = await reply;
         await Assert.That(ResponseReader.StringOrNull(in response)).IsEqualTo("probe");
@@ -269,9 +315,18 @@ public partial class StandaloneCircuitDispatchTests
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
         var error = await Failure(async () =>
         {
-            if (ReferenceEquals(queue, transaction)) await CommitQueue(transaction);
-            else if (shape == "durability") await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
-            else await batch.ExecuteAsync();
+            if (ReferenceEquals(queue, transaction))
+            {
+                await CommitQueue(transaction);
+            }
+            else if (shape == "durability")
+            {
+                await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
+            }
+            else
+            {
+                await batch.ExecuteAsync();
+            }
         });
         await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
         await Assert.That(pending?.Error ?? prepared!.Error).IsTypeOf<RespireCircuitOpenException>();
@@ -279,7 +334,11 @@ public partial class StandaloneCircuitDispatchTests
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
         clock.Advance(TimeSpan.FromMinutes(1));
         // Rejection must not expire connection-local fieldsets on an import session.
-        if (session is not null) await Assert.That(await session.PrepareAsync("schema", "field")).IsTrue();
+        if (session is not null)
+        {
+            await Assert.That(await session.PrepareAsync("schema", "field")).IsTrue();
+        }
+
         await client.GetStringAsync("full-1");
         await client.GetStringAsync("full-2");
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
@@ -328,6 +387,7 @@ public partial class StandaloneCircuitDispatchTests
         });
 #pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
+
         for (var round = 0; round < 8; round++)
         {
             Open(client, server);
@@ -335,7 +395,11 @@ public partial class StandaloneCircuitDispatchTests
             var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             server.SuppressReply = command =>
             {
-                if (command != "GET probe") return false;
+                if (command != "GET probe")
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             };
@@ -354,6 +418,7 @@ public partial class StandaloneCircuitDispatchTests
             await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
             await Assert.That(await client.GetStringAsync("after")).IsEqualTo("after");
         }
+
         await Assert.That(server.ReceivedCommands.Any(command => command == "GET never")).IsFalse();
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET probe")).IsEqualTo(8);
     }
@@ -374,8 +439,15 @@ public partial class StandaloneCircuitDispatchTests
         var attempts = 0;
         server.ReplyOverride = (_, command) =>
         {
-            if (command != "GET retry") return command.StartsWith("GET ", StringComparison.Ordinal) ? Bulk(command[4..]) : null;
-            if (Interlocked.Increment(ref attempts) != 1) return Bulk("final");
+            if (command != "GET retry")
+            {
+                return command.StartsWith("GET ", StringComparison.Ordinal) ? Bulk(command[4..]) : null;
+            }
+
+            if (Interlocked.Increment(ref attempts) != 1)
+            {
+                return Bulk("final");
+            }
             // The first member owns an older-generation permit. Its server error must
             // not complete the new half-open probe used by the next attempt.
             Open(client, server);
@@ -408,7 +480,12 @@ public partial class StandaloneCircuitDispatchTests
         Open(client, server);
         clock.Advance(TimeSpan.FromMinutes(1));
         using var cancellation = new CancellationTokenSource();
-        if (beforeDispatch) cancellation.Cancel();
+
+        if (beforeDispatch)
+        {
+            cancellation.Cancel();
+        }
+
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         IRespireCommandQueue queue = shape == "batch" ? batch : transaction;
@@ -416,22 +493,36 @@ public partial class StandaloneCircuitDispatchTests
         server.SuppressReply = command => command == (shape == "batch" ? "GET transaction" : "EXEC");
         var executing = Failure(async () =>
         {
-            if (shape == "batch") await batch.ExecuteAsync(cancellation.Token);
-            else await transaction.CommitAsync(cancellation.Token);
+            if (shape == "batch")
+            {
+                await batch.ExecuteAsync(cancellation.Token);
+            }
+            else
+            {
+                await transaction.CommitAsync(cancellation.Token);
+            }
         });
+
         if (!beforeDispatch)
         {
             await Received(server, shape == "batch" ? "GET transaction" : "EXEC");
             await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(1);
             cancellation.Cancel();
         }
+
         await Assert.That(await executing).IsTypeOf<OperationCanceledException>();
         await Assert.That(pending.Error).IsTypeOf<OperationCanceledException>();
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+
         if (!beforeDispatch)
+        {
             await server.SendRawAsync(shape == "batch" ? Bulk("late") : "*1\r\n$4\r\nlate\r\n"u8.ToArray());
+        }
         else
+        {
             await Assert.That(server.ReceivedCommands.Contains("GET transaction")).IsFalse();
+        }
+
         server.SuppressReply = null;
         server.ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal) ? Bulk(command[4..]) : null;
         await Assert.That(await client.GetStringAsync("full-1")).IsEqualTo("full-1");
@@ -523,8 +614,14 @@ public partial class StandaloneCircuitDispatchTests
         server.SuppressReply = command => command == (shape == "batch" ? "GET transaction" : "EXEC");
         var error = await Failure(async () =>
         {
-            if (shape == "batch") await batch.ExecuteAsync();
-            else await transaction.CommitAsync();
+            if (shape == "batch")
+            {
+                await batch.ExecuteAsync();
+            }
+            else
+            {
+                await transaction.CommitAsync();
+            }
         });
         await Assert.That(error).IsTypeOf<RespireTimeoutException>();
         await Assert.That(pending.Error).IsTypeOf<RespireTimeoutException>();
@@ -564,8 +661,16 @@ public partial class StandaloneCircuitDispatchTests
         await using var transaction = client.CreateTransaction();
         var error = await Failure(async () =>
         {
-            if (shape == "batch") { _ = batch.GetString("never"); await batch.ExecuteAsync(); }
-            else if (shape == "transaction") { _ = transaction.GetString("never"); await transaction.CommitAsync(); }
+            if (shape == "batch")
+            {
+                _ = batch.GetString("never");
+                await batch.ExecuteAsync();
+            }
+            else if (shape == "transaction")
+            {
+                _ = transaction.GetString("never");
+                await transaction.CommitAsync();
+            }
             else
             {
                 var response = await QueuedCircuitDispatch.EnqueueAsync(client.Core.Circuits!, connection,
@@ -577,7 +682,12 @@ public partial class StandaloneCircuitDispatchTests
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.HalfOpen);
         cancellation.Cancel();
-        foreach (var holder in holders) await Failure(() => holder);
+
+        foreach (var holder in holders)
+        {
+            await Failure(() => holder);
+        }
+
         await server.SendRawAsync("$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nd\r\n"u8.ToArray());
         server.SuppressReply = null;
         await client.GetStringAsync("full-1");
@@ -596,7 +706,8 @@ public partial class StandaloneCircuitDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates transaction handoff and the actual endpoint circuit after maintenance publication.
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(10),
         });
 #pragma warning restore RESP010
@@ -606,7 +717,12 @@ public partial class StandaloneCircuitDispatchTests
         Open(client, source);
         var endpoint = new RespireEndpoint("127.0.0.1", target.Port);
         var targetAdmission = client.Core.Circuits!.Acquire(endpoint, default);
-        if (targetOpen) targetAdmission.Failed(new RespireConnectionException("Injected target failure."), default);
+
+        if (targetOpen)
+        {
+            targetAdmission.Failed(new RespireConnectionException("Injected target failure."), default);
+        }
+
         targetAdmission.Dispose();
         var announcement = multiplexer.CaptureMovingAnnouncement(0, original,
             new MaintenanceNotification("MOVING", 1, 10, endpoint));
@@ -619,15 +735,24 @@ public partial class StandaloneCircuitDispatchTests
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
             ActivityStarted = activity =>
             {
-                if (activity.OperationName != "GET" || Interlocked.Increment(ref handoffs) != 1) return;
+                if (activity.OperationName != "GET" || Interlocked.Increment(ref handoffs) != 1)
+                {
+                    return;
+                }
+
                 multiplexer.QueueDedicatedMovingHandoff(original, announcement, static () => true);
-                if (!published.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Transaction handoff did not publish.");
+
+                if (!published.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    throw new TimeoutException("Transaction handoff did not publish.");
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
         var commands = source.CommandsSeen;
         await using var transaction = client.CreateTransaction();
         var pending = transaction.GetString("transaction");
+
         if (targetOpen)
         {
             var error = await Failure(async () => await transaction.CommitAsync());
@@ -640,6 +765,7 @@ public partial class StandaloneCircuitDispatchTests
             await Assert.That(pending.Result).IsEqualTo("transaction");
             await Assert.That(transaction.ExecutingConnection!.Port).IsEqualTo(target.Port);
         }
+
         await Assert.That(handoffs).IsEqualTo(1);
         await Assert.That(source.CommandsSeen).IsEqualTo(commands);
         await Assert.That(target.ReceivedCommands.Count(command => command == "MULTI")).IsEqualTo(targetOpen ? 0 : 1);
@@ -672,8 +798,16 @@ public partial class StandaloneCircuitDispatchTests
         IRespireCommandQueue queue = transactional ? transaction : batch;
         var pending = ((IPendingSink)queue).Add<Cmd1, long>("GET", new Cmd1(Verbs.Get, "invalid"),
             static (_, _) => throw new FormatException("Injected response conversion failure."));
-        if (transactional) await transaction.CommitAsync();
-        else await Assert.That(await Failure(async () => await batch.ExecuteAsync())).IsTypeOf<FormatException>();
+
+        if (transactional)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await Assert.That(await Failure(async () => await batch.ExecuteAsync())).IsTypeOf<FormatException>();
+        }
+
         await Assert.That(pending.Error).IsTypeOf<FormatException>();
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
         await Assert.That(circuit.Snapshot().SuccessfulProbes).IsEqualTo(1);
@@ -686,14 +820,24 @@ public partial class StandaloneCircuitDispatchTests
     private static void Open(RespireClient client, FakeRespServer server)
     {
         var admission = client.Core.Circuits!.Acquire(new("127.0.0.1", server.Port), default);
-        try { admission.Failed(new RespireConnectionException("Injected endpoint failure."), default); }
+
+        try
+        {
+            admission.Failed(new RespireConnectionException("Injected endpoint failure."), default);
+        }
         finally { admission.Dispose(); }
     }
 
     private static async Task CommitQueue(RespireTransactionBase transaction)
     {
-        if (transaction is RespireWatchedTransaction watched) await watched.CommitAsync();
-        else await ((RespireTransaction)transaction).CommitAsync();
+        if (transaction is RespireWatchedTransaction watched)
+        {
+            await watched.CommitAsync();
+        }
+        else
+        {
+            await ((RespireTransaction)transaction).CommitAsync();
+        }
     }
 
     private static FakeRespServer QueueServer()
@@ -702,12 +846,38 @@ public partial class StandaloneCircuitDispatchTests
         var transaction = false;
         server.ReplyOverride = (_, command) =>
         {
-            if (command.StartsWith("HELLO", StringComparison.Ordinal)) return "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
-            if (command == "CLIENT ID") return ":1\r\n"u8.ToArray();
-            if (command == "MULTI") { transaction = true; return FakeRespServer.OkReply; }
-            if (command == "EXEC") { transaction = false; return "*1\r\n$11\r\ntransaction\r\n"u8.ToArray(); }
-            if (transaction) return "+QUEUED\r\n"u8.ToArray();
-            if (command.StartsWith("GET ", StringComparison.Ordinal)) return Bulk(command[4..]);
+            if (command.StartsWith("HELLO", StringComparison.Ordinal))
+            {
+                return "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
+            }
+
+            if (command == "CLIENT ID")
+            {
+                return ":1\r\n"u8.ToArray();
+            }
+
+            if (command == "MULTI")
+            {
+                transaction = true;
+                return FakeRespServer.OkReply;
+            }
+
+            if (command == "EXEC")
+            {
+                transaction = false;
+                return "*1\r\n$11\r\ntransaction\r\n"u8.ToArray();
+            }
+
+            if (transaction)
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
+            if (command.StartsWith("GET ", StringComparison.Ordinal))
+            {
+                return Bulk(command[4..]);
+            }
+
             return null;
         };
         return server;

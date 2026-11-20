@@ -30,8 +30,11 @@ public class SentinelClientTests
         await Assert.That(profile.DownStateCommand).IsEqualTo(primaryAliases ? "IS-PRIMARY-DOWN-BY-ADDR" : "IS-MASTER-DOWN-BY-ADDR");
         await Assert.That(profile.ReplicasCommand).IsEqualTo(replicas ? "REPLICAS" : "SLAVES");
         await Assert.That(profile.SupportsMultiOptionConfig).IsEqualTo(multiOption);
+
         if (!primaryAliases && !replicas && !multiOption)
+        {
             await Assert.That(profile).IsEqualTo(SentinelServerProfile.Legacy);
+        }
     }
 
     private static byte[] Bulk(string value) => Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(value)}\r\n{value}\r\n");
@@ -51,6 +54,7 @@ public class SentinelClientTests
         };
         await using var client = await RespireSentinelClient.ConnectAsync(new("127.0.0.1", server.Port), new() { AllowAdmin = true });
         var options = new Dictionary<string, string> { ["announce-ip"] = "127.0.0.2", ["announce-port"] = "26380" };
+
         if (supported)
         {
             await client.ConfigSetAsync(options);
@@ -61,6 +65,7 @@ public class SentinelClientTests
             await Assert.That(async () => await client.ConfigSetAsync(options)).Throws<NotSupportedException>();
             await Assert.That(server.CommandsSeen).IsEqualTo(1);
         }
+
         await client.ConfigSetAsync(new Dictionary<string, string> { ["announce-port"] = "26380" });
         await Assert.That(server.ReceivedCommands.Contains("SENTINEL CONFIG SET announce-port 26380")).IsTrue();
     }
@@ -111,8 +116,13 @@ public class SentinelClientTests
         };
         await using var client = await RespireSentinelClient.ConnectAsync(new("127.0.0.1", server.Port), new()
         {
-            Username = "data", Password = "data-secret", Database = 9, SentinelPrimaryName = "not-discovered",
-            SentinelUsername = "operator", SentinelPassword = "sentinel-secret", AllowAdmin = true,
+            Username = "data",
+            Password = "data-secret",
+            Database = 9,
+            SentinelPrimaryName = "not-discovered",
+            SentinelUsername = "operator",
+            SentinelPassword = "sentinel-secret",
+            AllowAdmin = true,
         });
         await client.MonitorAsync("temp name", new("127.0.0.1", 6380), 2);
         await client.SetAsync("temp name", new Dictionary<string, string> { ["down-after-milliseconds"] = "5000" });
@@ -168,16 +178,19 @@ public class SentinelClientTests
                 _ => null,
             },
         };
+
         if (!fallback)
         {
             await Assert.That(async () => await RespireSentinelClient.ConnectAsync(new("127.0.0.1", server.Port))).Throws<RespireServerException>();
             return;
         }
+
         await using var client = await RespireSentinelClient.ConnectAsync(new("127.0.0.1", server.Port), new() { AllowAdmin = true });
         await Assert.That(await client.ReplicasAsync("main")).IsEmpty();
         await Assert.That(async () => await client.ConfigSetAsync(new Dictionary<string, string>
         {
-            ["announce-ip"] = "127.0.0.2", ["announce-port"] = "26380",
+            ["announce-ip"] = "127.0.0.2",
+            ["announce-port"] = "26380",
         })).Throws<NotSupportedException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(2);
     }

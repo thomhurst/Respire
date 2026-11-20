@@ -11,40 +11,52 @@ public class SortedSetAddOptionsTests
     public async Task EveryLegalCombination_WritesFlagsAndParsesResults(string mode)
     {
         foreach (var condition in new[] { "", "NX", "XX", "GT", "LT", "XX GT", "XX LT" })
-        foreach (var changed in new[] { false, true })
         {
-            var flags = (condition + (changed ? " CH" : "")).Trim();
-            var options = Options(flags);
-            byte[][] replies = mode == "transaction"
-                ? [FakeRespServer.OkReply, "+QUEUED\r\n"u8.ToArray(), "+QUEUED\r\n"u8.ToArray(),
+            foreach (var changed in new[] { false, true })
+            {
+                var flags = (condition + (changed ? " CH" : "")).Trim();
+                var options = Options(flags);
+                byte[][] replies = mode == "transaction"
+                    ? [FakeRespServer.OkReply, "+QUEUED\r\n"u8.ToArray(), "+QUEUED\r\n"u8.ToArray(),
                     "+QUEUED\r\n"u8.ToArray(), "*3\r\n:1\r\n:2\r\n$3\r\n2.5\r\n"u8.ToArray()]
-                : [":1\r\n"u8.ToArray(), ":2\r\n"u8.ToArray(), "$3\r\n2.5\r\n"u8.ToArray()];
-            await using var server = new FakeRespServer(replies);
-            await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-            var view = client.WithKeyPrefix("tenant:");
-            if (mode == "immediate")
-            {
-                await Assert.That(await view.SortedSets.AddAsync("key", options, "one", 1.5)).IsTrue();
-                await Assert.That(await view.SortedSets.AddAsync("key", options, ("one", 1.5), ("two", 2))).IsEqualTo(2);
-                await Assert.That(await view.SortedSets.IncrementAsync("key", options, "one", 1)).IsEqualTo(2.5);
+                    : [":1\r\n"u8.ToArray(), ":2\r\n"u8.ToArray(), "$3\r\n2.5\r\n"u8.ToArray()];
+                await using var server = new FakeRespServer(replies);
+                await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+                var view = client.WithKeyPrefix("tenant:");
+
+                if (mode == "immediate")
+                {
+                    await Assert.That(await view.SortedSets.AddAsync("key", options, "one", 1.5)).IsTrue();
+                    await Assert.That(await view.SortedSets.AddAsync("key", options, ("one", 1.5), ("two", 2))).IsEqualTo(2);
+                    await Assert.That(await view.SortedSets.IncrementAsync("key", options, "one", 1)).IsEqualTo(2.5);
+                }
+                else
+                {
+                    using var batch = view.CreateBatch();
+                    await using var transaction = view.CreateTransaction();
+                    IRespireCommandQueue queue = mode == "batch" ? batch : transaction;
+                    var single = queue.SortedSets.Add("key", options, "one", 1.5);
+                    var many = queue.SortedSets.Add("key", options, ("one", 1.5), ("two", 2));
+                    var increment = queue.SortedSets.Increment("key", options, "one", 1);
+
+                    if (mode == "batch")
+                    {
+                        await batch.ExecuteAsync();
+                    }
+                    else
+                    {
+                        await transaction.CommitAsync();
+                    }
+
+                    await Assert.That(single.Result).IsTrue();
+                    await Assert.That(many.Result).IsEqualTo(2);
+                    await Assert.That(increment.Result).IsEqualTo(2.5);
+                }
+
+                var prefix = "ZADD tenant:key " + (flags.Length == 0 ? "" : flags + " ");
+                await Assert.That(server.ReceivedCommands.Where(c => c.StartsWith("ZADD ")).SequenceEqual(
+                    [prefix + "1.5 one", prefix + "1.5 one 2 two", prefix + "INCR 1 one"])).IsTrue();
             }
-            else
-            {
-                using var batch = view.CreateBatch();
-                await using var transaction = view.CreateTransaction();
-                IRespireCommandQueue queue = mode == "batch" ? batch : transaction;
-                var single = queue.SortedSets.Add("key", options, "one", 1.5);
-                var many = queue.SortedSets.Add("key", options, ("one", 1.5), ("two", 2));
-                var increment = queue.SortedSets.Increment("key", options, "one", 1);
-                if (mode == "batch") await batch.ExecuteAsync();
-                else await transaction.CommitAsync();
-                await Assert.That(single.Result).IsTrue();
-                await Assert.That(many.Result).IsEqualTo(2);
-                await Assert.That(increment.Result).IsEqualTo(2.5);
-            }
-            var prefix = "ZADD tenant:key " + (flags.Length == 0 ? "" : flags + " ");
-            await Assert.That(server.ReceivedCommands.Where(c => c.StartsWith("ZADD ")).SequenceEqual(
-                [prefix + "1.5 one", prefix + "1.5 one 2 two", prefix + "INCR 1 one"])).IsTrue();
         }
     }
 
@@ -56,13 +68,19 @@ public class SortedSetAddOptionsTests
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         var valid = new HashSet<int> { 0, 1, 2, 4, 8, 6, 10, 16, 17, 18, 20, 24, 22, 26 };
+
         for (var bits = 0; bits <= 32; bits++)
         {
-            if (valid.Contains(bits)) continue;
+            if (valid.Contains(bits))
+            {
+                continue;
+            }
+
             var options = (RespireSortedSetAddOptions)bits;
             await Assert.That(async () => await client.SortedSets.AddAsync("key", options, "member", 1)).Throws<ArgumentException>();
             await Assert.That(async () => await client.SortedSets.AddAsync("key", options, ("member", 1))).Throws<ArgumentException>();
             await Assert.That(async () => await client.SortedSets.IncrementAsync("key", options, "member", 1)).Throws<ArgumentException>();
+
             foreach (var queue in new IRespireCommandQueue[] { batch, transaction })
             {
                 await Assert.That(() => queue.SortedSets.Add("key", options, "member", 1)).Throws<ArgumentException>();
@@ -70,6 +88,7 @@ public class SortedSetAddOptionsTests
                 await Assert.That(() => queue.SortedSets.Increment("key", options, "member", 1)).Throws<ArgumentException>();
             }
         }
+
         await Assert.That(async () => await client.SortedSets.AddAsync("key", RespireSortedSetAddOptions.None, [])).Throws<ArgumentException>();
         await Assert.That(() => batch.SortedSets.Add("key", RespireSortedSetAddOptions.None, [])).Throws<ArgumentException>();
         await Assert.That(() => transaction.SortedSets.Add("key", RespireSortedSetAddOptions.None, [])).Throws<ArgumentException>();
@@ -90,18 +109,30 @@ public class SortedSetAddOptionsTests
         await using var server = new FakeRespServer(replies);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         double? result;
+
         if (mode == "immediate")
+        {
             result = await client.SortedSets.IncrementAsync("key", RespireSortedSetAddOptions.Nx, "member", 1);
+        }
         else
         {
             using var batch = client.CreateBatch();
             await using var transaction = client.CreateTransaction();
             IRespireCommandQueue queue = mode == "batch" ? batch : transaction;
             var pending = queue.SortedSets.Increment("key", RespireSortedSetAddOptions.Nx, "member", 1);
-            if (mode == "batch") await batch.ExecuteAsync();
-            else await transaction.CommitAsync();
+
+            if (mode == "batch")
+            {
+                await batch.ExecuteAsync();
+            }
+            else
+            {
+                await transaction.CommitAsync();
+            }
+
             result = pending.Result;
         }
+
         await Assert.That(result).IsNull();
     }
 
@@ -129,7 +160,14 @@ public class SortedSetAddOptionsTests
     public async Task NewOverloads_ForwardCancellation(int method)
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var server = new FakeRespServer { SuppressReply = _ => { received.TrySetResult(); return true; } };
+        await using var server = new FakeRespServer
+        {
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            }
+        };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
         var options = RespireSortedSetAddOptions.Nx;
@@ -148,8 +186,12 @@ public class SortedSetAddOptionsTests
     private static RespireSortedSetAddOptions Options(string flags)
     {
         var options = RespireSortedSetAddOptions.None;
+
         foreach (var flag in flags.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
             options |= Enum.Parse<RespireSortedSetAddOptions>(flag, ignoreCase: true);
+        }
+
         return options;
     }
 }

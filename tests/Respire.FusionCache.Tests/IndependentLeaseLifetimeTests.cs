@@ -25,10 +25,16 @@ public class IndependentLeaseLifetimeTests(RedisTestContainer fixture)
         services.AddSingleton<IRespireClient>(client);
         var options = new RespireFusionCacheDistributedLockerOptions
         {
-            ReleaseOnCallerCancellation = false, MaximumIndependentLeaseLifetime = TimeSpan.FromMilliseconds(100),
+            ReleaseOnCallerCancellation = false,
+            MaximumIndependentLeaseLifetime = TimeSpan.FromMilliseconds(100),
         };
         var builder = registration == 1 ? services.AddFusionCache().WithRespireDistributedLocker(options) : null;
-        if (registration == 2) services.AddFusionCacheRespireDistributedLocker(options);
+
+        if (registration == 2)
+        {
+            services.AddFusionCacheRespireDistributedLocker(options);
+        }
+
         await using var provider = services.BuildServiceProvider();
         await using var locker = registration switch
         {
@@ -65,12 +71,21 @@ public class IndependentLeaseLifetimeTests(RedisTestContainer fixture)
         services.AddSingleton<IRespireClient>(client);
         var options = new RespireFusionCacheDistributedLockerOptions
         {
-            ReleaseOnCallerCancellation = false, LeaseDuration = TimeSpan.FromSeconds(1),
+            ReleaseOnCallerCancellation = false,
+            LeaseDuration = TimeSpan.FromSeconds(1),
             MaximumIndependentLeaseLifetime = TimeSpan.FromSeconds(3),
         };
         var builder = services.AddFusionCache(Guid.NewGuid().ToString());
-        if (registeredService) services.AddFusionCacheRespireDistributedLocker(options);
-        else builder.WithRespireDistributedLocker(options);
+
+        if (registeredService)
+        {
+            services.AddFusionCacheRespireDistributedLocker(options);
+        }
+        else
+        {
+            builder.WithRespireDistributedLocker(options);
+        }
+
         await using var provider = services.BuildServiceProvider();
         var locker = registeredService
             ? (RespireFusionCacheDistributedLocker)provider.GetRequiredService<IFusionCacheDistributedLocker>()
@@ -89,23 +104,37 @@ public class IndependentLeaseLifetimeTests(RedisTestContainer fixture)
             return 42;
         }, failSafeDefaultValue: -1, options: new FusionCacheEntryOptions
         {
-            IsFailSafeEnabled = true, FactorySoftTimeout = TimeSpan.FromMilliseconds(50),
-            FactoryHardTimeout = TimeSpan.FromMilliseconds(50), AllowTimedOutFactoryBackgroundCompletion = true,
-            AllowBackgroundDistributedCacheOperations = false, ReThrowDistributedLockerExceptions = true,
+            IsFailSafeEnabled = true,
+            FactorySoftTimeout = TimeSpan.FromMilliseconds(50),
+            FactoryHardTimeout = TimeSpan.FromMilliseconds(50),
+            AllowTimedOutFactoryBackgroundCompletion = true,
+            AllowBackgroundDistributedCacheOperations = false,
+            ReThrowDistributedLockerExceptions = true,
         }, token: caller.Token).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(await foreground.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(-1);
             var leases = new List<RespireKey>();
-            await foreach (var key in client.Keys.ScanAsync("respire:fusioncache:lock:*:lease")) leases.Add(key);
+
+            await foreach (var key in client.Keys.ScanAsync("respire:fusioncache:lock:*:lease"))
+            {
+                leases.Add(key);
+            }
+
             await Assert.That(leases.Count).IsEqualTo(1);
             await caller.CancelAsync();
             await DistributedLockerTests.WaitPastLeaseExpiryAsync(TimeSpan.FromSeconds(1));
             // The original server lease expired by now without renewal. The optional total limit has not expired.
             await Assert.That(await client.GetBytesAsync(leases[0])).IsNotNull();
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (await client.GetBytesAsync(leases[0], deadline.Token) is not null) await Task.Delay(10, deadline.Token);
+
+            while (await client.GetBytesAsync(leases[0], deadline.Token) is not null)
+            {
+                await Task.Delay(10, deadline.Token);
+            }
+
             await Assert.That(finish.Task.IsCompleted).IsFalse();
             await Assert.That(completed.Task.IsCompleted).IsFalse();
             var coordination = new RespireCoordination(client);
@@ -138,7 +167,8 @@ public class IndependentLeaseLifetimeTests(RedisTestContainer fixture)
         await using var client = await ConnectAsync(protocol);
         await using var original = new RespireFusionCacheDistributedLocker(client, new()
         {
-            ReleaseOnCallerCancellation = false, MaximumIndependentLeaseLifetime = TimeSpan.FromMilliseconds(200),
+            ReleaseOnCallerCancellation = false,
+            MaximumIndependentLeaseLifetime = TimeSpan.FromMilliseconds(200),
         });
         await using var next = new RespireFusionCacheDistributedLocker(client);
         var name = Guid.NewGuid().ToString();
@@ -156,6 +186,8 @@ public class IndependentLeaseLifetimeTests(RedisTestContainer fixture)
 
     private Task<RespireClient> ConnectAsync(int protocol) => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
     {
-        Protocol = (RespireProtocol)protocol, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+        Protocol = (RespireProtocol)protocol,
+        Connections = 1,
+        MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
     }).AsTask();
 }

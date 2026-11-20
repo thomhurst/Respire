@@ -18,18 +18,25 @@ internal sealed class NodeCommandSessions(string host) : IAsyncDisposable
     internal async Task<string> CommandAsync(int port, string[] arguments, CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken);
+
         try
         {
             if (!_sessions.TryGetValue(port, out var session))
             {
                 session = await TestRespSession.ConnectAsync(new RespireOptions
                 {
-                    Endpoints = [new(host, port)], Protocol = RespireProtocol.Resp2,
+                    Endpoints = [new(host, port)],
+                    Protocol = RespireProtocol.Resp2,
                 }, cancellationToken);
                 _sessions.Add(port, session);
             }
+
             RespValue reply;
-            try { reply = await session.CommandAsync(arguments).WaitAsync(cancellationToken); }
+
+            try
+            {
+                reply = await session.CommandAsync(arguments).WaitAsync(cancellationToken);
+            }
             catch
             {
                 // A cancelled or failed exchange can leave a partial reply on the socket.
@@ -37,10 +44,14 @@ internal sealed class NodeCommandSessions(string host) : IAsyncDisposable
                 await session.DisposeAsync();
                 throw;
             }
+
             using (reply)
             {
                 if (reply.IsError)
+                {
                     throw new InvalidOperationException($"Node {host}:{port} rejected {string.Join(' ', arguments)}: {reply.GetErrorMessage()}");
+                }
+
                 var text = new StringBuilder();
                 Render(reply, text);
                 return text.ToString();
@@ -55,7 +66,10 @@ internal sealed class NodeCommandSessions(string host) : IAsyncDisposable
         {
             // The sessions speak RESP2, so every aggregate is an array; nested items print one per line.
             case RespireDataType.Array:
-                foreach (var item in value.AsArray()) Render(item, text);
+                foreach (var item in value.AsArray())
+                {
+                    Render(item, text);
+                }
                 return;
             case RespireDataType.Integer:
                 text.Append(value.AsInteger().ToString(CultureInfo.InvariantCulture)).Append('\n');
@@ -68,7 +82,11 @@ internal sealed class NodeCommandSessions(string host) : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var session in _sessions.Values) await session.DisposeAsync();
+        foreach (var session in _sessions.Values)
+        {
+            await session.DisposeAsync();
+        }
+
         _sessions.Clear();
         _gate.Dispose();
     }

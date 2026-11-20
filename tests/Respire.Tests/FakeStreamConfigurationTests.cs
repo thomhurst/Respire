@@ -97,19 +97,31 @@ public class FakeStreamConfigurationTests
 #pragma warning restore RESP010
         await client.Streams.AddAsync("s", ("f", "seed"));
         await client.Streams.ConfigureAsync("s", new() { IdempotencyDurationSeconds = 1 });
+
         for (var index = 0; index < 64; index++)
+        {
             await client.Streams.AddAsync("s", new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual($"producer-{index}", "message") }, ("f", "v"));
+        }
+
         clock.Advance(TimeSpan.FromMilliseconds(500));
         var live = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual("live", "message") };
         var liveId = await client.Streams.AddAsync("s", live, ("f", "v"));
         await Assert.That(ProducerCount(server)).IsEqualTo(65);
         clock.Advance(TimeSpan.FromMilliseconds(501));
+
         switch (access)
         {
-            case 0: await client.Streams.AddAsync("s", ("f", "ordinary append")); break;
-            case 1: await client.Streams.CountAsync("s"); break;
-            case 2: await client.Streams.ConfigureAsync("s", new() { IdempotencyDurationSeconds = 1 }); break;
+            case 0:
+                await client.Streams.AddAsync("s", ("f", "ordinary append"));
+                break;
+            case 1:
+                await client.Streams.CountAsync("s");
+                break;
+            case 2:
+                await client.Streams.ConfigureAsync("s", new() { IdempotencyDurationSeconds = 1 });
+                break;
         }
+
         await Assert.That(ProducerCount(server)).IsEqualTo(1);
         await Assert.That(await client.Streams.AddAsync("s", live, ("f", "duplicate"))).IsEqualTo(liveId);
         clock.Advance(TimeSpan.FromMilliseconds(1000));
@@ -146,19 +158,33 @@ public class FakeStreamConfigurationTests
         RespireValue[][] invalid = [["IDMP-DURATION", 100, "IDMP-MAXSIZE", 0], ["IDMP-DURATION", 86401], ["IDMP-MAXSIZE", 10001],
             ["IDMP-MAXSIZE", 2, "IDMP-MAXSIZE", 3],
             ["IDMP-DURATION", 100, "UNKNOWN", 2], ["IDMP-MAXSIZE"], []];
+
         foreach (var arguments in invalid)
         {
-            await Assert.That(async () => { using var reply = await client.ExecuteAsync(RespireCommands.Stream.XCFGSET, ["s", .. arguments]); }).Throws<RespireServerException>();
+            await Assert.That(async () =>
+            {
+                using var reply = await client.ExecuteAsync(RespireCommands.Stream.XCFGSET, ["s", .. arguments]);
+            }).Throws<RespireServerException>();
             await Assert.That(await client.Streams.AddAsync("s", identity, ("f", "duplicate"))).IsEqualTo(first);
         }
+
         clock.Advance(TimeSpan.FromMilliseconds(1001));
         var expired = await client.Streams.AddAsync("s", identity, ("f", "expired"));
         await Assert.That(expired).IsNotEqualTo(first);
         await client.Streams.AddAsync("s", identity with { Idempotency = RespireStreamIdempotency.Manual("q", "i") }, ("f", "other producer"));
         await Assert.That(await client.Streams.AddAsync("s", identity, ("f", "duplicate"))).IsEqualTo(expired);
-        using (var expiry = await client.ExecuteAsync("PEXPIRE", "s", 1000)) { }
+
+        using (var expiry = await client.ExecuteAsync("PEXPIRE", "s", 1000))
+        {
+        }
+
         await client.Streams.ConfigureAsync("s", new() { IdempotencyMaxSize = 2 });
-        using (var ttl = await client.ExecuteAsync("PTTL", "s")) await Assert.That(ttl.AsInteger()).IsEqualTo(1000);
+
+        using (var ttl = await client.ExecuteAsync("PTTL", "s"))
+        {
+            await Assert.That(ttl.AsInteger()).IsEqualTo(1000);
+        }
+
         clock.Advance(TimeSpan.FromMilliseconds(1000));
         await Assert.That(await client.Streams.CountAsync("s")).IsEqualTo(0);
         await Assert.That(await client.Streams.AddAsync("missing", identity with { CreateStream = false }, ("f", "v"))).IsNull();
@@ -172,8 +198,12 @@ public class FakeStreamConfigurationTests
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
 #pragma warning restore RESP010
         RespireStreamAddOptions[] unsupported = [new() { MaxLength = 10 }, new() { Idempotency = RespireStreamIdempotency.Automatic("p") }];
+
         foreach (var option in unsupported)
+        {
             await Assert.That(async () => await client.Streams.AddAsync("s", option, ("f", "v"))).Throws<RespireServerException>();
+        }
+
         await Assert.That(await client.Keys.ExistsAsync("s")).IsFalse();
     }
 }

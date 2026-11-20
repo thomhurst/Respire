@@ -9,10 +9,16 @@ public sealed record RespireRedlockOptions
     /// Maximum time to wait for one node operation. Default is one second. Must be positive and at
     /// most 4,294,967,294 milliseconds (about 49.7 days), the longest supported timer delay.
     /// </summary>
-    public TimeSpan NodeTimeout { get; init; } = TimeSpan.FromSeconds(1);
+    public TimeSpan NodeTimeout
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(1);
 
     /// <summary>Fraction of the lease subtracted for clock drift. Default is 0.01.</summary>
-    public double DriftFactor { get; init; } = 0.01;
+    public double DriftFactor
+    {
+        get; init;
+    } = 0.01;
 }
 
 /// <summary>A result from an immediate Redlock acquisition attempt.</summary>
@@ -52,18 +58,34 @@ public sealed class RespireRedlockGroup
     {
         ArgumentNullException.ThrowIfNull(clients);
         var nodes = clients.ToArray();
+
         if (nodes.Length < 3 || (nodes.Length & 1) == 0)
+        {
             throw new ArgumentException("Redlock requires an odd number of at least three independent clients.", nameof(clients));
+        }
+
         if (nodes.Any(static client => client is null))
+        {
             throw new ArgumentException("Redlock clients cannot contain null.", nameof(clients));
+        }
+
         if (nodes.Distinct(ReferenceEqualityComparer.Instance).Count() != nodes.Length)
+        {
             throw new ArgumentException("Each Redlock node requires a distinct client instance.", nameof(clients));
+        }
 
         options ??= new RespireRedlockOptions();
+
         if (options.NodeTimeout <= TimeSpan.Zero || options.NodeTimeout > RespireRedlockNodes.MaxNodeTimeout)
+        {
             throw new ArgumentOutOfRangeException(nameof(options), "NodeTimeout must be positive and at most 4,294,967,294 milliseconds.");
+        }
+
         if (!double.IsFinite(options.DriftFactor) || options.DriftFactor < 0 || options.DriftFactor >= 1)
+        {
             throw new ArgumentOutOfRangeException(nameof(options), "DriftFactor must be finite and in [0, 1).");
+        }
+
         _nodes = new RespireRedlockNodes(nodes, options, timeProvider ?? TimeProvider.System);
     }
 
@@ -107,6 +129,7 @@ public sealed class RespireRedlockGroup
         CryptographicOperations.ZeroMemory(tokenBytes);
         var started = _nodes.Clock.GetTimestamp();
         _nodes.ValidateDeadline(started, duration, nameof(duration));
+
         try
         {
             var acquired = await _nodes.RunAsync(
@@ -115,8 +138,11 @@ public sealed class RespireRedlockGroup
                     : commands.TryTakeAsync(key, token, duration, cancellation),
                 cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
+
             if (_nodes.TryCreateLease(acquired, duration, started) is { } lease)
+            {
                 return new RespireRedlockAttempt(new RespireRedlock(_nodes, key, token, lease));
+            }
         }
         catch
         {
@@ -155,9 +181,15 @@ internal sealed class RespireRedlockNodes
         Quorum = clients.Length / 2 + 1;
     }
 
-    internal TimeProvider Clock { get; }
+    internal TimeProvider Clock
+    {
+        get;
+    }
 
-    internal int Quorum { get; }
+    internal int Quorum
+    {
+        get;
+    }
 
     internal ValueTask<TResult> RunHookedAsync<TState, TResult>(string operation,
         CancellationToken token, TState state, Func<TState, ValueTask<TResult>> execute)
@@ -171,15 +203,21 @@ internal sealed class RespireRedlockNodes
         var entered = 0;
         var rejected = -1;
         Exception? failure = null;
+
         try
         {
             for (var i = 0; i < _hooks.Length; i++)
             {
                 contexts[i] = new RespireCommandContext(operation, token);
                 entered++;
-                try { states[i] = _hooks[i].OnExecuting(contexts[i]); }
+
+                try
+                {
+                    states[i] = _hooks[i].OnExecuting(contexts[i]);
+                }
                 catch { rejected = i; throw; }
             }
+
             token.ThrowIfCancellationRequested();
             return await execute(state).ConfigureAwait(false);
         }
@@ -195,7 +233,11 @@ internal sealed class RespireRedlockNodes
                 var outcome = i == rejected ? RespireCommandOutcome.Rejected
                     : failure is OperationCanceledException ? RespireCommandOutcome.Canceled
                     : failure is not null ? RespireCommandOutcome.Failed : RespireCommandOutcome.Succeeded;
-                try { _hooks[i].OnCompleted(contexts[i], states[i], outcome, failure); }
+
+                try
+                {
+                    _hooks[i].OnCompleted(contexts[i], states[i], outcome, failure);
+                }
                 catch (Exception) { /* One observer cannot replace the result or skip later observers. */ }
             }
         }
@@ -204,14 +246,18 @@ internal sealed class RespireRedlockNodes
     internal static void ValidateDuration(TimeSpan duration, string parameterName)
     {
         if (duration.Ticks / TimeSpan.TicksPerMillisecond < 1)
+        {
             throw new ArgumentOutOfRangeException(parameterName, "Lease duration must be at least one millisecond.");
+        }
     }
 
     /// <summary>Rejects a lease whose local deadline cannot be represented, before any node is contacted.</summary>
     internal void ValidateDeadline(long started, TimeSpan duration, string parameterName)
     {
         if (!TryAddDuration(started, duration, out _))
+        {
             throw new ArgumentOutOfRangeException(parameterName, "Lease duration is too long to track locally.");
+        }
     }
 
     internal long GetConservativeDeadline(long started, TimeSpan duration)
@@ -226,16 +272,33 @@ internal sealed class RespireRedlockNodes
     internal RespireRedlockLease? TryCreateLease(bool[] results, TimeSpan duration, long started,
         long? previousValidUntil = null)
     {
-        if (results.Count(static success => success) < Quorum) return null;
+        if (results.Count(static success => success) < Quorum)
+        {
+            return null;
+        }
+
         var completed = Clock.GetTimestamp();
-        if (previousValidUntil is { } previousDeadline && completed >= previousDeadline) return null;
+
+        if (previousValidUntil is { } previousDeadline && completed >= previousDeadline)
+        {
+            return null;
+        }
+
         var validity = CalculateValidity(duration, Clock.GetElapsedTime(started, completed), _driftFactor);
-        if (validity <= TimeSpan.Zero) return null;
+
+        if (validity <= TimeSpan.Zero)
+        {
+            return null;
+        }
         // ValidateDeadline proved started + duration fits; completed + validity cannot exceed it.
         var validUntil = TryAddDuration(completed, validity, out var deadline) ? deadline : long.MaxValue;
         // A coarse clock can truncate a small positive validity to zero ticks; such a lease would
         // already read as expired, so it is not reported as acquired.
-        if (validUntil <= completed) return null;
+        if (validUntil <= completed)
+        {
+            return null;
+        }
+
         return new RespireRedlockLease(duration, validity, validUntil);
     }
 
@@ -261,8 +324,12 @@ internal sealed class RespireRedlockNodes
         CancellationToken cancellationToken)
     {
         var pending = new Task<bool>[_locks.Length];
+
         for (var i = 0; i < _locks.Length; i++)
+        {
             pending[i] = RunOnNodeAsync(_locks[i], operation, cancellationToken);
+        }
+
         return await Task.WhenAll(pending).ConfigureAwait(false);
     }
 
@@ -306,6 +373,7 @@ internal sealed class RespireRedlockNodes
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
         timeout.CancelAfter(_nodeTimeout);
         Task<bool>? command = null;
+
         try
         {
             command = operation(commands, timeout.Token).AsTask();
@@ -325,12 +393,21 @@ internal sealed class RespireRedlockNodes
 
     private static void Observe(Task<bool>? task)
     {
-        if (task is null) return;
-        if (task.IsCompleted)
+        if (task is null)
         {
-            if (task.IsFaulted) _ = task.Exception;
             return;
         }
+
+        if (task.IsCompleted)
+        {
+            if (task.IsFaulted)
+            {
+                _ = task.Exception;
+            }
+
+            return;
+        }
+
         _ = task.ContinueWith(
             static completed => _ = completed.Exception,
             CancellationToken.None,
@@ -341,6 +418,7 @@ internal sealed class RespireRedlockNodes
 
 /// <summary>One immutable lease generation, published atomically so readers never mix renewals.</summary>
 internal sealed record RespireRedlockLease(TimeSpan Duration, TimeSpan Validity, long ValidUntil);
+
 internal sealed record RespireRedlockLeaseState(RespireRedlockLease Lease, long? PendingValidUntil);
 
 /// <summary>A Redlock lease acquired on a quorum; operations remain attached to supplied clients.</summary>
@@ -361,35 +439,64 @@ public sealed class RespireRedlock : IAsyncDisposable
     }
 
     /// <summary>Lock key before each client's configured key prefix.</summary>
-    public RespireKey Key { get; }
+    public RespireKey Key
+    {
+        get;
+    }
+
     /// <summary>Random binary owner value stored on every node in the acquired quorum.</summary>
-    public RespireLockToken Token { get; }
+    public RespireLockToken Token
+    {
+        get;
+    }
+
     /// <summary>Configured lease duration.</summary>
     public TimeSpan Duration => Volatile.Read(ref _leaseState).Lease.Duration;
+
     /// <summary>Validity after acquisition elapsed time and configured drift allowance.</summary>
     public TimeSpan Validity => Volatile.Read(ref _leaseState).Lease.Validity;
+
     /// <summary>Conservative estimate; it does not prove continued server ownership.</summary>
     public TimeSpan RemainingEstimate
     {
         get
         {
-            if (Volatile.Read(ref _released) != 0) return TimeSpan.Zero;
+            if (Volatile.Read(ref _released) != 0)
+            {
+                return TimeSpan.Zero;
+            }
+
             while (true)
             {
-                if (Volatile.Read(ref _released) != 0) return TimeSpan.Zero;
+                if (Volatile.Read(ref _released) != 0)
+                {
+                    return TimeSpan.Zero;
+                }
+
                 var state = Volatile.Read(ref _leaseState);
                 var clock = _nodes.Clock;
                 var timestamp = clock.GetTimestamp();
-                if (!ReferenceEquals(state, Volatile.Read(ref _leaseState))) continue;
+
+                if (!ReferenceEquals(state, Volatile.Read(ref _leaseState)))
+                {
+                    continue;
+                }
+
                 var deadline = state.PendingValidUntil is { } pending
                     ? Math.Min(state.Lease.ValidUntil, pending)
                     : state.Lease.ValidUntil;
                 var remaining = clock.GetElapsedTime(timestamp, deadline);
-                if (Volatile.Read(ref _released) != 0) return TimeSpan.Zero;
+
+                if (Volatile.Read(ref _released) != 0)
+                {
+                    return TimeSpan.Zero;
+                }
+
                 return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
             }
         }
     }
+
     /// <summary>Whether this handle was released, expired locally, or lost quorum.</summary>
     public bool IsReleased => Volatile.Read(ref _released) != 0 || RemainingEstimate == TimeSpan.Zero;
 
@@ -421,15 +528,24 @@ public sealed class RespireRedlock : IAsyncDisposable
     private async ValueTask<bool> ResetExpiryCoreAsync(TimeSpan duration, CancellationToken cancellationToken)
     {
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
-            if (IsReleased) return false;
+            if (IsReleased)
+            {
+                return false;
+            }
+
             var previousLease = Volatile.Read(ref _leaseState).Lease;
             var started = _nodes.Clock.GetTimestamp();
             _nodes.ValidateDeadline(started, duration, nameof(duration));
             var requestedDeadline = _nodes.GetConservativeDeadline(started, duration);
+
             if (requestedDeadline < previousLease.ValidUntil)
+            {
                 Volatile.Write(ref _leaseState, new(previousLease, requestedDeadline));
+            }
+
             try
             {
                 var renewed = await _nodes.RunAsync(
@@ -438,6 +554,7 @@ public sealed class RespireRedlock : IAsyncDisposable
                         : commands.ResetExpiryAsync(Key, Token, duration, token),
                     cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
+
                 if (_nodes.TryCreateLease(renewed, duration, started, previousLease.ValidUntil) is { } lease)
                 {
                     Volatile.Write(ref _leaseState, new(lease, null));
@@ -472,12 +589,22 @@ public sealed class RespireRedlock : IAsyncDisposable
     private async ValueTask<bool> ReleaseCoreAsync(CancellationToken cancellationToken)
     {
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
-            if (Volatile.Read(ref _releaseConfirmed) != 0) return false;
+            if (Volatile.Read(ref _releaseConfirmed) != 0)
+            {
+                return false;
+            }
+
             Volatile.Write(ref _released, 1);
             var confirmed = await _nodes.ReleaseAsync(Key, Token).ConfigureAwait(false);
-            if (confirmed) Volatile.Write(ref _releaseConfirmed, 1);
+
+            if (confirmed)
+            {
+                Volatile.Write(ref _releaseConfirmed, 1);
+            }
+
             return confirmed;
         }
         finally
@@ -494,7 +621,10 @@ public sealed class RespireRedlock : IAsyncDisposable
 
     private async ValueTask<bool> DisposeCoreAsync()
     {
-        try { return await ReleaseCoreAsync(CancellationToken.None).ConfigureAwait(false); }
+        try
+        {
+            return await ReleaseCoreAsync(CancellationToken.None).ConfigureAwait(false);
+        }
         catch (Exception) { return false; }
     }
 
@@ -503,7 +633,10 @@ public sealed class RespireRedlock : IAsyncDisposable
         Volatile.Write(ref _released, 1);
         var state = Volatile.Read(ref _leaseState);
         Volatile.Write(ref _leaseState, new(state.Lease, null));
+
         if (await _nodes.ReleaseAsync(Key, Token).ConfigureAwait(false))
+        {
             Volatile.Write(ref _releaseConfirmed, 1);
+        }
     }
 }

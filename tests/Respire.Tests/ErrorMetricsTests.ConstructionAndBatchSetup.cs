@@ -16,7 +16,7 @@ public partial class ErrorMetricsTests
         [Matrix(false, true)] bool prefix)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         await using var server = new FakeRespServer(8, FakeRespServer.OkReply);
         server.ReplyOverride = (_, command) => command switch
         {
@@ -28,7 +28,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -36,23 +38,36 @@ public partial class ErrorMetricsTests
         RespireKey first = "{same}:one";
         RespireKey second = crossSlot ? "{other}:two" : "{same}:two";
         using var capture = new Capture(throwOnMeasurement: true);
+
         async Task Execute()
         {
             switch (operation)
             {
-                case "SORT": await client.Keys.SortStoreAsync(first, second); break;
-                case "ZINTERCARD": await client.SortedSets.IntersectCountAsync([first, second]); break;
-                default: await client.Strings.SetManyIfNotExistsAsync([(first, "one"), (second, "two")]); break;
+                case "SORT":
+                    await client.Keys.SortStoreAsync(first, second);
+                    break;
+                case "ZINTERCARD":
+                    await client.SortedSets.IntersectCountAsync([first, second]);
+                    break;
+                default:
+                    await client.Strings.SetManyIfNotExistsAsync([(first, "one"), (second, "two")]);
+                    break;
             }
         }
+
         if (crossSlot)
         {
             var error = await Assert.That(Execute).Throws<RespireCrossSlotException>();
             await Assert.That(error!.ExpectedSlot).IsNotEqualTo(error.ConflictingSlot);
         }
-        else await Execute();
+        else
+        {
+            await Execute();
+        }
+
         var items = capture.Items.ToArray();
         await Assert.That(items.Length).IsEqualTo(enabled && crossSlot ? 1 : 0);
+
         if (enabled && crossSlot)
         {
             await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsFalse();
@@ -61,6 +76,7 @@ public partial class ErrorMetricsTests
             await Assert.That(items[0].Tags["redis.client.errors.category"]).IsEqualTo("validation");
             await Assert.That(items[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
         }
+
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith(operation + " ", StringComparison.Ordinal)))
             .IsEqualTo(crossSlot ? 0 : 1);
     }
@@ -72,31 +88,52 @@ public partial class ErrorMetricsTests
         [Matrix(false, true)] bool enabled, [Matrix(false, true)] bool throwingExecute)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         await using var server = new FakeRespServer(4, FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await using var session = failure == "busy-import" ? await client.Hashes.CreateImportSessionAsync() : null;
         using var batch = session is null ? client.CreateBatch() : session.CreateBatch();
-        if (failure == "disposed") batch.Dispose();
-        if (failure == "sent") await batch.TryExecuteAsync();
+
+        if (failure == "disposed")
+        {
+            batch.Dispose();
+        }
+
+        if (failure == "sent")
+        {
+            await batch.TryExecuteAsync();
+        }
+
         using var busy = session?.EnterOperation();
         using var capture = new Capture(throwOnMeasurement: true);
         var error = await Assert.That(async () =>
         {
-            if (throwingExecute) await batch.ExecuteAsync();
-            else await batch.TryExecuteAsync();
+            if (throwingExecute)
+            {
+                await batch.ExecuteAsync();
+            }
+            else
+            {
+                await batch.TryExecuteAsync();
+            }
         }).Throws<Exception>();
         await Assert.That(error!.GetType()).IsEqualTo(failure == "disposed"
             ? typeof(ObjectDisposedException) : typeof(InvalidOperationException));
         var items = capture.Items.ToArray();
         await Assert.That(items.Length).IsEqualTo(enabled ? 1 : 0);
+
         if (enabled)
         {
             await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsFalse();
             await Assert.That(items[0].Tags["error.type"]).IsEqualTo(error.GetType().FullName);
             await Assert.That(items[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
         }
+
         await Assert.That(batch.Count).IsEqualTo(0);
-        if (failure != "sent") await Assert.That(batch.IsSent).IsFalse();
+
+        if (failure != "sent")
+        {
+            await Assert.That(batch.IsSent).IsFalse();
+        }
     }
 }

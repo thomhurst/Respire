@@ -24,7 +24,8 @@ public class PrimaryReadRetirementTests
 #pragma warning disable RESP010 // This retirement scenario owns and disposes its client and replacement pools to isolate the admission race.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -51,14 +52,20 @@ public class PrimaryReadRetirementTests
         var pending = core.ReadRouter.RentDedicatedConnectionAsync(
             allowFallback ? RespireReadFrom.PrimaryPreferred : RespireReadFrom.Primary, caller.Token, observation: default).AsTask();
         Task? retirement = null;
+
         try
         {
             await entered.Task.WaitAsync(limit);
-            if (retirePool) retirement = original.RetireAsync().AsTask();
+
+            if (retirePool)
+            {
+                retirement = original.RetireAsync().AsTask();
+            }
             // Publish a healthy replacement at the same address before delivering the
             // already-selected timeout. Retirement must not exclude that address.
             core.TestingDedicatedPoolOverride = replacement;
             release.TrySetResult();
+
             if (retirePool && connectTimeout)
             {
                 var lease = await pending.WaitAsync(limit);
@@ -72,19 +79,25 @@ public class PrimaryReadRetirementTests
                     .ThrowsExactly<RespireTimeoutException>();
                 await Assert.That(error).IsSameReferenceAs(failure);
             }
+
             await Assert.That(caller.IsCancellationRequested).IsFalse();
         }
         finally
         {
             release.TrySetResult();
             core.TestingDedicatedPoolOverride = null;
+
             try
             {
                 var lease = await pending.WaitAsync(limit);
                 lease.Pool.Return(lease.Connection);
             }
             catch (Exception) when (pending.IsCompleted) { }
-            if (retirement is not null) await retirement.WaitAsync(limit);
+
+            if (retirement is not null)
+            {
+                await retirement.WaitAsync(limit);
+            }
         }
     }
 }

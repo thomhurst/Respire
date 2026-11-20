@@ -37,7 +37,10 @@ public class ClusterMigrationStateTests
         var accepted = 0;
         await Task.WhenAll(Enumerable.Range(0, 64).Select(_ => Task.Run(() =>
         {
-            if (state.TryRecordSequence(connection, 42)) Interlocked.Increment(ref accepted);
+            if (state.TryRecordSequence(connection, 42))
+            {
+                Interlocked.Increment(ref accepted);
+            }
         })));
         await Assert.That(accepted).IsEqualTo(1);
     }
@@ -50,7 +53,11 @@ public class ClusterMigrationStateTests
         var later = new object();
         var skipped = new List<(string Reason, object Sender)>();
         state.Defer(new(Source, Target, [0, 1], 10, 0, original), skipped);
-        for (var i = 0; i < 64; i++) state.Defer(new(Source, Target, [i], 11, 1, later), skipped);
+
+        for (var i = 0; i < 64; i++)
+        {
+            state.Defer(new(Source, Target, [i], 11, 1, later), skipped);
+        }
 
         await Assert.That(state.DeferredCount).IsEqualTo(64);
         await Assert.That(state.DeferredSlots).IsEqualTo(64);

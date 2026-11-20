@@ -22,7 +22,8 @@ public class BufferedBulkReplyTests
         await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespireProtocol.Resp2, ReceiveBufferSize = bufferSize,
+                Protocol = RespireProtocol.Resp2,
+                ReceiveBufferSize = bufferSize,
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
             });
         var command = new Cmd1(Verbs.Get, "key");
@@ -53,7 +54,8 @@ public class BufferedBulkReplyTests
         await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespireProtocol.Resp2, ReceiveBufferSize = 1024,
+                Protocol = RespireProtocol.Resp2,
+                ReceiveBufferSize = 1024,
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
             });
         var command = new Cmd1(Verbs.Get, "key");
@@ -90,7 +92,8 @@ public class BufferedBulkReplyTests
         await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespireProtocol.Resp2, ReceiveBufferSize = bufferSize,
+                Protocol = RespireProtocol.Resp2,
+                ReceiveBufferSize = bufferSize,
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
             });
         var command = new Cmd1(Verbs.Get, "key");
@@ -116,6 +119,7 @@ public class BufferedBulkReplyTests
         await Assert.That(partial.IsCompleted).IsFalse();
         await Assert.That(following.IsCompleted).IsFalse();
         stream.Publish(malformed ? "cdefgXX:22\r\n"u8.ToArray() : "cdefg\r\n:22\r\n"u8.ToArray());
+
         if (malformed)
         {
             await Assert.That(async () => await partial.WaitAsync(deadline.Token)).Throws<RespireProtocolException>();
@@ -123,13 +127,19 @@ public class BufferedBulkReplyTests
             await Assert.That(connection.IsConnected).IsFalse();
             return;
         }
+
         using var second = await partial.WaitAsync(deadline.Token);
+
         if (nested)
         {
             await Assert.That(second.AsArray()[0].AsInteger()).IsEqualTo(11L);
             await Assert.That(second.AsArray()[1].AsSpan().SequenceEqual("abcdefg"u8)).IsTrue();
         }
-        else await Assert.That(second.AsSpan().SequenceEqual("abcdefg"u8)).IsTrue();
+        else
+        {
+            await Assert.That(second.AsSpan().SequenceEqual("abcdefg"u8)).IsTrue();
+        }
+
         using var last = await following.WaitAsync(deadline.Token);
         await Assert.That(last.AsInteger()).IsEqualTo(22L);
         await Assert.That(connection.IsConnected).IsTrue();
@@ -155,7 +165,8 @@ public class BufferedBulkReplyTests
             await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
                 new RespireConnectionOptions
                 {
-                    Protocol = RespireProtocol.Resp2, ReceiveBufferSize = 64 * 1024,
+                    Protocol = RespireProtocol.Resp2,
+                    ReceiveBufferSize = 64 * 1024,
                     TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
                 });
             var command = new Cmd1(Verbs.Get, "key");
@@ -167,15 +178,18 @@ public class BufferedBulkReplyTests
 
             var payload = new string('x', length);
             var bulk = Encoding.ASCII.GetBytes($"${length}\r\n{payload}\r\n");
+
             if (replyKind == 2)
             {
                 // Force the connection into its resumable aggregate parser before the bulk.
                 stream.Publish(":11\r\n*1\r\n"u8.ToArray());
                 await stream.NextReadAsync(deadline.Token);
             }
+
             var prefix = replyKind == 2 ? Array.Empty<byte>() : ":11\r\n"u8.ToArray();
             stream.Publish([.. prefix, .. bulk.AsSpan(0, bulk.Length - missing),
                 .. (missing == 0 ? ":22\r\n"u8.ToArray() : Array.Empty<byte>())]);
+
             if (missing != 0)
             {
                 await stream.NextReadAsync(deadline.Token);
@@ -193,13 +207,16 @@ public class BufferedBulkReplyTests
             }
 
             if (text is not null)
+            {
                 await Assert.That(await text.WaitAsync(deadline.Token)).IsEqualTo(payload);
+            }
             else
             {
                 using var value = await general!.WaitAsync(deadline.Token);
                 var actual = replyKind == 2 ? value.AsArray()[0].AsString() : value.AsString();
                 await Assert.That(actual).IsEqualTo(payload);
             }
+
             using var following = await last.WaitAsync(deadline.Token);
             await Assert.That(following.AsInteger()).IsEqualTo(22);
             await Assert.That(connection.IsConnected).IsTrue();
@@ -253,10 +270,20 @@ public class BufferedBulkReplyTests
         // Cancellation must abandon a submitted response, not remove an unsent command.
         await stream.WaitForWrittenAsync(2 * "*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n"u8.Length, deadline.Token);
         await stream.NextReadAsync(deadline.Token);
-        if (cancelBeforeHeader) canceled.Cancel();
+
+        if (cancelBeforeHeader)
+        {
+            canceled.Cancel();
+        }
+
         stream.Publish(Encoding.ASCII.GetBytes("*33\r\n" + string.Concat(Enumerable.Repeat(":7\r\n", 16))));
         await stream.NextReadAsync(deadline.Token);
-        if (!cancelBeforeHeader) canceled.Cancel();
+
+        if (!cancelBeforeHeader)
+        {
+            canceled.Cancel();
+        }
+
         await Assert.That(async () => await abandoned.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
         await Assert.That(following.IsCompleted).IsFalse();
         stream.Publish(Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat(":7\r\n", 17)) + ":99\r\n"));
@@ -274,22 +301,32 @@ public class BufferedBulkReplyTests
         private ReadOnlyMemory<byte> _remaining;
 
         public void Publish(byte[] bytes) => _segments.Writer.TryWrite(bytes);
+
         public async Task NextReadAsync(CancellationToken token) => await NextReadSizeAsync(token);
+
         public async Task<int> NextReadSizeAsync(CancellationToken token) => await _reads.Reader.ReadAsync(token);
+
         public async Task WaitForWrittenAsync(int count, CancellationToken token)
         {
             while (Interlocked.Read(ref _writtenBytes) < count)
+            {
                 await _writes.Reader.ReadAsync(token);
+            }
         }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             _reads.Writer.TryWrite(buffer.Length);
+
             if (_remaining.IsEmpty)
             {
-                try { _remaining = await _segments.Reader.ReadAsync(cancellationToken); }
+                try
+                {
+                    _remaining = await _segments.Reader.ReadAsync(cancellationToken);
+                }
                 catch (ChannelClosedException) { return 0; }
             }
+
             var count = Math.Min(buffer.Length, _remaining.Length);
             _remaining[..count].CopyTo(buffer);
             _remaining = _remaining[count..];
@@ -302,21 +339,37 @@ public class BufferedBulkReplyTests
             _writes.Writer.TryWrite(true);
             return ValueTask.CompletedTask;
         }
+
         protected override void Dispose(bool disposing)
         {
             _segments.Writer.TryComplete();
             _writes.Writer.TryComplete();
             base.Dispose(disposing);
         }
+
         public override bool CanRead => true;
+
         public override bool CanWrite => true;
+
         public override bool CanSeek => false;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-        public override void Flush() { }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
     }
 }

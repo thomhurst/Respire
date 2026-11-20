@@ -17,20 +17,31 @@ internal sealed class SentinelRetryBudget(RespireReconnectPolicy? policy)
     private int _attempts;
 
     internal int Attempts => Volatile.Read(ref _attempts);
+
     internal bool IsExhausted => policy?.IsExhausted(Attempts) == true;
 
     internal void Reset() => Volatile.Write(ref _attempts, 0);
 
     internal void MarkSubscriptionExhausted()
     {
-        if (policy?.MaxAttempts is { } maximum) Volatile.Write(ref _attempts, maximum);
+        if (policy?.MaxAttempts is { } maximum)
+        {
+            Volatile.Write(ref _attempts, maximum);
+        }
     }
 
     internal bool TryStartRetry()
     {
-        if (IsExhausted) return false;
+        if (IsExhausted)
+        {
+            return false;
+        }
         // Unlimited episodes must not wrap to a negative attempt or backoff exponent.
-        if (Attempts < int.MaxValue) Volatile.Write(ref _attempts, Attempts + 1);
+        if (Attempts < int.MaxValue)
+        {
+            Volatile.Write(ref _attempts, Attempts + 1);
+        }
+
         return true;
     }
 

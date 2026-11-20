@@ -267,6 +267,8 @@ internal static class JobDeduplication
     internal static void Validate(RespireJobDeduplicationMode mode)
     {
         if (mode is not (RespireJobDeduplicationMode.FirstSubmissionWins or RespireJobDeduplicationMode.Extend or RespireJobDeduplicationMode.Replace or RespireJobDeduplicationMode.KeepLastIfActive))
+        {
             throw new ArgumentOutOfRangeException(nameof(mode));
+        }
     }
 }

@@ -72,11 +72,14 @@ internal sealed partial class SortedSetCommands
     public ValueTask<long> IntersectCountAsync(long limit, RespireKey key, CancellationToken cancellationToken)
         => IntersectCountAsync(limit, [key], cancellationToken);
 
-
     public ValueTask<string?> RandomMemberAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
-        try { return owner.Attach(RandomMemberBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RandomMemberBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -88,7 +91,11 @@ internal sealed partial class SortedSetCommands
     public ValueTask<T?> RandomMemberAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T?>.Start();
-        try { return owner.Attach(RandomMemberBorrowedAsync<T>(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RandomMemberBorrowedAsync<T>(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -100,7 +107,11 @@ internal sealed partial class SortedSetCommands
     public ValueTask<string[]> RandomMembersAsync(RespireKey key, long count, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string[]>.Start();
-        try { return owner.Attach(RandomMembersBorrowedAsync(key, count, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RandomMembersBorrowedAsync(key, count, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -112,7 +123,11 @@ internal sealed partial class SortedSetCommands
     public ValueTask<T[]> RandomMembersAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T[]>.Start();
-        try { return owner.Attach(RandomMembersBorrowedAsync<T>(key, count, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RandomMembersBorrowedAsync<T>(key, count, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -124,7 +139,11 @@ internal sealed partial class SortedSetCommands
     public ValueTask<RespireSortedSetEntry[]> RandomMembersWithScoresAsync(RespireKey key, long count, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireSortedSetEntry[]>.Start();
-        try { return owner.Attach(RandomMembersWithScoresBorrowedAsync(key, count, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RandomMembersWithScoresBorrowedAsync(key, count, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -137,7 +156,11 @@ internal sealed partial class SortedSetCommands
     public ValueTask<RespireSortedSetEntry<T>[]> RandomMembersWithScoresAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireSortedSetEntry<T>[]>.Start();
-        try { return owner.Attach(RandomMembersWithScoresBorrowedAsync<T>(key, count, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RandomMembersWithScoresBorrowedAsync<T>(key, count, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -162,13 +185,19 @@ internal sealed partial class SortedSetCommands
     private static void ValidateRandomCount(long count)
     {
         if (count == long.MinValue)
+        {
             throw new ArgumentOutOfRangeException(nameof(count), "The absolute count must fit in a signed 64-bit integer.");
+        }
     }
 
     public ValueTask<long> CountByLexAsync(RespireKey key, RespireLexRange range, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(CountByLexBorrowedAsync(key, range, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(CountByLexBorrowedAsync(key, range, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -179,7 +208,11 @@ internal sealed partial class SortedSetCommands
     public ValueTask<long> RemoveRangeByLexAsync(RespireKey key, RespireLexRange range, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(RemoveRangeByLexBorrowedAsync(key, range, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RemoveRangeByLexBorrowedAsync(key, range, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -190,7 +223,11 @@ internal sealed partial class SortedSetCommands
     public ValueTask<long> IntersectCountAsync(params ReadOnlySpan<RespireKey> keys)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(IntersectCountBorrowedAsync(keys, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(IntersectCountBorrowedAsync(keys, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -200,7 +237,11 @@ internal sealed partial class SortedSetCommands
     public ValueTask<long> IntersectCountAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(IntersectCountBorrowedAsync(keys, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(IntersectCountBorrowedAsync(keys, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -210,7 +251,11 @@ internal sealed partial class SortedSetCommands
     public ValueTask<long> IntersectCountAsync(long limit, params ReadOnlySpan<RespireKey> keys)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(IntersectCountBorrowedAsync(limit, keys, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(IntersectCountBorrowedAsync(limit, keys, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -220,7 +265,11 @@ internal sealed partial class SortedSetCommands
     public ValueTask<long> IntersectCountAsync(long limit, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(IntersectCountBorrowedAsync(limit, keys, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(IntersectCountBorrowedAsync(limit, keys, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -230,17 +279,27 @@ internal sealed partial class SortedSetCommands
     internal static CmdN IntersectCountCommand(RespireClient client, ReadOnlySpan<RespireKey> keys, long limit)
     {
         var arguments = CountedKeyArguments.Create(client, keys, limit);
+
         if (client.Core.Cluster is not null)
         {
             int? slot = null;
+
             for (var i = 1; i <= keys.Length; i++)
             {
-                if (!arguments[i].TryGetClusterSlot(out var current)) continue;
+                if (!arguments[i].TryGetClusterSlot(out var current))
+                {
+                    continue;
+                }
+
                 if (slot is { } expected && expected != current)
+                {
                     throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, "ZINTERCARD", expected, current, arguments[i]);
+                }
+
                 slot = current;
             }
         }
+
         return new CmdN(Verbs.ZInterCard, arguments);
     }
 }

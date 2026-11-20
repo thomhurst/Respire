@@ -25,11 +25,14 @@ public class ClusterInfoEpochIntegrationTests
         (await Command(7001, ["CLUSTER", "SET-CONFIG-EPOCH", long.MaxValue.ToString(CultureInfo.InvariantCulture)])).Trim().Should().Be("OK");
         (await Command(7000, ["CLUSTER", "MEET", "127.0.0.1", "7001", "17001"])).Trim().Should().Be("OK");
         using var convergence = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
         try
         {
             while (!(await Command(7000, ["CLUSTER", "INFO"], convergence.Token))
                 .Contains("cluster_current_epoch:9223372036854775807", StringComparison.Ordinal))
+            {
                 await Task.Delay(50, convergence.Token);
+            }
         }
         catch (OperationCanceledException error) when (convergence.IsCancellationRequested)
         {
@@ -39,7 +42,8 @@ public class ClusterInfoEpochIntegrationTests
         (await Command(7000, ["CLUSTER", "BUMPEPOCH"])).Trim().Should().Be("BUMPED 9223372036854775808");
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(container.Hostname, container.GetMappedPublicPort(7000))], Connections = 1,
+            Endpoints = [new(container.Hostname, container.GetMappedPublicPort(7000))],
+            Connections = 1,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });

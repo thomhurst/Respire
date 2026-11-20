@@ -17,6 +17,7 @@ public sealed class SecuredRedisTestContainer : IAsyncInitializer, IAsyncDisposa
         _container ?? throw new InvalidOperationException("Secured Redis container has not been initialized.");
 
     public string Host => Container.Hostname;
+
     public int Port => Container.GetMappedPublicPort(RedisPort);
 
     public async Task InitializeAsync()

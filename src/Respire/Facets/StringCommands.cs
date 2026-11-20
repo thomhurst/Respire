@@ -365,7 +365,6 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<bool> SetManyExpireAsync(RespireExpiry expiry, RespireSetWhen when, (RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken)
         => SetManyExpireAsync(expiry, when, [pairs], cancellationToken);
 
-
     // Hot single-key commands own only their preflight and pass an empty observation, so
     // the default standalone route dispatches natively. See RespireClient.RecordPreflightFailure.
     public ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default)
@@ -390,7 +389,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<Stream?> GetStreamAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<Stream?>.Start();
-        try { return owner.Attach(GetStreamBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetStreamBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -401,7 +404,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<RespireLease> GetLeaseAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireLease>.Start();
-        try { return owner.Attach(GetLeaseBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetLeaseBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -413,8 +420,14 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         CancellationToken cancellationToken = default)
     {
         var borrowed = DispatchResponseSource.DecoratedObservation;
-        if (borrowed.IsOpen) return SetBorrowedAsync(key, value, expiry, when, cancellationToken, borrowed);
+
+        if (borrowed.IsOpen)
+        {
+            return SetBorrowedAsync(key, value, expiry, when, cancellationToken, borrowed);
+        }
+
         SetCommand command;
+
         try
         {
             RespireValue.ThrowIfNull(value, nameof(value));
@@ -423,6 +436,7 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
             command = new SetCommand(client.Key(in key), value, expiry, when, returnOld: false);
         }
         catch (Exception error) { RespireClient.RecordPreflightFailure(error); throw; }
+
         return GatheredSetCommand.SendAsync(client, command, value, cancellationToken);
     }
 
@@ -442,7 +456,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         RespireSetWhen when = RespireSetWhen.Always, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetBorrowedAsync(key, value, length, expiry, when, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetBorrowedAsync(key, value, length, expiry, when, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -451,13 +469,21 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         RespireSetWhen when, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         ArgumentNullException.ThrowIfNull(value);
-        if (!value.CanRead) throw new ArgumentException("The source stream must be readable.", nameof(value));
+
+        if (!value.CanRead)
+        {
+            throw new ArgumentException("The source stream must be readable.", nameof(value));
+        }
+
         ArgumentOutOfRangeException.ThrowIfNegative(length);
         // A short seekable source is rejected before any bytes are written, so it cannot close
         // the shared connection mid-frame.
         if (TryGetRemainingLength(value, out var remaining) && remaining < length)
+        {
             throw new ArgumentOutOfRangeException(nameof(length), length,
                 "The declared length exceeds the bytes remaining in the seekable source stream.");
+        }
+
         SetCommand.ValidateExpiry(expiry);
         SetCommand.ValidateWhen(when);
         return client.OkOrNullAsync("SET",
@@ -469,7 +495,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         RespireSetWhen when = RespireSetWhen.Always, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetBorrowedAsync(key, value, expiry, when, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetBorrowedAsync(key, value, expiry, when, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -488,7 +518,12 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     private static bool TryGetRemainingLength(Stream stream, out long remaining)
     {
         remaining = 0;
-        if (!stream.CanSeek) return false;
+
+        if (!stream.CanSeek)
+        {
+            return false;
+        }
+
         try
         {
             remaining = Math.Max(0, stream.Length - stream.Position);
@@ -508,6 +543,7 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     {
         RespireValue serialized;
         SetCommand command;
+
         try
         {
             SetCommand.ValidateExpiry(expiry);
@@ -516,6 +552,7 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
             command = new SetCommand(client.Key(in key), serialized, expiry, when, returnOld: false);
         }
         catch (Exception error) { RespireClient.RecordPreflightFailure(error); throw; }
+
         return GatheredSetCommand.SendAsync(client, command, serialized, cancellationToken);
     }
 
@@ -527,7 +564,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
-        try { return owner.Attach(GetAndSetBorrowedAsync(key, value, expiry, when, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetAndSetBorrowedAsync(key, value, expiry, when, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -556,7 +597,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T?>.Start();
-        try { return owner.Attach(GetAndSetBorrowedAsync<T>(key, value, expiry, when, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetAndSetBorrowedAsync<T>(key, value, expiry, when, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -579,7 +624,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<string?> GetAndDeleteAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
-        try { return owner.Attach(GetAndDeleteBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetAndDeleteBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -591,7 +640,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<T?> GetAndDeleteAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T?>.Start();
-        try { return owner.Attach(GetAndDeleteBorrowedAsync<T>(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetAndDeleteBorrowedAsync<T>(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -605,7 +658,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
-        try { return owner.Attach(GetAndExpireBorrowedAsync(key, expiry, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetAndExpireBorrowedAsync(key, expiry, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -623,7 +680,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T?>.Start();
-        try { return owner.Attach(GetAndExpireBorrowedAsync<T>(key, expiry, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetAndExpireBorrowedAsync<T>(key, expiry, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -640,7 +701,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<long> AppendAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(AppendBorrowedAsync(key, value, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(AppendBorrowedAsync(key, value, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -653,7 +718,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<long> LengthAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(LengthBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(LengthBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -663,7 +732,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<string> GetRangeAsync(RespireKey key, long start, long end, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string>.Start();
-        try { return owner.Attach(GetRangeBorrowedAsync(key, start, end, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetRangeBorrowedAsync(key, start, end, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -674,7 +747,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         RespireKey key, long offset, RespireValue value, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(SetRangeBorrowedAsync(key, offset, value, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetRangeBorrowedAsync(key, offset, value, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -703,7 +780,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<string?[]> GetManyAsync(params ReadOnlySpan<RespireKey> keys)
     {
         var owner = DispatchResponseSource<string?[]>.Start();
-        try { return owner.Attach(GetManyBorrowedAsync(keys, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetManyBorrowedAsync(keys, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -713,7 +794,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<string?[]> GetManyAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<string?[]>.Start();
-        try { return owner.Attach(GetManyBorrowedAsync(keys, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetManyBorrowedAsync(keys, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -731,7 +816,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<T?[]> GetManyAsync<T>(params ReadOnlySpan<RespireKey> keys)
     {
         var owner = DispatchResponseSource<T?[]>.Start();
-        try { return owner.Attach(GetManyBorrowedAsync<T>(keys, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetManyBorrowedAsync<T>(keys, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -745,7 +834,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<T?[]> GetManyAsync<T>(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<T?[]>.Start();
-        try { return owner.Attach(GetManyBorrowedAsync<T>(keys, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(GetManyBorrowedAsync<T>(keys, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -763,7 +856,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<bool> SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetManyBorrowedAsync(pairs, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetManyBorrowedAsync(pairs, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -774,7 +871,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetManyBorrowedAsync(pairs, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetManyBorrowedAsync(pairs, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -786,7 +887,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     public ValueTask<bool> SetManyIfNotExistsAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetManyIfNotExistsBorrowedAsync(pairs, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetManyIfNotExistsBorrowedAsync(pairs, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -797,7 +902,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetManyIfNotExistsBorrowedAsync(pairs, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetManyIfNotExistsBorrowedAsync(pairs, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -805,7 +914,10 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
+        {
             return ValueTask.FromCanceled<bool>(cancellationToken);
+        }
+
         return client.FlagAsync(
             "MSETNX", new CmdN(RespireCommands.String.MSETNX.Verb, SetManyIfNotExistsArgs(client, pairs)), cancellationToken, observation: observation);
     }
@@ -814,7 +926,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         RespireExpiry expiry, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetManyExpireBorrowedAsync(expiry, pairs, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetManyExpireBorrowedAsync(expiry, pairs, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -828,7 +944,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetManyExpireBorrowedAsync(expiry, pairs, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetManyExpireBorrowedAsync(expiry, pairs, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -844,7 +964,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetManyExpireBorrowedAsync(expiry, when, pairs, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetManyExpireBorrowedAsync(expiry, when, pairs, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -861,7 +985,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetManyExpireBorrowedAsync(expiry, when, pairs, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetManyExpireBorrowedAsync(expiry, when, pairs, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -881,7 +1009,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string>.Start();
-        try { return owner.Attach(LcsBorrowedAsync(firstKey, secondKey, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(LcsBorrowedAsync(firstKey, secondKey, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -896,7 +1028,11 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(LcsLengthBorrowedAsync(firstKey, secondKey, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(LcsLengthBorrowedAsync(firstKey, secondKey, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -912,6 +1048,7 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
         RespireClient client, ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
         var args = new RespireValue[pairs.Length * 2];
+
         for (var i = 0; i < pairs.Length; i++)
         {
             args[i * 2] = client.Key(in pairs[i].Key);
@@ -926,14 +1063,19 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     {
         ValidatePairs(pairs);
         var args = SetManyArgs(client, pairs);
+
         if (client.Core.Cluster is not null)
+        {
             EnsureSameSlot(client, args, stride: 2, operation: "MSETNX");
+        }
+
         return args;
     }
 
     private static void EnsureSameSlot(RespireClient client, ReadOnlySpan<RespireValue> args, int stride, string operation)
     {
         int? slot = null;
+
         for (var index = 0; index < args.Length; index += stride)
         {
             if (args[index].TryGetClusterSlot(out var keySlot))
@@ -943,6 +1085,7 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
                     // Reject before I/O or enqueueing, without retaining keys by default.
                     throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, operation, expected, keySlot, args[index]);
                 }
+
                 slot = keySlot;
             }
         }
@@ -964,10 +1107,10 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
 
         ValidatePairs(pairs);
         var condition = StringSetWhenToken(when);
-        var args = new RespireValue[
-            1 + pairs.Length * 2 + (condition is null ? 0 : 1) + expiry.TokenCount];
+        var args = new RespireValue[1 + pairs.Length * 2 + (condition is null ? 0 : 1) + expiry.TokenCount];
         var index = 0;
         args[index++] = pairs.Length;
+
         for (var i = 0; i < pairs.Length; i++)
         {
             args[index++] = client.Key(in pairs[i].Key);
@@ -996,14 +1139,14 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
 
         return args;
     }
-    private static string? StringSetWhenToken(RespireSetWhen when)
-        => when switch
-        {
-            RespireSetWhen.Always => null,
-            RespireSetWhen.NotExists => "NX",
-            RespireSetWhen.Exists => "XX",
-            _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
-        };
+
+    private static string? StringSetWhenToken(RespireSetWhen when) => when switch
+    {
+        RespireSetWhen.Always => null,
+        RespireSetWhen.NotExists => "NX",
+        RespireSetWhen.Exists => "XX",
+        _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
+    };
 
     private static void ValidatePairs(ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {

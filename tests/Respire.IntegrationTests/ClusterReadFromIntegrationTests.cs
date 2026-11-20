@@ -28,6 +28,7 @@ public class ClusterReadFromIntegrationTests
         var replica = client.WithReadFrom(policy);
 
         await client.Strings.SetAsync(key, "first");
+
         try
         {
             await WaitForReplicaValue("first");
@@ -36,26 +37,39 @@ public class ClusterReadFromIntegrationTests
         {
             throw new InvalidOperationException($"Replica routing failed. CLUSTER SLOTS: {slots} CLUSTER NODES: {await cluster.ClusterNodesAsync()}", error);
         }
+
         using (var raw = await replica.ExecuteAsync(RespireCommands.String.GET, key))
+        {
             raw.AsString().Should().Be("first");
+        }
+
         using (var batch = replica.CreateBatch())
         {
             var pending = batch.Strings.GetString(key);
             await batch.ExecuteAsync();
             (pending.Result).Should().Be("first");
         }
+
         await client.Strings.SetAsync(key, "updated", RespireExpiry.In(TimeSpan.FromSeconds(1)));
         await WaitForReplicaValue("updated");
         using var expiry = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         while (await replica.Strings.GetStringAsync(key, expiry.Token) is not null)
+        {
             await Task.Delay(100, expiry.Token);
+        }
 
         async Task WaitForReplicaValue(string expected)
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
             while (true)
             {
-                if (await replica.Strings.GetStringAsync(key, deadline.Token) == expected) return;
+                if (await replica.Strings.GetStringAsync(key, deadline.Token) == expected)
+                {
+                    return;
+                }
+
                 await Task.Delay(50, deadline.Token);
             }
         }

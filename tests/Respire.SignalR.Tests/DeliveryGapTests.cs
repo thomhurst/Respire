@@ -19,7 +19,8 @@ public class DeliveryGapTests(RedisTestContainer fixture)
     {
         var name = Guid.NewGuid().ToString("N");
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { ClientName = name, Protocol = protocol });
+            with
+        { ClientName = name, Protocol = protocol });
         await using var admin = await RespireClient.ConnectAsync(fixture.ConnectionString);
         var logger = new GapLogger();
         await using var bus = new RespirePubSub(client, new() { ChannelPrefix = name }, logger, name);
@@ -43,13 +44,20 @@ public class DeliveryGapTests(RedisTestContainer fixture)
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meterListener) =>
         {
-            if (instrument.Meter.Name == "Respire.SignalR") meterListener.EnableMeasurementEvents(instrument);
+            if (instrument.Meter.Name == "Respire.SignalR")
+            {
+                meterListener.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
         {
             foreach (var tag in tags)
+            {
                 if (tag.Key == "signalr.hub" && Equals(tag.Value, hub))
+                {
                     measurements.AddOrUpdate(instrument.Name, value, (_, previous) => previous + value);
+                }
+            }
         });
         listener.Start();
         await using var bus = new RespirePubSub(client,
@@ -65,7 +73,10 @@ public class DeliveryGapTests(RedisTestContainer fixture)
                 entered.SetResult();
                 await release.Task.WaitAsync(message.Stopping);
             }
-            else delivered.TrySetResult(message.Message.Span[0]);
+            else
+            {
+                delivered.TrySetResult(message.Message.Span[0]);
+            }
         });
         await bus.PublishAsync("messages", [1]);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -84,12 +95,21 @@ public class DeliveryGapTests(RedisTestContainer fixture)
 
     private sealed class GapLogger : ILogger
     {
-        internal TaskCompletionSource<string> Gap { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource<string> Gap
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel level) => true;
+
         public void Log<TState>(LogLevel level, EventId id, TState state, Exception? error, Func<TState, Exception?, string> format)
         {
-            if (id.Id == 16) Gap.TrySetResult(format(state, error));
+            if (id.Id == 16)
+            {
+                Gap.TrySetResult(format(state, error));
+            }
         }
     }
 }

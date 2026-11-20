@@ -23,6 +23,7 @@ internal sealed class RedisReplicaPair : IAsyncDisposable
     }
 
     public RespireEndpoint Primary => new(_primary!.Hostname, _primary.GetMappedPublicPort(RedisPort));
+
     public RespireEndpoint Replica => new(_replica!.Hostname, _replica.GetMappedPublicPort(RedisPort));
 
     public static async Task<RedisReplicaPair> StartAsync(string image)
@@ -30,16 +31,24 @@ internal sealed class RedisReplicaPair : IAsyncDisposable
         var network = new NetworkBuilder().Build();
         var pair = new RedisReplicaPair(network);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
         try
         {
             await network.CreateAsync(timeout.Token);
             await Task.WhenAll(StartPrimaryAsync(), StartReplicaAsync());
+
             while (true)
             {
                 var info = await pair._replica!.ExecAsync(["redis-cli", "INFO", "replication"], timeout.Token);
-                if (info.Stdout.Contains("master_link_status:up", StringComparison.Ordinal)) break;
+
+                if (info.Stdout.Contains("master_link_status:up", StringComparison.Ordinal))
+                {
+                    break;
+                }
+
                 await Task.Delay(100, timeout.Token);
             }
+
             return pair;
         }
         catch
@@ -59,10 +68,12 @@ internal sealed class RedisReplicaPair : IAsyncDisposable
     internal static async Task<IContainer> StartContainerAsync(Func<IContainer> createContainer, CancellationToken cancellationToken)
     {
         var collisions = new List<Exception>();
+
         for (var attempt = 1; ; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var container = createContainer();
+
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -72,17 +83,27 @@ internal sealed class RedisReplicaPair : IAsyncDisposable
             catch (Exception startupError)
             {
                 if (collisions.Count != 0)
+                {
                     startupError.Data["RedisReplicaPair.PreviousPortCollisions"] = collisions.ToArray();
-                try { await container.DisposeAsync(); }
+                }
+
+                try
+                {
+                    await container.DisposeAsync();
+                }
                 catch (Exception cleanupError)
                 {
                     throw new AggregateException("Replica-pair container startup and cleanup both failed.",
                         collisions.Append(startupError).Append(cleanupError));
                 }
+
                 cancellationToken.ThrowIfCancellationRequested();
                 // Only Docker's structured TCP bind collisions during StartAsync permit replacement.
                 if (attempt >= 3 || !ContainerPortCollision.IsStandaloneBindCollision(startupError, [RedisPort]))
+                {
                     throw;
+                }
+
                 collisions.Add(startupError);
             }
         }
@@ -102,13 +123,19 @@ internal sealed class RedisReplicaPair : IAsyncDisposable
     {
         try
         {
-            if (_replica is not null) await _replica.DisposeAsync();
+            if (_replica is not null)
+            {
+                await _replica.DisposeAsync();
+            }
         }
         finally
         {
             try
             {
-                if (_primary is not null) await _primary.DisposeAsync();
+                if (_primary is not null)
+                {
+                    await _primary.DisposeAsync();
+                }
             }
             finally
             {

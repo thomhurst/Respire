@@ -9,50 +9,89 @@ public sealed partial class RespireFakeServer
 
     private FakeReply Set(byte[][] args)
     {
-        if (args.Length < 3) return Syntax("SET");
+        if (args.Length < 3)
+        {
+            return Syntax("SET");
+        }
+
         var nx = false;
         var xx = false;
         var get = false;
         var keepTtl = false;
         string? expiration = null;
         long? expiresAt = null;
+
         for (var index = 3; index < args.Length; index++)
         {
             var option = Token(args[index]);
+
             switch (option)
             {
-                case "NX" when !xx: nx = true; break;
-                case "XX" when !nx: xx = true; break;
-                case "GET": get = true; break;
+                case "NX" when !xx:
+                    nx = true;
+                    break;
+                case "XX" when !nx:
+                    xx = true;
+                    break;
+                case "GET":
+                    get = true;
+                    break;
                 // Redis 7 rejects conditional SET before mutation. Native lock renewal
                 // recognizes this precise error and executes the owner-checked Lua script.
-                case "IFEQ": return FakeReply.Error("ERR syntax error");
-                case "KEEPTTL" when expiration is null: keepTtl = true; break;
-                case "EX" or "PX" or "EXAT" or "PXAT"
-                    when !keepTtl && (expiration is null || expiration == option) && index + 1 < args.Length:
+                case "IFEQ":
+                    return FakeReply.Error("ERR syntax error");
+                case "KEEPTTL" when expiration is null:
+                    keepTtl = true;
+                    break;
+                case "EX" or "PX" or "EXAT" or "PXAT" when !keepTtl && (expiration is null || expiration == option) && index + 1 < args.Length:
                     expiration = option;
                     var amount = Integer(args[++index]);
-                    if (amount <= 0) return FakeReply.Error("ERR invalid expire time in SET");
+                    if (amount <= 0)
+                    {
+                        return FakeReply.Error("ERR invalid expire time in SET");
+                    }
                     expiresAt = Expiration(option, amount);
                     break;
-                default: return Syntax("SET");
+                default:
+                    return Syntax("SET");
             }
         }
+
         var old = Find(args[1]);
         var previous = get ? old?.Value : null; // SET GET checks type even when NX rejects the write.
-        if ((nx && old is not null) || (xx && old is null)) return get ? FakeReply.Bulk(previous) : FakeReply.Null;
+
+        if ((nx && old is not null) || (xx && old is null))
+        {
+            return get ? FakeReply.Bulk(previous) : FakeReply.Null;
+        }
+
         SetEntry(args[1], new Entry(args[2], keepTtl ? old?.ExpiresAt : expiresAt));
         return get ? FakeReply.Bulk(previous) : FakeReply.Ok;
     }
 
     private FakeReply MultiSet(string command, byte[][] args)
     {
-        if (args.Length % 2 == 0) return WrongArity(command);
+        if (args.Length % 2 == 0)
+        {
+            return WrongArity(command);
+        }
+
         if (command == "MSETNX")
+        {
             for (var index = 1; index < args.Length; index += 2)
-                if (Find(args[index]) is not null) return FakeReply.Integer(0);
+            {
+                if (Find(args[index]) is not null)
+                {
+                    return FakeReply.Integer(0);
+                }
+            }
+        }
+
         for (var index = 1; index < args.Length; index += 2)
+        {
             SetEntry(args[index], new Entry(args[index + 1]));
+        }
+
         return command == "MSETNX" ? FakeReply.Integer(1) : FakeReply.Ok;
     }
 
@@ -95,36 +134,77 @@ public sealed partial class RespireFakeServer
 
     private FakeReply Expire(string command, byte[][] args)
     {
-        if (args.Length < 3) return Syntax(command);
+        if (args.Length < 3)
+        {
+            return Syntax(command);
+        }
+
         var expires = Expiration(command, Integer(args[2]));
         var options = args.Skip(3).Select(Token).ToHashSet(StringComparer.Ordinal);
+
         if (options.Any(option => option is not ("NX" or "XX" or "GT" or "LT")) ||
-            options.Contains("NX") && options.Count > 1 || options.Contains("GT") && options.Contains("LT")) return Syntax(command);
+            options.Contains("NX") && options.Count > 1 || options.Contains("GT") && options.Contains("LT"))
+        {
+            return Syntax(command);
+        }
+
         var entry = Find(args[1]);
+
         if (entry is null || options.Contains("NX") && entry.ExpiresAt is not null ||
             options.Contains("XX") && entry.ExpiresAt is null ||
             options.Contains("GT") && (entry.ExpiresAt is null || expires <= entry.ExpiresAt) ||
-            options.Contains("LT") && entry.ExpiresAt is { } old && expires >= old) return FakeReply.Integer(0);
+            options.Contains("LT") && entry.ExpiresAt is { } old && expires >= old)
+        {
+            return FakeReply.Integer(0);
+        }
+
         entry.ExpiresAt = expires;
-        if (expires <= Now) DeleteEntry(args[1]);
-        else TouchWatchedKey(args[1]);
+
+        if (expires <= Now)
+        {
+            DeleteEntry(args[1]);
+        }
+        else
+        {
+            TouchWatchedKey(args[1]);
+        }
+
         return FakeReply.Integer(1);
     }
 
     private FakeReply TimeToLive(string command, byte[] key)
     {
         var entry = Find(key);
-        if (entry is null) return FakeReply.Integer(-2);
-        if (entry.ExpiresAt is not { } expires) return FakeReply.Integer(-1);
+
+        if (entry is null)
+        {
+            return FakeReply.Integer(-2);
+        }
+
+        if (entry.ExpiresAt is not { } expires)
+        {
+            return FakeReply.Integer(-1);
+        }
+
         var value = command is "EXPIRETIME" or "PEXPIRETIME" ? expires : expires - Now;
-        if (command is "TTL" or "EXPIRETIME") value = value / 1000 + (value % 1000 >= 500 ? 1 : 0);
+
+        if (command is "TTL" or "EXPIRETIME")
+        {
+            value = value / 1000 + (value % 1000 >= 500 ? 1 : 0);
+        }
+
         return FakeReply.Integer(value);
     }
 
     private FakeReply Persist(byte[] key)
     {
         var entry = Find(key);
-        if (entry?.ExpiresAt is null) return FakeReply.Integer(0);
+
+        if (entry?.ExpiresAt is null)
+        {
+            return FakeReply.Integer(0);
+        }
+
         entry.ExpiresAt = null;
         TouchWatchedKey(key);
         return FakeReply.Integer(1);
@@ -132,32 +212,57 @@ public sealed partial class RespireFakeServer
 
     private FakeReply GetExpire(byte[][] args)
     {
-        if (args.Length < 2) return Syntax("GETEX");
+        if (args.Length < 2)
+        {
+            return Syntax("GETEX");
+        }
+
         var persist = false;
         string? expiration = null;
         long? expires = null;
+
         for (var index = 2; index < args.Length; index++)
         {
             var option = Token(args[index]);
-            if (option == "PERSIST" && expiration is null) persist = true;
+
+            if (option == "PERSIST" && expiration is null)
+            {
+                persist = true;
+            }
             else if (option is "EX" or "PX" or "EXAT" or "PXAT" && !persist &&
                      (expiration is null || expiration == option) && index + 1 < args.Length)
             {
                 expiration = option;
                 var amount = Integer(args[++index]);
-                if (amount <= 0) return FakeReply.Error("ERR invalid expire time in GETEX");
+
+                if (amount <= 0)
+                {
+                    return FakeReply.Error("ERR invalid expire time in GETEX");
+                }
+
                 expires = Expiration(option, amount);
             }
-            else return Syntax("GETEX");
+            else
+            {
+                return Syntax("GETEX");
+            }
         }
+
         var entry = Find(args[1]);
-        if (entry is null) return FakeReply.Null;
+
+        if (entry is null)
+        {
+            return FakeReply.Null;
+        }
+
         var value = entry.Value; // Validate type before changing the key's expiry.
+
         if (expiration is not null || persist && entry.ExpiresAt is not null)
         {
             entry.ExpiresAt = expires;
             TouchWatchedKey(args[1]);
         }
+
         return FakeReply.Bulk(value);
     }
 }

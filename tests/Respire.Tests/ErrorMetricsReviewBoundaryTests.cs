@@ -30,7 +30,9 @@ public class ErrorMetricsReviewBoundaryTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = cluster, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = cluster,
+            Connections = 1,
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", cluster ? seed.Port : target.Port)],
         });
@@ -45,7 +47,9 @@ public class ErrorMetricsReviewBoundaryTests
         listener.InstrumentPublished = (instrument, meterListener) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
                 meterListener.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<double>((_, value, _, _) =>
         {
@@ -57,9 +61,15 @@ public class ErrorMetricsReviewBoundaryTests
         {
             switch (shape)
             {
-                case "string": await client.Strings.GetStringAsync("key", deadline.Token); break;
-                case "bytes": await client.Strings.GetBytesAsync("key", deadline.Token); break;
-                default: await client.Strings.LengthAsync("key", deadline.Token); break;
+                case "string":
+                    await client.Strings.GetStringAsync("key", deadline.Token);
+                    break;
+                case "bytes":
+                    await client.Strings.GetBytesAsync("key", deadline.Token);
+                    break;
+                default:
+                    await client.Strings.LengthAsync("key", deadline.Token);
+                    break;
             }
         }).ThrowsExactly<RespireServerException>();
         await Assert.That(errors.Items.Count).IsEqualTo(1);
@@ -83,18 +93,29 @@ public class ErrorMetricsReviewBoundaryTests
         observation.SetAttempts(attempts);
         var pending = RespireTelemetry.ObserveFinalError(source.Task, observation).AsTask();
         var scheduler = new CompletionScheduler();
+
         foreach (var code in new[] { "WRONGTYPE", "NOPERM" })
         {
             var reply = RespValue.Error(Encoding.ASCII.GetBytes(code + " rejected"));
-            if (code == "WRONGTYPE") source.ObservePrefix(in reply);
+
+            if (code == "WRONGTYPE")
+            {
+                source.ObservePrefix(in reply);
+            }
+
             if (deferred)
             {
                 scheduler.Add(source, in reply);
                 scheduler.Flush();
                 await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
             }
-            else { source.TrySetResult(in reply); source.ReleaseRef(); }
+            else
+            {
+                source.TrySetResult(in reply);
+                source.ReleaseRef();
+            }
         }
+
         await Assert.That(async () => await pending).ThrowsExactly<RespireServerException>();
         var items = capture.Items.ToArray();
         await Assert.That(items.Length).IsEqualTo(2);
@@ -123,7 +144,9 @@ public class ErrorMetricsReviewBoundaryTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
@@ -132,7 +155,9 @@ public class ErrorMetricsReviewBoundaryTests
         await Assert.That(async () =>
         {
             if (largeKnownFrame)
+            {
                 await client.Lists.LeftPopAsync(key, TimeSpan.FromSeconds(1), deadline.Token);
+            }
             else
             {
                 using var result = await client.ExecuteAsync("BLPOP", [key, 0], cancellationToken: deadline.Token);
@@ -151,13 +176,20 @@ public class ErrorMetricsReviewBoundaryTests
     private sealed class ErrorCapture : IDisposable
     {
         private readonly MeterListener _listener = new();
-        internal ConcurrentQueue<Dictionary<string, object?>> Items { get; } = new();
+
+        internal ConcurrentQueue<Dictionary<string, object?>> Items
+        {
+            get;
+        } = new();
+
         internal ErrorCapture()
         {
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
@@ -166,6 +198,7 @@ public class ErrorMetricsReviewBoundaryTests
             });
             _listener.Start();
         }
+
         public void Dispose() => _listener.Dispose();
     }
 }

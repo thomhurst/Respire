@@ -133,6 +133,7 @@ public class CommonOperationsBenchmarks
     public async Task<TimeSpan> StackExchange_Ping_SteadyState()
     {
         var result = default(TimeSpan);
+
         for (var i = 0; i < SteadyStateOps; i++)
         {
             result = await _stackExchangeDb.PingAsync();
@@ -145,6 +146,7 @@ public class CommonOperationsBenchmarks
     public async Task<TimeSpan> Respire_Ping_SteadyState()
     {
         var result = default(TimeSpan);
+
         for (var i = 0; i < SteadyStateOps; i++)
         {
             result = await _respire.PingAsync();
@@ -157,6 +159,7 @@ public class CommonOperationsBenchmarks
     public async Task<string?> StackExchange_Get_SteadyState()
     {
         string? result = null;
+
         for (var i = 0; i < SteadyStateOps; i++)
         {
             result = await _stackExchangeDb.StringGetAsync("seeded:string");
@@ -169,6 +172,7 @@ public class CommonOperationsBenchmarks
     public async Task<string?> Respire_Get_SteadyState()
     {
         string? result = null;
+
         for (var i = 0; i < SteadyStateOps; i++)
         {
             result = await _respire.GetStringAsync("seeded:string");
@@ -181,6 +185,7 @@ public class CommonOperationsBenchmarks
     public async Task<bool> StackExchange_Set_SteadyState()
     {
         var result = false;
+
         for (var i = 0; i < SteadyStateOps; i++)
         {
             result = await _stackExchangeDb.StringSetAsync("bench:set", _smallValue);
@@ -193,6 +198,7 @@ public class CommonOperationsBenchmarks
     public async Task<bool> Respire_Set_SteadyState()
     {
         var result = false;
+
         for (var i = 0; i < SteadyStateOps; i++)
         {
             result = await _respire.SetAsync("bench:set", _smallValue);

@@ -12,7 +12,11 @@ public static class LeaderElection
         await using var attempt = await coordination.TryAcquireFencedLockAsync(
             "{scheduler}:leader", "{scheduler}:fence", TimeSpan.FromSeconds(30), cancellationToken)
             .ConfigureAwait(false);
-        if (!attempt.Acquired) return false;
+
+        if (!attempt.Acquired)
+        {
+            return false;
+        }
 
         await using var renewal = await attempt.Lock.KeepAliveAsync(cancellationToken).ConfigureAwait(false);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(

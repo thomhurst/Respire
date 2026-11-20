@@ -180,8 +180,14 @@ public class HashListTests(RedisTestContainer fixture)
         Assert.Throws<ArgumentNullException>(() => database.ListLeftPush("list", (RedisValue[])null!));
         Assert.Throws<ArgumentException>(() => database.ListRemove("list", RedisValue.Null));
         var batch = database.CreateBatch();
-        Assert.Throws<NotSupportedException>(() => { _ = batch.ListLengthAsync("list", CommandFlags.FireAndForget); });
-        Assert.Throws<NotSupportedException>(() => { _ = batch.ListLeftPushAsync("list", "value", When.NotExists); });
+        Assert.Throws<NotSupportedException>(() =>
+        {
+            _ = batch.ListLengthAsync("list", CommandFlags.FireAndForget);
+        });
+        Assert.Throws<NotSupportedException>(() =>
+        {
+            _ = batch.ListLeftPushAsync("list", "value", When.NotExists);
+        });
         database.HashSet("hash", "field", "value");
         Assert.Equal("WRONGTYPE", (await Assert.ThrowsAsync<RespireServerException>(() => database.ListLengthAsync("hash"))).Code);
     }

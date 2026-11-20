@@ -50,12 +50,19 @@ public class DedicatedHandshakeTests
         var result = await CancelAfterTcpConnect(pooled, cancellation);
         await Assert.That(result.Error is OperationCanceledException).IsTrue();
         var error = (OperationCanceledException)result.Error;
+
         if (cancellation is ConnectCancellation.Caller or ConnectCancellation.CallerAndDeadline)
+        {
             await Assert.That(error.CancellationToken).IsEqualTo(result.CallerToken);
+        }
         else if (cancellation == ConnectCancellation.UnrelatedCancellation)
+        {
             await Assert.That(error.CancellationToken).IsEqualTo(result.UnrelatedToken);
+        }
         else
+        {
             await Assert.That(error.CancellationToken == result.CallerToken).IsFalse();
+        }
     }
 
     private sealed record ConnectCancellationResult(
@@ -85,14 +92,23 @@ public class DedicatedHandshakeTests
             {
                 var socket = new System.Net.Sockets.Socket(
                     System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, token);
                     transport = new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
                     connected.TrySetResult();
                     await release.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                    if (cancellation == ConnectCancellation.UnrelatedCancellation) throw new OperationCanceledException(unrelated.Token);
-                    if (cancellation == ConnectCancellation.UncanceledOwnedToken) throw new OperationCanceledException(token);
+
+                    if (cancellation == ConnectCancellation.UnrelatedCancellation)
+                    {
+                        throw new OperationCanceledException(unrelated.Token);
+                    }
+
+                    if (cancellation == ConnectCancellation.UncanceledOwnedToken)
+                    {
+                        throw new OperationCanceledException(token);
+                    }
                     // Deliberately return after cancellation. The production post-connect check
                     // must observe it before handing this real TCP stream to the handshake.
                     return transport;
@@ -109,24 +125,42 @@ public class DedicatedHandshakeTests
         var pending = pooled ? pool.RentAsync(caller.Token).AsTask()
             : RespireConnection.ConnectAsync("127.0.0.1", server.Port, options, cancellationToken: caller.Token);
         Task? cleanup = null;
+
         try
         {
             await connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
             using var registration = connectTimeout!.Token.Register(() => cancelled.TrySetResult());
+
             switch (cancellation)
             {
-                case ConnectCancellation.OwnedDeadline: connectTimeout.Cancel(); break;
-                case ConnectCancellation.Caller: caller.Cancel(); break;
+                case ConnectCancellation.OwnedDeadline:
+                    connectTimeout.Cancel();
+                    break;
+                case ConnectCancellation.Caller:
+                    caller.Cancel();
+                    break;
                 case ConnectCancellation.CallerAndDeadline:
                     // Both sources fire before classification; caller cancellation must win.
                     connectTimeout.Cancel();
                     caller.Cancel();
                     break;
-                case ConnectCancellation.PoolRetirement: cleanup = pool.RetireAsync().AsTask(); break;
-                case ConnectCancellation.PoolDisposal: cleanup = pool.DisposeAsync().AsTask(); break;
-                case ConnectCancellation.UnrelatedCancellation: unrelated.Cancel(); connectTimeout.Cancel(); break;
+                case ConnectCancellation.PoolRetirement:
+                    cleanup = pool.RetireAsync().AsTask();
+                    break;
+                case ConnectCancellation.PoolDisposal:
+                    cleanup = pool.DisposeAsync().AsTask();
+                    break;
+                case ConnectCancellation.UnrelatedCancellation:
+                    unrelated.Cancel();
+                    connectTimeout.Cancel();
+                    break;
             }
-            if (cancellation != ConnectCancellation.UncanceledOwnedToken) await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            if (cancellation != ConnectCancellation.UncanceledOwnedToken)
+            {
+                await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+
             await Assert.That(server.CommandsSeen).IsEqualTo(0);
             release.TrySetResult();
             var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
@@ -135,20 +169,34 @@ public class DedicatedHandshakeTests
                 .IsEqualTo(cancellation is ConnectCancellation.Caller or ConnectCancellation.CallerAndDeadline);
             await Assert.That(server.CommandsSeen).IsEqualTo(0);
             await Assert.That(transport!.CanRead).IsFalse();
-            if (cleanup is not null) await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
+
+            if (cleanup is not null)
+            {
+                await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+
             await Assert.That(pool.CaptureRetirementState().Connecting).IsEqualTo(0);
             return new(error!, caller.Token, timeoutToken, unrelated.Token);
         }
         finally
         {
             release.TrySetResult();
+
             try
             {
                 var connection = await pending.WaitAsync(TimeSpan.FromSeconds(5));
-                if (!pooled) await connection.DisposeAsync();
+
+                if (!pooled)
+                {
+                    await connection.DisposeAsync();
+                }
             }
             catch (Exception) when (pending.IsCompleted) { }
-            if (cleanup is not null) await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
+
+            if (cleanup is not null)
+            {
+                await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
+            }
         }
     }
 
@@ -172,8 +220,14 @@ public class DedicatedHandshakeTests
         var pending = pooled ? pool.RentAsync(caller.Token).AsTask()
             : RespireConnection.ConnectAsync("127.0.0.1", port, options, cancellationToken: caller.Token);
         using var accepted = await listener.AcceptSocketAsync().WaitAsync(TimeSpan.FromSeconds(5));
-        if (!connectTimeout) caller.Cancel();
+
+        if (!connectTimeout)
+        {
+            caller.Cancel();
+        }
+
         OperationCanceledException cancellation;
+
         if (connectTimeout)
         {
             var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
@@ -190,6 +244,7 @@ public class DedicatedHandshakeTests
             cancellation = (await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
                 .Throws<OperationCanceledException>())!;
         }
+
         await Assert.That(cancellation.CancellationToken == caller.Token).IsEqualTo(!connectTimeout);
         await Assert.That(caller.IsCancellationRequested).IsEqualTo(!connectTimeout);
     }
@@ -205,9 +260,14 @@ public class DedicatedHandshakeTests
         };
         // The ordinary handshake must wait for its deadline even if a busy scheduler
         // delays the watchdog beyond 250 ms. Only the unarmed control gets a late reply.
-        if (fencing) server.DelayReply(0, 250);
+        if (fencing)
+        {
+            server.DelayReply(0, 250);
+        }
+
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireConnectionOptions { Database = 1, CommandTimeout = TimeSpan.FromMilliseconds(50) }, null);
+
         if (!fencing)
         {
             var error = await Assert.That(async () => await pool.RentAsync(CancellationToken.None)
@@ -235,17 +295,27 @@ public class DedicatedHandshakeTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireConnectionOptions { Database = 1 }, null);
         using var caller = new CancellationTokenSource();
         var pending = pool.RentAsync(caller.Token, armHandshakeDeadline: false, recoverConnection: false).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (disposePool)
+        {
             await pool.DisposeAsync();
+        }
         else
+        {
             caller.Cancel();
+        }
+
         await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<OperationCanceledException>();
     }

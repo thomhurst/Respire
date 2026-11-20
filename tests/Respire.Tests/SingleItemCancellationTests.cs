@@ -160,6 +160,7 @@ public class SingleItemCancellationTests
         await Assert.That(contract.AsInteger()).IsEqualTo(1);
         await Assert.That(server.ReceivedCommands.TakeLast(6)).IsEquivalentTo([
             "FUNCTION FLUSH", "FUNCTION FLUSH", "DEL key with spaces", "DEL key with spaces", "PING", "PING"]);
+
         foreach (var arguments in server.ReceivedArguments.TakeLast(4).Take(2))
         {
             await Assert.That(arguments.Length).IsEqualTo(2);
@@ -200,6 +201,7 @@ public class SingleItemCancellationTests
             await Assert.That(methods.Length).IsEqualTo(2);
             await Assert.That(methods.Select(method => method.GetParameters()[0].ParameterType))
                 .IsEquivalentTo([typeof(RespireChannel), typeof(ReadOnlySpan<RespireChannel>)]);
+
             foreach (var method in methods)
             {
                 var parameters = method.GetParameters();
@@ -209,6 +211,7 @@ public class SingleItemCancellationTests
                 await Assert.That(parameters.Skip(1).All(parameter => parameter.IsOptional)).IsTrue();
             }
         }
+
         foreach (var name in new[] { "PublishAsync", "PublishShardedAsync" })
         {
             var method = type.GetMethods().Single(method => method.Name == name);
@@ -263,12 +266,26 @@ public class SingleItemCancellationTests
         {
             switch (operation)
             {
-                case "delete": await client.DeleteAsync("key", token); break;
-                case "set": await client.Sets.UnionStoreAsync("dest", "key", token); break;
-                case "list": await client.Lists.LeftPushAsync("key", "value", token); break;
-                case "hash": await client.Hashes.RemoveAsync("key", "field", token); break;
-                case "raw": using (await client.ExecuteAsync("DEL", token, "key")) { } break;
-                default: await client.ExecuteFireAndForgetAsync("DEL", token, "key"); break;
+                case "delete":
+                    await client.DeleteAsync("key", token);
+                    break;
+                case "set":
+                    await client.Sets.UnionStoreAsync("dest", "key", token);
+                    break;
+                case "list":
+                    await client.Lists.LeftPushAsync("key", "value", token);
+                    break;
+                case "hash":
+                    await client.Hashes.RemoveAsync("key", "field", token);
+                    break;
+                case "raw":
+                    using (await client.ExecuteAsync("DEL", token, "key"))
+                    {
+                    }
+                    break;
+                default:
+                    await client.ExecuteFireAndForgetAsync("DEL", token, "key");
+                    break;
             }
         }).Throws<OperationCanceledException>();
 

@@ -7,9 +7,15 @@ namespace Respire.SignalR.Internal;
 
 internal readonly struct RedisCompletion
 {
-    public ReadOnlySequence<byte> CompletionMessage { get; }
+    public ReadOnlySequence<byte> CompletionMessage
+    {
+        get;
+    }
 
-    public string ProtocolName { get; }
+    public string ProtocolName
+    {
+        get;
+    }
 
     public RedisCompletion(string protocolName, ReadOnlySequence<byte> completionMessage)
     {

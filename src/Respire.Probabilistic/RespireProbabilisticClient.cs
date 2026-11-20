@@ -28,7 +28,12 @@ public sealed class RespireProbabilisticClient
     private async ValueTask<bool> BloomReserveUnhookedAsync(RespireKey key, double errorRate, long capacity, RespireBloomReserveOptions? options = null, CancellationToken cancellationToken = default)
     {
         ValidateErrorRate(errorRate, nameof(errorRate));
-        if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(capacity));
+
+        if (capacity <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(capacity));
+        }
+
         using var result = await DispatchAsync(BloomReserveCommand, [key, errorRate, capacity, .. (options ?? new()).ToArguments()], cancellationToken).ConfigureAwait(false);
         return IsOk(result);
     }
@@ -165,7 +170,11 @@ public sealed class RespireProbabilisticClient
 
     private async ValueTask<bool> CuckooReserveUnhookedAsync(RespireKey key, long capacity, RespireCuckooReserveOptions? options = null, CancellationToken cancellationToken = default)
     {
-        if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(capacity));
+        if (capacity <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(capacity));
+        }
+
         using var result = await DispatchAsync(CuckooReserveCommand, [key, capacity, .. (options ?? new()).ToArguments()], cancellationToken).ConfigureAwait(false);
         return IsOk(result);
     }
@@ -331,8 +340,16 @@ public sealed class RespireProbabilisticClient
 
     private async ValueTask CountMinInitializeByDimensionsUnhookedAsync(RespireKey key, long width, long depth, CancellationToken cancellationToken = default)
     {
-        if (width <= 0) throw new ArgumentOutOfRangeException(nameof(width));
-        if (depth <= 0) throw new ArgumentOutOfRangeException(nameof(depth));
+        if (width <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(width));
+        }
+
+        if (depth <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(depth));
+        }
+
         using var result = await DispatchAsync(CountMinInitializeByDimensionsCommand, [key, width, depth], cancellationToken).ConfigureAwait(false);
     }
 
@@ -402,7 +419,12 @@ public sealed class RespireProbabilisticClient
         ValidateKeys(sources);
         var optionArguments = (options ?? new()).ToArguments(sources.Count);
         var args = new RespireValue[checked(sources.Count + optionArguments.Length)];
-        for (var index = 0; index < sources.Count; index++) args[index] = sources[index];
+
+        for (var index = 0; index < sources.Count; index++)
+        {
+            args[index] = sources[index];
+        }
+
         optionArguments.CopyTo(args, sources.Count);
         using var result = await DispatchAsync(CountMinMergeCommand, [destination, sources.Count, .. args], cancellationToken).ConfigureAwait(false);
     }
@@ -417,7 +439,11 @@ public sealed class RespireProbabilisticClient
 
     private async ValueTask TopKReserveUnhookedAsync(RespireKey key, long count, RespireTopKReserveOptions? options = null, CancellationToken cancellationToken = default)
     {
-        if (count <= 0) throw new ArgumentOutOfRangeException(nameof(count));
+        if (count <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+
         using var result = await DispatchAsync(TopKReserveCommand, [key, count, .. (options ?? new()).ToArguments()], cancellationToken).ConfigureAwait(false);
     }
 
@@ -531,7 +557,12 @@ public sealed class RespireProbabilisticClient
     {
         ValidateKeys(sources);
         var args = new List<RespireValue>(checked(sources.Count + 4));
-        foreach (var source in sources) args.Add(source);
+
+        foreach (var source in sources)
+        {
+            args.Add(source);
+        }
+
         args.AddRange((options ?? new()).ToArguments(allowOverride: true));
         using var result = await DispatchAsync(TDigestMergeCommand, [destination, sources.Count, .. args], cancellationToken).ConfigureAwait(false);
     }
@@ -547,8 +578,20 @@ public sealed class RespireProbabilisticClient
     private async ValueTask TDigestAddUnhookedAsync(RespireKey key, IReadOnlyList<double> observations, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(observations);
-        if (observations.Count == 0) throw new ArgumentException("At least one observation is required.", nameof(observations));
-        foreach (var observation in observations) if (!double.IsFinite(observation)) throw new ArgumentOutOfRangeException(nameof(observations));
+
+        if (observations.Count == 0)
+        {
+            throw new ArgumentException("At least one observation is required.", nameof(observations));
+        }
+
+        foreach (var observation in observations)
+        {
+            if (!double.IsFinite(observation))
+            {
+                throw new ArgumentOutOfRangeException(nameof(observations));
+            }
+        }
+
         using var result = await DispatchAsync(TDigestAddCommand, [key, .. observations.Select(static value => (RespireValue)value)], cancellationToken).ConfigureAwait(false);
     }
 
@@ -656,8 +699,14 @@ public sealed class RespireProbabilisticClient
 
     private async ValueTask<double> TDigestTrimmedMeanUnhookedAsync(RespireKey key, double lowCut, double highCut, CancellationToken cancellationToken = default)
     {
-        ValidateQuantile(lowCut, nameof(lowCut)); ValidateQuantile(highCut, nameof(highCut));
-        if (lowCut >= highCut) throw new ArgumentOutOfRangeException(nameof(lowCut));
+        ValidateQuantile(lowCut, nameof(lowCut));
+        ValidateQuantile(highCut, nameof(highCut));
+
+        if (lowCut >= highCut)
+        {
+            throw new ArgumentOutOfRangeException(nameof(lowCut));
+        }
+
         using var result = await DispatchAsync(TDigestTrimmedMeanCommand, [key, lowCut, highCut], cancellationToken).ConfigureAwait(false);
         return ReadDouble(result);
     }
@@ -671,7 +720,12 @@ public sealed class RespireProbabilisticClient
         validate(values);
         using var result = await DispatchAsync(command, [key, .. values.Select(static value => (RespireValue)value)], cancellationToken).ConfigureAwait(false);
         var output = new double[result.Count];
-        for (var index = 0; index < output.Length; index++) output[index] = ReadDouble(result[index]);
+
+        for (var index = 0; index < output.Length; index++)
+        {
+            output[index] = ReadDouble(result[index]);
+        }
+
         return output;
     }
 
@@ -685,10 +739,20 @@ public sealed class RespireProbabilisticClient
     private async ValueTask<double[]> TDigestRankValuesAsync(RespireKey key, IReadOnlyList<long> ranks, RespireCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(ranks);
-        if (ranks.Count == 0 || ranks.Any(static rank => rank < 0)) throw new ArgumentOutOfRangeException(nameof(ranks));
+
+        if (ranks.Count == 0 || ranks.Any(static rank => rank < 0))
+        {
+            throw new ArgumentOutOfRangeException(nameof(ranks));
+        }
+
         using var result = await DispatchAsync(command, [key, .. ranks.Select(static rank => (RespireValue)rank)], cancellationToken).ConfigureAwait(false);
         var output = new double[result.Count];
-        for (var index = 0; index < output.Length; index++) output[index] = ReadDouble(result[index]);
+
+        for (var index = 0; index < output.Length; index++)
+        {
+            output[index] = ReadDouble(result[index]);
+        }
+
         return output;
     }
 
@@ -740,7 +804,11 @@ public sealed class RespireProbabilisticClient
 
     private ValueTask<RespireResult> DispatchAsync(RespireCommand command, RespireValue[] arguments, CancellationToken token)
     {
-        if (token.IsCancellationRequested) return ValueTask.FromCanceled<RespireResult>(token);
+        if (token.IsCancellationRequested)
+        {
+            return ValueTask.FromCanceled<RespireResult>(token);
+        }
+
         return _client is RespireClient client && client.Core.Options.CommandHook is not null
             ? client.ExecuteOwnedCommandUnhookedAsync(command, arguments, RespireCommandFlags.None, token)
             : _client.ExecuteAsync(command, arguments, cancellationToken: token);
@@ -749,19 +817,32 @@ public sealed class RespireProbabilisticClient
     private static RespireProbabilisticDumpChunk ParseDumpChunk(RespireResult result)
     {
         if (result.Type != RespireDataType.Array || result.Count != 2)
+        {
             throw new InvalidOperationException("Unexpected SCANDUMP reply: expected an iterator and a data chunk.");
+        }
+
         return new(result[0].AsInteger(), result[1].IsNull ? null : result[1].AsBytes());
     }
 
     private static RespireValue[] BuildIncrementArguments(IReadOnlyDictionary<RespireValue, long> increments)
     {
         ArgumentNullException.ThrowIfNull(increments);
-        if (increments.Count == 0) throw new ArgumentException("At least one item is required.", nameof(increments));
+
+        if (increments.Count == 0)
+        {
+            throw new ArgumentException("At least one item is required.", nameof(increments));
+        }
+
         var args = new RespireValue[checked(increments.Count * 2)];
         var index = 0;
+
         foreach (var (item, amount) in increments)
         {
-            if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(increments));
+            if (amount <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(increments));
+            }
+
             ProbabilisticValueValidation.ThrowIfNull(item, nameof(increments));
             args[index++] = item;
             args[index++] = amount;
@@ -773,7 +854,12 @@ public sealed class RespireProbabilisticClient
     private static byte[]?[] ReadNullableBytes(RespireResult result)
     {
         var values = new byte[]?[result.Count];
-        for (var index = 0; index < values.Length; index++) values[index] = result[index].IsNull ? null : result[index].AsBytes();
+
+        for (var index = 0; index < values.Length; index++)
+        {
+            values[index] = result[index].IsNull ? null : result[index].AsBytes();
+        }
+
         return values;
     }
 
@@ -786,21 +872,42 @@ public sealed class RespireProbabilisticClient
         if (result.Type != RespireDataType.Double)
         {
             var text = result.AsString();
+
             if (string.Equals(text, "inf", StringComparison.OrdinalIgnoreCase) || string.Equals(text, "+inf", StringComparison.OrdinalIgnoreCase))
+            {
                 return double.PositiveInfinity;
+            }
+
             if (string.Equals(text, "-inf", StringComparison.OrdinalIgnoreCase))
+            {
                 return double.NegativeInfinity;
+            }
         }
+
         return result.AsDouble();
     }
 
     private static bool IsOk(RespireResult result) => result.Type == RespireDataType.SimpleString ? result.AsString() == "OK" : result.AsBoolean();
+
     private static bool ReadBoolean(RespireResult result)
         => result.Type == RespireDataType.Boolean ? result.AsBoolean() : result.AsInteger() == 1;
-    private static bool[] ReadBooleans(RespireResult result) { var values = new bool[result.Count]; for (var i = 0; i < values.Length; i++) values[i] = ReadBoolean(result[i]); return values; }
+
+    private static bool[] ReadBooleans(RespireResult result)
+    {
+        var values = new bool[result.Count];
+
+        for (var i = 0; i < values.Length; i++)
+        {
+            values[i] = ReadBoolean(result[i]);
+        }
+
+        return values;
+    }
+
     private static RespireCuckooInsertResult[] ReadCuckooInsertResults(RespireResult result)
     {
         var values = new RespireCuckooInsertResult[result.Count];
+
         for (var i = 0; i < values.Length; i++)
         {
             // RESP3 replies with booleans for success/presence and keeps -1 for a full filter.
@@ -813,44 +920,93 @@ public sealed class RespireProbabilisticClient
                 var other => throw new InvalidOperationException($"Unexpected Cuckoo insert reply {other}."),
             };
         }
+
         return values;
     }
-    private static long[] ReadIntegers(RespireResult result) { var values = new long[result.Count]; for (var i = 0; i < values.Length; i++) values[i] = result[i].AsInteger(); return values; }
+
+    private static long[] ReadIntegers(RespireResult result)
+    {
+        var values = new long[result.Count];
+
+        for (var i = 0; i < values.Length; i++)
+        {
+            values[i] = result[i].AsInteger();
+        }
+
+        return values;
+    }
 
     private static void ValidateErrorRate(double value, string parameterName)
     {
-        if (!double.IsFinite(value) || value <= 0 || value >= 1) throw new ArgumentOutOfRangeException(parameterName);
+        if (!double.IsFinite(value) || value <= 0 || value >= 1)
+        {
+            throw new ArgumentOutOfRangeException(parameterName);
+        }
     }
 
     private static void ValidateItems(IReadOnlyList<RespireValue> items)
     {
         ArgumentNullException.ThrowIfNull(items);
-        if (items.Count == 0) throw new ArgumentException("At least one item is required.", nameof(items));
-        foreach (var item in items) ProbabilisticValueValidation.ThrowIfNull(item, nameof(items));
+
+        if (items.Count == 0)
+        {
+            throw new ArgumentException("At least one item is required.", nameof(items));
+        }
+
+        foreach (var item in items)
+        {
+            ProbabilisticValueValidation.ThrowIfNull(item, nameof(items));
+        }
     }
 
     private static void ValidateKeys(IReadOnlyList<RespireKey> keys)
     {
         ArgumentNullException.ThrowIfNull(keys);
-        if (keys.Count == 0) throw new ArgumentException("At least one source key is required.", nameof(keys));
+
+        if (keys.Count == 0)
+        {
+            throw new ArgumentException("At least one source key is required.", nameof(keys));
+        }
     }
 
     private static void ValidateQuantiles(IReadOnlyList<double> values)
     {
         ArgumentNullException.ThrowIfNull(values);
-        if (values.Count == 0) throw new ArgumentException("At least one quantile is required.", nameof(values));
-        foreach (var value in values) ValidateQuantile(value, nameof(values));
+
+        if (values.Count == 0)
+        {
+            throw new ArgumentException("At least one quantile is required.", nameof(values));
+        }
+
+        foreach (var value in values)
+        {
+            ValidateQuantile(value, nameof(values));
+        }
     }
 
     private static void ValidateFiniteValues(IReadOnlyList<double> values)
     {
         ArgumentNullException.ThrowIfNull(values);
-        if (values.Count == 0) throw new ArgumentException("At least one value is required.", nameof(values));
-        foreach (var value in values) if (!double.IsFinite(value)) throw new ArgumentOutOfRangeException(nameof(values));
+
+        if (values.Count == 0)
+        {
+            throw new ArgumentException("At least one value is required.", nameof(values));
+        }
+
+        foreach (var value in values)
+        {
+            if (!double.IsFinite(value))
+            {
+                throw new ArgumentOutOfRangeException(nameof(values));
+            }
+        }
     }
 
     private static void ValidateQuantile(double value, string parameterName)
     {
-        if (!double.IsFinite(value) || value < 0 || value > 1) throw new ArgumentOutOfRangeException(parameterName);
+        if (!double.IsFinite(value) || value < 0 || value > 1)
+        {
+            throw new ArgumentOutOfRangeException(parameterName);
+        }
     }
 }

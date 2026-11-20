@@ -53,27 +53,46 @@ public class AsyncFlushSignalTests
         {
             for (var i = 0; i < perProducer; i++)
             {
-                lock (gate) buffer.Enqueue(producer * perProducer + i);
+                lock (gate)
+                {
+                    buffer.Enqueue(producer * perProducer + i);
+                }
+
                 signal.Signal(preferInline);
-                if (i % 16 == 0) Thread.Yield();
+
+                if (i % 16 == 0)
+                {
+                    Thread.Yield();
+                }
             }
         })).ToArray();
         // Signals coalesce; consumers inspect authoritative work after every wake.
         do
         {
             await pending.AsTask().WaitAsync(deadline.Token);
+
             lock (gate)
             {
                 while (buffer.TryDequeue(out var item))
                 {
-                    if (observed[item]) throw new InvalidOperationException("A published item was drained twice.");
+                    if (observed[item])
+                    {
+                        throw new InvalidOperationException("A published item was drained twice.");
+                    }
+
                     observed[item] = true;
                     drained++;
                 }
             }
-            if (drained == observed.Length) break;
+
+            if (drained == observed.Length)
+            {
+                break;
+            }
+
             pending = signal.WaitAsync();
         } while (true);
+
         await Task.WhenAll(writers).WaitAsync(deadline.Token);
         await Assert.That(drained).IsEqualTo(producers * perProducer);
         await Assert.That(observed.All(item => item)).IsTrue();
@@ -99,6 +118,7 @@ public class AsyncFlushSignalTests
                 Volatile.Write(ref published, i);
                 signal.Signal(preferInline);
                 var spin = new SpinWait();
+
                 while (Volatile.Read(ref observed) != i)
                 {
                     deadline.Token.ThrowIfCancellationRequested();
@@ -106,6 +126,7 @@ public class AsyncFlushSignalTests
                 }
             }
         });
+
         try
         {
             while (Volatile.Read(ref observed) < publications)
@@ -113,6 +134,7 @@ public class AsyncFlushSignalTests
                 await signal.WaitAsync().AsTask().WaitAsync(deadline.Token);
                 Volatile.Write(ref observed, Volatile.Read(ref published));
             }
+
             await writer.WaitAsync(deadline.Token);
         }
         finally
@@ -120,6 +142,7 @@ public class AsyncFlushSignalTests
             deadline.Cancel();
             await writer;
         }
+
         await Assert.That(observed).IsEqualTo(publications);
     }
 
@@ -150,14 +173,25 @@ public class AsyncFlushSignalTests
         // Dedicated threads keep the wake and the signal storm independent of pool capacity.
         var wakeThread = StartSignalThread(() => signal.Signal(preferInline));
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        if (preferInline) await Assert.That(resumeThread).IsEqualTo(wakeThread.Thread.ManagedThreadId);
-        else await Assert.That(resumeOnPool).IsTrue();
+
+        if (preferInline)
+        {
+            await Assert.That(resumeThread).IsEqualTo(wakeThread.Thread.ManagedThreadId);
+        }
+        else
+        {
+            await Assert.That(resumeOnPool).IsTrue();
+        }
 
         using var start = new ManualResetEventSlim();
         var storm = Enumerable.Range(0, signalers).Select(_ => StartSignalThread(() =>
         {
             start.Wait();
-            for (var i = 0; i < signalsPerThread; i++) signal.Signal(preferInline);
+
+            for (var i = 0; i < signalsPerThread; i++)
+            {
+                signal.Signal(preferInline);
+            }
         })).ToArray();
         start.Set();
         await Task.WhenAll(storm.Select(s => s.Done).Append(wakeThread.Done)).WaitAsync(TimeSpan.FromSeconds(5));
@@ -181,9 +215,14 @@ public class AsyncFlushSignalTests
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
-            try { body(); done.TrySetResult(); }
+            try
+            {
+                body();
+                done.TrySetResult();
+            }
             catch (Exception error) { done.TrySetException(error); }
-        }) { IsBackground = true, Name = "AsyncFlushSignalTests signaler" };
+        })
+        { IsBackground = true, Name = "AsyncFlushSignalTests signaler" };
         thread.Start();
         return (thread, done.Task);
     }
@@ -250,8 +289,12 @@ public class AsyncFlushSignalTests
         {
             new(timestamp, measuringThread, "MeasuredStart", ""),
         };
+
         for (var i = 0; i < backgroundBudget + 1; i++)
+        {
             entries.Add(new(timestamp.AddTicks(i + 1), 2, $"Background{i}", ""));
+        }
+
         var allocation = new DispatchedWakeEventLog.Entry(timestamp.AddSeconds(1), measuringThread,
             "MethodJittingStarted", $" MethodName={nameof(ReportControlAllocation)} ");
         entries.Add(allocation);
@@ -269,18 +312,32 @@ public class AsyncFlushSignalTests
         var processName = Path.GetFileName(processPath);
         // Unix apphosts have no executable suffix; dots in the assembly name are significant.
         if (processName?.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) == true)
+        {
             processName = processName[..^4];
+        }
+
         var isAppHost = processName == Path.GetFileNameWithoutExtension(assemblyPath);
         var host = isAppHost || string.Equals(processName, "dotnet", StringComparison.OrdinalIgnoreCase)
             ? processPath : dotnetHostPath;
+
         if (string.IsNullOrEmpty(host) || !Path.IsPathFullyQualified(host))
+        {
             throw new InvalidOperationException("The probe needs the current apphost or an absolute DOTNET_HOST_PATH.");
+        }
+
         var start = new ProcessStartInfo(host)
         {
-            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
             CreateNoWindow = true,
         };
-        if (!isAppHost) start.ArgumentList.Add(assemblyPath);
+
+        if (!isAppHost)
+        {
+            start.ArgumentList.Add(assemblyPath);
+        }
+
         return start;
     }
 
@@ -298,7 +355,11 @@ public class AsyncFlushSignalTests
         var start = CreateProbeStartInfo(process, fallback, assembly);
         await Assert.That(start.FileName).IsEqualTo(executable == "coverage-host" ? fallback : process);
         await Assert.That(start.ArgumentList.Count).IsEqualTo(appHost ? 0 : 1);
-        if (!appHost) await Assert.That(start.ArgumentList[0]).IsEqualTo(assembly);
+
+        if (!appHost)
+        {
+            await Assert.That(start.ArgumentList[0]).IsEqualTo(assembly);
+        }
     }
 
     [Test]
@@ -319,8 +380,14 @@ public class AsyncFlushSignalTests
         // The timeout control reports when both streams are written. Only then does its short
         // exit deadline start, so startup time on loaded CI workers cannot decide the outcome.
         var marker = timeout ? Path.Combine(Path.GetTempPath(), $"respire-probe-ready-{Guid.NewGuid():N}") : null;
-        if (marker is not null) start.Environment[ProbeReadyMarker] = marker;
+
+        if (marker is not null)
+        {
+            start.Environment[ProbeReadyMarker] = marker;
+        }
+
         Exception? error;
+
         try
         {
             error = await Assert.That(() => RunProbeAsync(start,
@@ -329,13 +396,24 @@ public class AsyncFlushSignalTests
         }
         finally
         {
-            if (marker is not null) File.Delete(marker);
+            if (marker is not null)
+            {
+                File.Delete(marker);
+            }
         }
+
         await Assert.That(error!.Message).Contains("probe control stdout");
         await Assert.That(error.Message).Contains("probe control stderr");
         await Assert.That(error.Message).Contains($"{Environment.NewLine}stderr: probe control stderr");
-        if (timeout) await Assert.That(error.InnerException is TimeoutException).IsTrue();
-        else await Assert.That(error.Message).Contains("code 17");
+
+        if (timeout)
+        {
+            await Assert.That(error.InnerException is TimeoutException).IsTrue();
+        }
+        else
+        {
+            await Assert.That(error.Message).Contains("code 17");
+        }
     }
 
     // readyMarker: a file the child creates once it is running. When given, the exit timeout
@@ -347,10 +425,14 @@ public class AsyncFlushSignalTests
         var output = process.StandardOutput.ReadToEndAsync(readDeadline.Token);
         var errors = process.StandardError.ReadToEndAsync(readDeadline.Token);
         Exception? failure = null;
+
         try
         {
             if (readyMarker is not null)
+            {
                 await WaitForMarkerAsync(process, readyMarker).WaitAsync(ProbeStartupBudget);
+            }
+
             await process.WaitForExitAsync().WaitAsync(timeout);
         }
         catch (Exception error) { failure = error; }
@@ -369,43 +451,80 @@ public class AsyncFlushSignalTests
 
         // Always observe both readers, including after timeout/kill. Pipe cleanup has its own bound.
         readDeadline.CancelAfter(TimeSpan.FromSeconds(5));
-        try { await Task.WhenAll(output, errors); }
+
+        try
+        {
+            await Task.WhenAll(output, errors);
+        }
         catch (Exception error) { failure = failure is null ? error : new AggregateException(failure, error); }
+
         var diagnostics = $"stdout: {(output.IsCompletedSuccessfully ? output.Result : "<unavailable>")}"
             + $"{Environment.NewLine}stderr: {(errors.IsCompletedSuccessfully ? errors.Result : "<unavailable>")}";
-        if (failure is not null) throw new InvalidOperationException($"Isolated probe failed. {diagnostics}", failure);
+
+        if (failure is not null)
+        {
+            throw new InvalidOperationException($"Isolated probe failed. {diagnostics}", failure);
+        }
+
         if (process.ExitCode != 0)
+        {
             throw new InvalidOperationException($"Isolated probe exited with code {process.ExitCode}. {diagnostics}");
+        }
     }
 
     private static async Task WaitForMarkerAsync(Process process, string marker)
     {
-        while (!File.Exists(marker) && !process.HasExited) await Task.Delay(10);
+        while (!File.Exists(marker) && !process.HasExited)
+        {
+            await Task.Delay(10);
+        }
     }
 
     internal static int? RunIsolatedAllocationProbe()
     {
         var mode = Environment.GetEnvironmentVariable(AllocationProbeMode);
+
         if (mode is "timeout-control" or "failure-control")
         {
             // Neither stream supplies a newline: the parent must separate their diagnostics.
             Console.Write("probe control stdout");
             Console.Error.Write("probe control stderr");
+
             if (Environment.GetEnvironmentVariable(ProbeReadyMarker) is { Length: > 0 } marker)
+            {
                 File.WriteAllText(marker, "");
-            if (mode == "timeout-control") Thread.Sleep(Timeout.Infinite);
+            }
+
+            if (mode == "timeout-control")
+            {
+                Thread.Sleep(Timeout.Infinite);
+            }
+
             return 17;
         }
-        if (mode is not ("pool" or "dedicated" or "report-control")) return null;
+
+        if (mode is not ("pool" or "dedicated" or "report-control"))
+        {
+            return null;
+        }
+
         try
         {
             var expectedRuntime = Environment.GetEnvironmentVariable(AllocationProbeRuntime);
+
             if (expectedRuntime != Environment.Version.ToString())
+            {
                 throw new InvalidOperationException($"Probe runtime {Environment.Version} differs from parent {expectedRuntime}.");
+            }
+
             ThreadPool.GetMinThreads(out _, out var minIo);
             ThreadPool.GetMaxThreads(out _, out var maxIo);
+
             if (!ThreadPool.SetMinThreads(2, minIo) || !ThreadPool.SetMaxThreads(2, maxIo))
+            {
                 throw new InvalidOperationException("Could not configure the isolated two-worker pool.");
+            }
+
             s_reportControl = mode == "report-control";
 
             // Started before the pool warms, so its dispatcher thread exists before measurement.
@@ -415,25 +534,41 @@ public class AsyncFlushSignalTests
             using var entered = new CountdownEvent(2);
             using var release = new ManualResetEventSlim();
             using var finished = new CountdownEvent(2);
+
             for (var i = 0; i < 2; i++)
+            {
                 ThreadPool.UnsafeQueueUserWorkItem(_ =>
                 {
                     entered.Signal();
                     release.Wait(TimeSpan.FromSeconds(10));
                     finished.Signal();
                 }, 0, preferLocal: false);
+            }
+
             try
             {
-                if (!entered.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Workers did not start.");
+                if (!entered.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    throw new TimeoutException("Workers did not start.");
+                }
             }
             finally
             {
                 release.Set();
-                if (!finished.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Workers did not finish warming.");
+
+                if (!finished.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    throw new TimeoutException("Workers did not finish warming.");
+                }
             }
 
             MeasureSteadyState(events);
-            if (mode == "pool") Task.Run(() => MeasureSteadyState(events)).GetAwaiter().GetResult();
+
+            if (mode == "pool")
+            {
+                Task.Run(() => MeasureSteadyState(events)).GetAwaiter().GetResult();
+            }
+
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
@@ -454,15 +589,28 @@ public class AsyncFlushSignalTests
         var waiter = new ParkedWaiter();
         var ordinary = new WakeTrace(Wakes);
         var control = new WakeTrace(Wakes);
-        for (var i = 0; i < 20; i++) { Measure(waiter, false, ordinary); Measure(waiter, true, control); }
-        if (s_reportControl) s_allocateAtWake = ReportControlWake;
+
+        for (var i = 0; i < 20; i++)
+        {
+            Measure(waiter, false, ordinary);
+            Measure(waiter, true, control);
+        }
+
+        if (s_reportControl)
+        {
+            s_allocateAtWake = ReportControlWake;
+        }
+
         var measuringThread = events.MarkMeasuringThread();
         var measured = AllocationMeasurement.WithoutConcurrentGc(() => MeasurePair(waiter, ordinary, control));
         Console.WriteLine($"poolProducer={Thread.CurrentThread.IsThreadPoolThread}; {measured}");
+
         if (!IsClean(measured))
+        {
             throw new InvalidOperationException($"Expected zero wake allocations, a positive allocation control, "
                 + $"two existing workers and no collections; observed {measured}."
                 + DescribeFailure(events, waiter, ordinary, control, measuringThread));
+        }
     }
 
     private static bool IsClean(WakeSample measured) =>
@@ -499,6 +647,7 @@ public class AsyncFlushSignalTests
             ("ordinary interval starts", ordinary.StartedUtc), ("ordinary interval ends", ordinary.EndedUtc),
             ("control interval starts", control.StartedUtc), ("control interval ends", control.EndedUtc),
         ];
+
         for (var sample = 1; sample <= Remeasurements; sample++)
         {
             // A diagnostic failure must not replace the original failing sample's message.
@@ -513,6 +662,7 @@ public class AsyncFlushSignalTests
                 report.Append($"{nl}Re-measured sample {sample}/{Remeasurements} failed: {error.GetType().Name}: {error.Message}");
             }
         }
+
         events.WaitForDispatch();
         report.Append($"{nl}Runtime events in the failing interval: {events.Describe(measuringThread, 60, boundaries)}");
         return report.ToString();
@@ -526,15 +676,24 @@ public class AsyncFlushSignalTests
         var allocateAt = s_allocateAtWake;
         trace.StartedUtc = DateTime.UtcNow;
         var start = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < Wakes; i++)
         {
             waiter.ParkThenWake();
-            if (control) GC.KeepAlive(new byte[37]);
-            else if (i == allocateAt) GC.KeepAlive(ReportControlAllocation());
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
+            else if (i == allocateAt)
+            {
+                GC.KeepAlive(ReportControlAllocation());
+            }
             // Per-wake readings go to preallocated arrays, so they add no bytes to the interval.
             allocated[i] = GC.GetAllocatedBytesForCurrentThread() - start;
             workers[i] = ThreadPool.ThreadCount;
         }
+
         var bytes = GC.GetAllocatedBytesForCurrentThread() - start;
         trace.EndedUtc = DateTime.UtcNow;
         return bytes;
@@ -559,9 +718,14 @@ public class AsyncFlushSignalTests
             // Bounded so a lost wake fails this test instead of stalling the suite it runs alone in.
             var deadline = Environment.TickCount64 + 5_000;
             var spin = new SpinWait();
+
             while (!_resumed)
             {
-                if (Environment.TickCount64 > deadline) throw new TimeoutException("The dispatched wake never resumed the waiter.");
+                if (Environment.TickCount64 > deadline)
+                {
+                    throw new TimeoutException("The dispatched wake never resumed the waiter.");
+                }
+
                 spin.SpinOnce(sleep1Threshold: -1);
             }
         }

@@ -23,6 +23,7 @@ internal static class ScopeExitAnalysis
         SemanticModel semanticModel, IOperation? operation, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
         if (operation?.ConstantValue is { HasValue: true, Value: null })
         {
             return semanticModel.Compilation.GetTypeByMetadataName("System.NullReferenceException");
@@ -74,6 +75,7 @@ internal static class ScopeExitAnalysis
         }
 
         SyntaxNode node = identifier;
+
         while (node.Parent is ParenthesizedExpressionSyntax
                || node.Parent is PostfixUnaryExpressionSyntax suppression
                && suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression))
@@ -105,7 +107,9 @@ internal static class ScopeExitAnalysis
             || creation.Initializer is not null
             || creation.Arguments.Any(argument => !argument.Value.ConstantValue.HasValue
                 && argument.Value is not ILocalReferenceOperation and not IParameterReferenceOperation))
+        {
             return null;
+        }
 
         // These framework constructors only store the supplied message/inner exception.
         // Other constructors remain opaque; this is not an interprocedural exception proof.

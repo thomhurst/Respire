@@ -26,20 +26,39 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
         if (expression is BinaryExpression binary)
         {
             if (binary.Method is { } method && !(method.DeclaringType == typeof(string) && method.Name is "op_Equality" or "op_Inequality"))
+            {
                 throw Unsupported(expression, "Custom operators are unsupported.");
+            }
+
             if (binary.NodeType is ExpressionType.AndAlso or ExpressionType.OrElse)
+            {
                 return Combine(Visit(binary.Left), Visit(binary.Right), binary.NodeType == ExpressionType.AndAlso);
+            }
+
             if (binary.NodeType is ExpressionType.Equal or ExpressionType.NotEqual or ExpressionType.LessThan or ExpressionType.LessThanOrEqual or ExpressionType.GreaterThan or ExpressionType.GreaterThanOrEqual)
             {
                 if (TryField(binary.Left, out var field, out var type))
+                {
                     return Compare(field, type, binary.NodeType, Value(binary.Right));
+                }
+
                 if (TryField(binary.Right, out field, out type))
+                {
                     return Compare(field, type, Reverse(binary.NodeType), Value(binary.Left));
+                }
             }
         }
-        if (expression is UnaryExpression { NodeType: ExpressionType.Not, Method: null } not) return Negate(Visit(not.Operand));
+
+        if (expression is UnaryExpression { NodeType: ExpressionType.Not, Method: null } not)
+        {
+            return Negate(Visit(not.Operand));
+        }
+
         if (TryField(expression, out var boolean, out var booleanType) && booleanType == typeof(bool))
+        {
             return Compare(boolean, booleanType, ExpressionType.Equal, true);
+        }
+
         if (expression is MethodCallExpression call)
         {
             if (Contains(call, out var source, out var item))
@@ -49,8 +68,13 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
                     ValidateCollection(field, type);
                     return Tag(field, Value(item) as string ?? throw Unsupported(item, "Collection membership requires a nonnull string."));
                 }
-                if (TryField(item, out field, out type)) return In(field, type, source);
+
+                if (TryField(item, out field, out type))
+                {
+                    return In(field, type, source);
+                }
             }
+
             if (call.Method.DeclaringType == typeof(Enumerable) && call.Method.Name == nameof(Enumerable.Any) && call.Arguments.Count == 2
                 && TryField(call.Arguments[0], out var collection, out var collectionType)
                 && call.Arguments[1] is LambdaExpression lambda
@@ -61,7 +85,12 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
                 return In(collection, typeof(string), values, membership: true);
             }
         }
-        if (expression is ConstantExpression { Value: bool constant }) return constant ? "*" : None;
+
+        if (expression is ConstantExpression { Value: bool constant })
+        {
+            return constant ? "*" : None;
+        }
+
         throw Unsupported(expression);
     }
 
@@ -70,10 +99,17 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
         var value = Value(UnwrapSpan(source));
         // Never enumerate arbitrary user IEnumerable implementations during translation.
         if (value is not Array && (value is null || !SupportedList(value.GetType())))
+        {
             throw Unsupported(source, "Membership values must be an array or a supported List<T>.");
+        }
+
         var alternatives = new List<string>();
+
         foreach (var item in (IEnumerable)value)
+        {
             alternatives.Add(membership ? Tag(field, item as string ?? throw Unsupported(source, "Null collection elements are unsupported.")) : Compare(field, type, ExpressionType.Equal, item));
+        }
+
         return alternatives.Count == 0 ? None : "(" + string.Join(" | ", alternatives) + ")";
     }
 
@@ -81,8 +117,14 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
     {
         var nullable = !type.IsValueType || Nullable.GetUnderlyingType(type) is not null;
         type = Nullable.GetUnderlyingType(type) ?? type;
-        if (field.Kind == RespireVectorDataFilterKind.StringCollection) throw new NotSupportedException("Collection fields support membership only.");
+
+        if (field.Kind == RespireVectorDataFilterKind.StringCollection)
+        {
+            throw new NotSupportedException("Collection fields support membership only.");
+        }
+
         ValidateType(field, type);
+
         if (value is null)
         {
             var missing = nullable ? $"ismissing(@{field.StorageName})" : None;
@@ -93,28 +135,46 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
                 _ => None,
             };
         }
+
         string equality;
+
         if (field.Kind == RespireVectorDataFilterKind.String)
         {
             if (operation is not ExpressionType.Equal and not ExpressionType.NotEqual || value is not string text)
+            {
                 throw new NotSupportedException("String filters support ordinal equality/inequality only.");
+            }
+
             equality = Tag(field, text);
         }
         else
         {
             double number;
+
             if (field.Kind == RespireVectorDataFilterKind.Boolean)
             {
                 if (value is not bool boolean || operation is not ExpressionType.Equal and not ExpressionType.NotEqual)
+                {
                     throw new NotSupportedException("Boolean filters support equality/inequality only.");
+                }
+
                 number = boolean ? 1 : 0;
             }
             else
             {
-                if (!NumericType(value.GetType())) throw new NotSupportedException("Numeric filters require supported finite numeric constants.");
+                if (!NumericType(value.GetType()))
+                {
+                    throw new NotSupportedException("Numeric filters require supported finite numeric constants.");
+                }
+
                 number = Convert.ToDouble(value, CultureInfo.InvariantCulture);
-                if (!double.IsFinite(number)) throw new NotSupportedException("Numeric filter constants must be finite.");
+
+                if (!double.IsFinite(number))
+                {
+                    throw new NotSupportedException("Numeric filter constants must be finite.");
+                }
             }
+
             var query = operation switch
             {
                 ExpressionType.LessThan => RespireSearchQueryBuilder.NumericRange(field.StorageName, double.NegativeInfinity, number, exclusiveMaximum: true),
@@ -125,6 +185,7 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
             };
             equality = query.Value;
         }
+
         return operation == ExpressionType.NotEqual ? Negate(equality) : equality;
     }
 
@@ -134,11 +195,13 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
         type = expression.Type;
         var members = new Stack<string>();
         var source = expression;
+
         while (source is MemberExpression member)
         {
             members.Push(member.Member.Name);
             source = member.Expression!;
         }
+
         if (source == _record && members.Count > 0)
         {
             var name = string.Join('.', members);
@@ -146,6 +209,7 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
                 ?? throw Unsupported(expression, "Property has no explicit filter mapping.");
             return true;
         }
+
         field = null!;
         return false;
     }
@@ -158,7 +222,11 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
             RespireVectorDataFilterKind.Numeric => NumericType(type),
             RespireVectorDataFilterKind.Boolean => type == typeof(bool),
             _ => false,
-        }) return;
+        })
+        {
+            return;
+        }
+
         throw new NotSupportedException($"Property type '{type}' does not match filter mapping '{field.PropertyName}'.");
     }
 
@@ -168,19 +236,38 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
     private static void ValidateCollection(RespireVectorDataFilterField field, Type type)
     {
         if (field.Kind != RespireVectorDataFilterKind.StringCollection || type != typeof(string[]) && type != typeof(List<string>))
+        {
             throw new NotSupportedException("Collection filters require an explicitly mapped string array or List<string>.");
+        }
     }
 
     private static string Tag(RespireVectorDataFilterField field, string value)
         => RespireSearchQueryBuilder.Tag(field.StorageName, RespireVectorDataFilterEncoding.EncodeTag(value)).Value;
 
-    private static string Negate(string query) => query switch { "*" => None, None => "*", _ => $"-({query})" };
+    private static string Negate(string query) => query switch
+    {
+        "*" => None,
+        None => "*",
+        _ => $"-({query})"
+    };
 
     private static string Combine(string left, string right, bool and)
     {
-        if (left == (and ? None : "*") || right == (and ? None : "*")) return and ? None : "*";
-        if (left == (and ? "*" : None)) return right;
-        if (right == (and ? "*" : None)) return left;
+        if (left == (and ? None : "*") || right == (and ? None : "*"))
+        {
+            return and ? None : "*";
+        }
+
+        if (left == (and ? "*" : None))
+        {
+            return right;
+        }
+
+        if (right == (and ? "*" : None))
+        {
+            return left;
+        }
+
         return $"({left}{(and ? " " : " | ")}{right})";
     }
 
@@ -200,29 +287,51 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
             var target = Nullable.GetUnderlyingType(conversion.Type) ?? conversion.Type;
             var nullableSource = Nullable.GetUnderlyingType(conversion.Operand.Type);
             var source = nullableSource ?? conversion.Operand.Type;
+
             if (nullableSource is not null && Nullable.GetUnderlyingType(conversion.Type) is null
                 || target != source
                 && !(target == typeof(double) && NumericType(source))
                 && !(target == typeof(int) && (source == typeof(byte) || source == typeof(sbyte) || source == typeof(short) || source == typeof(ushort))))
+            {
                 throw Unsupported(expression, "Only nullable lifting, small-integer promotion and lossless promotion to double are supported.");
+            }
+
             expression = conversion.Operand;
         }
+
         return expression;
     }
 
     private static object? Value(Expression expression)
     {
         expression = Strip(expression);
-        if (expression is ConstantExpression constant) return constant.Value;
+
+        if (expression is ConstantExpression constant)
+        {
+            return constant.Value;
+        }
+
         if (expression is MemberExpression { Member: FieldInfo field } member)
+        {
             return field.GetValue(member.Expression is null ? null : Value(member.Expression));
+        }
+
         if (expression is MemberExpression { Member.Name: "Value", Expression: { } operand }
             && Nullable.GetUnderlyingType(operand.Type) is not null)
+        {
             return Value(operand) ?? throw new InvalidOperationException("Nullable object must have a value.");
+        }
+
         if (expression is NewArrayExpression { NodeType: ExpressionType.NewArrayInit } array)
+        {
             return array.Expressions.Select(Value).ToArray();
+        }
+
         if (expression is MethodCallExpression { Method.DeclaringType: { } declaring, Method.Name: "Empty", Arguments.Count: 0 } && declaring == typeof(Array))
+        {
             return Array.Empty<object>();
+        }
+
         throw Unsupported(expression, "Filter constants may use literals, arrays and captured fields; getters and method execution are unsupported.");
     }
 
@@ -233,18 +342,27 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
             if (call.Method.DeclaringType == typeof(Enumerable) || call.Method.DeclaringType == typeof(MemoryExtensions))
             {
                 if (call.Arguments.Count == 3 && Value(call.Arguments[2]) is not null)
+                {
                     throw Unsupported(call, "Custom membership comparers are unsupported.");
+                }
+
                 if (call.Arguments.Count is 2 or 3)
                 {
-                    source = UnwrapSpan(call.Arguments[0]); item = call.Arguments[1]; return true;
+                    source = UnwrapSpan(call.Arguments[0]);
+                    item = call.Arguments[1];
+                    return true;
                 }
             }
+
             if (call.Object is { } instance && call.Arguments.Count == 1
                 && call.Method.DeclaringType is { } declaring && SupportedList(declaring))
             {
-                source = instance; item = call.Arguments[0]; return true;
+                source = instance;
+                item = call.Arguments[0];
+                return true;
             }
         }
+
         source = item = null!;
         return false;
     }
@@ -256,10 +374,16 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
     {
         if (expression is UnaryExpression { Method.Name: "op_Implicit" } conversion
             && conversion.Method.DeclaringType is { IsGenericType: true } declaring && declaring.GetGenericTypeDefinition() == typeof(ReadOnlySpan<>))
+        {
             return conversion.Operand;
+        }
+
         if (expression is MethodCallExpression { Method.Name: "op_Implicit", Arguments.Count: 1 } call
             && call.Method.DeclaringType is { IsGenericType: true } type && type.GetGenericTypeDefinition() == typeof(ReadOnlySpan<>))
+        {
             return call.Arguments[0];
+        }
+
         return expression;
     }
 

@@ -13,7 +13,9 @@ internal sealed partial class RespireConnection
         where TCommand : struct, IRespCommand
     {
         observation.UseEndpoint(new(Host, Port), cancellationToken);
+
         if (observation.IsEmpty)
+        {
             return DispatchResponseSource<byte[]?>.Run(
                 (Connection: this, Command: command, Token: cancellationToken, Name: commandName,
                     Deadline: commandDeadline, Attempts: errorAttempts, Duration: durationStarted, Pinned: pinToConnection),
@@ -23,12 +25,19 @@ internal sealed partial class RespireConnection
                     return state.Connection.SendBytesAsync(state.Command, state.Token, state.Name, state.Deadline,
                         state.Attempts, owner, state.Duration, state.Pinned);
                 });
-        if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        }
+
+        if (!commandDeadline.IsSet)
+        {
+            commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        }
+
         var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
         var source = BytesPendingResponseSource.Rent(commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
             observeErrors: observation.IsEmpty, duration: duration, runContinuationsAsynchronously: _runContinuationsAsynchronously);
         bool enqueued;
         bool startedBatch;
+
         try
         {
             enqueued = TryEnqueue(in command, source, commandDeadline, out startedBatch);
@@ -36,23 +45,38 @@ internal sealed partial class RespireConnection
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
             ReclaimUnpublished(source);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return target.SendBytesAsync(in command, cancellationToken, commandName, rerouted, errorAttempts + 1, observation, durationStarted, pinToConnection);
         }
         catch (Exception error)
         {
             duration.Complete(commandName, error);
             ReclaimUnpublished(source);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
+
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
+            }
+
             throw;
         }
+
         if (enqueued)
         {
             source.RegisterCancellation(cancellationToken, this);
             ScheduleFlush(startedBatch);
             return source.Task;
         }
+
         return SendBytesSlowAsync(command, source, cancellationToken, commandName, commandDeadline, errorAttempts, observation, durationStarted, pinToConnection);
     }
 
@@ -67,6 +91,7 @@ internal sealed partial class RespireConnection
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
+
         try
         {
             startedBatch = await WaitForInflightCapacityAsync(
@@ -74,17 +99,30 @@ internal sealed partial class RespireConnection
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
-            else observation.Handled(error, new(Host, Port));
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            }
+            else
+            {
+                observation.Handled(error, new(Host, Port));
+            }
+
             return await target.SendBytesAsync(in command, cancellationToken, commandName, rerouted, errorAttempts + 1, observation, durationStarted, pinToConnection).ConfigureAwait(false);
         }
         catch (Exception error)
         {
             var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
             duration.Complete(commandName, error);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
+
+            if (observation.IsEmpty)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
+            }
+
             throw;
         }
+
         source.RegisterCancellation(cancellationToken, this);
         ScheduleFlush(startedBatch);
         return await source.Task.ConfigureAwait(false);

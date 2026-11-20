@@ -114,22 +114,33 @@ public class DeferredFacetParityTests
     private static string DeferredSignature(MethodInfo method, HashSet<string> actual)
     {
         var signature = Signature(method, immediate: true);
-        if (actual.Contains(signature)) return signature;
+
+        if (actual.Contains(signature))
+        {
+            return signature;
+        }
 
         // Cancellation belongs to Execute/Commit for deferred commands. The immediate
         // single-item conveniences can therefore use an existing collection command,
         // passing [item] (or simply item for params). Require the same name, all other
         // parameters, generic arity and result shape; a missing command still fails.
         var parameters = CommandParameters(method, immediate: true).ToArray();
+
         for (var index = 0; index < parameters.Length; index++)
         {
             var item = parameters[index];
+
             foreach (var collection in new[] { $"ReadOnlySpan`1<{item}>", $"{item}[]" })
             {
                 parameters[index] = collection;
                 var candidate = Signature(method, immediate: true, parameters);
-                if (actual.Contains(candidate)) return candidate;
+
+                if (actual.Contains(candidate))
+                {
+                    return candidate;
+                }
             }
+
             parameters[index] = item;
         }
 
@@ -158,7 +169,11 @@ public class DeferredFacetParityTests
         // Compare generic parameters by position; this shape audit does not compare their constraints.
         var name = immediate ? method.Name[..^"Async".Length] : method.Name;
         // Single-stream group pages distinguish themselves from existing consumer loops by name.
-        if (immediate && method.Name == nameof(IRespireStreamCommands.ReadGroupOnceAsync)) name = nameof(IRespireBatchStreamCommands.ReadGroup);
+        if (immediate && method.Name == nameof(IRespireStreamCommands.ReadGroupOnceAsync))
+        {
+            name = nameof(IRespireBatchStreamCommands.ReadGroup);
+        }
+
         parameters ??= CommandParameters(method, immediate);
         var result = method.ReturnType.GetGenericArguments().Single();
         return $"{name}`{method.GetGenericArguments().Length}({string.Join(", ", parameters)}): {TypeName(result)}";
@@ -170,10 +185,12 @@ public class DeferredFacetParityTests
         {
             return $"T{type.GenericParameterPosition}";
         }
+
         if (type.IsArray)
         {
             return $"{TypeName(type.GetElementType()!)}[]";
         }
+
         return type.IsGenericType
             ? $"{type.GetGenericTypeDefinition().Name}<{string.Join(", ", type.GetGenericArguments().Select(TypeName))}>"
             : type.Name;

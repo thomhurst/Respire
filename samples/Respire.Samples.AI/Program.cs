@@ -22,7 +22,10 @@ Console.WriteLine($"Provider received {provider.InputCount} inputs (3 on a cold 
 // Replace this generator with your real IEmbeddingGenerator<string, Embedding<float>>.
 sealed class DemoEmbeddingGenerator : IEmbeddingGenerator<string, Embedding<float>>
 {
-    public int InputCount { get; private set; }
+    public int InputCount
+    {
+        get; private set;
+    }
 
     public Task<GeneratedEmbeddings<Embedding<float>>> GenerateAsync(IEnumerable<string> values,
         EmbeddingGenerationOptions? options = null, CancellationToken cancellationToken = default)
@@ -38,5 +41,7 @@ sealed class DemoEmbeddingGenerator : IEmbeddingGenerator<string, Embedding<floa
         => serviceType == typeof(EmbeddingGeneratorMetadata)
             ? new EmbeddingGeneratorMetadata("demo", defaultModelId: "demo-v1", defaultModelDimensions: 2) : null;
 
-    public void Dispose() { }
+    public void Dispose()
+    {
+    }
 }

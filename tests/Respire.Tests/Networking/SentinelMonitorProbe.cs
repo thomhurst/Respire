@@ -15,7 +15,9 @@ internal sealed class SentinelMonitorProbe
     // Explicit defaults avoid CS0649 when focused builds exclude the assigning tests.
     internal Action? CancellationCallback = null;
     internal Action? Subscribed = null;
+
     internal event Action<RespireConnectionStateChange>? ConnectionStateChanged;
+
     internal void ChangeConnectionState(RespireConnectionStateChange change) => ConnectionStateChanged?.Invoke(change);
     internal bool IgnoreCancellation = false;
     internal CancellationToken SubscriptionToken;
@@ -39,7 +41,9 @@ internal sealed class SentinelMonitorProbe
             // before that registration's callback runs. Report observed cancellation
             // here too, without changing probes that intentionally ignore the token.
             if (!IgnoreCancellation && cancellationToken.IsCancellationRequested)
+            {
                 Cancelled.TrySetResult();
+            }
         }
     }
 
@@ -52,6 +56,7 @@ internal sealed class SentinelMonitorProbe
             add => owner.ConnectionStateChanged += value;
             remove => owner.ConnectionStateChanged -= value;
         }
+
         public ValueTask<ISentinelMonitorSubscription> SubscribeAsync(CancellationToken cancellationToken)
         {
             owner.SubscriptionToken = cancellationToken;
@@ -63,6 +68,7 @@ internal sealed class SentinelMonitorProbe
             owner.Subscribed?.Invoke();
             return ValueTask.FromResult<ISentinelMonitorSubscription>(new SubscriptionAdapter(owner));
         }
+
         public async ValueTask DisposeAsync()
         {
             owner.ClientCleanup.TrySetResult();
@@ -73,12 +79,18 @@ internal sealed class SentinelMonitorProbe
     private sealed class SubscriptionAdapter(SentinelMonitorProbe owner) : ISentinelMonitorSubscription
     {
         public Task<RespireSubscriptionEndReason> Completion => owner.Completion;
+
         public IAsyncEnumerator<RespireMessage> GetAsyncEnumerator(CancellationToken cancellationToken = default)
             => owner.GetAsyncEnumerator(cancellationToken);
+
         public async ValueTask DisposeAsync()
         {
             owner.SubscriptionCleanup.TrySetResult();
-            try { await owner.DisposeSubscription(); }
+
+            try
+            {
+                await owner.DisposeSubscription();
+            }
             finally { owner._cancellation.Dispose(); }
         }
     }

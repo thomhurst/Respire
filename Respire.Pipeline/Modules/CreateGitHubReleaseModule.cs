@@ -46,6 +46,7 @@ public class CreateGitHubReleaseModule : Module<string>
     protected override async Task<string> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         var gitHub = context.Tools.GitHub;
+
         if (string.IsNullOrWhiteSpace(_gitHubOptions.Value.AccessToken)
             && string.IsNullOrWhiteSpace(gitHub.EnvironmentVariables.Token))
         {
@@ -63,6 +64,7 @@ public class CreateGitHubReleaseModule : Module<string>
         context.Logger.LogInformation("Creating GitHub release for version {Version}", version);
 
         var existingRelease = await GetReleaseByTagAsync(gitHub.Client, repository, tagName);
+
         if (existingRelease is not null)
         {
             context.Logger.LogInformation(

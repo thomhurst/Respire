@@ -185,7 +185,11 @@ internal sealed partial class BatchPathHashCommands(IPendingSink sink) : IRespir
 
     private Cmd1N Command(RespireCommand command, RespireKey key, RespireValue[] args)
     {
-        for (var i = 0; i < args.Length; i++) args[i] = args[i].Snapshot();
+        for (var i = 0; i < args.Length; i++)
+        {
+            args[i] = args[i].Snapshot();
+        }
+
         return new(command.Verb, sink.Client.Key(in key).Snapshot(), args);
     }
 }

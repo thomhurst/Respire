@@ -24,18 +24,25 @@ public class DashboardDeduplicationTests(RedisTestContainer redis)
         var entries = await client.Streams.ReadGroupOnceAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, "worker", new() { Count = 2 });
         await Assert.That(entries.Length).IsEqualTo(2);
         var options = new RespireDashboardOptions();
-        options.Streams.Add(new() { Name = "batch-callback-policy", Stream = queue.StreamKey,
-            Group = RespireJobQueue<string>.ConsumerGroup, IsJobQueue = true });
+        options.Streams.Add(new()
+        {
+            Name = "batch-callback-policy",
+            Stream = queue.StreamKey,
+            Group = RespireJobQueue<string>.ConsumerGroup,
+            IsJobQueue = true
+        });
 
         var snapshot = await new DashboardState(client, options).ReadAsync(default);
         var policies = snapshot.Streams[0].Deduplication!;
         await Assert.That(policies.Count).IsEqualTo(2);
+
         foreach (var entry in entries)
         {
             await Assert.That(entry.GetString("_respire.job.batch_callback")).IsNotNull();
             await Assert.That(policies[entry.Id].Identity).IsEqualTo(entry.GetString("_respire.job.id"));
             await Assert.That(policies[entry.Id].Mode).IsEqualTo("Separate lifecycle");
         }
+
         await Assert.That(snapshot.Streams[0].Error).IsNull();
         var html = DashboardPage.Render(snapshot, "/workers", "token", "value");
         await Assert.That(html).Contains("Separate lifecycle");
@@ -57,8 +64,13 @@ public class DashboardDeduplicationTests(RedisTestContainer redis)
         await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
         var entries = await client.Streams.ReadGroupOnceAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, "worker", new() { Count = 1 });
         var options = new RespireDashboardOptions();
-        options.Streams.Add(new() { Name = "recurring-policy", Stream = queue.StreamKey,
-            Group = RespireJobQueue<string>.ConsumerGroup, IsJobQueue = true });
+        options.Streams.Add(new()
+        {
+            Name = "recurring-policy",
+            Stream = queue.StreamKey,
+            Group = RespireJobQueue<string>.ConsumerGroup,
+            IsJobQueue = true
+        });
 
         var snapshot = await new DashboardState(client, options).ReadAsync(default);
         var policy = snapshot.Streams[0].Deduplication![entries[0].Id];
@@ -74,7 +86,9 @@ public class DashboardDeduplicationTests(RedisTestContainer redis)
     private sealed class ManualClock : TimeProvider
     {
         private DateTimeOffset _utcNow = new(2026, 10, 20, 0, 0, 0, TimeSpan.Zero);
+
         public override DateTimeOffset GetUtcNow() => _utcNow;
+
         public void Advance(TimeSpan elapsed) => _utcNow += elapsed;
     }
 
@@ -91,8 +105,13 @@ public class DashboardDeduplicationTests(RedisTestContainer redis)
         await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
         await client.Streams.ReadGroupOnceAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, "worker", new() { Count = 4 });
         var options = new RespireDashboardOptions { EntryLimit = 4 };
-        options.Streams.Add(new() { Name = "deduplication", Stream = queue.StreamKey,
-            Group = RespireJobQueue<string>.ConsumerGroup, IsJobQueue = true });
+        options.Streams.Add(new()
+        {
+            Name = "deduplication",
+            Stream = queue.StreamKey,
+            Group = RespireJobQueue<string>.ConsumerGroup,
+            IsJobQueue = true
+        });
         var snapshot = await new DashboardState(client, options).ReadAsync(default);
         var policies = snapshot.Streams[0].Deduplication!;
         await Assert.That(policies.Count).IsEqualTo(4);

@@ -57,7 +57,10 @@ public class ReceiveLoopStartupTests
         private readonly TaskCompletionSource<int> _closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _reads;
 
-        public bool FirstReadCompletedSynchronously { get; private set; }
+        public bool FirstReadCompletedSynchronously
+        {
+            get; private set;
+        }
 
         public void ReleaseReply() => _release.Set();
 
@@ -66,7 +69,10 @@ public class ReceiveLoopStartupTests
             if (Interlocked.Increment(ref _reads) == 1)
             {
                 if (!_pingWritten.Wait(TimeSpan.FromSeconds(10)) || !_release.Wait(TimeSpan.FromSeconds(10)))
+                {
                     throw new TimeoutException("The PING was never written or the reply never released.");
+                }
+
                 Pong.CopyTo(buffer);
                 FirstReadCompletedSynchronously = true;
                 return new ValueTask<int>(Pong.Length);
@@ -77,7 +83,11 @@ public class ReceiveLoopStartupTests
 
         public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (buffer.Span.IndexOf("PING"u8) >= 0) _pingWritten.Set();
+            if (buffer.Span.IndexOf("PING"u8) >= 0)
+            {
+                _pingWritten.Set();
+            }
+
             return ValueTask.CompletedTask;
         }
 
@@ -100,12 +110,24 @@ public class ReceiveLoopStartupTests
         }
 
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => true;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-        public override void Flush() { }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
     }
 }

@@ -16,6 +16,7 @@ public class RespireValueTests
     public async Task HashesAgreeAcrossBinaryTextAndPrefixedStorageAtEncodingBoundaries(int leadingLength)
     {
         string[] suffixes = ["", "é", "😀", "\uD800", "\uDC00", "é\uD800😀"];
+
         foreach (var suffix in suffixes)
         {
             var text = new string('a', leadingLength) + suffix;

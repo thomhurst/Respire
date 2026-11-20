@@ -30,6 +30,7 @@ internal static partial class RespireTelemetry
     private static readonly MetricOperationNames MetricNames = new();
 
     internal static KeyValuePair<string, object?> ConnectionLibraryTag => LibraryTag;
+
     internal static KeyValuePair<string, object?> ConnectionSystemTag => SystemTag;
     internal static readonly ObservableUpDownCounter<long> ConnectionCount = Meter.CreateObservableUpDownCounter(
         "db.client.connection.count", ConnectionTelemetry.ObserveConnections, "{connection}", "Current ready connections by idle/used state.");
@@ -62,13 +63,19 @@ internal static partial class RespireTelemetry
 
     internal static void RecordTransactionConflict()
     {
-        try { TransactionConflicts.Add(1); }
+        try
+        {
+            TransactionConflicts.Add(1);
+        }
         catch (Exception) { /* Diagnostics must not change transaction outcomes. */ }
     }
 
     internal static void RecordTransactionRetry()
     {
-        try { TransactionRetries.Add(1); }
+        try
+        {
+            TransactionRetries.Add(1);
+        }
         catch (Exception) { /* Diagnostics must not prevent transaction retries. */ }
     }
 
@@ -81,19 +88,28 @@ internal static partial class RespireTelemetry
 
     internal static void RecordHedgeSent(RespireConnection connection)
     {
-        try { HedgesSent.Add(1, new("server.address", connection.Host), new("server.port", connection.Port)); }
+        try
+        {
+            HedgesSent.Add(1, new("server.address", connection.Host), new("server.port", connection.Port));
+        }
         catch (Exception) { /* Diagnostics cannot prevent a read from completing. */ }
     }
 
     internal static void RecordHedgeWon(RespireConnection connection)
     {
-        try { HedgesWon.Add(1, new("server.address", connection.Host), new("server.port", connection.Port)); }
+        try
+        {
+            HedgesWon.Add(1, new("server.address", connection.Host), new("server.port", connection.Port));
+        }
         catch (Exception) { /* Diagnostics cannot prevent a read from completing. */ }
     }
 
     internal static void RecordHedgeExtraLoad(RespireConnection connection, bool sent)
     {
-        try { HedgeExtraLoad.Record(sent ? 1d : 0d, new("server.address", connection.Host), new("server.port", connection.Port)); }
+        try
+        {
+            HedgeExtraLoad.Record(sent ? 1d : 0d, new("server.address", connection.Host), new("server.port", connection.Port));
+        }
         catch (Exception) { /* Diagnostics cannot prevent a read from completing. */ }
     }
 
@@ -105,7 +121,10 @@ internal static partial class RespireTelemetry
 
     internal static void RecordSentinelGuardedLoggingFailure()
     {
-        try { SentinelGuardedLoggingFailures.Add(1); }
+        try
+        {
+            SentinelGuardedLoggingFailures.Add(1);
+        }
         catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
         {
             // A failing metrics listener must not replace the logger failure or stop recovery.
@@ -127,13 +146,24 @@ internal static partial class RespireTelemetry
                 new KeyValuePair<string, object?>("server.address", host),
                 new KeyValuePair<string, object?>("server.port", port),
                 new KeyValuePair<string, object?>("respire.authentication.stage", stage),
-                new KeyValuePair<string, object?>("respire.authentication.outcome", succeeded switch { true => "success", false => "failure", null => "retry" }));
+                new KeyValuePair<string, object?>(
+                    "respire.authentication.outcome",
+                    succeeded switch
+                    {
+                        true => "success",
+                        false => "failure",
+                        null => "retry"
+                    }
+                ));
         }
         catch { /* Instrumentation must not change authentication or transport state. */ }
+
         try
         {
             if (succeeded == false)
+            {
                 logger?.CredentialRefreshFailed(stage, host, port);
+            }
         }
         catch { /* User loggers must not terminate renewal. */ }
     }
@@ -161,7 +191,11 @@ internal static partial class RespireTelemetry
 
     internal static void RecordMaintenanceNotification(string host, int port, string kind)
     {
-        if (!IsMetricEnabled(RespireMetricGroups.Resiliency, MaintenanceNotifications)) return;
+        if (!IsMetricEnabled(RespireMetricGroups.Resiliency, MaintenanceNotifications))
+        {
+            return;
+        }
+
         TagList tags = default;
         tags.Add(LibraryTag);
         tags.Add(SystemTag);
@@ -197,6 +231,7 @@ internal static partial class RespireTelemetry
                 new KeyValuePair<string, object?>("respire.coordination.cleanup.reason", reason));
         }
         catch { /* Instrumentation must not change cleanup behaviour. */ }
+
         try
         {
             logger?.CoordinationCleanupAbandoned(primitive, stage, reason);
@@ -256,7 +291,12 @@ internal static partial class RespireTelemetry
             }
             catch { /* Metrics listeners must not change health decisions. */ }
         }
-        if (!FailoverSwitches.Enabled) return;
+
+        if (!FailoverSwitches.Enabled)
+        {
+            return;
+        }
+
         try
         {
             FailoverSwitches.Add(1,
@@ -310,6 +350,7 @@ internal static partial class RespireTelemetry
             var address = new KeyValuePair<string, object?>("server.address", endpoint.Host);
             var port = new KeyValuePair<string, object?>("server.port", endpoint.Port);
             var scopeTag = new KeyValuePair<string, object?>("respire.reconnect.scope", scope);
+
             if (delay is { } scheduled)
             {
                 ReconnectAttempts.Record(attempt, address, port, scopeTag);
@@ -323,9 +364,13 @@ internal static partial class RespireTelemetry
         catch (Exception error)
         {
             // Meter listeners are user code and must not change discovery or its budget.
-            try { logger?.ReconnectTelemetryObserverFailed(scope, error); }
+            try
+            {
+                logger?.ReconnectTelemetryObserverFailed(scope, error);
+            }
             catch (Exception logError) when (logError is not OutOfMemoryException)
-            { /* User loggers must not interrupt discovery or recovery notifications. */ }
+            { /* User loggers must not interrupt discovery or recovery notifications. */
+            }
         }
     }
 
@@ -362,7 +407,11 @@ internal static partial class RespireTelemetry
     internal static void RecordPublication(string? operation, in RespValue response)
     {
         if (!ShouldRecordPublication(in response) || response.AsInteger() < 0
-            || !TryGetPublicationKind(operation, out var sharded)) return;
+            || !TryGetPublicationKind(operation, out var sharded))
+        {
+            return;
+        }
+
         AddPubSubMessage(received: false, sharded);
     }
 
@@ -370,35 +419,65 @@ internal static partial class RespireTelemetry
     {
         // The length check rejects almost every other command before a case-insensitive compare.
         sharded = false;
-        if (operation is not { Length: 7 or 8 }) return false;
+
+        if (operation is not { Length: 7 or 8 })
+        {
+            return false;
+        }
+
         sharded = string.Equals(operation, "SPUBLISH", StringComparison.OrdinalIgnoreCase);
         return sharded || string.Equals(operation, "PUBLISH", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static void RecordReceivedMessage(bool sharded)
     {
-        if (IsMetricEnabled(RespireMetricGroups.PubSub, PubSubMessages)) AddPubSubMessage(received: true, sharded);
+        if (IsMetricEnabled(RespireMetricGroups.PubSub, PubSubMessages))
+        {
+            AddPubSubMessage(received: true, sharded);
+        }
     }
 
     private static void AddPubSubMessage(bool received, bool sharded)
     {
         var tags = new TagList { LibraryTag, SystemTag, received ? ReceivedTag : PublishedTag, sharded ? ShardedTag : RegularTag };
-        try { PubSubMessages.Add(1, in tags); }
+
+        try
+        {
+            PubSubMessages.Add(1, in tags);
+        }
         catch { /* A listener must not change publication or subscription outcomes. */ }
     }
 
     internal static void RecordStreamProcessingStart(RespireStreamId id, TimeProvider? clock = null)
     {
-        if (!IsMetricEnabled(RespireMetricGroups.Streaming, StreamLag)) return;
+        if (!IsMetricEnabled(RespireMetricGroups.Streaming, StreamLag))
+        {
+            return;
+        }
+
         var text = id.Value.AsSpan();
         var separator = text.IndexOf('-');
+
         if (separator <= 0 || separator == text.Length - 1
             || !ulong.TryParse(text[..separator], NumberStyles.None, CultureInfo.InvariantCulture, out var milliseconds)
-            || !ulong.TryParse(text[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out _)) return;
+            || !ulong.TryParse(text[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out _))
+        {
+            return;
+        }
+
         var now = (clock ?? TimeProvider.System).GetUtcNow().ToUnixTimeMilliseconds();
-        if (now < 0 || milliseconds > (ulong)now) return;
+
+        if (now < 0 || milliseconds > (ulong)now)
+        {
+            return;
+        }
+
         var seconds = (now - (long)milliseconds) / 1000d;
-        try { StreamLag.Record(seconds, LibraryTag, SystemTag); }
+
+        try
+        {
+            StreamLag.Record(seconds, LibraryTag, SystemTag);
+        }
         catch { /* Observability must not prevent the application from processing an entry. */ }
     }
 
@@ -412,8 +491,15 @@ internal static partial class RespireTelemetry
 
     internal static void RecordCacheRequest(bool hit)
     {
-        if (!IsMetricEnabled(RespireMetricGroups.ClientSideCaching, ClientCacheRequests)) return;
-        try { ClientCacheRequests.Add(1, LibraryTag, SystemTag, new("redis.client.csc.result", hit ? "hit" : "miss")); }
+        if (!IsMetricEnabled(RespireMetricGroups.ClientSideCaching, ClientCacheRequests))
+        {
+            return;
+        }
+
+        try
+        {
+            ClientCacheRequests.Add(1, LibraryTag, SystemTag, new("redis.client.csc.result", hit ? "hit" : "miss"));
+        }
         catch { /* Metrics listeners must not change cache results. */ }
     }
 
@@ -431,11 +517,21 @@ internal static partial class RespireTelemetry
 
     internal static void RecordCacheEvictions(long count, string? reason = null)
     {
-        if (!IsMetricEnabled(RespireMetricGroups.ClientSideCaching, ClientCacheEvictions) || count <= 0) return;
+        if (!IsMetricEnabled(RespireMetricGroups.ClientSideCaching, ClientCacheEvictions) || count <= 0)
+        {
+            return;
+        }
+
         try
         {
-            if (reason is null) ClientCacheEvictions.Add(count, LibraryTag, SystemTag);
-            else ClientCacheEvictions.Add(count, LibraryTag, SystemTag, new("redis.client.csc.reason", reason));
+            if (reason is null)
+            {
+                ClientCacheEvictions.Add(count, LibraryTag, SystemTag);
+            }
+            else
+            {
+                ClientCacheEvictions.Add(count, LibraryTag, SystemTag, new("redis.client.csc.reason", reason));
+            }
         }
         catch { /* Metrics listeners must not interrupt removal or invalidation. */ }
     }
@@ -481,7 +577,10 @@ internal static partial class RespireTelemetry
         /// <summary>Freezes duration before publishing completion, independently of delayed consumption.</summary>
         internal void MarkCompleted()
         {
-            if (_timestamp != 0) _completedTimestamp = Stopwatch.GetTimestamp();
+            if (_timestamp != 0)
+            {
+                _completedTimestamp = Stopwatch.GetTimestamp();
+            }
         }
 
         /// <summary>Consumes the observation once and isolates listener failures from the command outcome.</summary>
@@ -492,8 +591,17 @@ internal static partial class RespireTelemetry
             var completed = _completedTimestamp;
             var suppressRetirement = _suppressRetirement;
             this = default;
-            if (suppressRetirement && error is RespireConnectionRetiredException) return;
-            if (connection is null || timestamp == 0 || !OperationDuration.Enabled) return;
+
+            if (suppressRetirement && error is RespireConnectionRetiredException)
+            {
+                return;
+            }
+
+            if (connection is null || timestamp == 0 || !OperationDuration.Enabled)
+            {
+                return;
+            }
+
             try
             {
                 var seconds = completed == 0 ? Stopwatch.GetElapsedTime(timestamp).TotalSeconds
@@ -515,12 +623,18 @@ internal static partial class RespireTelemetry
             { "db.namespace", databaseNamespace },
             { "server.address", host },
         };
-        if (port != DefaultRedisPort) tags.Add("server.port", port);
+
+        if (port != DefaultRedisPort)
+        {
+            tags.Add("server.port", port);
+        }
+
         if (peerAddress is not null)
         {
             tags.Add("network.peer.address", peerAddress);
             tags.Add("network.peer.port", peerPort);
         }
+
         return tags;
     }
 
@@ -543,12 +657,30 @@ internal static partial class RespireTelemetry
     private static bool IsBatchMetricEnabled<T>(string prefix, IReadOnlyList<T> operations, Func<T, string> operationName)
     {
         var selection = RespireMetrics.Current;
-        if (!selection.Includes(RespireMetricGroups.Command) || !OperationDuration.Enabled) return false;
-        if (!selection.HasCommandFilters) return true;
-        if ((prefix is "WAIT" or "WAITAOF") && !selection.IncludesCommand(prefix)) return false;
+
+        if (!selection.Includes(RespireMetricGroups.Command) || !OperationDuration.Enabled)
+        {
+            return false;
+        }
+
+        if (!selection.HasCommandFilters)
+        {
+            return true;
+        }
+
+        if ((prefix is "WAIT" or "WAITAOF") && !selection.IncludesCommand(prefix))
+        {
+            return false;
+        }
         // One measurement covers the whole pipeline/transaction: suppress it if any member is excluded.
         for (var i = 0; i < operations.Count; i++)
-            if (!selection.IncludesCommand(operationName(operations[i]))) return false;
+        {
+            if (!selection.IncludesCommand(operationName(operations[i])))
+            {
+                return false;
+            }
+        }
+
         return operations.Count != 0 || selection.IncludesCommand(prefix);
     }
 
@@ -557,23 +689,55 @@ internal static partial class RespireTelemetry
 
     private static bool IsBatchTraceEnabled<T>(string prefix, IReadOnlyList<T> operations, Func<T, string> operationName)
     {
-        if (!Source.HasListeners()) return false;
+        if (!Source.HasListeners())
+        {
+            return false;
+        }
+
         var filter = RespireTracing.CommandFilter;
-        if (filter is null) return true;
-        if (operations.Count == 0) return RespireTracing.IncludesCommand(filter, prefix);
-        if ((prefix is "WAIT" or "WAITAOF") && !RespireTracing.IncludesCommand(filter, prefix)) return false;
+
+        if (filter is null)
+        {
+            return true;
+        }
+
+        if (operations.Count == 0)
+        {
+            return RespireTracing.IncludesCommand(filter, prefix);
+        }
+
+        if ((prefix is "WAIT" or "WAITAOF") && !RespireTracing.IncludesCommand(filter, prefix))
+        {
+            return false;
+        }
+
         for (var i = 0; i < operations.Count; i++)
-            if (!RespireTracing.IncludesCommand(filter, operationName(operations[i]))) return false;
+        {
+            if (!RespireTracing.IncludesCommand(filter, operationName(operations[i])))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 
     internal static void RecordUnroutedBatchFailure<T>(string prefix, IReadOnlyList<T> operations,
         Func<T, string> operationName, int database, OperationStart started, Exception error, RespireEndpoint? endpoint = null)
     {
-        if (started.Timestamp == 0) return;
+        if (started.Timestamp == 0)
+        {
+            return;
+        }
+
         var metricEnabled = started.MetricEnabled;
         var traceEnabled = IsBatchTraceEnabled(prefix, operations, operationName);
-        if (!traceEnabled && !metricEnabled) return;
+
+        if (!traceEnabled && !metricEnabled)
+        {
+            return;
+        }
+
         var operation = BatchOperationName(prefix, operations, operationName);
         int? batchSize = operations.Count == 1 ? null : operations.Count;
         StartOperationCore(operation, endpoint?.Host, endpoint?.Port ?? DefaultRedisPort, database,
@@ -584,7 +748,10 @@ internal static partial class RespireTelemetry
     internal static void RecordUnroutedFailure(string operation, int database, OperationStart started,
         Exception error, string? storedProcedureName = null, int? batchSize = null, RespireEndpoint? endpoint = null)
     {
-        if (started.Timestamp == 0) return;
+        if (started.Timestamp == 0)
+        {
+            return;
+        }
         // No data connection was acquired. Use an endpoint only when the caller can identify
         // the intended server; never identify a Sentinel seed or historical generation.
         var host = endpoint?.Host;
@@ -603,7 +770,11 @@ internal static partial class RespireTelemetry
 
     public static void RecordSubscriptionGap(RespireSubscriptionKind kind, RespireSubscriptionGapReason reason)
     {
-        if (!SubscriptionGaps.Enabled) return;
+        if (!SubscriptionGaps.Enabled)
+        {
+            return;
+        }
+
         SubscriptionGaps.Add(1,
             new KeyValuePair<string, object?>("respire.subscription.kind", kind.ToString()),
             new KeyValuePair<string, object?>("respire.subscription.gap.reason", reason.ToString()));
@@ -643,6 +814,7 @@ internal static partial class RespireTelemetry
         }
 
         Activity? activity = null;
+
         if (traceEnabled)
         {
             var tags = new ActivityTagsCollection
@@ -651,10 +823,15 @@ internal static partial class RespireTelemetry
                 { "db.namespace", databaseNamespace ?? database.ToString(CultureInfo.InvariantCulture) },
                 { "db.operation.name", operation },
             };
+
             if (host is not null)
             {
                 tags.Add("server.address", host);
-                if (port != DefaultRedisPort) tags.Add("server.port", port);
+
+                if (port != DefaultRedisPort)
+                {
+                    tags.Add("server.port", port);
+                }
             }
 
             if (batchSize is not null)
@@ -676,7 +853,11 @@ internal static partial class RespireTelemetry
                 startTime: started == 0 ? default : DateTimeOffset.UtcNow - Stopwatch.GetElapsedTime(started));
         }
 
-        if (metricEnabled && started == 0) started = Stopwatch.GetTimestamp();
+        if (metricEnabled && started == 0)
+        {
+            started = Stopwatch.GetTimestamp();
+        }
+
         return new OperationScope(activity, metricEnabled ? started : 0);
     }
 
@@ -691,6 +872,7 @@ internal static partial class RespireTelemetry
     {
         var metricEnabled = started?.MetricEnabled ?? IsBatchMetricEnabled(prefix, operations, operationName);
         var traceEnabled = IsBatchTraceEnabled(prefix, operations, operationName);
+
         if (!traceEnabled && !metricEnabled)
         {
             operation = prefix;
@@ -714,6 +896,7 @@ internal static partial class RespireTelemetry
     {
         var metricEnabled = started?.MetricEnabled ?? IsBatchMetricEnabled(prefix, operations, operationName);
         var traceEnabled = IsBatchTraceEnabled(prefix, operations, operationName);
+
         if (!traceEnabled && !metricEnabled)
         {
             operation = prefix;
@@ -741,6 +924,7 @@ internal static partial class RespireTelemetry
         if (operations.Count > 1)
         {
             var first = operationName(operations[0]);
+
             for (var i = 1; i < operations.Count; i++)
             {
                 if (!string.Equals(first, operationName(operations[i]), StringComparison.Ordinal))
@@ -765,24 +949,34 @@ internal static partial class RespireTelemetry
     internal static void AttachCancellationDiagnostics(OperationCanceledException error,
         RespireConnection connection, long writeStart, long writeEnd, RespireCommandStage stage = RespireCommandStage.Unknown)
     {
-        try { CancellationDiagnostics.AddOrUpdate(error, connection.CaptureTimeoutDiagnostics(writeStart, writeEnd, stage)); }
+        try
+        {
+            CancellationDiagnostics.AddOrUpdate(error, connection.CaptureTimeoutDiagnostics(writeStart, writeEnd, stage));
+        }
         catch { /* Diagnostics must not change cancellation. */ }
     }
 
     private static void SetCancellationTags(Activity activity, Exception error)
     {
         if (error is not OperationCanceledException)
+        {
             return;
+        }
 
         RespireTimeoutDiagnostics? diagnostics = null;
+
         for (var current = error; current is not null && diagnostics is null; current = current.InnerException)
         {
             if (current is OperationCanceledException cancelled)
+            {
                 CancellationDiagnostics.TryGetValue(cancelled, out diagnostics);
+            }
         }
 
         if (diagnostics is null)
+        {
             return;
+        }
 
         activity.SetTag("respire.command.stage", diagnostics.Stage.ToString());
         activity.SetTag("respire.connection.id", diagnostics.ConnectionId);
@@ -796,7 +990,11 @@ internal static partial class RespireTelemetry
     {
         internal void UpdateServerEndpoint(string host, int port)
         {
-            if (activity is null) return;
+            if (activity is null)
+            {
+                return;
+            }
+
             activity.SetTag("server.address", host);
             activity.SetTag("server.port", port == DefaultRedisPort ? (int?)null : port);
         }
@@ -809,7 +1007,11 @@ internal static partial class RespireTelemetry
             RespireConnection? connection = null,
             int? batchSize = null)
         {
-            if (activity is null && startTimestamp == 0) return;
+            if (activity is null && startTimestamp == 0)
+            {
+                return;
+            }
+
             var endpoint = connection is null ? core.Endpoint : new RespireEndpoint(connection.Host, connection.Port);
             Complete(operation, endpoint.Host, endpoint.Port, core.Options.Database,
                 storedProcedureName, error, connection, batchSize);
@@ -838,6 +1040,7 @@ internal static partial class RespireTelemetry
             var peerPort = connection?.NetworkPeerPort;
 
             double? activityDurationSeconds = null;
+
             if (activity is not null)
             {
                 if (peerAddress is not null)
@@ -849,13 +1052,18 @@ internal static partial class RespireTelemetry
                 if (error is not null)
                 {
                     activity.SetTag("error.type", errorType);
+
                     if (responseStatusCode is not null)
                     {
                         activity.SetTag("db.response.status_code", responseStatusCode);
                     }
 
                     activity.SetStatus(ActivityStatusCode.Error, errorType);
-                    if (activity.IsAllDataRequested) SetCancellationTags(activity, error);
+
+                    if (activity.IsAllDataRequested)
+                    {
+                        SetCancellationTags(activity, error);
+                    }
                 }
 
                 activity.Stop();
@@ -895,6 +1103,7 @@ internal static partial class RespireTelemetry
         int database, Exception? error, RespireConnection? connection, int? batchSize)
     {
         TagList tags;
+
         if (connection is not null && connection.OperationMetricDatabase == database
             && connection.Host == host && connection.Port == port)
         {
@@ -908,14 +1117,20 @@ internal static partial class RespireTelemetry
                 { "db.system.name", DatabaseSystem },
                 { "db.namespace", database.ToString(CultureInfo.InvariantCulture) },
             };
+
             if (host is not null)
             {
                 tags.Add("server.address", host);
-                if (port != DefaultRedisPort) tags.Add("server.port", port);
+
+                if (port != DefaultRedisPort)
+                {
+                    tags.Add("server.port", port);
+                }
             }
 
             var peerAddress = connection?.NetworkPeerAddress;
             var peerPort = connection?.NetworkPeerPort;
+
             if (peerAddress is not null)
             {
                 tags.Add("network.peer.address", peerAddress);
@@ -924,14 +1139,22 @@ internal static partial class RespireTelemetry
         }
 
         tags.Add("db.operation.name", MetricNames.GetName(operation));
-        if (batchSize is not null) tags.Add("db.operation.batch.size", batchSize.Value);
+
+        if (batchSize is not null)
+        {
+            tags.Add("db.operation.batch.size", batchSize.Value);
+        }
 
         if (error is not null)
         {
             tags.Add("error.type", OperationScope.ErrorType(error));
             var responseStatusCode = RespireException.GetDefinitiveServerError(error) is { Code.Length: > 0 } serverError
                 ? serverError.Code : null;
-            if (responseStatusCode is not null) tags.Add("db.response.status_code", responseStatusCode);
+
+            if (responseStatusCode is not null)
+            {
+                tags.Add("db.response.status_code", responseStatusCode);
+            }
         }
 
         OperationDuration.Record(seconds, tags);

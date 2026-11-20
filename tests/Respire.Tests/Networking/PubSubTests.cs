@@ -136,6 +136,7 @@ public class PubSubTests
         await server.SendRawAsync(
             "*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$1\r\nc\r\n"u8.ToArray());
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (subscription.DroppedMessages != 2)
         {
             await Task.Delay(10, cts.Token);
@@ -143,13 +144,16 @@ public class PubSubTests
 
         await using var enumerator = subscription.GetAsyncEnumerator();
         await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+
         if (overflow == RespireSubscriptionOverflow.DropOldest)
         {
             await Assert.That(enumerator.Current.Kind).IsEqualTo(RespireMessageKind.Gap);
             await Assert.That(enumerator.Current.Gap!.DroppedMessages).IsEqualTo(2);
             await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
         }
+
         await Assert.That(enumerator.Current.Text).IsEqualTo(retainedMessage);
+
         if (overflow == RespireSubscriptionOverflow.DropNewest)
         {
             await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
@@ -182,6 +186,7 @@ public class PubSubTests
         await server.SendRawAsync(
             "*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$1\r\nb\r\n"u8.ToArray());
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (subscription.DroppedMessages != 1)
         {
             await Task.Delay(10, cts.Token);
@@ -208,7 +213,10 @@ public class PubSubTests
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
+            if (change.State == RespireConnectionState.Connected)
+            {
+                recovered.TrySetResult();
+            }
         };
         using var cts = new CancellationTokenSource();
         var failedSubscription = client.SubscribeAsync("ch", cancellationToken: cts.Token).AsTask();
@@ -244,6 +252,7 @@ public class PubSubTests
     private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (server.CommandsSeen < count)
         {
             await Task.Delay(10, cts.Token);
@@ -284,6 +293,7 @@ public class PubSubTests
             "127.0.0.1", server.Port, new RespireConnectionOptions());
 
         await controlGate.WaitAsync();
+
         try
         {
             // Disposal snapshots no connection, then waits behind a reconnect control operation.

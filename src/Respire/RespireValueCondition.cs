@@ -19,7 +19,11 @@ public sealed class RespireValueCondition
     }
 
     internal ReadOnlyMemory<byte> Token => _token;
-    internal RespireValue Operand { get; }
+
+    internal RespireValue Operand
+    {
+        get;
+    }
 
     /// <summary>Compare the current string bytes for equality. SET: Redis 8.4+ or Valkey 8.1+; DELEX: Redis 8.4+.</summary>
     public static RespireValueCondition EqualTo(RespireValue value) => new(EqualToken, value);

@@ -26,19 +26,30 @@ public partial class Json810IntegrationTests(ModernRedisTestContainer fixture)
         document.TryGetProperty("remove", out _).Should().BeFalse();
         document.GetProperty("nested").GetProperty("old").GetInt32().Should().Be(3);
         document.GetProperty("nested").GetProperty("new").GetInt32().Should().Be(4);
+
         using (var length = await json.Commands.ArrayLengthAsync("doc", ".items"))
+        {
             length.AsInteger().Should().Be(1);
+        }
+
         using (var lengths = await json.Commands.ArrayLengthAsync("doc", "$.items"))
         {
             lengths.Count.Should().Be(1);
             lengths[0].AsInteger().Should().Be(1);
         }
+
         using (var mismatch = await json.Commands.ArrayLengthAsync("doc", "$.keep"))
+        {
             mismatch[0].IsNull.Should().BeTrue();
+        }
+
         await json.Commands.Awaiting(commands => commands.ArrayLengthAsync("missing", "$").AsTask())
             .Should().ThrowAsync<RespireServerException>();
+
         using (var unmatched = await json.Commands.ArrayLengthAsync("doc", "$.absent"))
+        {
             unmatched.Count.Should().Be(0);
+        }
 
         var replacement = JsonSerializer.Deserialize("[8,9]", Json810Context.Default.JsonElement);
         await json.MergeAsync("doc", replacement, Json810Context.Default.JsonElement);
@@ -56,16 +67,29 @@ public partial class Json810IntegrationTests(ModernRedisTestContainer fixture)
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var json = client.WithKeyPrefix($"json810:{Guid.NewGuid():N}:").Json;
         await json.SetJsonAsync("doc", """{"n":3,"items":[1,2]}""");
+
         using (var power = await json.Commands.NumberPowerByAsync("doc", "$.n", 2))
         {
-            if (protocol == 2) power.AsString().Should().Be("[9]");
-            else power[0].AsDouble().Should().Be(9);
+            if (protocol == 2)
+            {
+                power.AsString().Should().Be("[9]");
+            }
+            else
+            {
+                power[0].AsDouble().Should().Be(9);
+            }
         }
+
         using (var power = await json.Commands.NumberPowerByAsync("doc", ".n", 0.5))
         {
             if (protocol == 2)
+            {
                 double.Parse(power.AsString()!, System.Globalization.CultureInfo.InvariantCulture).Should().Be(3);
-            else power[0].AsDouble().Should().Be(3);
+            }
+            else
+            {
+                power[0].AsDouble().Should().Be(3);
+            }
         }
 
         (string Path, double Expected)[] projections =
@@ -77,6 +101,7 @@ public partial class Json810IntegrationTests(ModernRedisTestContainer fixture)
             ("(2 * $.n)", 6),
             ("- $.n", -3),
         ];
+
         foreach (var (path, expected) in projections)
         {
             var result = await json.GetAsync("doc", Json810Context.Default.Double, RespireJsonPath.Projection(path));

@@ -1,6 +1,6 @@
+using global::Respire;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using global::Respire;
 
 namespace Respire.Aspire;
 
@@ -17,7 +17,10 @@ public sealed class AspireRespireClientBuilder
     }
 
     /// <summary>The host that owns the client.</summary>
-    public IHostApplicationBuilder HostBuilder { get; }
+    public IHostApplicationBuilder HostBuilder
+    {
+        get;
+    }
 
     /// <summary>Returns a detached snapshot of settings applied during registration.</summary>
     /// <remarks>Changing the returned copy does not reconfigure the client or host integrations.
@@ -25,7 +28,10 @@ public sealed class AspireRespireClientBuilder
     public RespireClientSettings Settings => _settings.Copy();
 
     /// <summary>The keyed service name, or null for the default client.</summary>
-    public string? ServiceKey { get; }
+    public string? ServiceKey
+    {
+        get;
+    }
 
     /// <summary>Resolves this registration's existing client. Cache helpers do not own or dispose that client.</summary>
     public IRespireClient GetClient(IServiceProvider services)

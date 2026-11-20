@@ -21,18 +21,35 @@ public class DedicatedPoolBenchmarks
         _pool = new DedicatedConnectionPool(_redis.Hostname, _redis.GetMappedPublicPort(6379),
             RespireConnectionOptions.Default, null);
         var connections = new RespireConnection[4];
-        for (var i = 0; i < connections.Length; i++) connections[i] = await _pool.RentAsync(CancellationToken.None);
-        foreach (var connection in connections) _pool.Return(connection);
+
+        for (var i = 0; i < connections.Length; i++)
+        {
+            connections[i] = await _pool.RentAsync(CancellationToken.None);
+        }
+
+        foreach (var connection in connections)
+        {
+            _pool.Return(connection);
+        }
         // Ensure setup produced a usable, reusable lease before any measurement.
         var rented = await _pool.RentAsync(CancellationToken.None);
-        if (!rented.IsConnected) throw new InvalidOperationException("Dedicated lease is not connected.");
+
+        if (!rented.IsConnected)
+        {
+            throw new InvalidOperationException("Dedicated lease is not connected.");
+        }
+
         _pool.Return(rented);
     }
 
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_pool is not null) await _pool.DisposeAsync();
+        if (_pool is not null)
+        {
+            await _pool.DisposeAsync();
+        }
+
         await _redis.DisposeAsync();
     }
 

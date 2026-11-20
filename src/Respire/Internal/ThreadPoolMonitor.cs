@@ -29,21 +29,29 @@ internal sealed class ThreadPoolMonitor
     {
         // Ensure observable instruments exist even before the first Redis command.
         _ = RespireTelemetry.ThreadPoolSchedulingDelay;
+
         lock (Gate)
         {
             var start = _current is null;
             var monitor = _current ??= new ThreadPoolMonitor();
             var lease = new Lease(monitor, logger, warningThreshold);
             monitor._leases = [.. monitor._leases, lease];
+
             if (start)
             {
                 try
                 {
                     // This process-wide thread must not retain the creating request's AsyncLocals.
-                    if (ExecutionContext.IsFlowSuppressed()) monitor._thread.Start();
+                    if (ExecutionContext.IsFlowSuppressed())
+                    {
+                        monitor._thread.Start();
+                    }
                     else
                     {
-                        using (ExecutionContext.SuppressFlow()) monitor._thread.Start();
+                        using (ExecutionContext.SuppressFlow())
+                        {
+                            monitor._thread.Start();
+                        }
                     }
                 }
                 catch
@@ -54,6 +62,7 @@ internal sealed class ThreadPoolMonitor
                     throw;
                 }
             }
+
             return lease;
         }
     }
@@ -62,7 +71,10 @@ internal sealed class ThreadPoolMonitor
     {
         lock (Gate)
         {
-            if (ReferenceEquals(_current, this)) SharedProbe.QueueIfCompleted();
+            if (ReferenceEquals(_current, this))
+            {
+                SharedProbe.QueueIfCompleted();
+            }
         }
     }
 
@@ -71,15 +83,23 @@ internal sealed class ThreadPoolMonitor
     private sealed class Probe : IThreadPoolWorkItem
     {
         // Reads and requeue are serialized by Gate; only the current sampler can requeue.
-        internal long QueuedAt { get; private set; }
+        internal long QueuedAt
+        {
+            get; private set;
+        }
         private long _completedAt;
+
         internal long CompletedAt => Volatile.Read(ref _completedAt);
 
         internal void QueueIfCompleted()
         {
             // Preserve the original timestamp across monitor restarts while this work
             // item is pending: resetting it would hide the actual scheduling delay.
-            if (QueuedAt != 0 && CompletedAt == 0) return;
+            if (QueuedAt != 0 && CompletedAt == 0)
+            {
+                return;
+            }
+
             QueuedAt = Stopwatch.GetTimestamp();
             Volatile.Write(ref _completedAt, 0);
             ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: false);
@@ -93,6 +113,7 @@ internal sealed class ThreadPoolMonitor
         try
         {
             QueueProbe();
+
             while (!_stop.Wait(Interval))
             {
                 ThreadPool.GetAvailableThreads(out var available, out _);
@@ -102,11 +123,16 @@ internal sealed class ThreadPoolMonitor
                 long completed;
                 RespireThreadPoolSnapshot sample;
                 Lease[] observers;
+
                 lock (Gate)
                 {
                     // A replacement sampler can start before this thread exits; only
                     // the current instance may publish a sample or requeue the probe.
-                    if (!ReferenceEquals(_current, this)) return;
+                    if (!ReferenceEquals(_current, this))
+                    {
+                        return;
+                    }
+
                     now = Stopwatch.GetTimestamp();
                     completed = SharedProbe.CompletedAt;
                     sample = new RespireThreadPoolSnapshot(DateTimeOffset.UtcNow,
@@ -115,8 +141,16 @@ internal sealed class ThreadPoolMonitor
                     Volatile.Write(ref _latest, sample);
                     observers = _leases;
                 }
-                foreach (var observer in observers) observer.Observe(sample, now);
-                if (completed != 0 && !_stop.IsSet) QueueProbe();
+
+                foreach (var observer in observers)
+                {
+                    observer.Observe(sample, now);
+                }
+
+                if (completed != 0 && !_stop.IsSet)
+                {
+                    QueueProbe();
+                }
             }
         }
         finally
@@ -134,12 +168,22 @@ internal sealed class ThreadPoolMonitor
         lock (Gate)
         {
             var index = Array.IndexOf(_leases, lease);
-            if (index < 0) return;
+
+            if (index < 0)
+            {
+                return;
+            }
+
             var remaining = new Lease[_leases.Length - 1];
             _leases.AsSpan(0, index).CopyTo(remaining);
             _leases.AsSpan(index + 1).CopyTo(remaining.AsSpan(index));
             _leases = remaining;
-            if (_leases.Length != 0) return;
+
+            if (_leases.Length != 0)
+            {
+                return;
+            }
+
             if (ReferenceEquals(_current, this))
             {
                 _current = null;
@@ -149,7 +193,10 @@ internal sealed class ThreadPoolMonitor
         // Do not wait for a starved pool callback or a user logger during client disposal.
         lock (_stopGate)
         {
-            if (!_stopDisposed) _stop.Set();
+            if (!_stopDisposed)
+            {
+                _stop.Set();
+            }
         }
     }
 
@@ -162,8 +209,13 @@ internal sealed class ThreadPoolMonitor
         internal void Observe(RespireThreadPoolSnapshot sample, long now)
         {
             if (Volatile.Read(ref _disposed) != 0 || logger is null || sample.SchedulingDelay < threshold
-                || _lastWarning != 0 && Stopwatch.GetElapsedTime(_lastWarning, now) < WarningInterval) return;
+                || _lastWarning != 0 && Stopwatch.GetElapsedTime(_lastWarning, now) < WarningInterval)
+            {
+                return;
+            }
+
             _lastWarning = now;
+
             try
             {
                 logger.ThreadPoolSchedulingDelayed(sample.SchedulingDelay.TotalMilliseconds, sample.IsPending, sample.BusyWorkerThreads, sample.MinWorkerThreads, sample.PendingWorkItems);
@@ -176,17 +228,23 @@ internal sealed class ThreadPoolMonitor
 
         public void Dispose()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) == 0) owner.Release(this);
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                owner.Release(this);
+            }
         }
     }
 
     // Observable callbacks allocate only when a metrics consumer collects a sample.
     internal static IEnumerable<Measurement<double>> ObserveDelay()
         => Latest is { } sample ? [new(sample.SchedulingDelay.TotalSeconds)] : [];
+
     internal static IEnumerable<Measurement<long>> ObserveBusyWorkers()
         => Latest is { } sample ? [new(sample.BusyWorkerThreads)] : [];
+
     internal static IEnumerable<Measurement<long>> ObserveMinimumWorkers()
         => Latest is { } sample ? [new(sample.MinWorkerThreads)] : [];
+
     internal static IEnumerable<Measurement<long>> ObservePendingWork()
         => Latest is { } sample ? [new(sample.PendingWorkItems)] : [];
 }

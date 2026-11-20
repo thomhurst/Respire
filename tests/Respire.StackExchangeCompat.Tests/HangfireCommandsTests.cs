@@ -1,10 +1,10 @@
+using Respire.Internal;
 using Respire.StackExchangeCompat;
+using Respire.Tests.Networking;
 using StackExchange.Redis;
 using TUnit.Core;
-using Assert = Xunit.Assert;
 using RedisSortedSetEntry = StackExchange.Redis.SortedSetEntry;
-using Respire.Tests.Networking;
-using Respire.Internal;
+using Assert = Xunit.Assert;
 
 namespace Respire.StackExchangeCompat.Tests;
 
@@ -29,17 +29,20 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         var database = connection.GetDatabase();
         var expected = control.GetDatabase();
         await expected.SortedSetAddAsync("length", [new("negative", double.NegativeInfinity), new("zero", 0), new("positive", double.PositiveInfinity)]);
+
         foreach (var exclude in new[] { Exclude.None, Exclude.Start, Exclude.Stop, Exclude.Both })
-        foreach (var (min, max) in new[] { (double.NegativeInfinity, double.PositiveInfinity), (double.NegativeInfinity, 0d), (0d, double.PositiveInfinity), (double.PositiveInfinity, double.NegativeInfinity) })
         {
-            var count = await expected.SortedSetLengthAsync("length", min, max, exclude);
-            Assert.Equal(count, database.SortedSetLength("length", min, max, exclude));
-            Assert.Equal(count, await database.SortedSetLengthAsync("length", min, max, exclude));
-            var batch = database.CreateBatch();
-            var pending = batch.SortedSetLengthAsync("length", min, max, exclude);
-            Assert.False(pending.IsCompleted);
-            batch.Execute();
-            Assert.Equal(count, await pending);
+            foreach (var (min, max) in new[] { (double.NegativeInfinity, double.PositiveInfinity), (double.NegativeInfinity, 0d), (0d, double.PositiveInfinity), (double.PositiveInfinity, double.NegativeInfinity) })
+            {
+                var count = await expected.SortedSetLengthAsync("length", min, max, exclude);
+                Assert.Equal(count, database.SortedSetLength("length", min, max, exclude));
+                Assert.Equal(count, await database.SortedSetLengthAsync("length", min, max, exclude));
+                var batch = database.CreateBatch();
+                var pending = batch.SortedSetLengthAsync("length", min, max, exclude);
+                Assert.False(pending.IsCompleted);
+                batch.Execute();
+                Assert.Equal(count, await pending);
+            }
         }
     }
 
@@ -51,6 +54,7 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         await using var connection = RespireConnectionMultiplexer.Wrap(client);
         var database = connection.GetDatabase();
         var commands = new List<string>();
+
         foreach (var (value, increment, decrement) in new[]
         {
             (1L, "INCR key", "DECR key"),
@@ -76,6 +80,7 @@ public class HangfireCommandsTests(RedisTestContainer redis)
             Assert.Equal(42, await decrease);
             commands.AddRange([increment, decrement, increment, decrement, increment, decrement]);
         }
+
         Assert.Equal(42, await database.StringIncrementAsync("key"));
         Assert.Equal(42, await database.StringDecrementAsync("key"));
         commands.AddRange(["INCR key", "DECR key"]);
@@ -145,18 +150,22 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         RedisSortedSetEntry[] entries = [new("negative", -2), new("zero", 0), new("a", 1), new("b", 1), new("positive", 3), new("infinity", double.PositiveInfinity)];
         Assert.Equal(6, await database.SortedSetAddAsync("sorted", entries));
         Assert.Equal(0, database.SortedSetAdd("sorted", entries));
+
         foreach (var order in new[] { Order.Ascending, Order.Descending })
         {
             Assert.Equal(expected.SortedSetRangeByRank("sorted", -4, -1, order), database.SortedSetRangeByRank("sorted", -4, -1, order));
             Assert.Equal(await expected.SortedSetRangeByRankWithScoresAsync("sorted", 0, -1, order), await database.SortedSetRangeByRankWithScoresAsync("sorted", 0, -1, order));
+
             foreach (var exclude in new[] { Exclude.None, Exclude.Start, Exclude.Stop, Exclude.Both })
             {
                 Assert.Equal(expected.SortedSetLength("sorted", 1, 2, exclude), await database.SortedSetLengthAsync("sorted", 1, 2, exclude));
                 Assert.Equal(expected.SortedSetRangeByScore("sorted", 1, 2, exclude, order), await database.SortedSetRangeByScoreAsync("sorted", 1, 2, exclude, order));
                 Assert.Equal(expected.SortedSetRangeByScoreWithScores("sorted", 0, 3, exclude, order, 1, 2), database.SortedSetRangeByScoreWithScores("sorted", 0, 3, exclude, order, 1, 2));
             }
+
             Assert.Equal(expected.SortedSetRangeByScore("sorted", order: order, skip: 2, take: -1), database.SortedSetRangeByScore("sorted", order: order, skip: 2, take: -1));
         }
+
         Assert.Equal(7, database.SortedSetLength("sorted"));
         Assert.Equal(expected.SortedSetRangeByScore("sorted", 2, 1), database.SortedSetRangeByScore("sorted", 2, 1));
         Assert.Empty(await database.SortedSetRangeByScoreWithScoresAsync("sorted", take: 0));
@@ -179,25 +188,32 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         var expected = control.GetDatabase();
         RedisSortedSetEntry[] entries = [new("negative", -1), new("zero", 0), new("one", 1), new("two", 2), new("three", 3)];
         await expected.SortedSetAddAsync("reversed", entries);
+
         foreach (var order in new[] { Order.Ascending, Order.Descending })
-        foreach (var exclude in new[] { Exclude.None, Exclude.Start, Exclude.Stop, Exclude.Both })
-        foreach (var (start, stop) in new[] { (2d, 1d), (1d, 2d), (1d, 1d), (double.PositiveInfinity, double.NegativeInfinity) })
-        foreach (var (skip, take) in new[] { (0L, -1L), (1L, 1L) })
         {
-            var values = await expected.SortedSetRangeByScoreAsync("reversed", start, stop, exclude, order, skip, take);
-            var scores = await expected.SortedSetRangeByScoreWithScoresAsync("reversed", start, stop, exclude, order, skip, take);
-            Assert.Equal(values, database.SortedSetRangeByScore("reversed", start, stop, exclude, order, skip, take));
-            Assert.Equal(values, await database.SortedSetRangeByScoreAsync("reversed", start, stop, exclude, order, skip, take));
-            Assert.Equal(scores, database.SortedSetRangeByScoreWithScores("reversed", start, stop, exclude, order, skip, take));
-            Assert.Equal(scores, await database.SortedSetRangeByScoreWithScoresAsync("reversed", start, stop, exclude, order, skip, take));
-            var batch = database.CreateBatch();
-            var batchValues = batch.SortedSetRangeByScoreAsync("reversed", start, stop, exclude, order, skip, take);
-            var batchScores = batch.SortedSetRangeByScoreWithScoresAsync("reversed", start, stop, exclude, order, skip, take);
-            Assert.False(batchValues.IsCompleted);
-            Assert.False(batchScores.IsCompleted);
-            batch.Execute();
-            Assert.Equal(values, await batchValues);
-            Assert.Equal(scores, await batchScores);
+            foreach (var exclude in new[] { Exclude.None, Exclude.Start, Exclude.Stop, Exclude.Both })
+            {
+                foreach (var (start, stop) in new[] { (2d, 1d), (1d, 2d), (1d, 1d), (double.PositiveInfinity, double.NegativeInfinity) })
+                {
+                    foreach (var (skip, take) in new[] { (0L, -1L), (1L, 1L) })
+                    {
+                        var values = await expected.SortedSetRangeByScoreAsync("reversed", start, stop, exclude, order, skip, take);
+                        var scores = await expected.SortedSetRangeByScoreWithScoresAsync("reversed", start, stop, exclude, order, skip, take);
+                        Assert.Equal(values, database.SortedSetRangeByScore("reversed", start, stop, exclude, order, skip, take));
+                        Assert.Equal(values, await database.SortedSetRangeByScoreAsync("reversed", start, stop, exclude, order, skip, take));
+                        Assert.Equal(scores, database.SortedSetRangeByScoreWithScores("reversed", start, stop, exclude, order, skip, take));
+                        Assert.Equal(scores, await database.SortedSetRangeByScoreWithScoresAsync("reversed", start, stop, exclude, order, skip, take));
+                        var batch = database.CreateBatch();
+                        var batchValues = batch.SortedSetRangeByScoreAsync("reversed", start, stop, exclude, order, skip, take);
+                        var batchScores = batch.SortedSetRangeByScoreWithScoresAsync("reversed", start, stop, exclude, order, skip, take);
+                        Assert.False(batchValues.IsCompleted);
+                        Assert.False(batchScores.IsCompleted);
+                        batch.Execute();
+                        Assert.Equal(values, await batchValues);
+                        Assert.Equal(scores, await batchScores);
+                    }
+                }
+            }
         }
     }
 
@@ -215,21 +231,40 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         Assert.Equal(7, cursor.PageSize);
         using var enumerator = scan.GetEnumerator();
         var position = Assert.IsAssignableFrom<IScanningCursor>(enumerator);
-        for (var index = 0; index < 20; index++) Assert.True(enumerator.MoveNext());
+
+        for (var index = 0; index < 20; index++)
+        {
+            Assert.True(enumerator.MoveNext());
+        }
+
         Assert.Equal(position.Cursor, cursor.Cursor);
         Assert.Equal(position.PageOffset, cursor.PageOffset);
         var current = enumerator.Current;
         var remaining = new List<RedisSortedSetEntry> { current };
-        while (enumerator.MoveNext()) remaining.Add(enumerator.Current);
+
+        while (enumerator.MoveNext())
+        {
+            remaining.Add(enumerator.Current);
+        }
         // Cursor addresses the current server page; PageOffset addresses the current entry, inclusively.
         using var start = scan.GetEnumerator();
-        for (var index = 0; index < 20; index++) Assert.True(start.MoveNext());
+
+        for (var index = 0; index < 20; index++)
+        {
+            Assert.True(start.MoveNext());
+        }
+
         var saved = (IScanningCursor)start;
         Assert.Equal(remaining, database.SortedSetScan("scan", pageSize: 7, cursor: saved.Cursor, pageOffset: saved.PageOffset));
         var asyncScan = database.SortedSetScanAsync("scan", "member:1*", pageSize: 9);
         Assert.IsAssignableFrom<IScanningCursor>(asyncScan);
         var matches = new List<RedisSortedSetEntry>();
-        await foreach (var entry in asyncScan) matches.Add(entry);
+
+        await foreach (var entry in asyncScan)
+        {
+            matches.Add(entry);
+        }
+
         Assert.Equal(values.Where(entry => ((string)entry.Element!).StartsWith("member:1", StringComparison.Ordinal)).OrderBy(entry => entry.Score), matches.OrderBy(entry => entry.Score));
         byte[] member = [0xff, 0, 0x80];
         byte[] pattern = [0xff, (byte)'*'];
@@ -262,9 +297,15 @@ public class HangfireCommandsTests(RedisTestContainer redis)
             ReplyOverride = (_, command) =>
             {
                 if (command.StartsWith("ZSCAN key 0", StringComparison.Ordinal))
+                {
                     return "*2\r\n$1\r\n7\r\n*6\r\n$1\r\na\r\n$1\r\n1\r\n$1\r\nb\r\n$1\r\n2\r\n$1\r\nc\r\n$1\r\n3\r\n"u8.ToArray();
+                }
+
                 if (command.StartsWith("ZSCAN key 7", StringComparison.Ordinal))
+                {
                     return "*2\r\n$1\r\n0\r\n*6\r\n$1\r\nd\r\n$1\r\n4\r\n$1\r\ne\r\n$1\r\n5\r\n$1\r\nf\r\n$1\r\n6\r\n"u8.ToArray();
+                }
+
                 return null;
             },
         };
@@ -274,22 +315,31 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         var consumed = 0;
         var stopAfter = pageCursor == 0 ? 2 : 5;
         IScanningCursor position;
+
         if (asynchronous)
         {
             var scan = database.SortedSetScanAsync("key", pageSize: 3);
             position = Assert.IsAssignableFrom<IScanningCursor>(scan);
+
             await foreach (var entry in scan)
             {
-                if (++consumed == stopAfter) break;
+                if (++consumed == stopAfter)
+                {
+                    break;
+                }
             }
         }
         else
         {
             var scan = database.SortedSetScan("key", pageSize: 3);
             position = Assert.IsAssignableFrom<IScanningCursor>(scan);
+
             foreach (var entry in scan)
             {
-                if (++consumed == stopAfter) break;
+                if (++consumed == stopAfter)
+                {
+                    break;
+                }
             }
         }
 
@@ -418,12 +468,14 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         var move = scan.MoveNextAsync().AsTask();
         Assert.False(move.IsCompleted);
         batch.Execute();
+
         while (await move)
         {
             found.Add(scan.Current);
             move = scan.MoveNextAsync().AsTask();
             batch.Execute();
         }
+
         Assert.Equal(values.OrderBy(entry => entry.Score), found.OrderBy(entry => entry.Score));
         database.SetAdd("wrongtype", "value");
         await using var wrong = batch.SortedSetScanAsync("wrongtype").GetAsyncEnumerator();
@@ -452,12 +504,24 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         Assert.Equal(0, database.SortedSetAdd("sorted", Array.Empty<RedisSortedSetEntry>()));
         Assert.Equal(0, database.SortedSetRemove("sorted", Array.Empty<RedisValue>()));
         Assert.Throws<NotSupportedException>(() => database.StringIncrement("counter", 1.5));
-        Assert.Throws<NotSupportedException>(() => { _ = database.StringDecrementAsync("counter", 1.5); });
+        Assert.Throws<NotSupportedException>(() =>
+        {
+            _ = database.StringDecrementAsync("counter", 1.5);
+        });
         Assert.Throws<NotSupportedException>(() => database.SortedSetAdd("sorted", "member", 0, When.NotExists));
-        Assert.Throws<NotSupportedException>(() => { _ = database.SortedSetAddAsync("sorted", [new RedisSortedSetEntry("member", 0)], SortedSetWhen.Exists); });
+        Assert.Throws<NotSupportedException>(() =>
+        {
+            _ = database.SortedSetAddAsync("sorted", [new RedisSortedSetEntry("member", 0)], SortedSetWhen.Exists);
+        });
         Assert.Throws<NotSupportedException>(() => database.SetLength("set", (CommandFlags)1));
-        Assert.Throws<NotSupportedException>(() => { _ = database.SetAddAsync("set", "value", CommandFlags.DemandReplica); });
-        Assert.Throws<NotSupportedException>(() => { _ = database.CreateBatch().StringGetAsync("counter", CommandFlags.FireAndForget); });
+        Assert.Throws<NotSupportedException>(() =>
+        {
+            _ = database.SetAddAsync("set", "value", CommandFlags.DemandReplica);
+        });
+        Assert.Throws<NotSupportedException>(() =>
+        {
+            _ = database.CreateBatch().StringGetAsync("counter", CommandFlags.FireAndForget);
+        });
         Assert.Throws<NotSupportedException>(() => database.SortedSetScan("sorted", flags: CommandFlags.FireAndForget));
         Assert.Throws<ArgumentOutOfRangeException>(() => database.SortedSetScan("sorted", pageSize: 0));
         Assert.Throws<ArgumentOutOfRangeException>(() => database.SortedSetScanAsync("sorted", pageOffset: -1));
@@ -477,13 +541,25 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         {
             ReplyOverride = (_, command) =>
             {
-                if (command.StartsWith("ZSCAN key 0", StringComparison.Ordinal)) return "*2\r\n$1\r\n1\r\n*0\r\n"u8.ToArray();
-                if (command.StartsWith("EXISTS ", StringComparison.Ordinal)) return ":0\r\n"u8.ToArray();
+                if (command.StartsWith("ZSCAN key 0", StringComparison.Ordinal))
+                {
+                    return "*2\r\n$1\r\n1\r\n*0\r\n"u8.ToArray();
+                }
+
+                if (command.StartsWith("EXISTS ", StringComparison.Ordinal))
+                {
+                    return ":0\r\n"u8.ToArray();
+                }
+
                 return null;
             },
             SuppressReply = command =>
             {
-                if (!command.StartsWith("ZSCAN key 1", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("ZSCAN key 1", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 secondPage.TrySetResult();
                 return true;
             },
@@ -491,7 +567,8 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         server.DelayCommand("ZSCAN key 0", 750);
         await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
             CommandTimeout = TimeSpan.FromSeconds(2),
         });
         var database = connection.GetDatabase();
@@ -521,14 +598,19 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("ZSCAN ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("ZSCAN ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
         };
         await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
         });
         using var cancellation = new CancellationTokenSource();
         await using var scan = connection.GetDatabase().SortedSetScanAsync("key").GetAsyncEnumerator(cancellation.Token);

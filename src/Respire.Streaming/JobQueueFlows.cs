@@ -194,9 +194,13 @@ internal static class JobQueueFlows
     {
         using var reply = await client.Scripts.ExecuteAsync(Read, [key], [node], token).ConfigureAwait(false);
         var results = new RespireJobFlowResult[reply.Count];
+
         for (var i = 0; i < results.Length; i++)
+        {
             results[i] = new(reply[i][0].AsString(), reply[i][1].AsString(),
                 reply[i][2].IsNull ? null : reply[i][2].AsBytes());
+        }
+
         return results;
     }
 }

@@ -86,12 +86,14 @@ public class SentinelReporterLedgerTests
         await Assert.That(next.Reporters).IsEquivalentTo([Second]);
         await Assert.That(next.ReconciliationPrimary).IsEqualTo(owner);
         await Assert.That(next.Ledger.Observations.Length).IsEqualTo(2);
+
         foreach (var observation in next.Ledger.Observations)
         {
             await Assert.That(observation.Source).IsEqualTo(A);
             await Assert.That(observation.OwnerAtObservation).IsEqualTo(owner);
             await Assert.That(observation.CompletedDns[0].SingleAddress).IsEqualTo(A.Host);
         }
+
         var lateDns = next.WithSourceEvidence(new(A, [B.Host]));
         await Assert.That(lateDns.Sources).IsEmpty();
         await Assert.That(lateDns.Ledger.Observations[0].CompletedDns.Length).IsEqualTo(2);
@@ -125,17 +127,24 @@ public class SentinelReporterLedgerTests
         var equivalent = original.WithSourceAddresses(source, ["::ffff:192.0.2.2", "::ffff:192.0.2.1"]);
         var changed = original.WithSourceAddresses(source, ["192.0.2.3"]);
         var random = new Random(796);
+
         for (var run = 0; run < 64; run++)
         {
             var inputs = new[] { first, equivalent, changed, first, changed };
             random.Shuffle(inputs);
             var ledger = inputs[0].Ledger;
-            foreach (var input in inputs.Skip(1)) ledger = ledger.Union(input.Ledger);
+
+            foreach (var input in inputs.Skip(1))
+            {
+                ledger = ledger.Union(input.Ledger);
+            }
+
             await Assert.That(ledger.Observations.Length).IsEqualTo(1);
             await Assert.That(ledger.Observations[0].CompletedDns.Length).IsEqualTo(2);
             await Assert.That(ledger.ContainsObservation(first.Ledger.Observations[0])).IsTrue();
             await Assert.That(ledger.ContainsObservation(changed.Ledger.Observations[0])).IsTrue();
         }
+
         await Assert.That(original.Ledger.Observations[0].CompletedDns).IsEmpty();
         await Assert.That(first.Ledger.Observations[0].CompletedDns.Length).IsEqualTo(1);
         var repeated = first.WithSourceAddresses(source, ["192.0.2.1", "192.0.2.2"]);
@@ -160,6 +169,7 @@ public class SentinelReporterLedgerTests
     public async Task SeededLedgerIdentityPreservesCanonicalAliasesPortsAndObservedOwners()
     {
         var random = new Random(1796);
+
         for (var iteration = 0; iteration < 256; iteration++)
         {
             var port = random.Next(1000, 60000);

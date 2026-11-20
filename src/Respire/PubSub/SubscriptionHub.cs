@@ -52,11 +52,18 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         RespireChannel[] names, RespireSubscriptionOptions options)
     {
         if (core.Options.CredentialProvider is not null && core.Options.Protocol != RespireProtocol.Resp3)
+        {
             throw new RespireConfigurationException("Renewable Pub/Sub credentials require Protocol = RespireProtocol.Resp3; Redis forbids AUTH while subscribed in RESP2.");
+        }
+
         ArgumentNullException.ThrowIfNull(names);
+
         if (core.Cluster is not null && names.Any(static name => name.IsNotification)
             && names.Any(static name => !name.IsNotification))
+        {
             throw new ArgumentException("Cluster notification subscriptions cannot mix notification descriptors and ordinary channels.", nameof(names));
+        }
+
         if (names.Length == 0)
         {
             throw new ArgumentException("At least one channel is required.", nameof(names));
@@ -108,10 +115,16 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation)
     {
         var subscription = CreateSubscription(kind, names, options);
+
         if (IsClusterSharded(kind))
+        {
             await ActivateShardedAsync(subscription, cancellationToken, observation).ConfigureAwait(false);
+        }
         else
+        {
             await ActivateAsync(subscription, cancellationToken, observation).ConfigureAwait(false);
+        }
+
         return subscription;
     }
 
@@ -125,16 +138,22 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     {
         await _controlGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         RespireConnection? connection = null;
+
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+
             if (core.Cluster is not null && subscription.Names.Any(static name => name.IsNotification))
             {
                 if (subscription.Names.Any(static name => !name.IsNotification))
+                {
                     throw new ArgumentException("Cluster notification subscriptions cannot mix notification descriptors and ordinary channels.", nameof(subscription));
+                }
+
                 await ActivateClusterNotificationsAsync(subscription, cancellationToken, observation).ConfigureAwait(false);
                 return;
             }
+
             connection = await EnsureConnectionAsync(cancellationToken).ConfigureAwait(false);
 
             lock (_gate)
@@ -144,6 +163,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
                 // not register routes (and subscribe server-side) on a disposed hub.
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 var routes = Routes(subscription.Kind);
+
                 foreach (var name in subscription.Names)
                 {
                     if (!routes.TryGetValue(name, out var list))
@@ -170,6 +190,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         {
             subscription.Buffer.Complete();
             RemoveRoutes(subscription);
+
             if (connection is not null)
             {
                 // A cancelled command may already be on the wire. Closing the connection clears
@@ -192,25 +213,49 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         subscription.Buffer.Complete();
         var controlGate = IsClusterSharded(subscription.Kind) ? _shardedControlGate : _controlGate;
         await controlGate.WaitAsync().ConfigureAwait(false);
+
         try
         {
             RespireEndpoint[]? endpoints;
-            lock (_gate) endpoints = _clusterNotifications.Subscriptions.TryGetValue(subscription, out var state)
+
+            lock (_gate)
+            {
+                endpoints = _clusterNotifications.Subscriptions.TryGetValue(subscription, out var state)
                 ? state.Coverage.ToArray() : null;
+            }
+
             if (endpoints is not null)
             {
                 foreach (var endpoint in endpoints)
                 {
                     ClusterNotificationNode? node;
-                    lock (_gate) _clusterNotifications.Nodes.TryGetValue(endpoint, out node);
+
+                    lock (_gate)
+                    {
+                        _clusterNotifications.Nodes.TryGetValue(endpoint, out node);
+                    }
+
                     if (node is not null)
+                    {
                         await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false);
+                    }
                 }
+
                 RespireEndpoint? recoveredEndpoint;
-                lock (_gate) recoveredEndpoint = EndNotificationSubscriptionLocked(subscription);
-                if (recoveredEndpoint is { } clearedEndpoint) core.ClearClusterSubscriptionState(clearedEndpoint);
+
+                lock (_gate)
+                {
+                    recoveredEndpoint = EndNotificationSubscriptionLocked(subscription);
+                }
+
+                if (recoveredEndpoint is { } clearedEndpoint)
+                {
+                    core.ClearClusterSubscriptionState(clearedEndpoint);
+                }
+
                 return;
             }
+
             await ReleaseRoutesAsync(subscription).ConfigureAwait(false);
         }
         finally
@@ -223,12 +268,15 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     private async ValueTask ReleaseRoutesAsync(RespireSubscription subscription)
     {
         var releasedRoutes = RemoveRoutes(subscription);
+
         if (IsClusterSharded(subscription.Kind))
         {
             await ReleaseShardedRoutesAsync(releasedRoutes).ConfigureAwait(false);
             return;
         }
+
         var connection = _connection;
+
         if (_disposed || connection is not { IsConnected: true })
         {
             return;
@@ -254,15 +302,18 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     private List<(RespireSubscriptionKind Kind, RespireChannel Name)> RemoveRoutes(RespireSubscription subscription)
     {
         var releasedRoutes = new List<(RespireSubscriptionKind Kind, RespireChannel Name)>();
+
         lock (_gate)
         {
             _interrupted.Remove(subscription);
             var routes = Routes(subscription.Kind);
+
             foreach (var name in subscription.Names)
             {
                 if (routes.TryGetValue(name, out var list))
                 {
                     list.Remove(subscription);
+
                     if (list.Count == 0)
                     {
                         routes.Remove(name);
@@ -303,31 +354,53 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     {
         lock (_gate)
         {
-            if (!ReferenceEquals(_connection, connection)) return null;
+            if (!ReferenceEquals(_connection, connection))
+            {
+                return null;
+            }
+
             MarkInterruptedLocked();
             _connection = null;
             ++_connectionEpoch;
         }
+
         return connection.DisposeAsync().AsTask();
     }
 
     private void MarkInterruptedLocked()
     {
-        if (_disposed) return;
+        if (_disposed)
+        {
+            return;
+        }
+
         var now = DateTimeOffset.UtcNow;
         HashSet<RespireSubscription> affected = [];
+
         for (var i = 0; i < _routes.Length; i++)
         {
-            if (IsClusterSharded((RespireSubscriptionKind)i)) continue;
-            foreach (var subscriptions in _routes[i].Values) affected.UnionWith(subscriptions);
+            if (IsClusterSharded((RespireSubscriptionKind)i))
+            {
+                continue;
+            }
+
+            foreach (var subscriptions in _routes[i].Values)
+            {
+                affected.UnionWith(subscriptions);
+            }
         }
+
         foreach (var subscription in affected)
         {
             if (!_interrupted.TryGetValue(subscription, out var targets))
             {
                 _interrupted.Add(subscription, targets = []);
             }
-            foreach (var name in subscription.Names) targets.TryAdd(name, now);
+
+            foreach (var name in subscription.Names)
+            {
+                targets.TryAdd(name, now);
+            }
         }
     }
 
@@ -338,8 +411,15 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     // are swallowed. Out-of-memory is not, because nothing after it is reliable.
     private void TryLog<TState>(TState state, Action<ILogger, TState> log)
     {
-        if (core.Logger is not { } logger) return;
-        try { log(logger, state); }
+        if (core.Logger is not { } logger)
+        {
+            return;
+        }
+
+        try
+        {
+            log(logger, state);
+        }
         catch (Exception logError) when (logError is not OutOfMemoryException) { }
     }
 
@@ -351,7 +431,10 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            try { core.Logger?.SubscriptionCloseFailed(ex); }
+            try
+            {
+                core.Logger?.SubscriptionCloseFailed(ex);
+            }
             catch { /* Cleanup remains observed even when a user logger throws. */ }
         }
     }
@@ -361,19 +444,27 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     {
         InterruptPrimaryConnections(interruptedDisposals);
         var connection = Volatile.Read(ref _connection);
+
         if (connection is not null && DetachConnection(connection) is { } disposal)
         {
             interruptedDisposals.Add(disposal);
         }
 
         RespireConnection[] notificationConnections;
+
         lock (_gate)
+        {
             notificationConnections = _clusterNotifications.Nodes.Values
                 .Select(static node => node.Connection).Where(static candidate => candidate is not null)
                 .Select(static candidate => candidate!).ToArray();
+        }
+
         foreach (var notificationConnection in notificationConnections)
         {
-            if (!interrupted.Add(notificationConnection)) continue;
+            if (!interrupted.Add(notificationConnection))
+            {
+                continue;
+            }
             // Observe the fault here: the guarded close loop may see this same disposal fail,
             // and the final WhenAll must not rethrow it and skip the remaining cleanup.
             interruptedDisposals.Add(ObserveAbandonedConnectionAsync(notificationConnection.DisposeAsync().AsTask()));
@@ -422,19 +513,29 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         // Activation and reconciliation borrow their logical owner. Unsubscribe and
         // standalone replay own an internal attempt, including command construction.
         var owner = observation.IsEmpty ? DispatchResponseSource<bool>.Start() : null;
-        if (owner is not null) observation = owner.Observation;
+
+        if (owner is not null)
+        {
+            observation = owner.Observation;
+        }
+
         RespireTelemetry.OperationScope telemetry = default;
+
         try
         {
             if (instrument)
+            {
                 telemetry = RespireTelemetry.StartOperation(
                     operation, connection.Host, connection.Port, core.Options.Database);
+            }
+
             var command = new ProtocolCommand<Cmd1>(new Cmd1(verb, name.AsValue()));
             var reply = ask
                 ? await ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation,
                     observation: observation).ConfigureAwait(false)
                 : await connection.SendAsync(command, cancellationToken, commandName: operation,
                     observation: observation).ConfigureAwait(false);
+
             if (reply.IsError)
             {
                 var error = ResponseReader.ServerError(in reply, operation);
@@ -452,7 +553,10 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             // cancellation is excluded even when this command has an internal owner.
             if (owner is not null && ShouldObserveHandled(ex,
                     observeDeadlineCancellation ? CancellationToken.None : cancellationToken))
+            {
                 observation.Handled(ex);
+            }
+
             throw;
         }
         finally { owner?.CompleteInternal(); }
@@ -475,9 +579,11 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         }
 
         await _connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+
             if (GetConnectionForCaller(watch) is { } raced)
             {
                 return raced;
@@ -485,14 +591,22 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
 
             RespireConnection? previous;
             long epoch;
+
             lock (_gate)
             {
                 previous = _connection;
-                if (previous is not null) MarkInterruptedLocked();
+
+                if (previous is not null)
+                {
+                    MarkInterruptedLocked();
+                }
+
                 epoch = ++_connectionEpoch;
             }
+
             RespireEndpoint endpoint;
             SentinelRouter.Generation? sentinelGeneration = null;
+
             if (core.Cluster is { } cluster)
             {
                 endpoint = await cluster.GetPubSubEndpointAsync(cancellationToken).ConfigureAwait(false);
@@ -516,6 +630,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             using var connectCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken, _lifetimeCancellation.Token);
             RespireConnection connection;
+
             try
             {
                 connection = await RespireConnection.ConnectAsync(
@@ -526,20 +641,26 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             {
                 throw new OperationCanceledException(error.Message, error, cancellationToken);
             }
+
             lock (_gate)
             {
                 _connection = connection;
             }
+
             if (watch)
             {
                 if (core.Options.ReconnectPolicy is not null)
+                {
                     lock (_reconnectStateGate)
                     {
                         _configuredConnection = connection;
                         _configuredEpisodeCaptured = false;
                     }
+                }
+
                 _ = WatchConnectionAsync(connection);
             }
+
             if (previous is not null)
             {
                 // The replacement is already published. Prior cleanup must not invalidate it
@@ -559,6 +680,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     private async Task WatchConnectionAsync(RespireConnection connection)
     {
         await connection.Closed.ConfigureAwait(false);
+
         if (_disposed)
         {
             return;
@@ -566,7 +688,10 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
 
         lock (_gate)
         {
-            if (ReferenceEquals(_connection, connection)) MarkInterruptedLocked();
+            if (ReferenceEquals(_connection, connection))
+            {
+                MarkInterruptedLocked();
+            }
         }
 
         if (core.Options.ReconnectPolicy is { } policy)
@@ -577,6 +702,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
 
         long reconnectGeneration;
         bool publishState;
+
         lock (_reconnectStateGate)
         {
             if (_disposed)
@@ -597,22 +723,30 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         }
 
         var delay = TimeSpan.FromMilliseconds(250);
+
         while (!_disposed)
         {
             try
             {
                 await _controlGate.WaitAsync().ConfigureAwait(false);
+
                 try
                 {
                     var replacement = await EnsureConnectionAsync(CancellationToken.None).ConfigureAwait(false);
 
                     (RespireSubscriptionKind Kind, RespireChannel Name)[] routes;
+
                     lock (_gate)
                     {
                         var snapshot = new List<(RespireSubscriptionKind Kind, RespireChannel Name)>();
+
                         for (var i = 0; i < _routes.Length; i++)
                         {
-                            if (IsClusterSharded((RespireSubscriptionKind)i)) continue;
+                            if (IsClusterSharded((RespireSubscriptionKind)i))
+                            {
+                                continue;
+                            }
+
                             foreach (var name in _routes[i].Names)
                             {
                                 snapshot.Add(((RespireSubscriptionKind)i, name));
@@ -632,6 +766,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
                     // then owns the newer reconnect generation; this stale watcher must not announce
                     // Connected after that newer Reconnecting notification.
                     publishState = false;
+
                     lock (_reconnectStateGate)
                     {
                         if (reconnectGeneration == _reconnectGeneration
@@ -679,6 +814,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
                 : RespireReconnectSource.SentinelMonitor,
             SourceState = change.State,
         }, clusterSharded));
+
         if (_publishingReconnectState)
         {
             return false;
@@ -693,6 +829,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         while (true)
         {
             (RespireConnectionStateChange Change, bool ClusterSharded) observation;
+
             lock (_reconnectStateGate)
             {
                 if (!_pendingReconnectStates.TryDequeue(out observation))
@@ -703,25 +840,36 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             }
 
             var change = observation.Change;
+
             try
             {
                 var scope = core.Options.ReconnectTelemetryScope;
+
                 if (change.NextReconnectDelay is { } delay)
                 {
                     if (scope is not null)
+                    {
                         RespireTelemetry.RecordDiscoveryReconnect(change.Endpoint, scope,
                             change.ReconnectAttempt, delay, core.Logger);
+                    }
                     else
+                    {
                         RespireTelemetry.RecordReconnectAttempt(change.Endpoint.Host, change.Endpoint.Port,
                             change.ReconnectAttempt, delay, RespireReconnectSource.PubSub);
+                    }
                 }
+
                 if (change.ReconnectExhausted)
                 {
                     if (scope is not null)
+                    {
                         RespireTelemetry.RecordDiscoveryReconnect(change.Endpoint, scope,
                             change.ReconnectAttempt, delay: null, logger: core.Logger);
+                    }
                     else
+                    {
                         RespireTelemetry.RecordReconnectExhaustion(change.Endpoint.Host, change.Endpoint.Port, RespireReconnectSource.PubSub);
+                    }
                 }
             }
             catch (Exception error)
@@ -730,7 +878,10 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             }
             // Measurements describe scheduled work and survive disposal. Lifecycle events
             // still queued when disposal wins must not restore the client's subscription state.
-            if (!_disposed && !core.Disposed) core.NotifySubscriptionStateChanged(change, observation.ClusterSharded);
+            if (!_disposed && !core.Disposed)
+            {
+                core.NotifySubscriptionStateChanged(change, observation.ClusterSharded);
+            }
         }
     }
 
@@ -739,52 +890,104 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     private void OnSubscriptionConfirmation(long epoch, in RespValue value, PrimarySubscriptionConnection? primary = null)
     {
         var elements = value.AsArray();
-        if (elements.Length < 3) return;
+
+        if (elements.Length < 3)
+        {
+            return;
+        }
+
         var verb = elements[0].AsSpan();
         RespireSubscriptionKind kind;
-        if (verb.SequenceEqual("subscribe"u8)) kind = RespireSubscriptionKind.Channel;
-        else if (verb.SequenceEqual("psubscribe"u8)) kind = RespireSubscriptionKind.Pattern;
-        else if (verb.SequenceEqual("ssubscribe"u8)) kind = RespireSubscriptionKind.Sharded;
-        else return;
+
+        if (verb.SequenceEqual("subscribe"u8))
+        {
+            kind = RespireSubscriptionKind.Channel;
+        }
+        else if (verb.SequenceEqual("psubscribe"u8))
+        {
+            kind = RespireSubscriptionKind.Pattern;
+        }
+        else if (verb.SequenceEqual("ssubscribe"u8))
+        {
+            kind = RespireSubscriptionKind.Sharded;
+        }
+        else
+        {
+            return;
+        }
+
         List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? gaps = null;
+
         lock (_gate)
         {
             if (_disposed || (primary is null && epoch != _connectionEpoch)
-                || !Routes(kind).TryGetValue(elements[1].AsSpan(), out var name, out var subscriptions)) return;
+                || !Routes(kind).TryGetValue(elements[1].AsSpan(), out var name, out var subscriptions))
+            {
+                return;
+            }
+
             if (primary is not null)
             {
-                if (!_shardedOwners.TryGetValue(name, out var owner) || !ReferenceEquals(owner, primary)) return;
+                if (!_shardedOwners.TryGetValue(name, out var owner) || !ReferenceEquals(owner, primary))
+                {
+                    return;
+                }
+
                 primary.Confirmed.Add(name);
             }
+
             foreach (var subscription in subscriptions)
             {
                 if (_interrupted.TryGetValue(subscription, out var targets) && targets.Remove(name, out var started))
                 {
                     var ended = DateTimeOffset.UtcNow;
-                    if (ended < started) ended = started;
+
+                    if (ended < started)
+                    {
+                        ended = started;
+                    }
+
                     var gap = new RespireSubscriptionGap(RespireSubscriptionGapReason.Reconnect, started, ended);
-                    if (subscription.Buffer.WriteGap(gap)) (gaps ??= []).Add((subscription, gap));
-                    if (targets.Count == 0) _interrupted.Remove(subscription);
+
+                    if (subscription.Buffer.WriteGap(gap))
+                    {
+                        (gaps ??= []).Add((subscription, gap));
+                    }
+
+                    if (targets.Count == 0)
+                    {
+                        _interrupted.Remove(subscription);
+                    }
                 }
             }
         }
+
         if (gaps is not null)
         {
-            foreach (var (subscription, gap) in gaps) subscription.NotifyGap(gap);
+            foreach (var (subscription, gap) in gaps)
+            {
+                subscription.NotifyGap(gap);
+            }
         }
     }
 
     /// <summary>Runs on the connection's receive loop — copy out of the frame, never block.</summary>
     private void OnPush(long epoch, in RespValue value)
     {
-        if (epoch != Volatile.Read(ref _connectionEpoch)) return;
+        if (epoch != Volatile.Read(ref _connectionEpoch))
+        {
+            return;
+        }
+
         var elements = value.AsArray();
+
         if (elements.Length < 3)
         {
             return;
         }
 
         var frameKind = elements[0].AsSpan();
+
         if (frameKind.SequenceEqual("message"u8))
         {
             Deliver(epoch, RespireSubscriptionKind.Channel, elements[1].AsSpan(), elements[1].AsSpan(),
@@ -811,20 +1014,29 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         ReadOnlySpan<byte> payload)
     {
         List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? drops = null;
+
         lock (_gate)
         {
             // Validate and enqueue under the same gate that advances epochs and publishes
             // reconnect markers. A route snapshot alone would leave a stale-writer window.
             if (_disposed || epoch != _connectionEpoch
-                || !Routes(kind).TryGetValue(routeName, out var cachedRouteName, out var targets)) return;
+                || !Routes(kind).TryGetValue(routeName, out var cachedRouteName, out var targets))
+            {
+                return;
+            }
+
             var channelName = isPattern ? RespireChannel.FromOwnedBytes(channel.ToArray()) : cachedRouteName;
             EnqueueMessage(targets, channelName, isPattern ? cachedRouteName : (RespireChannel?)null, payload, ref drops);
         }
         // User handlers and metric callbacks never run under the routing/buffer gates.
         RespireTelemetry.RecordReceivedMessage(kind == RespireSubscriptionKind.Sharded);
+
         if (drops is not null)
         {
-            foreach (var (subscription, gap) in drops) subscription.NotifyDrop(gap);
+            foreach (var (subscription, gap) in drops)
+            {
+                subscription.NotifyDrop(gap);
+            }
         }
     }
 
@@ -833,17 +1045,28 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         ref List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? drops)
     {
         RespireMessage? message = null;
+
         foreach (var target in targets)
         {
             if (target.MaxPayloadBytes is { } limit && payload.Length > limit)
             {
                 var now = DateTimeOffset.UtcNow;
                 var gap = new RespireSubscriptionGap(RespireSubscriptionGapReason.PayloadTooLarge, now, now, 1);
-                if (target.Buffer.WriteGap(gap)) (drops ??= []).Add((target, gap));
+
+                if (target.Buffer.WriteGap(gap))
+                {
+                    (drops ??= []).Add((target, gap));
+                }
+
                 continue;
             }
+
             message ??= new RespireMessage(channel, pattern, payload.ToArray(), core.Options.Serializer);
-            if (target.Buffer.Write(message.Value) is { } dropped) (drops ??= []).Add((target, dropped));
+
+            if (target.Buffer.Write(message.Value) is { } dropped)
+            {
+                (drops ??= []).Add((target, dropped));
+            }
         }
     }
 
@@ -861,7 +1084,13 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         }
 
         lock (_gate)
-            if (_observingClusterTopology) core.Cluster!.TopologyChanged -= RequestShardedRecovery;
+        {
+            if (_observingClusterTopology)
+            {
+                core.Cluster!.TopologyChanged -= RequestShardedRecovery;
+            }
+        }
+
         await _lifetimeCancellation.CancelAsync().ConfigureAwait(false);
 
         // Interrupt stalled control commands while waiting for their serialization gate. A
@@ -872,12 +1101,19 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         InterruptPublishedConnection(interruptedDisposals, interruptedNotificationConnections);
         var controlGateAcquired = false;
         var shardedControlGateAcquired = false;
+
         while (!controlGateAcquired || !shardedControlGateAcquired)
         {
             if (!controlGateAcquired)
+            {
                 controlGateAcquired = await _controlGate.WaitAsync(DisposeConnectionPollInterval).ConfigureAwait(false);
+            }
+
             if (!shardedControlGateAcquired)
+            {
                 shardedControlGateAcquired = await _shardedControlGate.WaitAsync(DisposeConnectionPollInterval).ConfigureAwait(false);
+            }
+
             if (!controlGateAcquired || !shardedControlGateAcquired)
             {
                 InterruptPublishedConnection(interruptedDisposals, interruptedNotificationConnections);
@@ -890,9 +1126,11 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
 
             List<RespireSubscription> subscriptions = [];
             RespireConnection[] notificationConnections;
+
             lock (_gate)
             {
                 _interrupted.Clear();
+
                 foreach (var routes in _routes)
                 {
                     foreach (var list in routes.Values)
@@ -902,8 +1140,10 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
 
                     routes.Clear();
                 }
+
                 subscriptions.AddRange(_clusterNotifications.Subscriptions.Keys);
                 _clusterNotifications.Subscriptions.Clear();
+
                 foreach (var node in _clusterNotifications.Nodes.Values)
                 {
                     lock (node.Gate)
@@ -912,6 +1152,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
                         Interlocked.Increment(ref node.Epoch);
                     }
                 }
+
                 notificationConnections = _clusterNotifications.Nodes.Values
                     .Select(static node => node.Connection).Where(static connection => connection is not null)
                     .Select(static connection => connection!).ToArray();
@@ -920,7 +1161,10 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
 
             foreach (var connection in notificationConnections)
             {
-                try { await connection.DisposeAsync().ConfigureAwait(false); }
+                try
+                {
+                    await connection.DisposeAsync().ConfigureAwait(false);
+                }
                 catch (Exception error) { TryLog(error, static (logger, state) => logger.NotificationConnectionCloseFailed(state)); }
             }
 
@@ -933,6 +1177,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             // in-flight EnsureConnectionAsync published is visible here and gets swept instead of
             // leaking an open socket past client disposal.
             await _connectionGate.WaitAsync().ConfigureAwait(false);
+
             try
             {
                 InterruptPublishedConnection(interruptedDisposals, interruptedNotificationConnections);
@@ -951,11 +1196,29 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         }
 
         Task? recovery;
-        lock (_reconnectStateGate) recovery = _configuredRecoveryDrained?.Task;
-        if (recovery is not null) await recovery.ConfigureAwait(false);
+
+        lock (_reconnectStateGate)
+        {
+            recovery = _configuredRecoveryDrained?.Task;
+        }
+
+        if (recovery is not null)
+        {
+            await recovery.ConfigureAwait(false);
+        }
+
         Task? shardedRecovery;
-        lock (_gate) shardedRecovery = _shardedRecovery?.Task;
-        if (shardedRecovery is not null) await shardedRecovery.ConfigureAwait(false);
+
+        lock (_gate)
+        {
+            shardedRecovery = _shardedRecovery?.Task;
+        }
+
+        if (shardedRecovery is not null)
+        {
+            await shardedRecovery.ConfigureAwait(false);
+        }
+
         _lifetimeCancellation.Dispose();
     }
 

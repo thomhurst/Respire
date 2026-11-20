@@ -17,7 +17,8 @@ public class ReceiveDeadlineWireTests
         await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespireProtocol.Resp2, ResponseTimeout = TimeSpan.FromMilliseconds(50),
+                Protocol = RespireProtocol.Resp2,
+                ResponseTimeout = TimeSpan.FromMilliseconds(50),
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
             });
         var first = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token).AsTask();
@@ -43,9 +44,13 @@ public class ReceiveDeadlineWireTests
         private readonly Channel<int> _writes = Channel.CreateUnbounded<int>();
         private readonly TaskCompletionSource _firstWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _writeCount;
+
         public bool FirstWriteCompleted => _firstWrite.Task.IsCompleted;
+
         public void CompleteFirstWrite() => _firstWrite.TrySetResult();
+
         public void Publish(byte[] frame) => _replies.Writer.TryWrite(frame);
+
         public ValueTask<int> NextWriteAsync(CancellationToken token) => _writes.Reader.ReadAsync(token);
 
         public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
@@ -75,14 +80,28 @@ public class ReceiveDeadlineWireTests
         }
 
         public override bool CanRead => true;
+
         public override bool CanWrite => true;
+
         public override bool CanSeek => false;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-        public override void Flush() { }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
     }
 }

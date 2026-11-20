@@ -25,10 +25,13 @@ public class ListMoveManyTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var view = client.WithKeyPrefix("tenant:");
         string[]? result;
+
         if (mode is "immediate" or "blocking")
+        {
             result = await (mode == "blocking"
                 ? view.Lists.MoveManyAsync("source", "destination", TimeSpan.FromMilliseconds(250), 2, RespireListSide.Right, RespireListSide.Left, RespireListMoveCountMode.Exactly, RespireListMoveOrder.Bulk)
                 : view.Lists.MoveManyAsync("source", "destination", 2, RespireListSide.Right, RespireListSide.Left, RespireListMoveCountMode.Exactly, RespireListMoveOrder.Bulk));
+        }
         else
         {
             using var batch = mode == "batch" ? view.CreateBatch() : null;
@@ -36,10 +39,19 @@ public class ListMoveManyTests
             IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
             var pending = queue.Lists.MoveMany("source", "destination", 2, RespireListSide.Right, RespireListSide.Left,
                 RespireListMoveCountMode.Exactly, RespireListMoveOrder.Bulk);
-            if (transaction is not null) await transaction.CommitAsync();
-            else await batch!.ExecuteAsync();
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
+
             result = pending.Result;
         }
+
         await client.DisposeAsync();
         await Assert.That(result!).IsEquivalentTo(["b", "a"], CollectionOrdering.Matching);
         var expected = mode == "blocking"
@@ -63,10 +75,18 @@ public class ListMoveManyTests
             () => client.Lists.MoveManyAsync("s", "d", order: (RespireListMoveOrder)99),
             () => client.Lists.MoveManyAsync("s", "d", waitFor: TimeSpan.FromSeconds(-2)),
         ];
+
         foreach (var call in invalid)
-            await Assert.That(() => { _ = call(); }).Throws<ArgumentOutOfRangeException>();
+        {
+            await Assert.That(() =>
+            {
+                _ = call();
+            }).Throws<ArgumentOutOfRangeException>();
+        }
+
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
+
         foreach (var lists in new[] { batch.Lists, transaction.Lists })
         {
             await Assert.That(() => lists.MoveMany("s", "d", 0)).Throws<ArgumentOutOfRangeException>();
@@ -75,11 +95,16 @@ public class ListMoveManyTests
             await Assert.That(() => lists.MoveMany("s", "d", countMode: (RespireListMoveCountMode)99)).Throws<ArgumentOutOfRangeException>();
             await Assert.That(() => lists.MoveMany("s", "d", order: (RespireListMoveOrder)99)).Throws<ArgumentOutOfRangeException>();
         }
+
         using var cancel = new CancellationTokenSource();
         cancel.Cancel();
+
         foreach (var wait in new TimeSpan?[] { null, Timeout.InfiniteTimeSpan })
+        {
             await Assert.That(async () => await client.Lists.MoveManyAsync("s", "d", waitFor: wait, cancellationToken: cancel.Token))
                 .Throws<OperationCanceledException>();
+        }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
@@ -91,7 +116,11 @@ public class ListMoveManyTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("BLMOVEM ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("BLMOVEM ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -126,21 +155,32 @@ public class ListMoveManyTests
 #pragma warning disable RESP010 // This list-move scenario owns its client and isolated cluster queue validation state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
+
         foreach (var wait in new TimeSpan?[] { null, TimeSpan.Zero })
-            await Assert.That(() => { _ = view.Lists.MoveManyAsync("{a}:s", "{b}:d", waitFor: wait); })
+        {
+            await Assert.That(() =>
+                {
+                    _ = view.Lists.MoveManyAsync("{a}:s", "{b}:d", waitFor: wait);
+                })
                 .Throws<RespireCrossSlotException>();
+        }
+
         using var batch = view.CreateBatch();
         await using var transaction = view.CreateTransaction();
+
         foreach (var lists in new[] { batch.Lists, transaction.Lists })
         {
             await Assert.That(() => lists.MoveMany("{a}:s", "{b}:d")).Throws<RespireCrossSlotException>();
             _ = lists.MoveMany("{a}:s", "{a}:d");
         }
+
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
     }
 
@@ -149,6 +189,7 @@ public class ListMoveManyTests
     {
         await using var server = new FakeRespServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
         foreach (var wait in new TimeSpan?[] { null, TimeSpan.Zero })
         {
             var (operation, command) = ListCommands.MoveManyCommand((RespireClient)client.WithKeyPrefix("p:"), "s", "d", 1,

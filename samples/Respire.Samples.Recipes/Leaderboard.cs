@@ -24,7 +24,11 @@ public sealed class Leaderboard(IRespireClient client)
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
         var entries = await client.SortedSets.RangeWithScoresAsync(
             ScoresKey, 0, count - 1, descending: true, cancellationToken).ConfigureAwait(false);
-        if (entries.Length == 0) return [];
+
+        if (entries.Length == 0)
+        {
+            return [];
+        }
 
         var names = await client.Hashes.GetManyAsync(
             NamesKey, entries.Select(entry => entry.Member).ToArray(), cancellationToken).ConfigureAwait(false);

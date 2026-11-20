@@ -21,7 +21,11 @@ public class ClusterRetirementTests
     private readonly struct AdmissionCallbackCommand(Action onAccepted) : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
-        public void Write(ref RespWriter writer) { }
+
+        public void Write(ref RespWriter writer)
+        {
+        }
+
         public void OnAccepted() => onAccepted();
     }
 
@@ -83,16 +87,25 @@ public class ClusterRetirementTests
         await gate.WaitAsync(timeout.Token);
         Task<RespireConnection>? connectionTask = null;
         Task<DedicatedConnectionPool>? poolTask = null;
+
         try
         {
-            if (path == "dedicated") poolTask = router.GetDedicatedPoolAsync(42, timeout.Token, discovery: null, observation: default).AsTask();
-            else connectionTask = router.GetConnectionAsync(path == "keyed" ? 42 : null, timeout.Token, discovery: null, observation: default).AsTask();
+            if (path == "dedicated")
+            {
+                poolTask = router.GetDedicatedPoolAsync(42, timeout.Token, discovery: null, observation: default).AsTask();
+            }
+            else
+            {
+                connectionTask = router.GetConnectionAsync(path == "keyed" ? 42 : null, timeout.Token, discovery: null, observation: default).AsTask();
+            }
             // The old node has not created a socket or accepted any application command.
             Publish(router, endpoint, "new", 2);
         }
         finally { gate.Release(); }
+
         DedicatedConnectionPool? pool = poolTask is null ? null : await poolTask.WaitAsync(timeout.Token);
         var connection = pool is null ? await connectionTask!.WaitAsync(timeout.Token) : await pool.RentAsync(timeout.Token);
+
         try
         {
             using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token);
@@ -101,6 +114,7 @@ public class ClusterRetirementTests
             await Assert.That(ReferenceEquals(old, router.GetMultiplexer(endpoint))).IsFalse();
         }
         finally { pool?.Return(connection); }
+
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
     }
 
@@ -128,10 +142,14 @@ public class ClusterRetirementTests
             await ClusterScanTests.AssertRetirementPreservesAcceptedPagesAsync();
             return;
         }
+
         var commandName = path switch
         {
-            "script" => "SCRIPT FLUSH", "flush" => "FLUSHDB", "size" => "DBSIZE",
-            "scan" => "SCAN 0 COUNT 250", _ => "FUNCTION FLUSH",
+            "script" => "SCRIPT FLUSH",
+            "flush" => "FLUSHDB",
+            "size" => "DBSIZE",
+            "scan" => "SCAN 0 COUNT 250",
+            _ => "FUNCTION FLUSH",
         };
         var commandReply = path switch
         {
@@ -148,8 +166,15 @@ public class ClusterRetirementTests
         {
             SuppressReply = command =>
             {
-                if (command == "CLUSTER SLOTS") topologyRequested.TrySetResult();
-                else if (command == commandName) firstAccepted.TrySetResult();
+                if (command == "CLUSTER SLOTS")
+                {
+                    topologyRequested.TrySetResult();
+                }
+                else if (command == commandName)
+                {
+                    firstAccepted.TrySetResult();
+                }
+
                 return true;
             },
         };
@@ -157,8 +182,17 @@ public class ClusterRetirementTests
         {
             SuppressReply = command =>
             {
-                if (command != "PING") { secondAccepted.TrySetResult(); return false; }
-                if (Interlocked.Increment(ref pingCount) == 4) secondFull.TrySetResult();
+                if (command != "PING")
+                {
+                    secondAccepted.TrySetResult();
+                    return false;
+                }
+
+                if (Interlocked.Increment(ref pingCount) == 4)
+                {
+                    secondFull.TrySetResult();
+                }
+
                 return true;
             },
         };
@@ -188,11 +222,13 @@ public class ClusterRetirementTests
         await Assert.That(second.ReceivedConnectionIds).IsEquivalentTo([0, 0, 0, 0, 1]);
         await Assert.That(accepted.All(task => !task.IsCompleted)).IsTrue();
         await second.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(), 0);
+
         foreach (var task in accepted)
         {
             using var reply = await task.WaitAsync(timeout.Token);
             await Assert.That(reply.AsString()).IsEqualTo("PONG");
         }
+
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
 
         async Task SendAsync()
@@ -201,20 +237,36 @@ public class ClusterRetirementTests
             {
                 case "raw":
                     using (var reply = await client.ExecuteAsync($"FUNCTION FLUSH", cancellationToken: timeout.Token))
+                    {
                         await Assert.That(reply.AsString()).IsEqualTo("OK");
+                    }
                     break;
-                case "fire-forget": await client.ExecuteFireAndForgetAsync($"FUNCTION FLUSH", timeout.Token); break;
-                case "function": await client.Functions.FlushAsync(cancellationToken: timeout.Token); break;
-                case "script": await client.Scripts.FlushAsync(cancellationToken: timeout.Token); break;
-                case "flush": await client.Server.FlushDatabaseAsync(timeout.Token); break;
+                case "fire-forget":
+                    await client.ExecuteFireAndForgetAsync($"FUNCTION FLUSH", timeout.Token);
+                    break;
+                case "function":
+                    await client.Functions.FlushAsync(cancellationToken: timeout.Token);
+                    break;
+                case "script":
+                    await client.Scripts.FlushAsync(cancellationToken: timeout.Token);
+                    break;
+                case "flush":
+                    await client.Server.FlushDatabaseAsync(timeout.Token);
+                    break;
                 case "scan":
                     var keys = new List<string>();
-                    await foreach (var key in client.Keys.ScanAsync(cancellationToken: timeout.Token)) keys.Add(key);
+                    await foreach (var key in client.Keys.ScanAsync(cancellationToken: timeout.Token))
+                    {
+                        keys.Add(key);
+                    }
                     await Assert.That(keys).IsEquivalentTo(["key", "key"]);
                     break;
-                default: await Assert.That(await client.Server.DatabaseSizeAsync(timeout.Token)).IsEqualTo(2); break;
+                default:
+                    await Assert.That(await client.Server.DatabaseSizeAsync(timeout.Token)).IsEqualTo(2);
+                    break;
             }
         }
+
         void PublishTargets(string secondId, long generation)
         {
             var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", Private)!.GetValue(router)!;
@@ -238,7 +290,11 @@ public class ClusterRetirementTests
         {
             SuppressReply = command =>
             {
-                if (Interlocked.Increment(ref acceptedCount) == 4) full.TrySetResult();
+                if (Interlocked.Increment(ref acceptedCount) == 4)
+                {
+                    full.TrySetResult();
+                }
+
                 return true;
             },
         };
@@ -257,26 +313,41 @@ public class ClusterRetirementTests
         var exhausted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery)
+            {
+                return;
+            }
+
             changes.Enqueue(change);
-            if (change.ReconnectExhausted) exhausted.TrySetResult();
+
+            if (change.ReconnectExhausted)
+            {
+                exhausted.TrySetResult();
+            }
         };
         var replacements = 0;
         // This callback runs after replacement selection and before the tracked command's next send.
         // Retire that replacement deterministically, without racing the notification dispatcher.
         Action onRedirect = () =>
         {
-            if (++replacements == 1) Publish(router, new("127.0.0.1", last.Port), "last", 3);
+            if (++replacements == 1)
+            {
+                Publish(router, new("127.0.0.1", last.Port), "last", 3);
+            }
         };
         var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
         var pending = ((ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
             ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, onRedirect, true, null, default(CommandDeadline), null])!).AsTask();
         Publish(router, new("127.0.0.1", second.Port), "second", 2);
+
         try
         {
             if (configuredPolicy)
             {
-                await Assert.That(async () => { using var reply = await pending.WaitAsync(timeout.Token); })
+                await Assert.That(async () =>
+                    {
+                        using var reply = await pending.WaitAsync(timeout.Token);
+                    })
                     .ThrowsExactly<RespireReconnectLimitException>();
                 await exhausted.Task.WaitAsync(timeout.Token);
                 await Assert.That(replacements).IsEqualTo(1);
@@ -294,14 +365,20 @@ public class ClusterRetirementTests
                 await Assert.That(replacements).IsEqualTo(2);
                 await Assert.That(last.ReceivedCommands).IsEquivalentTo(["CLIENT CACHING YES", "SET key value"]);
             }
+
             await Assert.That(second.CommandsSeen).IsEqualTo(0);
             await Assert.That(accepted.All(task => !task.IsCompleted)).IsTrue();
         }
         finally
         {
             await first.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray());
-            foreach (var task in accepted) { using var reply = await task.WaitAsync(timeout.Token); }
+
+            foreach (var task in accepted)
+            {
+                using var reply = await task.WaitAsync(timeout.Token);
+            }
         }
+
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
     }
 
@@ -321,7 +398,9 @@ public class ClusterRetirementTests
         await using var server = new FakeRespServer(8, FakeRespServer.OkReply);
         await using var client = CreateClient(allowAdmin: true, reconnectPolicy: new()
         {
-            InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = unlimited ? null : 5,
+            InitialDelay = TimeSpan.Zero,
+            JitterRatio = 0,
+            MaxAttempts = unlimited ? null : 5,
         });
         using var timeout = new CancellationTokenSource(Limit);
         var router = client.Core.Cluster!;
@@ -336,8 +415,16 @@ public class ClusterRetirementTests
                 System.Diagnostics.ActivitySamplingResult.AllData,
             ActivityStarted = activity =>
             {
-                if (activity.GetTagItem("server.port") is not int port || port != server.Port) return;
-                if (activity.OperationName is not ("SET" or "SHUTDOWN")) return;
+                if (activity.GetTagItem("server.port") is not int port || port != server.Port)
+                {
+                    return;
+                }
+
+                if (activity.OperationName is not ("SET" or "SHUTDOWN"))
+                {
+                    return;
+                }
+
                 var generation = Interlocked.Increment(ref attempts);
                 Publish(router, endpoint, "generation-" + generation, generation + 1);
             },
@@ -347,9 +434,17 @@ public class ClusterRetirementTests
         var completed = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery)
+            {
+                return;
+            }
+
             changes.Enqueue(change);
-            if (change.NextReconnectDelay is null) completed.TrySetResult(change);
+
+            if (change.NextReconnectDelay is null)
+            {
+                completed.TrySetResult(change);
+            }
         };
         var error = await Assert.That(async () => await SendAsync().WaitAsync(timeout.Token))
             .Throws<RespireConnectionRetiredException>();
@@ -367,6 +462,7 @@ public class ClusterRetirementTests
         async Task SendAsync()
         {
             var command = new Cmd2(RespireCommands.String.SET.Verb, "key", "value");
+
             if (path == "tracked")
             {
                 var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
@@ -378,7 +474,9 @@ public class ClusterRetirementTests
                 using var reply = await client.SendToClusterTargetAsync("SET", original, command, timeout.Token);
             }
             else if (path == "fire-forget")
+            {
                 await client.ExecuteFireAndForgetAsync($"SHUTDOWN NOSAVE", timeout.Token);
+            }
             else
             {
                 using var reply = await client.ExecuteAsync(RespireCommands.String.SET, ["key", "value"],
@@ -438,7 +536,9 @@ public class ClusterRetirementTests
         trace.Record("server created");
         await using var client = CreateClient(reconnectPolicy: new()
         {
-            InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = unlimited ? null : 5,
+            InitialDelay = TimeSpan.Zero,
+            JitterRatio = 0,
+            MaxAttempts = unlimited ? null : 5,
         });
         trace.Record("client created");
         using var timeout = new CancellationTokenSource(Limit);
@@ -450,12 +550,28 @@ public class ClusterRetirementTests
         var slot = ClusterHash.GetSlot("key");
         server.ReplyOverride = (_, command) =>
         {
-            if (command == "CLIENT ID") return ":42\r\n"u8.ToArray();
-            if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal)) return ":0\r\n"u8.ToArray();
-            if (command == "EXEC") return "-EXECABORT rejected queue\r\n"u8.ToArray();
+            if (command == "CLIENT ID")
+            {
+                return ":42\r\n"u8.ToArray();
+            }
+
+            if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal))
+            {
+                return ":0\r\n"u8.ToArray();
+            }
+
+            if (command == "EXEC")
+            {
+                return "-EXECABORT rejected queue\r\n"u8.ToArray();
+            }
+
             if (!command.StartsWith("SET ", StringComparison.Ordinal)
                 && !command.StartsWith("EVALSHA ", StringComparison.Ordinal)
-                && !command.StartsWith("BLPOP ", StringComparison.Ordinal)) return null;
+                && !command.StartsWith("BLPOP ", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
             var final = Interlocked.Increment(ref attempts) > ClusterRouter.RedirectLimit;
             // The first reselection is immediate; the next four start one episode.
             // The last route still rejects the command, including READONLY after
@@ -470,12 +586,20 @@ public class ClusterRetirementTests
         var completed = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery)
+            {
+                return;
+            }
+
             trace.Record($"discovery {change.SourceState}; attempt={change.ReconnectAttempt}, "
                 + $"episode={change.ReconnectEpisodeId}, terminal={change.NextReconnectDelay is null}, "
                 + $"error={change.Error?.GetType().Name}/{(change.Error as RespireServerException)?.Code}");
             changes.Enqueue(change);
-            if (change.NextReconnectDelay is null) completed.TrySetResult(change);
+
+            if (change.NextReconnectDelay is null)
+            {
+                completed.TrySetResult(change);
+            }
         };
         await trace.ObserveAsync(async () =>
         {
@@ -484,7 +608,11 @@ public class ClusterRetirementTests
             var error = await Assert.That(async () =>
                 {
                     pendingSend = SendAsync();
-                    try { await pendingSend.WaitAsync(timeout.Token); }
+
+                    try
+                    {
+                        await pendingSend.WaitAsync(timeout.Token);
+                    }
                     finally { trace.Record($"send wait finished; task={pendingSend.Status}"); }
                 })
                 .ThrowsExactly<RespireServerException>();
@@ -512,7 +640,9 @@ public class ClusterRetirementTests
                 case "tracked":
                     var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
                     using (await (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-                        ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, null, true, null, default(CommandDeadline), null])!) { }
+                        ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, null, true, null, default(CommandDeadline), null])!)
+                    {
+                    }
                     break;
                 case "batch":
                     var batch = client.CreateBatch();
@@ -523,7 +653,9 @@ public class ClusterRetirementTests
                 case "script":
                     var execution = await client.StartTrackedScriptExecutionAsync(
                         RespireScript.Create("return redis.call('SET', KEYS[1], ARGV[1])"), ["key"], ["value"], timeout.Token);
-                    using (await execution.ConsumeResponseAsync()) { }
+                    using (await execution.ConsumeResponseAsync())
+                    {
+                    }
                     break;
                 case "native-lock":
                     await client.ExecuteLockAsync("key", new RespireLockToken("owner"), 1000, timeout.Token);
@@ -537,10 +669,14 @@ public class ClusterRetirementTests
                     break;
                 case "blocking":
                     using (await client.SendBlockingAsync("BLPOP",
-                        new Cmd2(RespireCommands.List.BLPOP.Verb, "key", "0"), timeout.Token)) { }
+                        new Cmd2(RespireCommands.List.BLPOP.Verb, "key", "0"), timeout.Token))
+                    {
+                    }
                     break;
                 default:
-                    using (await client.ExecuteAsync(RespireCommands.String.SET, ["key", "value"], cancellationToken: timeout.Token)) { }
+                    using (await client.ExecuteAsync(RespireCommands.String.SET, ["key", "value"], cancellationToken: timeout.Token))
+                    {
+                    }
                     break;
             }
         }
@@ -578,7 +714,11 @@ public class ClusterRetirementTests
         var slot = ClusterHash.GetSlot("key");
         first.ReplyOverride = (_, command) =>
         {
-            if (command != "SET key value") return null;
+            if (command != "SET key value")
+            {
+                return null;
+            }
+
             Publish(router, new("127.0.0.1", second.Port), "second", 2);
             return System.Text.Encoding.ASCII.GetBytes(code == "READONLY"
                 ? "-READONLY demoted\r\n" : $"-{code} {slot} 127.0.0.1:{second.Port}\r\n");
@@ -599,7 +739,9 @@ public class ClusterRetirementTests
             {
                 if (activity.OperationName == "SET" && activity.GetTagItem("server.port") is int port
                     && port == second.Port && Interlocked.CompareExchange(ref retired, 1, 0) == 0)
+                {
                     Publish(router, new("127.0.0.1", last.Port), "last", 3);
+                }
             },
         };
         System.Diagnostics.ActivitySource.AddActivityListener(listener);
@@ -607,10 +749,19 @@ public class ClusterRetirementTests
         var changes = new System.Collections.Concurrent.ConcurrentQueue<RespireConnectionStateChange>();
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery)
+            {
+                return;
+            }
+
             changes.Enqueue(change);
-            if (change.ReconnectExhausted) exhausted.TrySetResult(change);
+
+            if (change.ReconnectExhausted)
+            {
+                exhausted.TrySetResult(change);
+            }
         };
+
         async Task Execute()
         {
             if (path == "batch")
@@ -627,8 +778,12 @@ public class ClusterRetirementTests
                     ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, null, true, null, default(CommandDeadline), null])!;
                 await Assert.That(response.AsString()).IsEqualTo("OK");
             }
-            else await Assert.That(await client.SetAsync("key", "value", cancellationToken: timeout.Token)).IsTrue();
+            else
+            {
+                await Assert.That(await client.SetAsync("key", "value", cancellationToken: timeout.Token)).IsTrue();
+            }
         }
+
         if (configured)
         {
             await Assert.That(async () => await Execute()).Throws<RespireReconnectLimitException>();
@@ -640,7 +795,11 @@ public class ClusterRetirementTests
             await Assert.That(second.ReceivedCommands.Count(command => command == "SET key value")).IsEqualTo(0);
             await Assert.That(last.CommandsSeen).IsEqualTo(0);
         }
-        else await Execute();
+        else
+        {
+            await Execute();
+        }
+
         await Assert.That(retired).IsEqualTo(1);
         await Assert.That(first.ReceivedCommands.Count(command => command == "SET key value")).IsEqualTo(1);
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
@@ -667,7 +826,11 @@ public class ClusterRetirementTests
         var slot = ClusterHash.GetSlot("key");
         first.ReplyOverride = (_, command) =>
         {
-            if (!command.StartsWith("BLPOP ", StringComparison.Ordinal)) return null;
+            if (!command.StartsWith("BLPOP ", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
             Publish(router, new("127.0.0.1", second.Port), "second", 2);
             return System.Text.Encoding.ASCII.GetBytes(code == "READONLY"
                 ? "-READONLY demoted\r\n" : $"-{code} {slot} 127.0.0.1:{second.Port}\r\n");
@@ -683,16 +846,26 @@ public class ClusterRetirementTests
         var changes = new System.Collections.Concurrent.ConcurrentQueue<RespireConnectionStateChange>();
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery)
+            {
+                return;
+            }
+
             changes.Enqueue(change);
-            if (change.ReconnectExhausted) exhausted.TrySetResult(change);
+
+            if (change.ReconnectExhausted)
+            {
+                exhausted.TrySetResult(change);
+            }
         };
+
         async Task Execute()
         {
             using var reply = await client.SendBlockingAsync("BLPOP",
                 new Cmd2(RespireCommands.List.BLPOP.Verb, "key", "0"), timeout.Token);
             await Assert.That(reply.IsNull).IsTrue();
         }
+
         if (configured)
         {
             if (code == "ASK")
@@ -701,7 +874,11 @@ public class ClusterRetirementTests
                 var error = await Assert.That(rejection).IsNotNull();
                 await Assert.That(error.Code).IsEqualTo("ASK");
             }
-            else await Assert.That(async () => await Execute()).ThrowsExactly<RespireReconnectLimitException>();
+            else
+            {
+                await Assert.That(async () => await Execute()).ThrowsExactly<RespireReconnectLimitException>();
+            }
+
             var terminal = await exhausted.Task.WaitAsync(timeout.Token);
             await Assert.That(terminal.ReconnectAttempt).IsEqualTo(1);
             var events = changes.ToArray();
@@ -710,7 +887,11 @@ public class ClusterRetirementTests
             await Assert.That(second.ReceivedCommands.Any(command => command.StartsWith("BLPOP "))).IsFalse();
             await Assert.That(last.CommandsSeen).IsEqualTo(0);
         }
-        else await Execute();
+        else
+        {
+            await Execute();
+        }
+
         await Assert.That(logger.Calls).IsEqualTo(1);
         await Assert.That(first.ReceivedCommands.Count(command => command.StartsWith("BLPOP "))).IsEqualTo(1);
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
@@ -729,7 +910,11 @@ public class ClusterRetirementTests
         {
             report = text;
             reportedBeforeTeardown = !disposed;
-            if (failReporter) throw new IOException("Diagnostic output unavailable.");
+
+            if (failReporter)
+            {
+                throw new IOException("Diagnostic output unavailable.");
+            }
         });
 
         var error = await Assert.That(ScenarioAsync).Throws<OperationCanceledException>();
@@ -750,8 +935,15 @@ public class ClusterRetirementTests
                 SuppressReply = command =>
                 {
                     trace.Record("server received " + command);
+
                     if (failReporter)
-                        for (var index = 0; index < 400; index++) trace.Record("timeline overflow control");
+                    {
+                        for (var index = 0; index < 400; index++)
+                        {
+                            trace.Record("timeline overflow control");
+                        }
+                    }
+
                     canceled.Cancel();
                     return true;
                 },
@@ -759,6 +951,7 @@ public class ClusterRetirementTests
             await using var client = CreateClient();
             Publish(client.Core.Cluster!, new("127.0.0.1", server.Port), "owner", 1);
             using var safety = new CancellationTokenSource(Limit);
+
             try
             {
                 await trace.ObserveAsync(async () =>
@@ -787,7 +980,11 @@ public class ClusterRetirementTests
 
         public void Record(string phase)
         {
-            if (Interlocked.Increment(ref _recorded) > Capacity) return;
+            if (Interlocked.Increment(ref _recorded) > Capacity)
+            {
+                return;
+            }
+
             _entries.Enqueue(Capture(phase));
         }
 
@@ -813,7 +1010,10 @@ public class ClusterRetirementTests
 
         public async Task ObserveAsync(Func<Task> action, Func<string> describeState)
         {
-            try { await action(); }
+            try
+            {
+                await action();
+            }
             catch (Exception error)
             {
                 try
@@ -824,15 +1024,20 @@ public class ClusterRetirementTests
                     var text = new System.Text.StringBuilder($"Terminal routing failure ({scenario}): {describeState()}")
                         .AppendLine().Append("Prepared replies precede socket writes and do not prove client receipt. "
                             + "GC/thread-pool counters are process-wide observations, not proof of causation.");
+
                     foreach (var entry in _entries.Append(boundary).OrderBy(entry => entry.ElapsedMilliseconds))
+                    {
                         text.AppendLine().Append(FormattableString.Invariant(
                             $"{entry.Utc:o} +{entry.ElapsedMilliseconds:F3} ms: {entry.Phase}; workers={entry.Workers}, pending={entry.Pending}, completed-delta={entry.Completed}, gc-delta={entry.Gen0}/{entry.Gen1}/{entry.Gen2}, gc-pause-delta-ms={entry.PauseMilliseconds:F3}"));
+                    }
+
                     text.AppendLine().Append($"Dropped timeline entries: {Math.Max(0, Volatile.Read(ref _recorded) - Capacity)}");
                     var report = text.ToString();
                     error.Data[nameof(TerminalRoutingTrace)] = report;
                     (reportFailure ?? Console.Error.WriteLine)(report);
                 }
                 catch (Exception) { /* Preserve the original failure even if diagnostics fail. */ }
+
                 throw;
             }
         }
@@ -848,16 +1053,29 @@ public class ClusterRetirementTests
     {
         internal Action? OnConnected;
         internal int Calls;
+
         public ILogger CreateLogger(string categoryName)
             => categoryName == $"Respire.Cluster.Blocking.127.0.0.1:{port}" ? this : NullLogger.Instance;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel level) => true;
+
         public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? error, Func<TState, Exception?, string> formatter)
         {
             if (level == LogLevel.Debug && formatter(state, error).StartsWith("Connected to", StringComparison.Ordinal)
-                && Interlocked.CompareExchange(ref Calls, 1, 0) == 0) OnConnected?.Invoke();
+                && Interlocked.CompareExchange(ref Calls, 1, 0) == 0)
+            {
+                OnConnected?.Invoke();
+            }
         }
     }
 
@@ -890,21 +1108,32 @@ public class ClusterRetirementTests
             {
                 if (command == "PING")
                 {
-                    if (Interlocked.Increment(ref acceptedCount) == 4) full.TrySetResult();
+                    if (Interlocked.Increment(ref acceptedCount) == 4)
+                    {
+                        full.TrySetResult();
+                    }
+
                     return true;
                 }
+
                 if (command == "SET key value")
                 {
                     retried.TrySetResult();
                     return cancelAfterAcceptance;
                 }
+
                 return false;
             },
             ReplyOverride = (_, command) => command == "SET key value" ? System.Text.Encoding.ASCII.GetBytes($"-{errorCode} test application error\r\n") : null,
         };
         await using var client = CreateClient(maxInflightCommands: 4,
-            reconnectPolicy: new() { InitialDelay = cancelDuringRecovery ? TimeSpan.FromSeconds(30) : TimeSpan.Zero,
-                MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0, MaxAttempts = 1 });
+            reconnectPolicy: new()
+            {
+                InitialDelay = cancelDuringRecovery ? TimeSpan.FromSeconds(30) : TimeSpan.Zero,
+                MaxDelay = TimeSpan.FromSeconds(30),
+                JitterRatio = 0,
+                MaxAttempts = 1
+            });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var caller = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
         var router = client.Core.Cluster!;
@@ -916,17 +1145,29 @@ public class ClusterRetirementTests
         await full.Task.WaitAsync(timeout.Token);
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
-            if (change.NextReconnectDelay is not null) scheduled.TrySetResult();
-            else terminal.TrySetResult(change);
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery)
+            {
+                return;
+            }
+
+            if (change.NextReconnectDelay is not null)
+            {
+                scheduled.TrySetResult();
+            }
+            else
+            {
+                terminal.TrySetResult(change);
+            }
         };
         var pending = SendAsync();
         await Assert.That(pending.IsCompleted).IsFalse();
         Publish(router, endpoint, "new", 2);
+
         try
         {
             await (cancelDuringRecovery ? scheduled.Task : retried.Task).WaitAsync(timeout.Token);
             OperationCanceledException? cancellationError = null;
+
             if (cancelAfterAcceptance || cancelDuringRecovery)
             {
                 caller.Cancel();
@@ -938,11 +1179,20 @@ public class ClusterRetirementTests
                 var error = await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<RespireServerException>();
                 await Assert.That(error!.Code).IsEqualTo(errorCode);
             }
+
             var recovered = await terminal.Task.WaitAsync(timeout.Token);
             await Assert.That(recovered.SourceState).IsEqualTo(cancelDuringRecovery
                 ? RespireConnectionState.Disconnected : RespireConnectionState.Connected);
-            if (cancelDuringRecovery) await Assert.That(recovered.Error).IsSameReferenceAs(cancellationError);
-            else await Assert.That(recovered.Error).IsNull();
+
+            if (cancelDuringRecovery)
+            {
+                await Assert.That(recovered.Error).IsSameReferenceAs(cancellationError);
+            }
+            else
+            {
+                await Assert.That(recovered.Error).IsNull();
+            }
+
             await Assert.That(recovered.ReconnectAttempt).IsEqualTo(1);
             await Assert.That(recovered.ReconnectExhausted).IsFalse();
             await Assert.That(server.ReceivedCommands.Count(command => command == "SET key value")).IsEqualTo(cancelDuringRecovery ? 0 : 1);
@@ -951,13 +1201,19 @@ public class ClusterRetirementTests
         finally
         {
             await server.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(), 0);
-            foreach (var task in accepted) { using var reply = await task.WaitAsync(timeout.Token); }
+
+            foreach (var task in accepted)
+            {
+                using var reply = await task.WaitAsync(timeout.Token);
+            }
         }
+
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
 
         async Task SendAsync()
         {
             var command = new Cmd2(RespireCommands.String.SET.Verb, "key", "value");
+
             if (path == "pinned")
             {
                 using var reply = await client.SendToClusterTargetAsync("SET", old, command, caller.Token);
@@ -1001,19 +1257,34 @@ public class ClusterRetirementTests
         {
             SuppressReply = command =>
             {
-                if (command != "PING") { retried.TrySetResult(); return false; }
-                if (Interlocked.Increment(ref acceptedCount) == 4) full.TrySetResult();
+                if (command != "PING")
+                {
+                    retried.TrySetResult();
+                    return false;
+                }
+
+                if (Interlocked.Increment(ref acceptedCount) == 4)
+                {
+                    full.TrySetResult();
+                }
+
                 return true;
             },
         };
         await using var client = CreateClient(maxInflightCommands: 4, allowAdmin: true,
-            reconnectPolicy: configuredPolicy ? new() { InitialDelay = TimeSpan.FromMilliseconds(10),
-                JitterRatio = 0, MaxAttempts = 1 } : null);
+            reconnectPolicy: configuredPolicy ? new()
+            {
+                InitialDelay = TimeSpan.FromMilliseconds(10),
+                JitterRatio = 0,
+                MaxAttempts = 1
+            } : null);
         var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
             if (change.ReconnectSource == RespireReconnectSource.ClusterDiscovery && change.NextReconnectDelay is not null)
+            {
                 scheduled.TrySetResult(change);
+            }
         };
         using var timeout = new CancellationTokenSource(Limit);
         var router = client.Core.Cluster!;
@@ -1029,6 +1300,7 @@ public class ClusterRetirementTests
         Publish(router, endpoint, "new", 2);
         await retry.WaitAsync(timeout.Token);
         await retried.Task.WaitAsync(timeout.Token);
+
         if (configuredPolicy)
         {
             var change = await scheduled.Task.WaitAsync(timeout.Token);
@@ -1036,6 +1308,7 @@ public class ClusterRetirementTests
             await Assert.That(change.NextReconnectDelay).IsEqualTo(TimeSpan.FromMilliseconds(10));
             await Assert.That(change.Error).IsTypeOf<RespireConnectionRetiredException>();
         }
+
         await Assert.That(accepted.All(task => !task.IsCompleted)).IsTrue();
         await Assert.That(server.ReceivedCommands.Take(4)).IsEquivalentTo(["PING", "PING", "PING", "PING"]);
         await Assert.That(server.ReceivedConnectionIds.Take(4)).IsEquivalentTo([0, 0, 0, 0]);
@@ -1049,11 +1322,13 @@ public class ClusterRetirementTests
         };
         await Assert.That(server.ReceivedCommands.Skip(4)).IsEquivalentTo(expected);
         await server.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(), 0);
+
         foreach (var task in accepted)
         {
             using var reply = await task.WaitAsync(timeout.Token);
             await Assert.That(reply.AsString()).IsEqualTo("PONG");
         }
+
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
 
         async Task SendAsync()
@@ -1066,7 +1341,10 @@ public class ClusterRetirementTests
                     var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
                     var pending = (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
                         ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, onRedirect, true, null, default(CommandDeadline), null])!;
-                    using (var reply = await pending) await Assert.That(reply.AsString()).IsEqualTo("OK");
+                    using (var reply = await pending)
+                    {
+                        await Assert.That(reply.AsString()).IsEqualTo("OK");
+                    }
                     await Assert.That(rebased).IsEqualTo(1);
                     break;
                 case "fire-forget":
@@ -1089,7 +1367,9 @@ public class ClusterRetirementTests
                 default:
                     using (var reply = await client.ExecuteAsync(RespireCommands.String.SET, ["key", "value"],
                         path == "no-redirect" ? RespireCommandFlags.NoRedirect : RespireCommandFlags.None, timeout.Token))
+                    {
                         await Assert.That(reply.AsString()).IsEqualTo("OK");
+                    }
                     break;
             }
         }
@@ -1115,8 +1395,12 @@ public class ClusterRetirementTests
         var oldEndpoint = new RespireEndpoint("127.0.0.1", oldServer.Port);
         Publish(router, oldEndpoint, "old", 1);
         var source = await router.GetConnectionAsync(42, timeout.Token, discovery: null, observation: default);
+
         using (var ready = await source.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token))
+        {
             await Assert.That(ready.AsString()).IsEqualTo("PONG");
+        }
+
         var selected = await router.GetDedicatedPoolAsync(42, timeout.Token, discovery: null, observation: default);
         Publish(router, new("127.0.0.1", newServer.Port), "new", 2);
         await Assert.That(selected.IsStopping).IsTrue();
@@ -1126,6 +1410,7 @@ public class ClusterRetirementTests
             asking ? new RespireServerException($"ASK 42 127.0.0.1:{oldServer.Port}") : null, redirectSource);
         var (pool, connection) = await router.RentDedicatedConnectionAsync(
             selected, route, timeout.Token, discovery: null, default, reuseIdle);
+
         try
         {
             await Assert.That(ReferenceEquals(pool, selected)).IsFalse();
@@ -1142,6 +1427,7 @@ public class ClusterRetirementTests
                 + $"new wire: {string.Join(", ", newServer.ReceivedCommands)}", error);
         }
         finally { pool.Return(connection); }
+
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
     }
 
@@ -1156,8 +1442,16 @@ public class ClusterRetirementTests
         {
             SuppressReply = command =>
             {
-                if (command != "PING") return false;
-                if (Interlocked.Increment(ref pings) == 4) full.TrySetResult();
+                if (command != "PING")
+                {
+                    return false;
+                }
+
+                if (Interlocked.Increment(ref pings) == 4)
+                {
+                    full.TrySetResult();
+                }
+
                 return true;
             },
         };
@@ -1179,6 +1473,7 @@ public class ClusterRetirementTests
         var command = new Cmd2(RespireCommands.String.SET.Verb, "key", "value");
         var rebased = new List<bool>();
         Task<Respire.Protocol.RespValue> pending;
+
         if (tracked)
         {
             var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
@@ -1186,18 +1481,32 @@ public class ClusterRetirementTests
             pending = ((ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
                 ["SET", router, command, timeout.Token, onRedirect, true, null, default(CommandDeadline), null])!).AsTask();
         }
-        else pending = client.SendAsync("SET", command, timeout.Token).AsTask();
+        else
+        {
+            pending = client.SendAsync("SET", command, timeout.Token).AsTask();
+        }
+
         var signal = typeof(RespireConnection).GetField("_capacitySignal", Private)!.GetValue(old)!;
         var waiters = signal.GetType().GetField("_waiters", Private)!;
+
         while (waiters.GetValue(signal) is null)
         {
-            if (pending.IsCompleted) { using var unexpected = await pending; throw new InvalidOperationException("ASK did not reach the full target queue."); }
+            if (pending.IsCompleted)
+            {
+                using var unexpected = await pending;
+                throw new InvalidOperationException("ASK did not reach the full target queue.");
+            }
+
             await Task.Delay(1, timeout.Token);
         }
         // The source stays the slot owner; only its temporary ASK target is detached.
         Publish(router, sourceEndpoint, "source", 2);
+
         using (var reply = await pending.WaitAsync(timeout.Token))
+        {
             await Assert.That(reply.AsString()).IsEqualTo("OK");
+        }
+
         await Assert.That(oldTarget.IsRetired).IsTrue();
         string[] expectedCommands = tracked
             ? ["ASKING", "CLIENT CACHING YES", "SET key value"]
@@ -1205,9 +1514,19 @@ public class ClusterRetirementTests
         await Assert.That(target.ReceivedCommands.Skip(4)).IsEquivalentTo(expectedCommands);
         await Assert.That(source.ReceivedCommands.Count(value => value == "SET key value")).IsEqualTo(1);
         await Assert.That((await router.GetConnectionAsync(slot, timeout.Token, discovery: null, observation: default)).Port).IsEqualTo(source.Port);
-        if (tracked) await Assert.That(rebased).IsEquivalentTo([true, true]);
+
+        if (tracked)
+        {
+            await Assert.That(rebased).IsEquivalentTo([true, true]);
+        }
+
         await target.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(), 0);
-        foreach (var task in accepted) { using var reply = await task.WaitAsync(timeout.Token); }
+
+        foreach (var task in accepted)
+        {
+            using var reply = await task.WaitAsync(timeout.Token);
+        }
+
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
     }
 
@@ -1220,7 +1539,11 @@ public class ClusterRetirementTests
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var oldServer = new FakeRespServer(FakeRespServer.OkReply)
         {
-            SuppressReply = command => { handshake.TrySetResult(); return true; },
+            SuppressReply = command =>
+            {
+                handshake.TrySetResult();
+                return true;
+            },
         };
         await using var replacement = new FakeRespServer(2, FakeRespServer.OkReply);
         await using var client = CreateClient();
@@ -1234,16 +1557,28 @@ public class ClusterRetirementTests
         Publish(router, new("127.0.0.1", replacement.Port), "new", 1);
         var pending = router.RentDedicatedConnectionAsync(selected, 42, caller.Token, discovery: null, observation: default).AsTask();
         await handshake.Task.WaitAsync(timeout.Token);
-        if (action == "cancel") caller.Cancel();
-        if (action == "dispose") await client.DisposeAsync();
+
+        if (action == "cancel")
+        {
+            caller.Cancel();
+        }
+
+        if (action == "dispose")
+        {
+            await client.DisposeAsync();
+        }
+
         await selected.RetireAsync();
+
         if (action != "retire")
         {
             await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<OperationCanceledException>();
             await Assert.That(replacement.CommandsSeen).IsEqualTo(0);
             return;
         }
+
         var (pool, connection) = await pending.WaitAsync(timeout.Token);
+
         try
         {
             using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token);
@@ -1252,6 +1587,7 @@ public class ClusterRetirementTests
             await Assert.That(ReferenceEquals(selected, pool)).IsFalse();
         }
         finally { pool.Return(connection); }
+
         await Assert.That(oldServer.ReceivedCommands).IsEquivalentTo(["SELECT 1"]);
     }
 
@@ -1268,8 +1604,16 @@ public class ClusterRetirementTests
         {
             SuppressReply = command =>
             {
-                if (command != "PING") return false;
-                if (Interlocked.Increment(ref pings) == 4) full.TrySetResult();
+                if (command != "PING")
+                {
+                    return false;
+                }
+
+                if (Interlocked.Increment(ref pings) == 4)
+                {
+                    full.TrySetResult();
+                }
+
                 return true;
             },
         };
@@ -1280,7 +1624,10 @@ public class ClusterRetirementTests
             SuppressReply = command =>
             {
                 if (command.StartsWith("EVALSHA ", StringComparison.Ordinal) || command.StartsWith("DELEX ", StringComparison.Ordinal))
+                {
                     identityAtWrite = currentIdentity!();
+                }
+
                 return false;
             },
         };
@@ -1290,7 +1637,9 @@ public class ClusterRetirementTests
         client.ConnectionStateChanged += change =>
         {
             if (change.ReconnectSource == RespireReconnectSource.ClusterDiscovery && change.NextReconnectDelay is not null)
+            {
                 scheduled.TrySetResult(change);
+            }
         };
         using var timeout = new CancellationTokenSource(Limit);
         var router = client.Core.Cluster!;
@@ -1300,6 +1649,7 @@ public class ClusterRetirementTests
             .Select(_ => old.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token).AsTask()).ToArray();
         await full.Task.WaitAsync(timeout.Token);
         Task operation;
+
         if (script)
         {
             var execution = await client.StartTrackedScriptExecutionAsync(
@@ -1313,9 +1663,11 @@ public class ClusterRetirementTests
             currentIdentity = () => execution.ConnectionIdentity;
             operation = execution.ConsumeResponseAsync().AsTask();
         }
+
         await Assert.That(operation.IsCompleted).IsFalse();
         Publish(router, new("127.0.0.1", newServer.Port), "new", 2);
         await operation.WaitAsync(timeout.Token);
+
         if (configuredPolicy)
         {
             var change = await scheduled.Task.WaitAsync(timeout.Token);
@@ -1323,6 +1675,7 @@ public class ClusterRetirementTests
             await Assert.That(change.NextReconnectDelay).IsEqualTo(TimeSpan.FromMilliseconds(10));
             await Assert.That(change.Error).IsTypeOf<RespireConnectionRetiredException>();
         }
+
         await Assert.That(identityAtWrite.HasValue).IsTrue();
         await Assert.That(identityAtWrite!.Value.ServerClientId).IsEqualTo(42);
         await Assert.That(identityAtWrite.Value.Endpoint.Port).IsEqualTo(newServer.Port);
@@ -1330,7 +1683,12 @@ public class ClusterRetirementTests
         await Assert.That(newServer.ReceivedCommands.Count).IsEqualTo(3);
         await Assert.That(oldServer.ReceivedCommands.Skip(2)).IsEquivalentTo(["PING", "PING", "PING", "PING"]);
         await oldServer.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(), 0);
-        foreach (var task in accepted) { using var reply = await task.WaitAsync(timeout.Token); }
+
+        foreach (var task in accepted)
+        {
+            using var reply = await task.WaitAsync(timeout.Token);
+        }
+
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
 
         static async Task CompleteScriptAsync(ValueTask<RespireResult> response)
@@ -1349,7 +1707,16 @@ public class ClusterRetirementTests
         var commands = 0;
         await using var server = new FakeRespServer(4, FakeRespServer.PongReply)
         {
-            SuppressReply = _ => { if (Interlocked.Increment(ref commands) != 1) return false; received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                if (Interlocked.Increment(ref commands) != 1)
+                {
+                    return false;
+                }
+
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var client = CreateClient();
         var router = client.Core.Cluster!;
@@ -1373,14 +1740,31 @@ public class ClusterRetirementTests
         await Assert.That(snapshot.BorrowedDedicatedConnectionCount).IsEqualTo(dedicated ? 1L : 0L);
         await Assert.That(snapshot.PendingCorrectionFenceCount).IsEqualTo(0);
         await Assert.That(snapshot.CleanupFailedGenerationCount).IsEqualTo(0);
-        if (!dedicated) await Assert.That(snapshot.UndrainedGenerationCount).IsEqualTo(1);
+
+        if (!dedicated)
+        {
+            await Assert.That(snapshot.UndrainedGenerationCount).IsEqualTo(1);
+        }
+
         await current.EnsureConnectedAsync();
+
         using (var reply = await current.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+        {
             await Assert.That(reply.AsString()).IsEqualTo("PONG");
+        }
+
         await server.SendRawAsync(FakeRespServer.PongReply, dedicated ? 1 : 0);
+
         using (var reply = await pending.WaitAsync(Limit))
+        {
             await Assert.That(reply.AsString()).IsEqualTo("PONG");
-        if (dedicated) pool.Return(connection);
+        }
+
+        if (dedicated)
+        {
+            pool.Return(connection);
+        }
+
         await router.WaitForRetirementAsync().WaitAsync(Limit);
         await Assert.That(connection.IsConnected).IsFalse();
         await Assert.That(ReferenceEquals(current, router.GetMultiplexer(endpoint))).IsTrue();
@@ -1398,6 +1782,7 @@ public class ClusterRetirementTests
         await using var client = CreateClient();
         var router = client.Core.Cluster!;
         var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
+
         for (var generation = 1; generation <= 12; generation++)
         {
             Publish(router, endpoint, $"node-{generation}", generation);
@@ -1405,11 +1790,19 @@ public class ClusterRetirementTests
             var node = router.GetMultiplexer(endpoint);
             await node.EnsureConnectedAsync();
             var pool = router.GetDedicatedPool(endpoint);
+
             using (var ready = await node.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+            {
                 await Assert.That(ready.AsString()).IsEqualTo("PONG");
+            }
+
             var borrowed = await pool.RentAsync(default);
+
             using (var ready = await borrowed.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+            {
                 await Assert.That(ready.AsString()).IsEqualTo("PONG");
+            }
+
             pool.Return(borrowed);
             await using var correction = router.GetCorrectionLease(node.GetConnection());
             await Assert.That(RetainedNodes(router)).IsEqualTo(2);
@@ -1424,6 +1817,7 @@ public class ClusterRetirementTests
             await Assert.That(identities.Endpoints.Count()).IsEqualTo(3); // seed, preferred, advertised alias
             await Assert.That(client.GetClusterRetirementSnapshot()!.RetiringGenerationCount).IsEqualTo(0);
         }
+
         await Assert.That(client.Core.Multiplexer.IsRetired).IsFalse();
     }
 
@@ -1435,7 +1829,11 @@ public class ClusterRetirementTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply)
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var client = CreateClient();
         var router = client.Core.Cluster!;
@@ -1464,8 +1862,12 @@ public class ClusterRetirementTests
     {
         await using var sourceServer = new FakeRespServer(FakeRespServer.PongReply);
         await using var source = await RespireConnection.ConnectAsync("127.0.0.1", sourceServer.Port);
+
         using (var ready = await source.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+        {
             await Assert.That(ready.AsString()).IsEqualTo("PONG");
+        }
+
         await using var target = new FakeRespServer(2, FakeRespServer.PongReply);
         await using var client = CreateClient();
         var router = client.Core.Cluster!;
@@ -1477,11 +1879,19 @@ public class ClusterRetirementTests
         await gate.WaitAsync(timeout.Token);
         Task<RespireConnection>? connectionTask = null;
         Task<DedicatedConnectionPool>? poolTask = null;
+
         try
         {
             var moved = new RespireServerException($"MOVED 42 127.0.0.1:{target.Port}");
-            if (dedicated) poolTask = router.GetRedirectDedicatedPoolAsync(moved, source, timeout.Token, commandSlot: null, discovery: null, observation: default).AsTask();
-            else connectionTask = router.GetRedirectConnectionAsync(moved, source, timeout.Token, commandSlot: null, discovery: null, observation: default).AsTask();
+
+            if (dedicated)
+            {
+                poolTask = router.GetRedirectDedicatedPoolAsync(moved, source, timeout.Token, commandSlot: null, discovery: null, observation: default).AsTask();
+            }
+            else
+            {
+                connectionTask = router.GetRedirectConnectionAsync(moved, source, timeout.Token, commandSlot: null, discovery: null, observation: default).AsTask();
+            }
             // Redirect setup is parked inside the old generation's connection gate.
             Publish(router, endpoint, "new", 2);
         }
@@ -1495,6 +1905,7 @@ public class ClusterRetirementTests
         await Assert.That(old.IsRetired).IsTrue();
         DedicatedConnectionPool? pool = dedicated ? await poolTask!.WaitAsync(timeout.Token) : null;
         var connection = pool is null ? await connectionTask!.WaitAsync(timeout.Token) : await pool.RentAsync(timeout.Token);
+
         try
         {
             using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token);
@@ -1505,6 +1916,7 @@ public class ClusterRetirementTests
         {
             pool?.Return(connection);
         }
+
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
     }
 
@@ -1519,9 +1931,14 @@ public class ClusterRetirementTests
         Publish(router, endpoint, "old", 1);
         var old = router.GetMultiplexer(endpoint);
         await old.EnsureConnectedAsync();
+
         using (var ready = await old.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+        {
             await Assert.That(ready.AsString()).IsEqualTo("PONG");
+        }
+
         Publish(router, endpoint, "new", 2);
+
         try
         {
             var error = await Assert.That(async () => await router.WaitForRetirementAsync().WaitAsync(Limit))
@@ -1554,12 +1971,20 @@ public class ClusterRetirementTests
         Publish(router, endpoint, "old", 1);
         var node = router.GetMultiplexer(endpoint);
         await node.EnsureConnectedAsync();
+
         using (var ready = await node.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+        {
             await Assert.That(ready.AsString()).IsEqualTo("PONG");
+        }
+
         var pool = router.GetDedicatedPool(endpoint);
         var borrowed = await pool.RentAsync(default);
+
         using (var ready = await borrowed.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+        {
             await Assert.That(ready.AsString()).IsEqualTo("PONG");
+        }
+
         Publish(router, endpoint, "new", 2);
         var retirement = router.WaitForRetirementAsync();
         pool.Return(borrowed);
@@ -1583,7 +2008,11 @@ public class ClusterRetirementTests
         {
             SuppressReply = command =>
             {
-                if (command != "CLIENT KILL ID 42") return false;
+                if (command != "CLIENT KILL ID 42")
+                {
+                    return false;
+                }
+
                 killSeen.TrySetResult();
                 return true;
             },
@@ -1599,8 +2028,12 @@ public class ClusterRetirementTests
         await original.EnsureServerClientIdAsync();
         var pool = router.GetDedicatedPool(endpoint);
         var borrowed = await pool.RentAsync(default);
+
         using (var ready = await borrowed.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+        {
             await Assert.That(ready.AsInteger()).IsEqualTo(42);
+        }
+
         await original.DisposeAsync();
         Publish(router, endpoint, "new", 2);
         var retirement = router.WaitForRetirementAsync();
@@ -1608,6 +2041,7 @@ public class ClusterRetirementTests
         await server.SendRawAsync("-ERR unavailable\r\n"u8.ToArray(), 2);
         await logger.RetirementFailureSeen.Task.WaitAsync(Limit);
         pool.Return(borrowed);
+
         try
         {
             var error = await Assert.That(async () => await retirement.WaitAsync(Limit)).ThrowsExactly<AggregateException>();
@@ -1630,9 +2064,11 @@ public class ClusterRetirementTests
         var gate = (SemaphoreSlim)typeof(RespireConnectionMultiplexer).GetField("_retiredFenceGate", Private)!.GetValue(node)!;
         Task fencing;
         Task disposal;
+
         if (waitForGate)
         {
             await gate.WaitAsync();
+
             try
             {
                 fencing = node.FenceRetiredConnectionsAsync().AsTask();
@@ -1649,6 +2085,7 @@ public class ClusterRetirementTests
             await disposal.WaitAsync(Limit);
             fencing = node.FenceRetiredConnectionsAsync().AsTask();
         }
+
         await Assert.That(async () => await fencing.WaitAsync(Limit))
             .ThrowsExactly<RespireConnectionMultiplexer.CorrectionFenceDisposedException>();
         await disposal.WaitAsync(Limit);
@@ -1667,6 +2104,7 @@ public class ClusterRetirementTests
         var nodeRetirement = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         typeof(RespireConnectionMultiplexer).GetField("_retirementCompletion", Private)!.SetValue(node, nodeRetirement);
         var failure = new ObjectDisposedException("unrelated resource");
+
         try
         {
             Publish(router, endpoint, "new", 2);
@@ -1708,11 +2146,13 @@ public class ClusterRetirementTests
         typeof(RespireConnectionMultiplexer).GetField("_retirementCompletion", Private)!.SetValue(node, nodeRetirement);
         Exception failure = unexpectedFailure ? new InvalidOperationException("Unexpected retirement failure")
             : new RespireConnectionMultiplexer.CorrectionFenceDisposedException();
+
         try
         {
             Publish(router, endpoint, "new", 2);
             var retirement = router.WaitForRetirementAsync();
             await Assert.That(retirement.IsCompleted).IsFalse();
+
             if (disposeFirst)
             {
                 var disposal = client.DisposeAsync().AsTask();
@@ -1720,6 +2160,7 @@ public class ClusterRetirementTests
                 await Assert.That(stop.IsCancellationRequested).IsTrue();
                 await Assert.That(disposal.IsCompleted).IsFalse();
                 nodeRetirement.SetException(failure);
+
                 if (unexpectedFailure)
                 {
                     var error = await Assert.That(async () => await disposal.WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
@@ -1758,7 +2199,11 @@ public class ClusterRetirementTests
         {
             SuppressReply = command =>
             {
-                if (command != "CLIENT KILL ID 42") return false;
+                if (command != "CLIENT KILL ID 42")
+                {
+                    return false;
+                }
+
                 killSeen.TrySetResult();
                 return true;
             },
@@ -1772,7 +2217,8 @@ public class ClusterRetirementTests
                     // Expire the fence during connection setup, before CLIENT KILL can be sent.
                     await Task.Delay(Timeout.InfiniteTimeSpan, token);
                     return Stream.Null;
-                } : null,
+                }
+                : null,
             });
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         await connection.EnsureServerClientIdAsync();
@@ -1780,6 +2226,7 @@ public class ClusterRetirementTests
         await connection.DisposeAsync();
         using var cancel = new CancellationTokenSource();
         var fencing = node.FenceRetiredConnectionsAsync(cancel.Token).AsTask();
+
         if (cancelCaller)
         {
             // Caller cancellation specifically exercises an accepted, unacknowledged kill.
@@ -1796,8 +2243,12 @@ public class ClusterRetirementTests
             await Assert.That(error!.Message).Contains("CLIENT KILL");
             await Assert.That(cancel.IsCancellationRequested).IsFalse();
         }
+
         if (blockControlConnection)
+        {
             await Assert.That(server.ReceivedCommands).DoesNotContain("CLIENT KILL ID 42");
+        }
+
         await Assert.That(node.HasPendingCorrectionFences).IsTrue();
     }
 
@@ -1840,13 +2291,20 @@ public class ClusterRetirementTests
         // Complete a round trip before retiring: TCP connect can finish before the fake
         // listener accepts, and Windows AcceptEx can fail if that socket closes first.
         using (var ready = await old.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+        {
             await Assert.That(ready.AsString()).IsEqualTo("PONG");
+        }
+
         var lease = router.GetCorrectionLease(old.GetConnection());
         Publish(router, endpoint, "new", 2);
         await router.WaitForRetirementAsync().WaitAsync(Limit);
         var control = await lease.Pool.RentAsync(default);
+
         using (var reply = await control.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+        {
             await Assert.That(reply.AsString()).IsEqualTo("PONG");
+        }
+
         lease.Pool.Return(control);
         await lease.DisposeAsync();
         await Assert.That(control.IsConnected).IsFalse();
@@ -1869,15 +2327,23 @@ public class ClusterRetirementTests
         var firstLease = router.GetCorrectionLease(original);
         var firstPool = firstLease.Pool;
         var control = await firstPool.RentAsync(default);
+
         using (var ready = await control.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+        {
             await Assert.That(ready.AsInteger()).IsEqualTo(42);
+        }
+
         firstPool.Return(control);
         await firstLease.DisposeAsync();
         await using var reconnected = await RespireConnection.ConnectAsync("127.0.0.1", firstServer.Port);
         await reconnected.EnsureServerClientIdAsync();
         InstallPhysicalConnection(node, reconnected);
+
         await using (var samePeer = router.GetCorrectionLease(reconnected))
+        {
             await Assert.That(ReferenceEquals(samePeer.Pool, firstPool)).IsTrue();
+        }
+
         await using var replacement = await RespireConnection.ConnectAsync("127.0.0.1", secondServer.Port);
         await replacement.EnsureServerClientIdAsync();
         InstallPhysicalConnection(node, replacement);
@@ -1886,8 +2352,11 @@ public class ClusterRetirementTests
         handlers?.Invoke(0, new(endpoint, RespireConnectionState.Connected, null));
         await Assert.That(Count(router, "_correctionPools")).IsEqualTo(0);
         await Assert.That(Count(router, "_correctionStateHandlers")).IsEqualTo(0);
+
         await using (var newPeer = router.GetCorrectionLease(replacement))
+        {
             await Assert.That(ReferenceEquals(newPeer.Pool, firstPool)).IsFalse();
+        }
         // Await the already-started cleanup rather than depending on background timing.
         await firstPool.RetireAsync();
         await Assert.That(control.IsConnected).IsFalse();
@@ -1924,9 +2393,20 @@ public class ClusterRetirementTests
         {
             SuppressReply = command =>
             {
-                if (command != "CLIENT KILL ID 42") return false;
-                if (Interlocked.Increment(ref kills) == 1) firstSeen.TrySetResult();
-                else retrySeen.TrySetResult();
+                if (command != "CLIENT KILL ID 42")
+                {
+                    return false;
+                }
+
+                if (Interlocked.Increment(ref kills) == 1)
+                {
+                    firstSeen.TrySetResult();
+                }
+                else
+                {
+                    retrySeen.TrySetResult();
+                }
+
                 return true;
             },
         };
@@ -1955,6 +2435,7 @@ public class ClusterRetirementTests
         await Assert.That(snapshot.OldestRetirementAge).IsGreaterThan(TimeSpan.Zero);
         var later = client.GetClusterRetirementSnapshot()!;
         await Assert.That(later.OldestRetirementAge).IsGreaterThanOrEqualTo(snapshot.OldestRetirementAge);
+
         if (disposeBeforeAcknowledgement)
         {
             await client.DisposeAsync().AsTask().WaitAsync(Limit);
@@ -1962,6 +2443,7 @@ public class ClusterRetirementTests
             await Assert.That(snapshot.PendingCorrectionFenceCount).IsEqualTo(1);
             return;
         }
+
         await server.SendRawAsync(":1\r\n"u8.ToArray(), 2);
         await router.WaitForRetirementAsync().WaitAsync(Limit);
         await Assert.That(RetainedNodes(router)).IsEqualTo(2);
@@ -1994,6 +2476,7 @@ public class ClusterRetirementTests
         var versions = (long[])typeof(ClusterRouter).GetField("_slotVersions", Private)!.GetValue(router)!;
         var result = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         bool readerReachedSnapshot;
+
         lock (gate)
         {
             // Pause PublishSlotLocked between its version and owner writes.
@@ -2007,13 +2490,15 @@ public class ClusterRetirementTests
                     result.TrySetResult(router.IsDedicatedStreamRouteCurrent(42, captured, connection));
                 }
                 catch (Exception error) { result.TrySetException(error); }
-            }) { IsBackground = true };
+            })
+            { IsBackground = true };
             reader.Start();
             // Wait for a real result or lock contention, rather than relying on a sleep.
             readerReachedSnapshot = SpinWait.SpinUntil(() => result.Task.IsCompleted
                 || (reader.ThreadState & ThreadState.WaitSleepJoin) != 0, Limit);
             router.SetSlotOwner(42, replacement);
         }
+
         await Assert.That(readerReachedSnapshot).IsTrue();
         await Assert.That(await result.Task.WaitAsync(Limit)).IsFalse();
     }
@@ -2047,19 +2532,29 @@ public class ClusterRetirementTests
         using var timeout = new CancellationTokenSource(Limit);
         using var source = new ReplayReadStream(() =>
         {
-            if (changeDuringRead) ChangeOwner();
+            if (changeDuringRead)
+            {
+                ChangeOwner();
+            }
         });
         var upload = client.Strings.SetAsync("key", source, source.Length, cancellationToken: timeout.Token).AsTask();
+
         if (!changeDuringRead)
         {
             while (!oldTarget.ReceivedCommands.Contains("ASKING"))
             {
-                if (upload.IsCompleted) await upload;
+                if (upload.IsCompleted)
+                {
+                    await upload;
+                }
+
                 await Task.Delay(5, timeout.Token);
             }
+
             ChangeOwner();
             await oldTarget.SendRawAsync(FakeRespServer.OkReply, oldTarget.ReceivedConnectionIds[^1]);
         }
+
         await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
         await Assert.That(oldNode.IsRetired).IsFalse();
         await Assert.That(oldTarget.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
@@ -2067,7 +2562,12 @@ public class ClusterRetirementTests
 
         void ChangeOwner()
         {
-            if (!discovery) { router.SetSlotOwner(slot, next); return; }
+            if (!discovery)
+            {
+                router.SetSlotOwner(slot, next);
+                return;
+            }
+
             var ranges = new List<ClusterTopologyRange>
             {
                 new(slot, slot, new("127.0.0.1", replacement.Port), "replacement", []),
@@ -2092,7 +2592,11 @@ public class ClusterRetirementTests
             ReplyOverride = (_, command) => command == "HELLO 3" ? hello : FakeRespServer.OkReply,
             SuppressReply = command =>
             {
-                if (command != "HELLO 3" || Volatile.Read(ref holdHandshake) == 0) return false;
+                if (command != "HELLO 3" || Volatile.Read(ref holdHandshake) == 0)
+                {
+                    return false;
+                }
+
                 connecting.TrySetResult();
                 return true;
             },
@@ -2127,6 +2631,7 @@ public class ClusterRetirementTests
         using var source = new MemoryStream("payload"u8.ToArray());
         var upload = client.Strings.SetAsync("key", source, source.Length, cancellationToken: timeout.Token).AsTask();
         await connecting.Task.WaitAsync(timeout.Token);
+
         if (discovery)
         {
             var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", Private)!.GetValue(router)!;
@@ -2136,7 +2641,10 @@ public class ClusterRetirementTests
             ], version, 2L);
         }
         else
+        {
             router.SetSlotOwner(slot, router.GetOrCreateNode(new("127.0.0.1", replacement.Port)));
+        }
+
         Volatile.Write(ref holdHandshake, 0);
         await oldTarget.SendRawAsync(hello, oldTarget.ReceivedConnectionIds[^1]);
 
@@ -2170,18 +2678,31 @@ public class ClusterRetirementTests
         var oldPool = router.GetDedicatedPool(new("127.0.0.1", oldTarget.Port));
         var version = router.CaptureSlotVersion(slot);
         using var timeout = new CancellationTokenSource(Limit);
-        using var source = new ReplayReadStream(() => { if (changeDuringRead) PublishReplacement(); });
+        using var source = new ReplayReadStream(() =>
+        {
+            if (changeDuringRead)
+            {
+                PublishReplacement();
+            }
+        });
         var upload = client.Strings.SetAsync("key", source, source.Length, cancellationToken: timeout.Token).AsTask();
+
         if (!changeDuringRead)
         {
             while (!oldTarget.ReceivedCommands.Contains("ASKING"))
             {
-                if (upload.IsCompleted) await upload;
+                if (upload.IsCompleted)
+                {
+                    await upload;
+                }
+
                 await Task.Delay(5, timeout.Token);
             }
+
             PublishReplacement();
             await oldTarget.SendRawAsync(FakeRespServer.OkReply, oldTarget.ReceivedConnectionIds[^1]);
         }
+
         await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
         await Assert.That(router.CaptureSlotVersion(slot)).IsEqualTo(version);
         await Assert.That(oldPool.IsStopping).IsFalse();
@@ -2197,11 +2718,11 @@ public class ClusterRetirementTests
             var endpoint = Activator.CreateInstance(field.FieldType, "127.0.0.1", replacement.Port);
             var pool = new DedicatedConnectionPool("127.0.0.1", replacement.Port,
                 client.Core.Options.ToConnectionOptions(), NullLogger.Instance);
+
             lock ((Lock)typeof(ClusterRouter).GetField("_nodesGate", Private)!.GetValue(router)!)
             {
                 field.SetValue(oldNode, endpoint);
-                var pools = (Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool>)
-                    typeof(ClusterRouter).GetField("_dedicatedPools", Private)!.GetValue(router)!;
+                var pools = (Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool>)typeof(ClusterRouter).GetField("_dedicatedPools", Private)!.GetValue(router)!;
                 pools[oldNode] = pool;
                 router.OwnedPools.Add(pool);
             }
@@ -2211,9 +2732,14 @@ public class ClusterRetirementTests
     private sealed class ReplayReadStream(Action onReplay) : MemoryStream("payload"u8.ToArray())
     {
         private int _reads;
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (++_reads == 2) onReplay();
+            if (++_reads == 2)
+            {
+                onReplay();
+            }
+
             return base.ReadAsync(buffer, cancellationToken);
         }
     }
@@ -2224,7 +2750,12 @@ public class ClusterRetirementTests
         // Larger than one chunk, so the retry must replay the restored first chunk and then keep
         // reading the original source for the rest.
         var payload = new byte[RespireConnection.StreamChunkSize + 7_000];
-        for (var index = 0; index < payload.Length; index++) payload[index] = (byte)('a' + index % 26);
+
+        for (var index = 0; index < payload.Length; index++)
+        {
+            payload[index] = (byte)('a' + index % 26);
+        }
+
         await using var oldServer = new FakeRespServer(2, FakeRespServer.OkReply);
         await using var replacementServer = new FakeRespServer(2, FakeRespServer.OkReply);
         await using var client = CreateClient();
@@ -2322,15 +2853,18 @@ public class ClusterRetirementTests
     private sealed class RetiringUploadStream(byte[] payload, Action retire) : MemoryStream(payload)
     {
         private bool _firstRead = true;
+
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             await Task.Delay(TimeSpan.FromMilliseconds(650), cancellationToken);
             var read = await base.ReadAsync(buffer, cancellationToken);
+
             if (_firstRead)
             {
                 _firstRead = false;
                 retire();
             }
+
             return read;
         }
     }
@@ -2338,29 +2872,59 @@ public class ClusterRetirementTests
     private sealed class PausingStream(byte[] payload, int pauseAt) : Stream
     {
         private int _position;
-        internal TaskCompletionSource Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Paused
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Resume
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         internal int BytesRead => Volatile.Read(ref _position);
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (_position == pauseAt && Paused.TrySetResult()) await Resume.Task.WaitAsync(cancellationToken);
+            if (_position == pauseAt && Paused.TrySetResult())
+            {
+                await Resume.Task.WaitAsync(cancellationToken);
+            }
+
             var count = Math.Min(buffer.Length, payload.Length - _position);
-            if (_position < pauseAt) count = Math.Min(count, pauseAt - _position);
+
+            if (_position < pauseAt)
+            {
+                count = Math.Min(count, pauseAt - _position);
+            }
+
             payload.AsMemory(_position, count).CopyTo(buffer);
             Volatile.Write(ref _position, _position + count);
             return count;
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
@@ -2385,7 +2949,9 @@ public class ClusterRetirementTests
         {
             LibraryName = null, // Only the intentionally suppressed HELLO may consume the timeout.
             Protocol = RespireProtocol.Resp3,
-            UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             CommandTimeout = TimeSpan.FromMilliseconds(200),
         });
 #pragma warning restore RESP010
@@ -2415,16 +2981,31 @@ public class ClusterRetirementTests
         long redirectedAt = 0;
         server.ReplyOverride = (_, command) =>
         {
-            if (command == "CLIENT ID") return ":42\r\n"u8.ToArray();
-            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return null;
-            if (Interlocked.Increment(ref evals) > 1) return ":1\r\n"u8.ToArray();
+            if (command == "CLIENT ID")
+            {
+                return ":42\r\n"u8.ToArray();
+            }
+
+            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            if (Interlocked.Increment(ref evals) > 1)
+            {
+                return ":1\r\n"u8.ToArray();
+            }
+
             Volatile.Write(ref redirectedAt, System.Diagnostics.Stopwatch.GetTimestamp());
             return System.Text.Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{server.Port}\r\n");
         };
 
         var execution = await client.StartTrackedScriptExecutionAsync(
             RespireScript.Create("return 1"), ["key"], [], timeout.Token, captureSendTimestampOnly: true);
-        using (await execution.ConsumeResponseAsync()) { }
+
+        using (await execution.ConsumeResponseAsync())
+        {
+        }
 
         // Lease-based callers measure validity from this timestamp, so it must belong to the
         // redirected send, not the rejected first attempt.
@@ -2434,27 +3015,39 @@ public class ClusterRetirementTests
 
     private static RespireClient CreateClient(ILoggerFactory? loggerFactory = null, int maxInflightCommands = 16384,
         bool allowAdmin = false, RespireReconnectPolicy? reconnectPolicy = null) => RespireClient.Create(new RespireOptions
-    {
-        Protocol = RespireProtocol.Resp2,
-        UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("seed.invalid") },
-        LoggerFactory = loggerFactory,
-        MaxInflightCommands = maxInflightCommands,
-        AllowAdmin = allowAdmin,
-        ReconnectPolicy = reconnectPolicy,
-    });
+        {
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = { new RespireEndpoint("seed.invalid") },
+            LoggerFactory = loggerFactory,
+            MaxInflightCommands = maxInflightCommands,
+            AllowAdmin = allowAdmin,
+            ReconnectPolicy = reconnectPolicy,
+        });
 
     private sealed class FailingPoolDisconnectLogger(bool failRetirementLog = false, bool failNodeDisconnect = false) : ILoggerFactory, ILogger
     {
         internal readonly InvalidOperationException Failure = new("Test dedicated disconnect failure.");
         internal readonly InvalidOperationException RetirementFailure = new("Test retirement failure.");
         internal readonly TaskCompletionSource RetirementFailureSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public ILogger CreateLogger(string categoryName) => categoryName.Contains(".Blocking.", StringComparison.Ordinal)
             || (failNodeDisconnect && categoryName.StartsWith("Respire.Cluster.127.", StringComparison.Ordinal))
             || (failRetirementLog && categoryName == "Respire.Cluster") ? this : NullLogger.Instance;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
             if (failRetirementLog && logLevel == LogLevel.Debug
@@ -2463,8 +3056,11 @@ public class ClusterRetirementTests
                 RetirementFailureSeen.TrySetResult();
                 throw RetirementFailure;
             }
+
             if (logLevel == LogLevel.Debug && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
+            {
                 throw Failure;
+            }
         }
     }
 
@@ -2473,7 +3069,10 @@ public class ClusterRetirementTests
 
     private static int RetainedNodes(ClusterRouter router)
     {
-        lock (router.NodeStateGate) return Identities(router).All.Count();
+        lock (router.NodeStateGate)
+        {
+            return Identities(router).All.Count();
+        }
     }
 
     private static int Count(ClusterRouter router, string field)
@@ -2492,4 +3091,3 @@ public class ClusterRetirementTests
         typeof(ClusterRouter).GetMethod("ApplyTopology", Private)!.Invoke(router, [ranges, version, generation]);
     }
 }
-

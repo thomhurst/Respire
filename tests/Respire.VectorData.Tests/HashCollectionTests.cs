@@ -22,6 +22,7 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
         var index = store.IndexName("movies");
         index = index[..(index.LastIndexOf(':') + 1)] + encodedName;
         await client.Search.CreateIndexAsync(index, new() { Prefixes = [index + ":"], Fields = [new("title", RespireSearchFieldType.Text)] });
+
         try
         {
             Func<Task> list = () => Collect(store.ListCollectionNamesAsync());
@@ -41,6 +42,7 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
         await using var client = await Connect(protocol);
         using var store = Store(client);
         using var collection = store.GetHashCollection<Movie>("movies");
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
@@ -62,6 +64,7 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
         var mapper = new WideMapper(5000);
         store.RegisterMapper(mapper);
         using var collection = store.GetHashCollection<Movie>("wide");
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
@@ -75,18 +78,34 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
     private sealed class WideMapper(int extraFields) : RespireVectorDataHashMapper<Movie>
     {
         private readonly MovieMapper _inner = new();
-        public int LastReadFieldCount { get; private set; }
+
+        public int LastReadFieldCount
+        {
+            get; private set;
+        }
+
         public override IReadOnlyList<RespireVectorDataVectorField> VectorFields => _inner.VectorFields;
+
         public override IReadOnlyList<RespireSearchField> DataFields => _inner.DataFields;
+
         public override IReadOnlyList<RespireVectorDataTextField> TextFields => _inner.TextFields;
+
         public override IReadOnlyList<RespireVectorDataFilterField> FilterFields => _inner.FilterFields;
+
         public override string GetKey(Movie record) => _inner.GetKey(record);
+
         public override IReadOnlyDictionary<string, ReadOnlyMemory<byte>> Write(Movie record)
         {
             var fields = new Dictionary<string, ReadOnlyMemory<byte>>(_inner.Write(record), StringComparer.Ordinal);
-            for (var i = 0; i < extraFields; i++) fields["extra" + i] = new byte[] { (byte)'x' };
+
+            for (var i = 0; i < extraFields; i++)
+            {
+                fields["extra" + i] = new byte[] { (byte)'x' };
+            }
+
             return fields;
         }
+
         public override Movie Read(string key, IReadOnlyDictionary<string, ReadOnlyMemory<byte>> fields)
         {
             LastReadFieldCount = fields.Count;
@@ -98,8 +117,11 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
     internal static async Task WaitForInitialScan(RespireClient client, string index)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
         while ((await client.Search.GetIndexInfoAsync(index, deadline.Token)).Properties["indexing"].Scalar != "0")
+        {
             await Task.Delay(20, deadline.Token);
+        }
     }
 
     internal static async Task<long> MaxDocumentId(RespireClient client, string index)
@@ -130,6 +152,7 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
         using var store = Store(client);
         using var collection = store.GetHashCollection<Movie>("movies");
         using var other = store.GetHashCollection<Movie>("movies:other");
+
         try
         {
             await collection.UpsertAsync(Movie("before-index", 1, 0));
@@ -159,6 +182,7 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
         await using var client = await Connect(protocol);
         using var store = Store(client);
         using var collection = store.GetHashCollection<Movie>("movies");
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
@@ -187,17 +211,24 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
         await using var client = await Connect(protocol);
         using var store = Store(client);
         using var collection = store.GetHashCollection<Movie>("movies");
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
             await collection.UpsertAsync(new[] { Movie("a", 1, 0), Movie("b", 0, 1), Movie("c", -1, 0) });
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             List<VectorSearchResult<Movie>> all;
+
             do
             {
                 all = await Collect(collection.SearchAsync(new float[] { 1, 0 }, 3, cancellationToken: deadline.Token));
-                if (all.Count < 3) await Task.Delay(20, deadline.Token);
+
+                if (all.Count < 3)
+                {
+                    await Task.Delay(20, deadline.Token);
+                }
             } while (all.Count < 3);
+
             all.Select(r => r.Record.Id).Should().Equal("a", "b", "c");
             all.Select(r => r.Score).Should().Equal(0, 2, 4);
             all.Should().OnlyContain(r => r.Record.Vector.IsEmpty);
@@ -215,6 +246,7 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
         await using var client = await Connect(protocol);
         using var store = Store(client);
         using var collection = store.GetHashCollection<Movie>("movies");
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
@@ -222,22 +254,31 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
             await collection.UpsertAsync(movies);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             List<VectorSearchResult<Movie>> hits;
+
             do
             {
                 hits = await Collect(collection.SearchAsync(new float[] { 1, 0 }, 40, new() { IncludeVectors = true }, deadline.Token));
-                if (hits.Count < 40) await Task.Delay(20, deadline.Token);
+
+                if (hits.Count < 40)
+                {
+                    await Task.Delay(20, deadline.Token);
+                }
             } while (hits.Count < 40);
+
             hits.Select(hit => hit.Record.Id).Should().Equal(movies.Select(movie => movie.Id));
+
             for (var i = 0; i < hits.Count; i++)
             {
                 hits[i].Score.Should().Be(i * i);
                 hits[i].Record.Vector.ToArray().Should().Equal(i + 1, 0);
             }
+
             await using (var iterator = collection.SearchAsync(new float[] { 1, 0 }, 40).GetAsyncEnumerator())
             {
                 (await iterator.MoveNextAsync()).Should().BeTrue();
                 iterator.Current.Record.Id.Should().Be("0");
             }
+
             await client.PingAsync();
         }
         finally { await collection.EnsureCollectionDeletedAsync(); }
@@ -251,6 +292,7 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
         using var secondStore = Store(client);
         using var first = firstStore.GetHashCollection<Movie>("same");
         using var second = secondStore.GetHashCollection<Movie>("same");
+
         try
         {
             await first.EnsureCollectionExistsAsync();
@@ -261,6 +303,7 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
             (await second.CollectionExistsAsync()).Should().BeTrue();
         }
         finally { await second.EnsureCollectionDeletedAsync(); }
+
         first.Dispose();
         firstStore.Dispose();
         await client.PingAsync();
@@ -305,6 +348,7 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
         using var store = Store(client);
         store.RegisterMapper(new TwinMapper());
         using var collection = store.GetHashCollection<TwinMovie>("two-vectors");
+
         try
         {
             await collection.EnsureCollectionExistsAsync();
@@ -317,11 +361,17 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
             await ambiguous.Should().ThrowAsync<InvalidOperationException>();
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             List<VectorSearchResult<TwinMovie>> hits;
+
             do
             {
                 hits = await Collect(collection.SearchAsync(new float[] { 1, 0 }, 2, new() { VectorProperty = m => m.Second, IncludeVectors = true }, deadline.Token));
-                if (hits.Count < 2) await Task.Delay(20, deadline.Token);
+
+                if (hits.Count < 2)
+                {
+                    await Task.Delay(20, deadline.Token);
+                }
             } while (hits.Count < 2);
+
             hits.Select(hit => hit.Record.Id).Should().Equal("b", "a");
             hits[0].Record.Second.ToArray().Should().Equal(1, 0);
             hits[0].Record.First.ToArray().Should().Equal(0, 1);
@@ -335,14 +385,20 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
 
     private sealed class TwinMapper : RespireVectorDataHashMapper<TwinMovie>
     {
-        public override IReadOnlyList<RespireVectorDataVectorField> VectorFields { get; } =
+        public override IReadOnlyList<RespireVectorDataVectorField> VectorFields
+        {
+            get;
+        } =
             [new(nameof(TwinMovie.First), "first", 2), new(nameof(TwinMovie.Second), "second", 2)];
+
         public override string GetKey(TwinMovie record) => record.Id;
+
         public override IReadOnlyDictionary<string, ReadOnlyMemory<byte>> Write(TwinMovie record) => new Dictionary<string, ReadOnlyMemory<byte>>
         {
             ["first"] = RespireVectorDataFloat32.Encode(record.First.Span),
             ["second"] = RespireVectorDataFloat32.Encode(record.Second.Span),
         };
+
         public override TwinMovie Read(string key, IReadOnlyDictionary<string, ReadOnlyMemory<byte>> fields)
             => new(key, fields.TryGetValue("first", out var first) ? RespireVectorDataFloat32.Decode(first.Span) : default,
                 fields.TryGetValue("second", out var second) ? RespireVectorDataFloat32.Decode(second.Span) : default);
@@ -415,12 +471,16 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
     private sealed class InvalidMapper(RespireVectorDataVectorField vector) : RespireVectorDataHashMapper<Movie>
     {
         public override IReadOnlyList<RespireVectorDataVectorField> VectorFields => [vector];
+
         public override string GetKey(Movie record) => record.Id;
+
         public override IReadOnlyDictionary<string, ReadOnlyMemory<byte>> Write(Movie record) => throw new NotSupportedException();
+
         public override Movie Read(string key, IReadOnlyDictionary<string, ReadOnlyMemory<byte>> fields) => throw new NotSupportedException();
     }
 
     private static Movie Movie(string key, float x, float y) => new(key, "Title " + key, new float[] { x, y });
+
     private static RespireVectorStore Store(IRespireClient client)
     {
         var store = new RespireVectorStore(client, "test:vector:" + Guid.NewGuid().ToString("N") + ":");
@@ -434,7 +494,12 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
     private static async Task<List<T>> Collect<T>(IAsyncEnumerable<T> values)
     {
         var items = new List<T>();
-        await foreach (var value in values) items.Add(value);
+
+        await foreach (var value in values)
+        {
+            items.Add(value);
+        }
+
         return items;
     }
 }

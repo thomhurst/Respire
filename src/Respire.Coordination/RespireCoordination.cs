@@ -10,6 +10,7 @@ public sealed class RespireCoordination
     private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
     private readonly IRespireClient _client;
     private readonly TimeProvider _fencedLockClock;
+
     internal IRespireClient Client => _client;
 
     private readonly struct FencedLockWaitTarget(
@@ -99,7 +100,10 @@ public sealed class RespireCoordination
         RespireScript.Create(ReadCountdownLatchSource, readOnly: false, cacheReadOnly: true);
 
     /// <summary>Creates Redis-backed rate limiters that use this coordination client's Redis connection.</summary>
-    public RespireRateLimiters RateLimiters { get; }
+    public RespireRateLimiters RateLimiters
+    {
+        get;
+    }
 
     /// <summary>Creates a semaphore view over a dedicated Redis key.</summary>
     /// <param name="key">Dedicated key before the client's configured prefix.</param>
@@ -153,6 +157,7 @@ public sealed class RespireCoordination
                 static (RespireClient client, in Respire.Protocol.RespValue value) =>
                     RespireResult.CreateOwned(in value, client.Core.Options.Serializer)).ConfigureAwait(false);
         }
+
         using var batch = _client.CreateBatch();
         var pending = batch.Scripts.Evaluate(script, [key], args);
         await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
@@ -182,14 +187,23 @@ public sealed class RespireCoordination
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var result = await ReadLatchStateAsync(_client, snapshot, cancellationToken).ConfigureAwait(false);
-        if (result[0].AsString() == "0") return null;
+
+        if (result[0].AsString() == "0")
+        {
+            return null;
+        }
+
         var generation = result[1].AsString();
         var remainingText = result[2].AsString();
         var channel = result[3].AsString();
+
         if (generation.Length == 0 || channel.Length == 0
             || !long.TryParse(remainingText, NumberStyles.None, CultureInfo.InvariantCulture, out var remaining)
             || remaining < 0)
+        {
             throw new RespireProtocolException("Redis returned invalid countdown-latch state.");
+        }
+
         return new RespireCountdownLatch(_client, snapshot, generation, channel);
     }
 
@@ -232,7 +246,12 @@ public sealed class RespireCoordination
         RespireKey snapshot, long count, bool reset, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (count < 0) throw new ArgumentOutOfRangeException(nameof(count), "Latch count must be nonnegative.");
+
+        if (count < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), "Latch count must be nonnegative.");
+        }
+
         var generation = Guid.NewGuid().ToString("N");
         var channel = "respire:latch:" + Guid.NewGuid().ToString("N");
         using var result = await CoordinationCommandHooks.ExecuteAsync(_client,
@@ -431,7 +450,12 @@ public sealed class RespireCoordination
     {
         cancellationToken.ThrowIfCancellationRequested();
         var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
-        if (milliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
+
+        if (milliseconds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
+        }
+
         return AcquireReadWriteLockAsync(key.Snapshot(), milliseconds, isWriter, cancellationToken);
     }
 
@@ -443,18 +467,24 @@ public sealed class RespireCoordination
         var role = isWriter ? WriterRole : ReaderRole;
         using var response = await CoordinationCommandHooks.ExecuteAsync(_client, AcquireReadWriteLock, [key],
             [owner.Bytes, milliseconds, role], cancellationToken).ConfigureAwait(false);
-        if (response.AsInteger() != 1) return default;
+
+        if (response.AsInteger() != 1)
+        {
+            return default;
+        }
 
         var completed = Stopwatch.GetTimestamp();
         var validity = TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond) - Stopwatch.GetElapsedTime(started, completed);
         var lease = new RespireReadWriteLock(_client, key, owner, isWriter,
             TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond), started);
+
         if (validity <= TimeSpan.Zero)
         {
             await CorrectionCoordinator.WaitAsync(lease.DisposeUnhookedAsync().AsTask(), BestEffortCleanupTimeout)
                 .ConfigureAwait(false);
             return default;
         }
+
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -509,10 +539,17 @@ public sealed class RespireCoordination
     internal static long ValidateAcquisition(RespireKey key, RespireKey fencingCounterKey, TimeSpan duration)
     {
         var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
+
         if (milliseconds <= 0)
+        {
             throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
+        }
+
         if (key == fencingCounterKey)
+        {
             throw new ArgumentException("Lock and fencing counter keys must differ.", nameof(fencingCounterKey));
+        }
+
         return milliseconds;
     }
 
@@ -543,6 +580,7 @@ public sealed class RespireCoordination
         var concreteClient = _client as RespireClient;
         RespireClient.TrackedScriptExecution? execution = null;
         bool acquired;
+
         try
         {
             if (concreteClient is null)
@@ -579,6 +617,7 @@ public sealed class RespireCoordination
                 await BestEffortReleaseHashFieldLeaseAsync(
                     hashKey, field, owner, concreteClient, execution?.ConnectionIdentity ?? default).ConfigureAwait(false);
             }
+
             throw;
         }
 
@@ -589,14 +628,24 @@ public sealed class RespireCoordination
                 await BestEffortReleaseHashFieldLeaseAsync(
                     hashKey, field, owner, concreteClient, execution?.ConnectionIdentity ?? default).ConfigureAwait(false);
             }
+
             cancellationToken.ThrowIfCancellationRequested();
         }
-        if (!acquired) return null;
+
+        if (!acquired)
+        {
+            return null;
+        }
 
         var appliedDuration = TimeSpan.FromMilliseconds(milliseconds);
         var acquiredTimestamp = execution?.StartedTimestamp ?? started;
         var lease = new RespireCoordinationLease(this, hashKey, field, owner, appliedDuration, acquiredTimestamp);
-        if (lease.RemainingEstimate > TimeSpan.Zero) return lease;
+
+        if (lease.RemainingEstimate > TimeSpan.Zero)
+        {
+            return lease;
+        }
+
         await BestEffortReleaseHashFieldLeaseAsync(
             hashKey, field, owner, concreteClient, execution?.ConnectionIdentity ?? default).ConfigureAwait(false);
         return null;
@@ -631,11 +680,23 @@ public sealed class RespireCoordination
 
     internal static long ValidateLease(RespireKey hashKey, RespireKey field, TimeSpan duration)
     {
-        if (hashKey.IsEmpty) throw new ArgumentException("The hash key must not be empty.", nameof(hashKey));
-        if (field.IsEmpty) throw new ArgumentException("The lease field must not be empty.", nameof(field));
+        if (hashKey.IsEmpty)
+        {
+            throw new ArgumentException("The hash key must not be empty.", nameof(hashKey));
+        }
+
+        if (field.IsEmpty)
+        {
+            throw new ArgumentException("The lease field must not be empty.", nameof(field));
+        }
+
         var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
+
         if (milliseconds <= 0)
+        {
             throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
+        }
+
         return milliseconds;
     }
 
@@ -648,6 +709,7 @@ public sealed class RespireCoordination
         RespireClient.TrackedScriptExecution? execution = null)
     {
         using var timeout = new CancellationTokenSource(BestEffortCleanupTimeout);
+
         try
         {
             if (concreteClient is null)
@@ -689,6 +751,7 @@ public sealed class RespireCoordination
         // later sends that follow a newer route, so they run independently and are only settled, within
         // the cleanup bound, once monitoring ends.
         List<Task>? routedReleases = null;
+
         try
         {
             originalCorrection = client.ExecuteOnAllConnectionsAsync(
@@ -705,6 +768,7 @@ public sealed class RespireCoordination
         // Keep following route changes while any correction is still unanswered: a stalled original
         // or routed release means the lease may now live on a node that a later route points to.
         var probeDelay = TimeSpan.FromMilliseconds(100);
+
         using (var monitoringTimeout = new CancellationTokenSource(BestEffortCleanupTimeout))
         {
             while (!monitoringTimeout.IsCancellationRequested && HasPendingCorrection())
@@ -713,7 +777,12 @@ public sealed class RespireCoordination
                 await (originalCorrection is { IsCompleted: false }
                     ? Task.WhenAny(originalCorrection, probe)
                     : Task.WhenAny(probe)).ConfigureAwait(false);
-                if (monitoringTimeout.IsCancellationRequested || !HasPendingCorrection()) break;
+
+                if (monitoringTimeout.IsCancellationRequested || !HasPendingCorrection())
+                {
+                    break;
+                }
+
                 await ReleaseOnCurrentRoutesAsync().ConfigureAwait(false);
                 probeDelay = CoordinationCleanupRetry.NextDelay(probeDelay, BestEffortCleanupTimeout);
             }
@@ -721,7 +790,10 @@ public sealed class RespireCoordination
 
         if (originalCorrection is { IsCompleted: true })
         {
-            try { await originalCorrection.ConfigureAwait(false); }
+            try
+            {
+                await originalCorrection.ConfigureAwait(false);
+            }
             catch (Exception error) { originalFailure ??= error; }
         }
         else if (originalCorrection is not null)
@@ -734,6 +806,7 @@ public sealed class RespireCoordination
         if (routedReleases is not null)
         {
             var settled = Task.WhenAll(routedReleases);
+
             try
             {
                 await CorrectionCoordinator.WaitAsync(settled, BestEffortCleanupTimeout).ConfigureAwait(false);
@@ -745,7 +818,9 @@ public sealed class RespireCoordination
         }
 
         if (originalFailure is not null)
+        {
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(originalFailure).Throw();
+        }
 
         bool HasPendingCorrection()
             => originalCorrection is { IsCompleted: false }
@@ -757,8 +832,11 @@ public sealed class RespireCoordination
             {
                 sentinelCorrection = await StartSentinelGenerationReleaseAsync(
                     client, hashKey, field, owner, connectionIdentity, sentinelCorrection).ConfigureAwait(false);
+
                 if (sentinelCorrection is { IsNew: true } started)
+                {
                     (routedReleases ??= []).Add(started.Release);
+                }
             }
             catch (Exception error)
             {
@@ -766,7 +844,9 @@ public sealed class RespireCoordination
             }
 
             if (client.Core.Cluster is not null)
+            {
                 (routedReleases ??= []).Add(ReleaseOnCurrentClusterOwnerAsync(client, hashKey, field, owner));
+            }
         }
     }
 
@@ -789,10 +869,18 @@ public sealed class RespireCoordination
         SentinelCorrection? previous)
     {
         var sentinel = client.Core.Sentinel;
-        if (sentinel is null || originalIdentity.Connection is null) return null;
+
+        if (sentinel is null || originalIdentity.Connection is null)
+        {
+            return null;
+        }
+
         var current = await sentinel.GetGenerationAsync(CancellationToken.None).ConfigureAwait(false);
         // The original correction already covers the generation that accepted the acquisition.
-        if (ReferenceEquals(current.Multiplexer, originalIdentity.Connection.Multiplexer)) return null;
+        if (ReferenceEquals(current.Multiplexer, originalIdentity.Connection.Multiplexer))
+        {
+            return null;
+        }
         // One release per promoted generation, unless it failed and should be retried.
         if (previous is not null && ReferenceEquals(current, previous.Generation)
             && !previous.Release.IsFaulted && !previous.Release.IsCanceled)
@@ -801,6 +889,7 @@ public sealed class RespireCoordination
         }
 
         Task release;
+
         try
         {
             release = client.ExecuteOnAllConnectionsAsync(
@@ -810,6 +899,7 @@ public sealed class RespireCoordination
         {
             release = Task.FromException(error);
         }
+
         return new SentinelCorrection(current, release, IsNew: true);
     }
 
@@ -844,28 +934,43 @@ public sealed class RespireCoordination
         var started = _fencedLockClock.GetTimestamp();
         using var response = await CoordinationCommandHooks.ExecuteAsync(_client, AcquireFencedLock, [key, counterKey],
             [owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
-        if (response.IsNull) return default;
+
+        if (response.IsNull)
+        {
+            return default;
+        }
 
         var lease = new RespireLock(_client.Locks, key, owner,
             TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond), started, _fencedLockClock);
         var transferred = false;
+
         try
         {
             // Lua numbers cannot represent every Int64. The script returns GET's decimal
             // bulk string after INCR, rather than converting INCR's Lua number back to RESP.
             if (!long.TryParse(response.AsString(), NumberStyles.None, CultureInfo.InvariantCulture, out var fence) || fence <= 0)
+            {
                 throw new RespireProtocolException("Fencing acquisition did not return a positive Int64 token.");
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
             // An already-expired lease is intentionally reported like contention: the caller
             // acquired no usable lease even though this attempt consumed a fencing token.
-            if (lease.IsReleased) return default;
+            if (lease.IsReleased)
+            {
+                return default;
+            }
+
             var result = new RespireFencedLockAttempt(new RespireFencedLock(lease, counterKey, fence));
             transferred = true;
             return result;
         }
         finally
         {
-            if (!transferred) await lease.DisposeUnhookedAsync().ConfigureAwait(false);
+            if (!transferred)
+            {
+                await lease.DisposeUnhookedAsync().ConfigureAwait(false);
+            }
         }
     }
 }

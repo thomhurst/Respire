@@ -28,7 +28,12 @@ public class SentinelDiscoveryAgingTests
         var state = Create();
         var membership = PeerMembership(state);
         state.RecordConnection(membership, succeeded: true);
-        for (var i = 0; i < 5; i++) Miss(state);
+
+        for (var i = 0; i < 5; i++)
+        {
+            Miss(state);
+        }
+
         await Assert.That(state.Snapshot().Length).IsEqualTo(2);
         state.RecordConnection(membership, succeeded: false);
         await Assert.That(state.Snapshot().SequenceEqual([Seed])).IsTrue();
@@ -43,11 +48,13 @@ public class SentinelDiscoveryAgingTests
         state.RecordConnection(PeerMembership(state), succeeded: false);
         Miss(state);
         Miss(state);
+
         using (var round = state.BeginDiscovery())
         {
             round.Report(Seed, []);
             round.Report(selfReport ? new("PEER", 26379) : Seed, selfReport ? [] : [new("PEER", 26379)]);
         }
+
         Miss(state);
         Miss(state);
         await Assert.That(state.Snapshot().Length).IsEqualTo(2);
@@ -60,14 +67,19 @@ public class SentinelDiscoveryAgingTests
     {
         var state = Create();
         state.RecordConnection(PeerMembership(state), succeeded: false);
+
         for (var i = 0; i < 5; i++)
         {
-            using (state.BeginDiscovery()) { }
+            using (state.BeginDiscovery())
+            {
+            }
+
             using var cancellation = new CancellationTokenSource();
             using var round = state.BeginDiscovery(cancellation.Token);
             round.Report(Seed, []);
             cancellation.Cancel();
         }
+
         Miss(state);
         Miss(state);
         await Assert.That(state.Snapshot().Length).IsEqualTo(2);
@@ -81,21 +93,30 @@ public class SentinelDiscoveryAgingTests
         state.RecordConnection(oldMembership, succeeded: false);
         Miss(state);
         Miss(state);
+
         using (var old = state.BeginDiscovery())
         {
             old.Report(Seed, []);
             using var newer = state.BeginDiscovery();
             newer.Report(Seed, [Peer]);
         }
+
         await Assert.That(state.Snapshot().Length).IsEqualTo(2);
+
         using (var old = state.BeginDiscovery())
         {
             old.Report(Seed, []);
             state.TryRemove(Peer);
             state.TryAdd(Peer);
         }
+
         state.RecordConnection(oldMembership, succeeded: false);
-        for (var i = 0; i < 5; i++) Miss(state);
+
+        for (var i = 0; i < 5; i++)
+        {
+            Miss(state);
+        }
+
         await Assert.That(state.Snapshot().Length).IsEqualTo(2);
     }
 
@@ -103,14 +124,20 @@ public class SentinelDiscoveryAgingTests
     public async Task SuccessfulConnectionClearsFailureAndSeedsNeverAgeOut()
     {
         var state = Create();
+
         foreach (var membership in state.MembershipSnapshot(out _))
+        {
             state.RecordConnection(membership, succeeded: false);
+        }
+
         state.RecordConnection(PeerMembership(state), succeeded: true);
+
         for (var i = 0; i < 5; i++)
         {
             using var round = state.BeginDiscovery();
             round.Report(new("other", 26379), []);
         }
+
         await Assert.That(state.Snapshot().Length).IsEqualTo(2);
     }
 
@@ -118,16 +145,24 @@ public class SentinelDiscoveryAgingTests
     public async Task MonitorConnectionFailureRemovesPreviouslyMissingPeer()
     {
         var state = Create();
-        for (var i = 0; i < 3; i++) Miss(state);
+
+        for (var i = 0; i < 3; i++)
+        {
+            Miss(state);
+        }
+
         state.Snapshot(out var changed);
         using var lifetime = new CancellationTokenSource();
         var seed = new SentinelMonitorProbe();
         var monitor = new SentinelMonitoring(new() { SentinelPrimaryName = "mymaster" }, null,
-            new Lock(), state, lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { })
+            new Lock(), state, lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) =>
+            {
+            })
         {
             ClientFactory = options => options.Endpoints[0] == Seed ? seed.Client
                 : throw new RespireConnectionException("Learned Sentinel is unavailable."),
         };
+
         try
         {
             monitor.Published();
@@ -157,22 +192,37 @@ public class SentinelDiscoveryAgingTests
         {
             SentinelPrimaryName = "mymaster",
             ReconnectPolicy = configured ? new() { MaxAttempts = null } : null,
-        }, null, new Lock(), state, lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { })
+        }, null, new Lock(), state, lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) =>
+        {
+        })
         {
             ClientFactory = options => options.Endpoints[0] == Seed ? seed.Client : peer.Client,
         };
+
         try
         {
             monitor.Published();
             await monitor.WaitForSubscriptionsAsync(2, lifetime.Token).WaitAsync(TimeSpan.FromSeconds(5));
             peer.ChangeConnectionState(new(Peer, RespireConnectionState.Reconnecting, null)
-                { ReconnectSource = RespireReconnectSource.SentinelMonitor });
+            { ReconnectSource = RespireReconnectSource.SentinelMonitor });
+
             if (recovered)
+            {
                 peer.ChangeConnectionState(new(Peer, RespireConnectionState.Connected, null)
-                    { ReconnectSource = RespireReconnectSource.SentinelMonitor });
-            for (var i = 0; i < 3; i++) Miss(state);
+                { ReconnectSource = RespireReconnectSource.SentinelMonitor });
+            }
+
+            for (var i = 0; i < 3; i++)
+            {
+                Miss(state);
+            }
+
             await Assert.That(state.Snapshot().Contains(Peer)).IsEqualTo(recovered);
-            if (!recovered) await peer.SubscriptionCleanup.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            if (!recovered)
+            {
+                await peer.SubscriptionCleanup.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
         }
         finally
         {
@@ -194,21 +244,32 @@ public class SentinelDiscoveryAgingTests
         peer.Subscribed = () =>
         {
             peer.ChangeConnectionState(new(Peer, RespireConnectionState.Reconnecting, null)
-                { ReconnectSource = RespireReconnectSource.SentinelMonitor });
+            { ReconnectSource = RespireReconnectSource.SentinelMonitor });
+
             if (recovered)
+            {
                 peer.ChangeConnectionState(new(Peer, RespireConnectionState.Connected, null)
-                    { ReconnectSource = RespireReconnectSource.SentinelMonitor });
+                { ReconnectSource = RespireReconnectSource.SentinelMonitor });
+            }
         };
         var monitor = new SentinelMonitoring(new() { SentinelPrimaryName = "mymaster" }, null,
-            new Lock(), state, lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { })
+            new Lock(), state, lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) =>
+            {
+            })
         {
             ClientFactory = options => options.Endpoints[0] == Seed ? seed.Client : peer.Client,
         };
+
         try
         {
             monitor.Published();
             await monitor.WaitForSubscriptionsAsync(2, lifetime.Token).WaitAsync(TimeSpan.FromSeconds(5));
-            for (var i = 0; i < 3; i++) Miss(state);
+
+            for (var i = 0; i < 3; i++)
+            {
+                Miss(state);
+            }
+
             await Assert.That(state.Snapshot().Contains(Peer)).IsEqualTo(recovered);
         }
         finally
@@ -223,14 +284,23 @@ public class SentinelDiscoveryAgingTests
     public async Task AgingFreesCapacityAndPreservesEpochEvidence()
     {
         var state = new SentinelDiscoveryState([Seed]);
+
         for (var i = 0; i < SentinelDiscoveryState.MaximumDiscoveredEndpoints; i++)
+        {
             state.TryAdd(new($"peer-{i}", 26379));
+        }
+
         var primary = new RespireEndpoint("primary", 6379);
         state.AcceptConfiguration(primary, 12);
         await Assert.That(state.TryAdd(Peer)).IsFalse();
         var membership = state.MembershipSnapshot(out _)[1];
         state.RecordConnection(membership, succeeded: false);
-        for (var i = 0; i < 3; i++) Miss(state);
+
+        for (var i = 0; i < 3; i++)
+        {
+            Miss(state);
+        }
+
         await Assert.That(state.TryAdd(Peer)).IsTrue();
         await Assert.That(state.IsCurrentConfiguration(primary, 12)).IsTrue();
         await Assert.That(state.TryObserveConfiguration(primary, 11)).IsFalse();
@@ -258,11 +328,17 @@ public class SentinelDiscoveryAgingTests
         state.RecordConnection(PeerMembership(state), succeeded: false);
         var options = new RespireOptions
         {
-            Endpoints = [seed], SentinelPrimaryName = "mymaster", Protocol = RespireProtocol.Resp2,
+            Endpoints = [seed],
+            SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2,
         };
+
         for (var i = 0; i < 3; i++)
+        {
             await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (_, _, _) => ValueTask.FromResult(1),
                 CancellationToken.None, state);
+        }
+
         await Assert.That(state.Snapshot().Length).IsEqualTo(removed ? 1 : 2);
     }
 

@@ -33,16 +33,29 @@ public class CommandDurationTests
         original.Source.TrySetCanceled(cancellation);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         // Cancellation reserves completion before its scheduled source publication.
-        while (!original.IsCompleted()) await Task.Delay(1, deadline.Token);
-        if (!callerFirst) original.Source.ReleaseRef();
-        try { await Assert.That(original.Consume).Throws<OperationCanceledException>(); }
-        finally { if (callerFirst) original.Source.ReleaseRef(); }
+        while (!original.IsCompleted())
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
+        if (!callerFirst)
+        {
+            original.Source.ReleaseRef();
+        }
+
+        try
+        {
+            await Assert.That(original.Consume).Throws<OperationCanceledException>();
+        }
+        finally { if (callerFirst) { original.Source.ReleaseRef(); } }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         await Assert.That(capture.Items.Single().Tags["error.type"]).IsEqualTo(typeof(OperationCanceledException).FullName);
 
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.None });
         capture.Items.Clear();
         var rentals = new List<(PendingResponse Source, Action Consume, Func<bool> IsCompleted)>();
+
         try
         {
             var found = false;
@@ -51,13 +64,19 @@ public class CommandDurationTests
             {
                 var rental = RentDurationReuseSource(shape, default);
                 rentals.Add(rental);
-                if (!ReferenceEquals(rental.Source, original.Source)) continue;
+
+                if (!ReferenceEquals(rental.Source, original.Source))
+                {
+                    continue;
+                }
+
                 found = true;
                 await Assert.That(rental.Source.State).IsNotEqualTo(previousState);
                 await Assert.That(rental.Source.Deadline).IsEqualTo(CommandDeadline.None);
                 await Assert.That(rental.Source.InspectForTests().RegisteredCancellationToken).IsEqualTo(CancellationToken.None);
                 break;
             }
+
             await Assert.That(found).IsTrue();
         }
         finally
@@ -65,10 +84,15 @@ public class CommandDurationTests
             foreach (var rental in rentals)
             {
                 rental.Source.TrySetResult(RespValue.Null);
-                try { rental.Consume(); }
+
+                try
+                {
+                    rental.Consume();
+                }
                 finally { rental.Source.ReleaseRef(); }
             }
         }
+
         await Assert.That(capture.Items.IsEmpty).IsTrue();
     }
 
@@ -104,13 +128,20 @@ public class CommandDurationTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            MaxInflightCommands = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
 #pragma warning restore RESP010
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var first = client.GetStringAsync("first", limit.Token).AsTask();
-        while (!server.ReceivedCommands.Contains("GET first")) await Task.Delay(1, limit.Token);
+
+        while (!server.ReceivedCommands.Contains("GET first"))
+        {
+            await Task.Delay(1, limit.Token);
+        }
+
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Command });
         using var capture = new DurationCapture(throwFromListener: true);
         using var cancellation = new CancellationTokenSource();
@@ -158,7 +189,9 @@ public class CommandDurationTests
     private readonly struct AdmissionFailureCommand(Exception error) : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void ValidateAdmission() => throw error;
+
         public void Write(ref RespWriter writer) => new Cmd1(Verbs.Get, "key").Write(ref writer);
     }
 
@@ -192,28 +225,57 @@ public class CommandDurationTests
         using var cancellation = new CancellationTokenSource();
         var pending = Send(client, shape, cancellation.Token);
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         while (!server.ReceivedCommands.Any(command => command.StartsWith("GET ") || command.StartsWith("STRLEN ")))
+        {
             await Task.Delay(1, limit.Token);
+        }
+
         switch (failure)
         {
-            case "server": await server.SendRawAsync("-ERR original server error\r\n"u8.ToArray()); break;
-            case "cancel": cancellation.Cancel(); break;
-            case "dispose": await client.DisposeAsync(); break;
+            case "server":
+                await server.SendRawAsync("-ERR original server error\r\n"u8.ToArray());
+                break;
+            case "cancel":
+                cancellation.Cancel();
+                break;
+            case "dispose":
+                await client.DisposeAsync();
+                break;
         }
+
         Exception? actual = null;
-        try { await pending.WaitAsync(limit.Token); }
+
+        try
+        {
+            await pending.WaitAsync(limit.Token);
+        }
         catch (Exception error) { actual = error; }
+
         switch (failure)
         {
-            case "server": await Assert.That(actual is RespireServerException { Code: "ERR" }).IsTrue(); break;
-            case "cancel": await Assert.That(actual is OperationCanceledException error && error.CancellationToken == cancellation.Token).IsTrue(); break;
-            case "deadline": await Assert.That(actual is RespireTimeoutException).IsTrue(); break;
-            default: await Assert.That(actual is RespireConnectionException or ObjectDisposedException).IsTrue(); break;
+            case "server":
+                await Assert.That(actual is RespireServerException { Code: "ERR" }).IsTrue();
+                break;
+            case "cancel":
+                await Assert.That(actual is OperationCanceledException error && error.CancellationToken == cancellation.Token).IsTrue();
+                break;
+            case "deadline":
+                await Assert.That(actual is RespireTimeoutException).IsTrue();
+                break;
+            default:
+                await Assert.That(actual is RespireConnectionException or ObjectDisposedException).IsTrue();
+                break;
         }
+
         var measurement = capture.Items.Single();
         await Assert.That(measurement.Tags.ContainsKey("error.type")).IsTrue();
         await Assert.That(measurement.Tags["db.operation.name"]).IsEqualTo(shape == "integer" ? "STRLEN" : "GET");
-        if (failure == "server") await Assert.That(measurement.Tags["db.response.status_code"]).IsEqualTo("ERR");
+
+        if (failure == "server")
+        {
+            await Assert.That(measurement.Tags["db.response.status_code"]).IsEqualTo("ERR");
+        }
     }
 
     [Test]
@@ -228,8 +290,10 @@ public class CommandDurationTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-            Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            ThreadPoolMonitoring = false,
             CircuitBreaker = circuitEnabled ? new() : null,
         });
 #pragma warning restore RESP010
@@ -241,7 +305,10 @@ public class CommandDurationTests
             static ((InvalidOperationException Error, DurationCapture Capture) state, in RespValue _) =>
             {
                 if (state.Capture.Items.IsEmpty)
+                {
                     throw new InvalidOperationException("Duration must complete before user conversion.");
+                }
+
                 throw state.Error;
             });
         var actual = await Assert.That(async () => await pending).ThrowsExactly<InvalidOperationException>();
@@ -260,7 +327,9 @@ public class CommandDurationTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Database = 7, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Database = 7,
+            Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
 #pragma warning restore RESP010
@@ -268,12 +337,21 @@ public class CommandDurationTests
         listener.InstrumentPublished = static (instrument, owner) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
                 owner.EnableMeasurementEvents(instrument);
+            }
         };
-        listener.SetMeasurementEventCallback<double>(static (_, _, _, _) => { });
+        listener.SetMeasurementEventCallback<double>(static (_, _, _, _) =>
+        {
+        });
         listener.Start();
         var connection = client.Core.Multiplexer.GetConnection();
-        for (var i = 0; i < 20; i++) MeasureCompletedSources(connection, shape);
+
+        for (var i = 0; i < 20; i++)
+        {
+            MeasureCompletedSources(connection, shape);
+        }
+
         MeasurePositiveControl();
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
             (MeasureCompletedSources(connection, shape), MeasurePositiveControl()));
@@ -285,23 +363,35 @@ public class CommandDurationTests
     private static long MeasureCompletedSources(RespireConnection connection, int shape)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1000; i++)
         {
             var duration = new RespireTelemetry.DurationObservation(connection, RespireTelemetry.CaptureOperationStart("GET"));
+
             switch (shape)
             {
                 case 0:
                     var text = StringPendingResponseSource.Rent("GET", duration: duration);
-                    text.TrySetResult(RespValue.Null); _ = text.Task.GetAwaiter().GetResult(); text.ReleaseRef(); break;
+                    text.TrySetResult(RespValue.Null);
+                    _ = text.Task.GetAwaiter().GetResult();
+                    text.ReleaseRef();
+                    break;
                 case 1:
                     var bytes = BytesPendingResponseSource.Rent("GET", duration: duration);
-                    bytes.TrySetResult(RespValue.Null); _ = bytes.Task.GetAwaiter().GetResult(); bytes.ReleaseRef(); break;
+                    bytes.TrySetResult(RespValue.Null);
+                    _ = bytes.Task.GetAwaiter().GetResult();
+                    bytes.ReleaseRef();
+                    break;
                 default:
                     var integer = ConvertedPendingResponseSource<int, int>.Rent(42,
                         static (int state, in RespValue _) => state, false, "GET", duration: duration);
-                    integer.TrySetResult(RespValue.Null); _ = integer.Task.GetAwaiter().GetResult(); integer.ReleaseRef(); break;
+                    integer.TrySetResult(RespValue.Null);
+                    _ = integer.Task.GetAwaiter().GetResult();
+                    integer.ReleaseRef();
+                    break;
             }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -311,17 +401,21 @@ public class CommandDurationTests
     private static long MeasurePositiveControl()
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var i = 0; i < 1000; i++) _allocationAnchor = new byte[37];
+
+        for (var i = 0; i < 1000; i++)
+        {
+            _allocationAnchor = new byte[37];
+        }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
-    private static Task Send(RespireClient client, string shape, CancellationToken token)
-        => shape switch
-        {
-            "string" => client.GetStringAsync("key", token).AsTask(),
-            "bytes" => client.GetBytesAsync("key", token).AsTask(),
-            _ => client.Strings.LengthAsync("key", token).AsTask(),
-        };
+    private static Task Send(RespireClient client, string shape, CancellationToken token) => shape switch
+    {
+        "string" => client.GetStringAsync("key", token).AsTask(),
+        "bytes" => client.GetBytesAsync("key", token).AsTask(),
+        _ => client.Strings.LengthAsync("key", token).AsTask(),
+    };
 
     [Test]
     [Arguments("string")]
@@ -337,19 +431,27 @@ public class CommandDurationTests
         var duration = new RespireTelemetry.DurationObservation(client.Core.Multiplexer.GetConnection(), started);
         PendingResponse source;
         Action consume;
+
         switch (shape)
         {
             case "string":
                 var text = StringPendingResponseSource.Rent("GET", duration: duration);
-                source = text; consume = () => text.Task.GetAwaiter().GetResult(); break;
+                source = text;
+                consume = () => text.Task.GetAwaiter().GetResult();
+                break;
             case "bytes":
                 var bytes = BytesPendingResponseSource.Rent("GET", duration: duration);
-                source = bytes; consume = () => bytes.Task.GetAwaiter().GetResult(); break;
+                source = bytes;
+                consume = () => bytes.Task.GetAwaiter().GetResult();
+                break;
             default:
                 var integer = ConvertedPendingResponseSource<int, int>.Rent(42,
                     static (int state, in RespValue _) => state, false, "GET", duration: duration);
-                source = integer; consume = () => integer.Task.GetAwaiter().GetResult(); break;
+                source = integer;
+                consume = () => integer.Task.GetAwaiter().GetResult();
+                break;
         }
+
         try
         {
             var beforeCompletion = Stopwatch.GetTimestamp();
@@ -379,14 +481,28 @@ public class CommandDurationTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         Task response;
         string expectedSource;
+
         switch (shape)
         {
-            case "string": response = client.GetStringAsync("key", timeout.Token).AsTask(); expectedSource = nameof(StringPendingResponseSource); break;
-            case "bytes": response = client.GetBytesAsync("key", timeout.Token).AsTask(); expectedSource = nameof(BytesPendingResponseSource); break;
-            default: response = client.Strings.LengthAsync("key", timeout.Token).AsTask(); expectedSource = "ConvertedPendingResponseSource"; break;
+            case "string":
+                response = client.GetStringAsync("key", timeout.Token).AsTask();
+                expectedSource = nameof(StringPendingResponseSource);
+                break;
+            case "bytes":
+                response = client.GetBytesAsync("key", timeout.Token).AsTask();
+                expectedSource = nameof(BytesPendingResponseSource);
+                break;
+            default:
+                response = client.Strings.LengthAsync("key", timeout.Token).AsTask();
+                expectedSource = "ConvertedPendingResponseSource";
+                break;
         }
+
         while (!server.ReceivedCommands.Any(command => command.StartsWith(operation + " ")))
+        {
             await Task.Delay(1, timeout.Token);
+        }
+
         var connection = client.Core.Multiplexer.GetConnection();
         await Assert.That(connection.InspectForTests().Inflight.TryPeek(out var pending)).IsTrue();
         // The reply is parked, so the source cannot be hidden by synchronous completion.
@@ -408,19 +524,29 @@ public class CommandDurationTests
     private sealed class DurationCapture : IDisposable
     {
         private readonly MeterListener _listener = new();
-        internal ConcurrentQueue<Measurement> Items { get; } = new();
+
+        internal ConcurrentQueue<Measurement> Items
+        {
+            get;
+        } = new();
 
         internal DurationCapture(bool throwFromListener = false)
         {
             _listener.InstrumentPublished = static (instrument, listener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<double>((_, value, tags, _) =>
             {
                 Items.Enqueue(new(value, tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
-                if (throwFromListener) throw new InvalidOperationException("metrics listener failed");
+
+                if (throwFromListener)
+                {
+                    throw new InvalidOperationException("metrics listener failed");
+                }
             });
             _listener.Start();
         }

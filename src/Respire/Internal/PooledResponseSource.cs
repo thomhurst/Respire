@@ -65,6 +65,7 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
             var received = false;
             var converted = false;
             Exception? failure = null;
+
             try
             {
                 response = responseTask.Result;
@@ -78,7 +79,10 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
             {
                 try
                 {
-                    if (!transferOwnership || !converted) response.Dispose();
+                    if (!transferOwnership || !converted)
+                    {
+                        response.Dispose();
+                    }
                 }
                 catch (Exception cleanupError)
                 {
@@ -134,6 +138,7 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
         var received = false;
         TResult result = default!;
         Exception? error = null;
+
         try
         {
             response = responseTask.GetAwaiter().GetResult();
@@ -149,7 +154,10 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
         {
             try
             {
-                if (!transferOwnership || !converted) response.Dispose();
+                if (!transferOwnership || !converted)
+                {
+                    response.Dispose();
+                }
             }
             catch (Exception cleanupError) { error ??= cleanupError; }
         }
@@ -163,6 +171,7 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
         // CancellationTokenSource.Cancel, independently of PendingResponse.DispatchException.
         // Set this on every completion: Reset preserves this property across pooled reuse.
         _core.RunContinuationsAsynchronously = error is not null;
+
         if (error is null)
         {
             _core.SetResult(result);
@@ -178,15 +187,23 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
     private static void FinishObservation(ErrorObservation.FinalOwner observation,
         RespireTelemetry.ErrorObservation legacyObservation, Exception? error, bool observeErrors)
     {
-        if (error is not null) RespireException.PopulateEndpoint(error, legacyObservation.Endpoint);
+        if (error is not null)
+        {
+            RespireException.PopulateEndpoint(error, legacyObservation.Endpoint);
+        }
+
         if (legacyObservation.IsEmpty)
         {
             ErrorObservation.FinishFinal(observation, error, observeErrors);
             return;
         }
+
         try
         {
-            if (error is not null && observeErrors) legacyObservation.Final(error);
+            if (error is not null && observeErrors)
+            {
+                legacyObservation.Final(error);
+            }
         }
         finally { legacyObservation.Dispose(); }
     }

@@ -159,6 +159,7 @@ public class GlideCommonOperationsBenchmarks
     public async Task<string?> Glide_Get_SteadyState()
     {
         string? result = null;
+
         for (var i = 0; i < SteadyStateOps; i++)
         {
             result = await _glide.GetAsync("seeded:string");
@@ -171,6 +172,7 @@ public class GlideCommonOperationsBenchmarks
     public async Task<string?> Respire_Get_SteadyState()
     {
         string? result = null;
+
         for (var i = 0; i < SteadyStateOps; i++)
         {
             result = await _respire.GetStringAsync("seeded:string");
@@ -193,6 +195,7 @@ public class GlideCommonOperationsBenchmarks
     public async Task<bool> Respire_Set_SteadyState()
     {
         var result = false;
+
         for (var i = 0; i < SteadyStateOps; i++)
         {
             result = await _respire.SetAsync("bench:set", _smallValue);

@@ -1,8 +1,8 @@
 using System.Text;
-using Respire.Aspire;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Respire.Aspire;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -22,13 +22,28 @@ public class PubSubPrefixConfigurationTests
         {
             ["ConnectionStrings:cache"] = "localhost,keyPrefix=keys%3A,pubSubPrefix=parsed%3A",
         };
-        if (mode != "absent") values["Aspire:Respire:Options:PubSubPrefix"] = mode == "empty-global" ? "" : "global:%";
+
+        if (mode != "absent")
+        {
+            values["Aspire:Respire:Options:PubSubPrefix"] = mode == "empty-global" ? "" : "global:%";
+        }
+
         if (mode is "named" or "empty-named" or "callback" or "binary-callback")
+        {
             values["Aspire:Respire:cache:Options:PubSubPrefix"] = mode == "empty-named" ? "" : "named:";
+        }
+
         builder.Configuration.AddInMemoryCollection(values);
-        var configured = mode switch { "absent" => "parsed:", "global" => "global:%", "empty-global" or "empty-named" => "", _ => "named:" };
+        var configured = mode switch
+        {
+            "absent" => "parsed:",
+            "global" => "global:%",
+            "empty-global" or "empty-named" => "",
+            _ => "named:"
+        };
         byte[] binary = [255, 0];
         RespireOptions? observed = null;
+
         RespireOptions Configure(IServiceProvider _, RespireOptions options)
         {
             observed = options;
@@ -39,8 +54,16 @@ public class PubSubPrefixConfigurationTests
                 _ => options,
             };
         }
-        if (keyed) builder.AddKeyedRespireClient("cache", configureOptions: Configure);
-        else builder.AddRespireClient("cache", configureOptions: Configure);
+
+        if (keyed)
+        {
+            builder.AddKeyedRespireClient("cache", configureOptions: Configure);
+        }
+        else
+        {
+            builder.AddRespireClient("cache", configureOptions: Configure);
+        }
+
         using var host = builder.Build();
         var client = keyed ? host.Services.GetRequiredKeyedService<IRespireClient>("cache")
             : host.Services.GetRequiredService<IRespireClient>();

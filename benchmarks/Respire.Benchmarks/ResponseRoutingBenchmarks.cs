@@ -16,7 +16,10 @@ public class ResponseRoutingBenchmarks
     private RespireClient _client = null!;
 
     [Params("Standalone", "Cluster", "Sentinel", "Replica")]
-    public string Route { get; set; } = "Standalone";
+    public string Route
+    {
+        get; set;
+    } = "Standalone";
 
     [GlobalSetup]
     public async Task Setup()
@@ -38,9 +41,16 @@ public class ResponseRoutingBenchmarks
         await _client.SetAsync(Key, Value);
         // Replica replication is asynchronous. Validate the actual measured route before timing.
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
         while (await _client.GetStringAsync(Key, timeout.Token) != Value)
+        {
             await Task.Delay(25, timeout.Token);
-        if (Route == "Replica") await VerifyReplicaRouteAsync(timeout.Token);
+        }
+
+        if (Route == "Replica")
+        {
+            await VerifyReplicaRouteAsync(timeout.Token);
+        }
     }
 
     private async Task VerifyReplicaRouteAsync(CancellationToken cancellationToken)
@@ -53,23 +63,34 @@ public class ResponseRoutingBenchmarks
 #pragma warning restore RESP010
         var primaryBefore = await GetCallsAsync(primary, cancellationToken);
         var replicaBefore = await GetCallsAsync(replica, cancellationToken);
+
         if (await _client.GetStringAsync(Key, cancellationToken) != Value)
+        {
             throw new InvalidOperationException("Replica route returned an unexpected value.");
+        }
+
         var primaryAfter = await GetCallsAsync(primary, cancellationToken);
         var replicaAfter = await GetCallsAsync(replica, cancellationToken);
+
         if (primaryAfter != primaryBefore || replicaAfter != replicaBefore + 1)
+        {
             throw new InvalidOperationException($"Replica route mismatch: primary GET delta {primaryAfter - primaryBefore}, replica GET delta {replicaAfter - replicaBefore}.");
+        }
     }
 
     private static async Task<long> GetCallsAsync(RespireClient client, CancellationToken cancellationToken)
     {
         using var info = await client.ExecuteAsync("INFO", ["commandstats"], cancellationToken: cancellationToken);
         const string prefix = "cmdstat_get:calls=";
+
         foreach (var line in info.AsString().Split('\n'))
         {
             if (line.StartsWith(prefix, StringComparison.Ordinal))
+            {
                 return long.Parse(line.AsSpan(prefix.Length, line.IndexOf(',') - prefix.Length), System.Globalization.CultureInfo.InvariantCulture);
+            }
         }
+
         return 0;
     }
 
@@ -79,6 +100,9 @@ public class ResponseRoutingBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_client is not null) await _client.DisposeAsync();
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+        }
     }
 }

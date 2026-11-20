@@ -72,8 +72,11 @@ public sealed class StackExchangeMigrationTests
         var diagnostics = await Analyze(document);
         await Assert.That(diagnostics.Length > 0).IsTrue();
         await Assert.That(diagnostics.All(d => d.Id == DiagnosticIds.StackExchangeManualMigration)).IsTrue();
+
         foreach (var diagnostic in diagnostics)
+        {
             await Assert.That((await Actions(document, diagnostic)).Count).IsEqualTo(0);
+        }
     }
 
     [Test]
@@ -249,6 +252,7 @@ public sealed class StackExchangeMigrationTests
             """;
         var solution = document.Project.Solution;
         var callerProjectId = document.Project.Id;
+
         if (dependentProject)
         {
             callerProjectId = ProjectId.CreateNewId();
@@ -257,6 +261,7 @@ public sealed class StackExchangeMigrationTests
                 .AddMetadataReferences(callerProjectId, References)
                 .AddProjectReference(callerProjectId, new ProjectReference(document.Project.Id));
         }
+
         solution = generated
             ? solution.AddAnalyzerReference(callerProjectId, new CallerGeneratorReference(caller))
             : solution.AddDocument(DocumentId.CreateNewId(callerProjectId), "Caller.cs", caller);
@@ -267,6 +272,7 @@ public sealed class StackExchangeMigrationTests
         var diagnostic = (await Analyze(document)).Single();
         await Assert.That((await Actions(document, diagnostic)).Count).IsEqualTo(0);
         var provider = new StackExchangeMigrationCodeFixProvider();
+
         foreach (var scope in new[] { FixAllScope.Document, FixAllScope.Project, FixAllScope.Solution })
         {
             var context = new FixAllContext(document, provider, scope,
@@ -384,8 +390,12 @@ public sealed class StackExchangeMigrationTests
         await AssertCompiles(document.Project);
         var diagnostics = await Analyze(document);
         await Assert.That(diagnostics.Length).IsEqualTo(2);
+
         foreach (var diagnostic in diagnostics)
+        {
             await Assert.That((await Actions(document, diagnostic)).Count).IsEqualTo(1);
+        }
+
         var provider = new StackExchangeMigrationCodeFixProvider();
         var context = new FixAllContext(document, provider, FixAllScope.Document,
             "Migrate method and IDatabase parameter to RespireClient", provider.FixableDiagnosticIds,
@@ -433,8 +443,12 @@ public sealed class StackExchangeMigrationTests
         var second = first.Project.AddDocument("Second.cs", Wrap("return await db.KeyDeleteAsync(key);", "Task<bool>").Replace("class C", "class D"));
         first = second.Project.GetDocument(first.Id)!;
         var solution = await FixAll(first, scope);
+
         foreach (var document in solution.GetProject(first.Project.Id)!.Documents)
+        {
             await Assert.That((await Analyze(document)).Length).IsEqualTo(0);
+        }
+
         await AssertCompiles(solution.GetProject(first.Project.Id)!);
     }
 
@@ -471,8 +485,12 @@ public sealed class StackExchangeMigrationTests
     {
         var actions = new List<CodeAction>();
         var provider = new StackExchangeMigrationCodeFixProvider();
+
         if (provider.FixableDiagnosticIds.Contains(diagnostic.Id))
+        {
             await provider.RegisterCodeFixesAsync(new CodeFixContext(document, diagnostic, (action, _) => actions.Add(action), CancellationToken.None));
+        }
+
         return actions;
     }
 
@@ -494,7 +512,11 @@ public sealed class StackExchangeMigrationTests
     {
         var compilation = (await project.GetCompilationAsync())!;
         var errors = compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
-        if (errors.Length != 0) throw new InvalidOperationException(string.Join(Environment.NewLine, errors.Select(d => d.ToString())));
+
+        if (errors.Length != 0)
+        {
+            throw new InvalidOperationException(string.Join(Environment.NewLine, errors.Select(d => d.ToString())));
+        }
     }
 
     private sealed class MigrationDiagnosticProvider : FixAllContext.DiagnosticProvider
@@ -508,7 +530,12 @@ public sealed class StackExchangeMigrationTests
         public override async Task<IEnumerable<Diagnostic>> GetAllDiagnosticsAsync(Project project, CancellationToken cancellationToken)
         {
             var diagnostics = new List<Diagnostic>();
-            foreach (var document in project.Documents) diagnostics.AddRange(await Analyze(document));
+
+            foreach (var document in project.Documents)
+            {
+                diagnostics.AddRange(await Analyze(document));
+            }
+
             return diagnostics;
         }
     }
@@ -516,18 +543,27 @@ public sealed class StackExchangeMigrationTests
     private sealed class CallerGeneratorReference(string source) : AnalyzerReference
     {
         private readonly ImmutableArray<ISourceGenerator> _generators = [new CallerGenerator(source)];
+
         public override string? FullPath => null;
+
         public override object Id => this;
+
         public override ImmutableArray<DiagnosticAnalyzer> GetAnalyzers(string language) => [];
+
         public override ImmutableArray<DiagnosticAnalyzer> GetAnalyzersForAllLanguages() => [];
+
         public override ImmutableArray<ISourceGenerator> GetGenerators(string language)
             => language == LanguageNames.CSharp ? _generators : [];
+
         public override ImmutableArray<ISourceGenerator> GetGeneratorsForAllLanguages() => _generators;
     }
 
     private sealed class CallerGenerator(string source) : ISourceGenerator
     {
-        public void Initialize(GeneratorInitializationContext context) { }
+        public void Initialize(GeneratorInitializationContext context)
+        {
+        }
+
         public void Execute(GeneratorExecutionContext context) => context.AddSource("Caller.g.cs", source);
     }
 }

@@ -19,9 +19,13 @@ public class NodeAddressMappingIntegrationTests
             node => new RespireEndpoint(cluster.Host, cluster.Port(node)));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Connections = 1, ClusterTopologyRefreshInterval = null,
-            Endpoints = [new(cluster.Host, cluster.Port(0))], NodeAddressMap = map,
+            UseCluster = true,
+            Connections = 1,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new(cluster.Host, cluster.Port(0))],
+            NodeAddressMap = map,
         }, deadline.Token);
+
         for (var index = 0; index < 30; index++)
         {
             var key = "nat:" + index;
@@ -70,10 +74,14 @@ public class NodeAddressMappingIntegrationTests
             && !replica.Flags.Contains("s_down", StringComparison.Ordinal)
             && !replica.Flags.Contains("o_down", StringComparison.Ordinal)
             && !replica.Flags.Contains("disconnected", StringComparison.Ordinal)))
+        {
             await Task.Delay(50, deadline.Token);
+        }
+
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            SentinelPrimaryName = "nat-primary", Connections = 1,
+            SentinelPrimaryName = "nat-primary",
+            Connections = 1,
             Endpoints = [sentinelEndpoint],
             NodeAddressMap = new Dictionary<RespireEndpoint, RespireEndpoint>
             {
@@ -86,7 +94,10 @@ public class NodeAddressMappingIntegrationTests
         client.Endpoint.Should().Be(new RespireEndpoint("127.0.0.1", 6379));
         await client.Core.ReadRouter.RefreshNowAsync(deadline.Token);
         var reader = client.WithReadFrom(RespireReadFrom.Replica);
+
         while (await reader.GetStringAsync("nat:sentinel", deadline.Token) != "mapped")
+        {
             await Task.Delay(10, deadline.Token);
+        }
     }
 }

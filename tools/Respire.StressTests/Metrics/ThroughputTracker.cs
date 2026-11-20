@@ -27,7 +27,9 @@ internal sealed class ThroughputTracker
     private double _cpuTimeSeconds;
 
     public long OperationCount => Interlocked.Read(ref _operationCount);
+
     public long ErrorCount => Interlocked.Read(ref _errorCount);
+
     public TimeSpan Elapsed => _stopwatch.Elapsed;
 
     /// <summary>
@@ -58,7 +60,9 @@ internal sealed class ThroughputTracker
         _ = Interlocked.Increment(ref _errorCount);
 
         if (_errorSamplesFull)
+        {
             return;
+        }
 
         lock (_errorsLock)
         {
@@ -82,10 +86,14 @@ internal sealed class ThroughputTracker
         var now = Stopwatch.GetTimestamp();
         var operations = OperationCount;
         var elapsedSeconds = (now - _lastSampleTimestamp) / (double)Stopwatch.Frequency;
+
         if (elapsedSeconds <= 0)
+        {
             return;
+        }
 
         var rate = (operations - _lastSampleOperationCount) / elapsedSeconds;
+
         lock (_samplesLock)
         {
             _operationsPerSecondSamples.Add(rate);

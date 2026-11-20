@@ -10,8 +10,16 @@ public sealed record RespireStreamIdempotency
         IdempotentId = idempotentId;
     }
 
-    internal RespireValue ProducerId { get; }
-    internal RespireValue IdempotentId { get; }
+    internal RespireValue ProducerId
+    {
+        get;
+    }
+
+    internal RespireValue IdempotentId
+    {
+        get;
+    }
+
     internal int ArgumentCount => IdempotentId.IsNull ? 2 : 3;
 
     /// <summary>Uses an explicit producer/message identity (IDMP), independent of field values.</summary>
@@ -28,7 +36,12 @@ public sealed record RespireStreamIdempotency
     private static RespireValue SnapshotIdentifier(RespireValue value, string parameterName)
     {
         RespireValue.ThrowIfNull(value, parameterName);
-        if (value.GetWireLength() == 0) throw new ArgumentException("Idempotency identifiers must not be empty.", parameterName);
+
+        if (value.GetWireLength() == 0)
+        {
+            throw new ArgumentException("Idempotency identifiers must not be empty.", parameterName);
+        }
+
         return value.Snapshot();
     }
 
@@ -36,7 +49,12 @@ public sealed record RespireStreamIdempotency
     {
         arguments[0] = IdempotentId.IsNull ? "IDMPAUTO" : "IDMP";
         arguments[1] = ProducerId;
-        if (!IdempotentId.IsNull) arguments[2] = IdempotentId;
+
+        if (!IdempotentId.IsNull)
+        {
+            arguments[2] = IdempotentId;
+        }
+
         return ArgumentCount;
     }
 }

@@ -72,19 +72,26 @@ public sealed partial class RespireJobQueue<T>
     {
         ArgumentNullException.ThrowIfNull(transaction);
         var sink = (IPendingSink)transaction;
+
         if (!UsesTransactionClient(sink.Client))
+        {
             throw new ArgumentException("Create the transaction from the same client instance as the queue.", nameof(transaction));
+        }
+
         return sink;
     }
 
     private bool UsesTransactionClient(RespireClient client)
     {
         if (_client is RespireClient direct)
+        {
             return ReferenceEquals(client, direct);
+        }
 
         // A decorator's transaction factory exposes the concrete owner, including its key-prefix
         // view. Do not compare endpoints: separate clients and views must remain distinct.
         var probe = _client.CreateTransaction();
+
         try
         {
             return ReferenceEquals(client, ((IPendingSink)probe).Client);

@@ -19,7 +19,12 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand, I
         {
             _original = current;
             Current = current;
-            if (!current.CanSeek) return;
+
+            if (!current.CanSeek)
+            {
+                return;
+            }
+
             try
             {
                 _originalPosition = current.Position;
@@ -31,15 +36,26 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand, I
             }
         }
 
-        internal Stream Current { get; private set; }
-        internal bool CanReplay { get; }
+        internal Stream Current
+        {
+            get; private set;
+        }
+
+        internal bool CanReplay
+        {
+            get;
+        }
 
         internal void RestorePrefix(ReadOnlySpan<byte> prefix)
             => Current = new PrefixStream(prefix.ToArray(), Current);
 
         internal void ResetForReplay()
         {
-            if (!CanReplay) throw new InvalidOperationException("This SET stream cannot be replayed.");
+            if (!CanReplay)
+            {
+                throw new InvalidOperationException("This SET stream cannot be replayed.");
+            }
+
             _original.Position = _originalPosition;
             Current = _original;
         }
@@ -50,40 +66,55 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand, I
         private int _offset;
 
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => false;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
 
         public override int Read(Span<byte> buffer)
         {
             var copied = Math.Min(buffer.Length, prefix.Length - _offset);
+
             if (copied != 0)
             {
                 prefix.AsSpan(_offset, copied).CopyTo(buffer);
                 _offset += copied;
                 return copied;
             }
+
             return remainder.Read(buffer);
         }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             var copied = Math.Min(buffer.Length, prefix.Length - _offset);
+
             if (copied != 0)
             {
                 prefix.AsMemory(_offset, copied).CopyTo(buffer);
                 _offset += copied;
                 return ValueTask.FromResult(copied);
             }
+
             return remainder.ReadAsync(buffer, cancellationToken);
         }
 
         public override int Read(byte[] buffer, int offset, int count)
             => Read(buffer.AsSpan(offset, count));
+
         public override void Flush() => throw new NotSupportedException();
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
@@ -132,10 +163,15 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand, I
     }
 
     internal RespireValue Key => _key;
+
     internal long Length => _length;
+
     public bool CanReplay => _stream?.CanReplay ?? true;
+
     public ReadCommandKind ReadKind => ReadCommandKind.None;
+
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.Set.CacheMetadata;
+
     public RespireCacheMutation GetCacheMutation(string operation) => Verbs.Set.CacheMetadata.Policy;
 
     /// <summary>The stream source, or <see langword="null"/> for an in-memory sequence.</summary>
@@ -180,6 +216,7 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand, I
     internal void WriteEnd(ref RespWriter writer)
     {
         writer.WriteBulkStringTerminator();
+
         if (_expiry.TryGetRelativeMilliseconds(out var milliseconds))
         {
             writer.WriteRaw(CommandOptionFrames.PX);
@@ -191,8 +228,18 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand, I
             writer.WriteBulkInteger(unixMilliseconds);
         }
 
-        if (_when == RespireSetWhen.NotExists) writer.WriteRaw(CommandOptionFrames.NX);
-        else if (_when == RespireSetWhen.Exists) writer.WriteRaw(CommandOptionFrames.XX);
-        if (_expiry.IsKeep) writer.WriteRaw(CommandOptionFrames.KEEPTTL);
+        if (_when == RespireSetWhen.NotExists)
+        {
+            writer.WriteRaw(CommandOptionFrames.NX);
+        }
+        else if (_when == RespireSetWhen.Exists)
+        {
+            writer.WriteRaw(CommandOptionFrames.XX);
+        }
+
+        if (_expiry.IsKeep)
+        {
+            writer.WriteRaw(CommandOptionFrames.KEEPTTL);
+        }
     }
 }

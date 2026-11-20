@@ -17,7 +17,11 @@ public class SubscriptionRecoveryTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (command != "SUBSCRIBE ch") return null;
+                if (command != "SUBSCRIBE ch")
+                {
+                    return null;
+                }
+
                 return Volatile.Read(ref recovering) == 0
                     ? "*3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n"u8.ToArray()
                     : "-NOPERM recovery rejected\r\n"u8.ToArray();
@@ -35,11 +39,15 @@ public class SubscriptionRecoveryTests
         native.ConnectionStateChanged += change =>
         {
             if (change.ReconnectSource == RespireReconnectSource.PubSub && change.ReconnectExhausted)
+            {
                 exhausted.TrySetResult();
+            }
         };
         var subscriber = connection.GetSubscriber();
         RedisChannel channel = RedisChannel.Literal("ch");
-        Action<RedisChannel, RedisValue> handler = (_, _) => { };
+        Action<RedisChannel, RedisValue> handler = (_, _) =>
+        {
+        };
         await subscriber.SubscribeAsync(channel, handler);
 
         Volatile.Write(ref recovering, 1);
@@ -49,7 +57,11 @@ public class SubscriptionRecoveryTests
 
         // A reachable server does not reset the native client's exhausted reconnect budget.
         Volatile.Write(ref recovering, 0);
-        Action<RedisChannel, RedisValue> nextHandler = differentHandler ? (_, _) => { } : handler;
+        Action<RedisChannel, RedisValue> nextHandler = differentHandler
+            ? (_, _) =>
+            {
+            }
+        : handler;
         await Assert.ThrowsAsync<RespireReconnectLimitException>(() => subscriber.SubscribeAsync(channel, nextHandler));
         await Assert.ThrowsAsync<RespireReconnectLimitException>(() => subscriber.SubscribeAsync(channel, handler));
         Assert.Equal(2, server.ReceivedCommands.Count(command => command == "SUBSCRIBE ch"));

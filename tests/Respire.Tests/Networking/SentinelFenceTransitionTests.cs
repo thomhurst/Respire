@@ -57,20 +57,30 @@ public class SentinelFenceTransitionTests
         var newGeneration = new SentinelGenerationIdentity();
         var active = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer,
             SentinelHint.FromGap(First))).State;
-        if (pending) active = active.Transition(new(SentinelNotificationEventKind.Offer,
+
+        if (pending)
+        {
+            active = active.Transition(new(SentinelNotificationEventKind.Offer,
             SentinelHint.FromSwitchMaster("b-a", B, A, Second))).State;
+        }
+
         var completed = active.Transition(new(SentinelNotificationEventKind.AttemptSucceeded),
             new(ValidatedGeneration: oldGeneration, ValidatedPrimary: new(A, A),
                 CurrentEvidence: new(newGeneration, A, A, false, [A], A)));
         await Assert.That(completed.Action).IsEqualTo(pending ? SentinelNotificationAction.RunNext : SentinelNotificationAction.Stop);
         await Assert.That(completed.State.Pending).IsNull();
         await Assert.That(completed.RetireGeneration).IsNull();
+
         if (pending)
         {
             await Assert.That(completed.State.Active!.Value.Reporters).IsEquivalentTo([Second]);
             await Assert.That(completed.State.Active.Value.Sources.Select(source => source.Endpoint)).IsEquivalentTo([B]);
         }
-        else await Assert.That(completed.State.Active).IsNull();
+        else
+        {
+            await Assert.That(completed.State.Active).IsNull();
+        }
+
         await Assert.That(active.Active!.Value.Reporters).IsEquivalentTo([First]);
     }
 
@@ -102,6 +112,7 @@ public class SentinelFenceTransitionTests
     {
         var state = new SentinelNotificationState().Transition(new(SentinelNotificationEventKind.Offer,
             SentinelHint.FromGap(First))).State;
+
         for (var attempt = 1; attempt <= 256; attempt++)
         {
             var failed = state.Transition(new(SentinelNotificationEventKind.AttemptFailed));
@@ -123,6 +134,7 @@ public class SentinelFenceTransitionTests
         await Assert.That(disposed.Action).IsEqualTo(SentinelNotificationAction.Stop);
         await Assert.That(disposed.State.IsDisposed).IsTrue();
         await Assert.That(disposed.State.Phase).IsEqualTo(SentinelNotificationPhase.Idle);
+
         foreach (var kind in new[] { SentinelNotificationEventKind.Offer, SentinelNotificationEventKind.PrepareAttempt,
             SentinelNotificationEventKind.AttemptSucceeded, SentinelNotificationEventKind.AttemptFailed })
         {
@@ -130,6 +142,7 @@ public class SentinelFenceTransitionTests
             await Assert.That(late.Action).IsEqualTo(SentinelNotificationAction.Stop);
             await Assert.That(late.State).IsEqualTo(disposed.State);
         }
+
         await Assert.That(state.Phase).IsEqualTo(SentinelNotificationPhase.ActivePending);
     }
 
@@ -185,10 +198,13 @@ public class SentinelFenceTransitionTests
             .BindDownReportsToCurrentPrimary(new(hostname, currentPeer));
         var options = new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster", Endpoints = [endpoint],
+            Protocol = RespireProtocol.Resp2,
+            SentinelPrimaryName = "mymaster",
+            Endpoints = [endpoint],
         };
         var validations = 0;
         var accepted = false;
+
         try
         {
             await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (primary, _, _) =>
@@ -201,6 +217,7 @@ public class SentinelFenceTransitionTests
             accepted = true;
         }
         catch (RespireConnectionException) { }
+
         var provesCurrentOwner = observedCurrent && resolvesCurrent == true;
         await Assert.That(accepted).IsEqualTo(provesCurrentOwner);
         await Assert.That(validations).IsEqualTo(provesCurrentOwner ? 1 : 0);
@@ -222,7 +239,9 @@ public class SentinelFenceTransitionTests
         var endpoint = new RespireEndpoint("127.0.0.1", reporter.Port);
         var options = new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster", Endpoints = [endpoint],
+            Protocol = RespireProtocol.Resp2,
+            SentinelPrimaryName = "mymaster",
+            Endpoints = [endpoint],
         };
         // This Sentinel has only observed A's outage. Another Sentinel may report B down,
         // but cannot authorize this stale reporter to replace B with its old ROLE-master A.
@@ -236,17 +255,30 @@ public class SentinelFenceTransitionTests
         var random = new Random(seed);
         var coalescer = new SentinelNotificationCoalescer();
         var attempts = 0;
+
         for (var step = 0; step < 64; step++)
         {
             for (var offer = random.Next(1, 5); offer > 0; offer--)
+            {
                 coalescer.Offer(evidence[random.Next(evidence.Length)], targetIsCurrent: false);
+            }
+
             if (random.Next(3) == 0)
             {
                 var next = random.Next(3) == 0 ? coalescer.SupersedeActive()
                     : coalescer.TakePending(activeFailed: random.Next(2) == 0, validatedPrimary: B, validatedPeer: B);
-                if (next is null) coalescer.Complete();
+
+                if (next is null)
+                {
+                    coalescer.Complete();
+                }
             }
-            if (coalescer.Active is not { } active) continue;
+
+            if (coalescer.Active is not { } active)
+            {
+                continue;
+            }
+
             var hint = active.BindDownReportsToCurrentPrimary(new(B, B));
             // Probe both outcomes through the resolver, without epoch metadata. Acceptance
             // of B is a positive control: rejecting every candidate does not satisfy this test.
@@ -255,6 +287,7 @@ public class SentinelFenceTransitionTests
                 candidate = probe;
                 var validations = 0;
                 var accepted = false;
+
                 try
                 {
                     await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (primary, _, _) =>
@@ -265,11 +298,14 @@ public class SentinelFenceTransitionTests
                     accepted = true;
                 }
                 catch (RespireConnectionException) { }
+
                 await Assert.That((seed, step, probe, accepted)).IsEqualTo((seed, step, probe, probe == B));
                 await Assert.That(validations).IsEqualTo(probe == B ? 1 : 0);
             }
+
             attempts++;
         }
+
         await Assert.That(attempts).IsGreaterThan(32);
     }
 
@@ -283,42 +319,53 @@ public class SentinelFenceTransitionTests
             var hint = Transition(row.Name);
             await Assert.That(hint.Sources.Select(source => source.Endpoint)).IsEquivalentTo(row.Sources);
             await Assert.That(hint.ReconciliationPrimary.HasValue).IsEqualTo(row.Bound);
+
             foreach (var newer in metadataAvailable ? new[] { false, true } : [false])
-            foreach (var candidate in new[] { A, B })
             {
-                var epoch = newer ? 3 : 2;
-                await using var reporter = new FakeRespServer(2, "*0\r\n"u8.ToArray())
+                foreach (var candidate in new[] { A, B })
                 {
-                    ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER")
-                        ? Encoding.ASCII.GetBytes($"*2\r\n+{candidate.Host}\r\n+{candidate.Port}\r\n")
-                        : command == "SENTINEL MASTER mymaster" && metadataAvailable
-                            ? Encoding.ASCII.GetBytes($"*8\r\n+ip\r\n+{candidate.Host}\r\n+port\r\n+{candidate.Port}\r\n+config-epoch\r\n+{epoch}\r\n+flags\r\n+master\r\n")
-                            : "*0\r\n"u8.ToArray(),
-                };
-                var options = new RespireOptions
-                {
-                    Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster",
-                    Endpoints = [new("127.0.0.1", reporter.Port)],
-                };
-                var state = new SentinelDiscoveryState(options.Endpoints);
-                if (metadataAvailable) state.AcceptConfiguration(B, 2);
-                var validations = 0;
-                var accepted = false;
-                try
-                {
-                    await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (primary, _, _) =>
+                    var epoch = newer ? 3 : 2;
+                    await using var reporter = new FakeRespServer(2, "*0\r\n"u8.ToArray())
                     {
-                        validations++;
-                        return ValueTask.FromResult(primary.PrimaryEndpoint);
-                    }, CancellationToken.None, discoveryState: state, preferredTarget: hint.Target, notificationHint: hint);
-                    accepted = true;
+                        ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER")
+                            ? Encoding.ASCII.GetBytes($"*2\r\n+{candidate.Host}\r\n+{candidate.Port}\r\n")
+                            : command == "SENTINEL MASTER mymaster" && metadataAvailable
+                                ? Encoding.ASCII.GetBytes($"*8\r\n+ip\r\n+{candidate.Host}\r\n+port\r\n+{candidate.Port}\r\n+config-epoch\r\n+{epoch}\r\n+flags\r\n+master\r\n")
+                                : "*0\r\n"u8.ToArray(),
+                    };
+                    var options = new RespireOptions
+                    {
+                        Protocol = RespireProtocol.Resp2,
+                        SentinelPrimaryName = "mymaster",
+                        Endpoints = [new("127.0.0.1", reporter.Port)],
+                    };
+                    var state = new SentinelDiscoveryState(options.Endpoints);
+
+                    if (metadataAvailable)
+                    {
+                        state.AcceptConfiguration(B, 2);
+                    }
+
+                    var validations = 0;
+                    var accepted = false;
+
+                    try
+                    {
+                        await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (primary, _, _) =>
+                        {
+                            validations++;
+                            return ValueTask.FromResult(primary.PrimaryEndpoint);
+                        }, CancellationToken.None, discoveryState: state, preferredTarget: hint.Target, notificationHint: hint);
+                        accepted = true;
+                    }
+                    catch (RespireConnectionException) { }
+
+                    var expected = newer || row.Allowed.Contains(candidate) && (!metadataAvailable || candidate == B);
+                    // Include the row and candidate in assertion values so any failure identifies
+                    // the exact transition, rather than only reporting an unexpected boolean.
+                    await Assert.That((row.Name, candidate, newer, accepted)).IsEqualTo((row.Name, candidate, newer, expected));
+                    await Assert.That(validations).IsEqualTo(expected ? 1 : 0);
                 }
-                catch (RespireConnectionException) { }
-                var expected = newer || row.Allowed.Contains(candidate) && (!metadataAvailable || candidate == B);
-                // Include the row and candidate in assertion values so any failure identifies
-                // the exact transition, rather than only reporting an unexpected boolean.
-                await Assert.That((row.Name, candidate, newer, accepted)).IsEqualTo((row.Name, candidate, newer, expected));
-                await Assert.That(validations).IsEqualTo(expected ? 1 : 0);
             }
         }
     }
@@ -331,18 +378,31 @@ public class SentinelFenceTransitionTests
             : name.Contains("gap") ? SentinelHint.FromGap(First)
             : name.Contains("down") ? SentinelHint.FromDown("down", First) : outbound;
         coalescer.Offer(hint, false);
-        if (name.StartsWith("idle")) return coalescer.Active!.Value;
+
+        if (name.StartsWith("idle"))
+        {
+            return coalescer.Active!.Value;
+        }
+
         if (name.StartsWith("switch-gap"))
         {
             coalescer.Offer(SentinelHint.FromGap(Second), false);
-            if (name.Contains("duplicate")) coalescer.Offer(outbound, false);
+
+            if (name.Contains("duplicate"))
+            {
+                coalescer.Offer(outbound, false);
+            }
         }
         else if (name.StartsWith("pending"))
         {
             coalescer.Offer(SentinelHint.FromSwitchMaster("b-to-a", B, A, Second), false);
             coalescer.Offer(outbound, false);
         }
-        else coalescer.Offer(hint with { Reporters = [Second] }, false);
+        else
+        {
+            coalescer.Offer(hint with { Reporters = [Second] }, false);
+        }
+
         var failed = name.EndsWith("failure");
         return coalescer.TakePending(failed, failed ? (RespireEndpoint?)null : B, failed ? (RespireEndpoint?)null : B)!.Value;
     }
@@ -356,7 +416,12 @@ public class SentinelFenceTransitionTests
     {
         var coalescer = new SentinelNotificationCoalescer();
         var active = SentinelHint.FromSwitchMaster("a-to-b", A, B, First);
-        if (retainedReporter) active = active with { Reporters = [First, Second] };
+
+        if (retainedReporter)
+        {
+            active = active with { Reporters = [First, Second] };
+        }
+
         coalescer.Offer(active, false);
         coalescer.Offer(down ? SentinelHint.FromDown("down", Second) : SentinelHint.FromGap(Second), false);
         var next = coalescer.TakePending(validatedPrimary: B, validatedPeer: B)!.Value;
@@ -369,7 +434,8 @@ public class SentinelFenceTransitionTests
         };
         var options = new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2,
+            SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", reporter.Port)],
         };
         var validations = 0;

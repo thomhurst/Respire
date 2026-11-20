@@ -35,6 +35,7 @@ public class BinarySerializerIntegrationTests(RedisTestContainer redis)
             _ => throw new InvalidOperationException("Cache miss"), TimeSpan.FromMinutes(1)), value);
 
         byte[] Encode(SerializerPayload payload) => BinarySerializerTests.Encode(serializer, payload);
+
         var queue = new RespireJobQueue<SerializerPayload>(client, key, Encode);
         await queue.EnqueueAsync("job-1", value);
         var entries = await client.Streams.ReadAsync(queue.StreamKey);
@@ -46,12 +47,17 @@ public class BinarySerializerIntegrationTests(RedisTestContainer redis)
         services.AddRespireJobQueue<Handler, SerializerPayload>(key, Encode,
             bytes => serializer.Deserialize<SerializerPayload>(bytes)!,
             new() { ConsumerName = "binary-test", ReadWait = TimeSpan.FromMilliseconds(20) });
+
         await using (var provider = services.BuildServiceProvider())
         {
             var worker = provider.GetServices<IHostedService>().Single();
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             await worker.StartAsync(deadline.Token);
-            try { await BinarySerializerTests.Verify(await received.Task.WaitAsync(deadline.Token), value); }
+
+            try
+            {
+                await BinarySerializerTests.Verify(await received.Task.WaitAsync(deadline.Token), value);
+            }
             finally { await worker.StopAsync(CancellationToken.None); }
         }
 

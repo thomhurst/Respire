@@ -26,6 +26,7 @@ public partial class JobQueueIntegrationTests
         var worker = provider.GetServices<IHostedService>().Single();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await worker.StartAsync(deadline.Token);
+
         try
         {
             await using var reader = queue.ReadEventsAsync(cancellationToken: deadline.Token).GetAsyncEnumerator();
@@ -52,8 +53,10 @@ public partial class JobQueueIntegrationTests
         var script = JobScript(delete ? "CompleteAndDelete" : "Complete");
         // The consumer sends completion and disappears without acting on its reply.
         await using (var crashed = await ConnectAsync(protocol))
+        {
             await crashed.Scripts.ExecuteIntegerAsync(script, [queue.StreamKey, queue.EventsStreamKey],
                 [RespireJobQueue<string>.ConsumerGroup, "crashed", delivery.Value, 1, "completed"]);
+        }
         // An ambiguous retry cannot publish twice after the atomic acknowledgement.
         await Assert.That(await client.Scripts.ExecuteIntegerAsync(script, [queue.StreamKey, queue.EventsStreamKey],
             [RespireJobQueue<string>.ConsumerGroup, "crashed", delivery.Value, 1, "completed"])).IsEqualTo(0);
@@ -62,6 +65,7 @@ public partial class JobQueueIntegrationTests
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         RespireJobEvent saved;
+
         await using (var observer = await ConnectAsync(protocol))
         await using (var reader = Queue(observer).ReadEventsAsync(cancellationToken: deadline.Token).GetAsyncEnumerator())
         {
@@ -72,6 +76,7 @@ public partial class JobQueueIntegrationTests
             await Assert.That(saved.JobId).IsEqualTo("job");
             await Assert.That(saved.Percent).IsNull();
         }
+
         var second = await PendingJobAsync(client, queue, "second");
         await client.Scripts.ExecuteIntegerAsync(script, [queue.StreamKey, queue.EventsStreamKey],
             [RespireJobQueue<string>.ConsumerGroup, "crashed", second.Value, 1, "completed"]);
@@ -107,7 +112,11 @@ public partial class JobQueueIntegrationTests
         await Assert.That(await client.Streams.CountAsync(queue.EventsStreamKey)).IsEqualTo(0);
         await Assert.That(await client.Scripts.ExecuteIntegerAsync(JobScript("Complete"), keys, args)).IsEqualTo(1);
         await Assert.That(await client.Streams.CountAsync(queue.EventsStreamKey)).IsEqualTo(1);
-        if (deadLetter) await Assert.That(await client.Streams.CountAsync(queue.DeadLetterStreamKey)).IsEqualTo(1);
+
+        if (deadLetter)
+        {
+            await Assert.That(await client.Streams.CountAsync(queue.DeadLetterStreamKey)).IsEqualTo(1);
+        }
     }
 
     [Test]
@@ -121,10 +130,12 @@ public partial class JobQueueIntegrationTests
         var delivery = await PendingJobAsync(admin, queue);
         var username = "events-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">event-test-password", "~*", "+@all", "-" + denied]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = username, Password = "event-test-password" });
+                with
+            { Username = username, Password = "event-test-password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(JobScript("Complete"),
                 [queue.StreamKey, queue.EventsStreamKey, queue.DeadLetterStreamKey],
                 [RespireJobQueue<string>.ConsumerGroup, "crashed", delivery.Value, 1, "dead-letter", "explicit", ""]))
@@ -144,15 +155,22 @@ public partial class JobQueueIntegrationTests
         var info = await admin.Server.InfoAsync("server");
         var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
         var version = Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]);
-        if (version < new Version(8, 2)) return; // XACKDEL is exercised by the Redis 8.2+ matrix.
+
+        if (version < new Version(8, 2))
+        {
+            return; // XACKDEL is exercised by the Redis 8.2+ matrix.
+        }
+
         var queue = Queue(admin);
         var delivery = await PendingJobAsync(admin, queue);
         var username = "ack-events-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">event-test-password", "~*", "+@all", "-xackdel"]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = username, Password = "event-test-password" });
+                with
+            { Username = username, Password = "event-test-password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(JobScript("CompleteAndDelete"),
                 [queue.StreamKey, queue.EventsStreamKey],
                 [RespireJobQueue<string>.ConsumerGroup, "crashed", delivery.Value, 1, "completed"]))
@@ -180,7 +198,10 @@ public partial class JobQueueIntegrationTests
         using var metrics = new MeterListener();
         metrics.InstrumentPublished = (instrument, meter) =>
         {
-            if (instrument.Meter.Name == RespireStreamWorkerTelemetry.MeterName) meter.EnableMeasurementEvents(instrument);
+            if (instrument.Meter.Name == RespireStreamWorkerTelemetry.MeterName)
+            {
+                meter.EnableMeasurementEvents(instrument);
+            }
         };
         metrics.SetMeasurementEventCallback<double>((_, _, tags, _) => metricTags.Enqueue(tags.ToArray()));
         metrics.SetMeasurementEventCallback<long>((_, _, tags, _) => metricTags.Enqueue(tags.ToArray()));
@@ -198,16 +219,27 @@ public partial class JobQueueIntegrationTests
         var state = new HandlerState { Result = RespireStreamWorkerResult.Nack };
         var services = new ServiceCollection().AddSingleton<IRespireClient>(client).AddSingleton(state);
         services.AddRespireJobQueue<Handler, string>("test", System.Text.Encoding.UTF8.GetBytes, System.Text.Encoding.UTF8.GetString,
-            new() { DeliveryLimit = 3, MinimumIdleTime = TimeSpan.FromMilliseconds(20),
-                RecoveryPollInterval = TimeSpan.FromMilliseconds(10), ReadWait = TimeSpan.FromMilliseconds(10) });
+            new()
+            {
+                DeliveryLimit = 3,
+                MinimumIdleTime = TimeSpan.FromMilliseconds(20),
+                RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
+                ReadWait = TimeSpan.FromMilliseconds(10)
+            });
         await using var provider = services.BuildServiceProvider();
         var worker = provider.GetServices<IHostedService>().Single();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await worker.StartAsync(deadline.Token);
-        try { await UntilAsync(() => Task.FromResult(stopped.Count(a => a.OperationName == "job process") == 2), deadline.Token); }
+
+        try
+        {
+            await UntilAsync(() => Task.FromResult(stopped.Count(a => a.OperationName == "job process") == 2), deadline.Token);
+        }
         finally { await worker.StopAsync(deadline.Token); }
+
         var attempts = stopped.Where(activity => activity.OperationName == "job process").ToArray();
         await Assert.That(attempts.Length).IsEqualTo(2);
+
         foreach (var attempt in attempts)
         {
             var link = attempt.Links.Single().Context;
@@ -217,11 +249,16 @@ public partial class JobQueueIntegrationTests
             await Assert.That(link.IsRemote).IsTrue();
             await Assert.That(attempt.ParentSpanId).IsEqualTo(default(ActivitySpanId));
         }
+
         await Assert.That(attempts[0].SpanId).IsNotEqualTo(attempts[1].SpanId);
         await Assert.That(metricTags.IsEmpty).IsFalse();
+
         foreach (var tags in metricTags)
+        {
             await Assert.That(tags.All(tag => tag.Key is "respire.worker.name" or "respire.worker.outcome" or "respire.worker.reason"))
                 .IsTrue();
+        }
+
         await Assert.That((await client.Streams.ReadAsync(queue.EventsStreamKey)).Single().GetString("entry_id"))
             .IsEqualTo(delivery.Value);
     }
@@ -241,14 +278,19 @@ public partial class JobQueueIntegrationTests
         var previous = Activity.Current;
         Activity.Current = null;
         using var parent = ambient ? new Activity("ambient").SetIdFormat(ActivityIdFormat.W3C).Start() : null;
+
         try
         {
             await queue.EnqueueAsync("job", "secret-payload");
             var entry = (await client.Streams.ReadAsync(queue.StreamKey)).Single();
             // TUnit's HTML reporter can independently sample every source.
             await Assert.That(entry.GetString("traceparent")).IsEqualTo(serializedUnder?.Id);
+
             if (serializedUnder != parent)
+            {
                 await Assert.That(serializedUnder!.ParentSpanId).IsEqualTo(parent?.SpanId ?? default);
+            }
+
             await Assert.That(Activity.Current).IsSameReferenceAs(parent);
         }
         finally { parent?.Dispose(); Activity.Current = previous; }
@@ -262,6 +304,7 @@ public partial class JobQueueIntegrationTests
         var previous = Activity.Current;
         Activity.Current = null;
         using var parent = ambient ? new Activity("ambient").SetIdFormat(ActivityIdFormat.W3C).Start() : null;
+
         try
         {
             // Explicitly omit the source to exercise no-listener behavior even when the test reporter samples all sources.
@@ -289,8 +332,20 @@ public partial class JobQueueIntegrationTests
             ShouldListenTo = source => source.Name == RespireStreamWorkerTelemetry.ActivitySourceName,
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => failure == "sample"
                 ? throw new InvalidOperationException() : ActivitySamplingResult.AllData,
-            ActivityStarted = _ => { if (failure == "started") throw new InvalidOperationException(); },
-            ActivityStopped = _ => { if (failure == "stopped") throw new InvalidOperationException(); },
+            ActivityStarted = _ =>
+            {
+                if (failure == "started")
+                {
+                    throw new InvalidOperationException();
+                }
+            },
+            ActivityStopped = _ =>
+            {
+                if (failure == "stopped")
+                {
+                    throw new InvalidOperationException();
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
         await Assert.That((await queue.EnqueueAsync("job", "secret")).Enqueued).IsTrue();

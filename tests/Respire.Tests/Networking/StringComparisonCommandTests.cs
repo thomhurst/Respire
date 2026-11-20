@@ -24,6 +24,7 @@ public class StringComparisonCommandTests
         byte[] operand = "{\"Version\":1}"u8.ToArray();
         var condition = RespireValueCondition.EqualTo(operand);
         Document? result;
+
         if (mode == "immediate")
         {
             Array.Clear(operand);
@@ -36,10 +37,19 @@ public class StringComparisonCommandTests
             IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
             var pending = queue.Strings.GetAndSetConditional("key", new Document(2), condition);
             Array.Clear(operand);
-            if (transaction is not null) await transaction.CommitAsync();
-            else await batch!.ExecuteAsync();
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
+
             result = pending.Result;
         }
+
         await Assert.That(result).IsEqualTo(new Document(1));
         await Assert.That(server.ReceivedCommands.Where(x => x is not "MULTI" and not "EXEC"))
             .IsEquivalentTo(["SET key {\"Version\":2} IFEQ {\"Version\":1} GET"]);
@@ -87,6 +97,7 @@ public class StringComparisonCommandTests
         var digest = RespireValueCondition.DigestEqualTo("0123456789abcdef");
         var otherDigest = RespireValueCondition.DigestNotEqualTo("fedcba9876543210");
         byte[]? owned;
+
         if (mode == "immediate")
         {
             await Assert.That(await view.Strings.SetConditionalAsync("a", (RespireValue)"new", equal, RespireExpiry.In(TimeSpan.FromSeconds(5)))).IsTrue();
@@ -109,8 +120,16 @@ public class StringComparisonCommandTests
             var e = queue.Strings.DeleteConditional("e", equal);
             var f = queue.Strings.DeleteIfEqual("f", "old");
             var g = queue.Strings.Digest("g");
-            if (transaction is not null) await transaction.CommitAsync();
-            else await batch!.ExecuteAsync();
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
+
             await Assert.That(a.Result).IsTrue();
             await Assert.That(b.Result).IsFalse();
             owned = c.Result;
@@ -119,6 +138,7 @@ public class StringComparisonCommandTests
             await Assert.That(f.Result).IsFalse();
             await Assert.That(g.Result).IsEqualTo("0123456789abcdef");
         }
+
         await client.DisposeAsync();
         await Assert.That(owned).IsEquivalentTo(new byte[] { 0xff, 0 });
         await Assert.That(server.ReceivedCommands.Where(x => x is not "MULTI" and not "EXEC")).IsEquivalentTo([
@@ -145,6 +165,7 @@ public class StringComparisonCommandTests
         await Assert.That(async () => await client.Strings.DeleteIfEqualAsync("k", default)).Throws<ArgumentException>();
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
+
         foreach (var strings in new[] { batch.Strings, transaction.Strings })
         {
             await Assert.That(() => strings.SetConditional("k", (RespireValue)"v", null!)).Throws<ArgumentNullException>();
@@ -153,6 +174,7 @@ public class StringComparisonCommandTests
             await Assert.That(() => strings.DeleteConditional("k", null!)).Throws<ArgumentNullException>();
             await Assert.That(() => strings.DeleteIfEqual("k", default)).Throws<ArgumentException>();
         }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
@@ -165,7 +187,14 @@ public class StringComparisonCommandTests
     public async Task Cancellation_ReachesPendingCommands(string operation)
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var server = new FakeRespServer { SuppressReply = _ => { received.TrySetResult(); return true; } };
+        await using var server = new FakeRespServer
+        {
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            }
+        };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
         var equal = RespireValueCondition.EqualTo("old");
@@ -201,12 +230,15 @@ public class StringComparisonCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         const string key = "{compare}:key";
         var condition = RespireValueCondition.EqualTo("{other}:old");
+
         if (mode == "immediate")
         {
             await view.Strings.SetConditionalAsync(key, (RespireValue)"{different}:new", condition);
@@ -223,9 +255,17 @@ public class StringComparisonCommandTests
             _ = queue.Strings.DeleteConditional(key, condition);
             _ = queue.Strings.DeleteIfEqual(key, "{other}:old");
             _ = queue.Strings.Digest(key);
-            if (transaction is not null) await transaction.CommitAsync();
-            else await batch!.ExecuteAsync();
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
         }
+
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         await Assert.That(owner.ReceivedCommands.Where(x => x is not "MULTI" and not "EXEC")).IsEquivalentTo([
             "SET tenant:{compare}:key {different}:new IFEQ {other}:old", "DELEX tenant:{compare}:key IFEQ {other}:old",

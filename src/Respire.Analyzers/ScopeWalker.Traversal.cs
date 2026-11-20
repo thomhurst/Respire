@@ -39,6 +39,7 @@ internal static partial class ScopeWalker
         private readonly List<CatchDispatch?> _dispatches = [null];
         private readonly Dictionary<(int Block, int Continuation, bool NullPath, bool Implicit, bool AllocationOnly, string? ExceptionType), int> _dispatchIds = new();
         private ImplicitExceptionClassifier? _exceptionClassifier;
+
         private ImplicitExceptionClassifier Exceptions => _exceptionClassifier ??= new(semanticModel, _conditions, cancellationToken);
         private readonly Stack<SearchState> _pending = new();
         private readonly Dictionary<SearchState, int> _earliestEntries = new();
@@ -46,12 +47,35 @@ internal static partial class ScopeWalker
         private readonly struct SearchState(
             BasicBlock block, int continuation, bool started, ulong known, ulong values, int dispatch) : IEquatable<SearchState>
         {
-            internal BasicBlock Block { get; } = block;
-            internal int Continuation { get; } = continuation;
-            internal bool Started { get; } = started;
-            internal ulong Known { get; } = known;
-            internal ulong Values { get; } = values;
-            internal int Dispatch { get; } = dispatch;
+            internal BasicBlock Block
+            {
+                get;
+            } = block;
+
+            internal int Continuation
+            {
+                get;
+            } = continuation;
+
+            internal bool Started
+            {
+                get;
+            } = started;
+
+            internal ulong Known
+            {
+                get;
+            } = known;
+
+            internal ulong Values
+            {
+                get;
+            } = values;
+
+            internal int Dispatch
+            {
+                get;
+            } = dispatch;
 
             public bool Equals(SearchState other) => Block == other.Block
                 && Continuation == other.Continuation && Started == other.Started
@@ -78,6 +102,7 @@ internal static partial class ScopeWalker
             foreach (var barrier in barriers)
             {
                 var (block, position) = FindBarrierLocation(barrier);
+
                 if (block is null)
                 {
                     continue;
@@ -93,16 +118,22 @@ internal static partial class ScopeWalker
             }
 
             foreach (var positions in _barrierPositions.Values)
+            {
                 positions.Sort();
+            }
             // Start at entry so reaching an origin retains the branch that selected it.
             _pending.Push(new(graph.Blocks[0], continuation: 0, started: false, known: 0, values: 0, dispatch: 0));
             var remaining = MaxProcessedStates;
+
             while (_pending.Count > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 // Exhaustion is a possible path, never a proof of safety.
                 if (--remaining == 0)
+                {
                     return true;
+                }
+
                 var pending = _pending.Pop();
                 var block = pending.Block;
                 var entryPosition = int.MinValue;
@@ -111,6 +142,7 @@ internal static partial class ScopeWalker
                 var known = pending.Known;
                 var values = pending.Values;
                 var dispatch = pending.Dispatch;
+
                 if (!started && block.Ordinal == startBlock.Ordinal)
                 {
                     started = true;
@@ -118,6 +150,7 @@ internal static partial class ScopeWalker
                 }
 
                 var state = new SearchState(block, continuation, started, known, values, dispatch);
+
                 if (_earliestEntries.TryGetValue(state, out var earliestEntry)
                     && earliestEntry <= entryPosition)
                 {
@@ -148,6 +181,7 @@ internal static partial class ScopeWalker
                         // A null continuation ends a successful transfer; exceptions still dispatch normally.
                         Enqueue(null, returning.FinallyRegions, 0, started, known, values, 0);
                     }
+
                     continue;
                 }
 
@@ -163,51 +197,81 @@ internal static partial class ScopeWalker
             if (barrier is AwaitExpressionSyntax awaited)
             {
                 var block = FindBlock(graph, awaited);
-                if (block is null) return (null, 0);
+
+                if (block is null)
+                {
+                    return (null, 0);
+                }
                 // Flush and await failures are outside the proof, but evaluating their
                 // receivers, arguments, and completion adapters must finish first.
                 _completionOperations.Add(awaited);
+
                 if (semanticModel.GetOperation(awaited.Expression, cancellationToken) is { } operand)
+                {
                     RegisterCompletionCalls(operand);
+                }
+
                 _unconditionalBarriers.Add((block.Ordinal, awaited.Span.End));
                 return (block, awaited.Span.End);
             }
+
             if (barrier is InvocationExpressionSyntax
                 && semanticModel.GetOperation(barrier, cancellationToken) is IInvocationOperation
-                    { TargetMethod.Name: "GetResult", Arguments.Length: 0,
-                        Instance: IInvocationOperation { TargetMethod.Name: "GetAwaiter", Arguments.Length: 0 } } synchronous
+                {
+                    TargetMethod.Name: "GetResult", Arguments.Length: 0,
+                    Instance: IInvocationOperation { TargetMethod.Name: "GetAwaiter", Arguments.Length: 0 }
+                } synchronous
                 && synchronous.TargetMethod.ContainingNamespace.ToDisplayString() == "System.Runtime.CompilerServices")
+            {
                 RegisterCompletionCalls(synchronous);
+            }
+
             var scope = origin is null ? graph.OriginalOperation.Syntax : GetEnclosingScope(origin);
             SyntaxNode? capture = barrier.Ancestors().TakeWhile(node => node != scope)
                 .OfType<AnonymousFunctionExpressionSyntax>().LastOrDefault();
+
             if (capture is null && semanticModel.GetOperation(barrier, cancellationToken) is IMethodReferenceOperation)
+            {
                 capture = barrier;
+            }
+
             SyntaxNode? delegateSyntax = null;
+
             if (capture is not null)
             {
                 foreach (var block in graph.Blocks)
                 {
                     foreach (var operation in block.Operations.Concat(block.BranchValue is { } branch ? [branch] : []))
+                    {
                         if (FindDelegateCreation(operation, capture) is { } creation)
                         {
                             delegateSyntax = creation.Syntax;
                             break;
                         }
-                    if (delegateSyntax is not null) break;
+                    }
+
+                    if (delegateSyntax is not null)
+                    {
+                        break;
+                    }
                 }
             }
-            if (delegateSyntax is not null) barrier = delegateSyntax;
+
+            if (delegateSyntax is not null)
+            {
+                barrier = delegateSyntax;
+            }
+
             var expression = barrier is ExpressionSyntax value ? GetOutermostTransparentExpression(value) : null;
             var wrapped = delegateSyntax is not null;
+
             while (expression is not null)
             {
                 ExpressionSyntax? wrapper = expression.Parent switch
                 {
                     ArgumentSyntax { Parent: TupleExpressionSyntax tuple } => tuple,
                     AnonymousObjectMemberDeclaratorSyntax { Parent: AnonymousObjectCreationExpressionSyntax anonymous } => anonymous,
-                    AssignmentExpressionSyntax { Parent: InitializerExpressionSyntax memberInitializer } member
-                        when member.Right == expression && (memberInitializer.IsKind(SyntaxKind.ObjectInitializerExpression)
+                    AssignmentExpressionSyntax { Parent: InitializerExpressionSyntax memberInitializer } member when member.Right == expression && (memberInitializer.IsKind(SyntaxKind.ObjectInitializerExpression)
                             || memberInitializer.IsKind(SyntaxKind.WithInitializerExpression))
                             && semanticModel.GetOperation(member.Left, cancellationToken) is not IPropertyReferenceOperation { Property.SetMethod: not null } => memberInitializer,
                     BaseObjectCreationExpressionSyntax creation when creation.Initializer == expression => creation,
@@ -229,45 +293,77 @@ internal static partial class ScopeWalker
                         && GetOutermostTransparentExpression(discarded).Parent is not ExpressionStatementSyntax => discarded,
                     _ => null,
                 };
-                if (wrapper is null) break;
+
+                if (wrapper is null)
+                {
+                    break;
+                }
+
                 expression = GetOutermostTransparentExpression(wrapper);
                 wrapped = true;
             }
+
             var call = expression?.Parent is ArgumentSyntax { Parent: ArgumentListSyntax arguments }
                 ? arguments.Parent : expression;
             // The statement consumes the finished temporary after every initializer,
             // including initializers lowered into separate conditional blocks.
             var constructionCompletion = call is BaseObjectCreationExpressionSyntax { Initializer: { } initializer }
                 && initializer.Span.Contains(barrier.Span) && expression?.Parent is ExpressionStatementSyntax;
-            if (constructionCompletion) call = expression!.Parent;
+
+            if (constructionCompletion)
+            {
+                call = expression!.Parent;
+            }
+
             var operatorTransfer = expression?.Parent is { } operatorSyntax
                 && semanticModel.GetOperation(operatorSyntax, cancellationToken) is
                     IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null }
                     or ICompoundAssignmentOperation { OperatorMethod: not null };
-            if (operatorTransfer) call = expression!.Parent;
+
+            if (operatorTransfer)
+            {
+                call = expression!.Parent;
+            }
+
             var eventAssignment = expression?.Parent is AssignmentExpressionSyntax eventSyntax
                 ? semanticModel.GetOperation(eventSyntax, cancellationToken) as IEventAssignmentOperation : null;
             var eventTransfer = eventAssignment is not null;
+
             if (eventAssignment is not null)
             {
-                if (!eventAssignment.Adds) return (null, 0);
+                if (!eventAssignment.Adds)
+                {
+                    return (null, 0);
+                }
+
                 call = expression!.Parent;
             }
+
             var collectionTransfer = expression?.Parent is InitializerExpressionSyntax collectionElement
                 && (collectionElement.IsKind(SyntaxKind.ComplexElementInitializerExpression)
                     || collectionElement.IsKind(SyntaxKind.CollectionInitializerExpression));
+
             if (expression?.Parent is InitializerExpressionSyntax complexElement
                 && complexElement.IsKind(SyntaxKind.ComplexElementInitializerExpression))
+            {
                 call = complexElement;
+            }
+
             var returnTransfer = expression?.Parent is ReturnStatementSyntax;
             var initializerTransfer = expression?.Parent is EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax };
+
             if (initializerTransfer)
+            {
                 call = expression!.Parent!.Parent;
+            }
+
             var assignmentTransfer = false;
             var indexerTransfer = expression?.Parent is ArgumentSyntax { Parent: BracketedArgumentListSyntax };
+
             if (expression?.Parent is ArgumentSyntax { Parent: BracketedArgumentListSyntax { Parent: ElementAccessExpressionSyntax indexer } })
             {
                 call = indexer;
+
                 if (indexer.Parent is AssignmentExpressionSyntax indexedAssignment
                     && indexedAssignment.IsKind(SyntaxKind.SimpleAssignmentExpression) && indexedAssignment.Left == indexer)
                 {
@@ -275,6 +371,7 @@ internal static partial class ScopeWalker
                     assignmentTransfer = true;
                 }
             }
+
             if (expression is not null && (wrapped || Unwrap(expression) is IdentifierNameSyntax)
                 && expression.Parent is AssignmentExpressionSyntax assignment
                 && (assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) || assignment.IsKind(SyntaxKind.CoalesceAssignmentExpression))
@@ -284,7 +381,10 @@ internal static partial class ScopeWalker
                     && IsDiscardedReference(assignmentOperation.Target, assignmentOperation.Value, barrier))
                 {
                     // The discard retains nothing, but the anonymous constructor first accepts its values.
-                    if (expression is not AnonymousObjectCreationExpressionSyntax) return (null, 0);
+                    if (expression is not AnonymousObjectCreationExpressionSyntax)
+                    {
+                        return (null, 0);
+                    }
                 }
                 else
                 {
@@ -292,19 +392,28 @@ internal static partial class ScopeWalker
                     assignmentTransfer = true;
                 }
             }
+
             var delegateTransfer = delegateSyntax is not null && call == delegateSyntax;
+
             if (call is not null && (assignmentTransfer || returnTransfer || initializerTransfer || constructionCompletion || delegateTransfer || indexerTransfer || collectionTransfer || operatorTransfer || eventTransfer
                 || call is InvocationExpressionSyntax or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax
                     or AnonymousObjectCreationExpressionSyntax))
             {
                 foreach (var block in graph.Blocks)
+                {
                     foreach (var operation in block.Operations.Concat(block.BranchValue is { } branch ? [branch] : []))
+                    {
                         if (returnTransfer ? operation == block.BranchValue && operation.Syntax == call : ContainsCall(operation, call))
                         {
                             // Returns and local initializers transfer ownership only after
                             // the complete expression, including its final conversion.
                             var position = returnTransfer || initializerTransfer || constructionCompletion || collectionTransfer || delegateTransfer ? call.Span.End : TransferPosition(call);
-                            if (collectionTransfer) _collectionTransfers.Add(call);
+
+                            if (collectionTransfer)
+                            {
+                                _collectionTransfers.Add(call);
+                            }
+
                             if (wrapped)
                             {
                                 var reference = barrier is ExpressionSyntax barrierExpression ? Unwrap(barrierExpression) : barrier;
@@ -314,18 +423,37 @@ internal static partial class ScopeWalker
                                 var flag = _conditions.ReservePathFlag();
                                 // Barriers stop paths. Omitting an unproven barrier only adds
                                 // reachable paths, so exhaustion can retain a warning, never hide one.
-                                if (triggerBlock is null || flag == FlowConditions.UnknownPathFlag) return (null, 0);
+                                if (triggerBlock is null || flag == FlowConditions.UnknownPathFlag)
+                                {
+                                    return (null, 0);
+                                }
+
                                 _transferFlags |= flag;
                                 _transferTriggers[reference] = _transferTriggers.TryGetValue(reference, out var existing) ? existing | flag : flag;
+
                                 if (!_transferGuards.TryGetValue((block.Ordinal, position), out var guards))
+                                {
                                     _transferGuards.Add((block.Ordinal, position), guards = []);
+                                }
+
                                 guards.Add((triggerBlock.Ordinal, flag));
                             }
-                            else _unconditionalBarriers.Add((block.Ordinal, position));
-                            if (returnTransfer) _returnBarriers.Add((block.Ordinal, position));
+                            else
+                            {
+                                _unconditionalBarriers.Add((block.Ordinal, position));
+                            }
+
+                            if (returnTransfer)
+                            {
+                                _returnBarriers.Add((block.Ordinal, position));
+                            }
+
                             return (block, position);
                         }
+                    }
+                }
             }
+
             return (FindBlock(graph, barrier), barrier.SpanStart);
 
             static bool ContainsCall(IOperation operation, SyntaxNode call)
@@ -338,7 +466,10 @@ internal static partial class ScopeWalker
                     or IPropertyReferenceOperation or IDynamicIndexerAccessOperation
                     or IBinaryOperation { OperatorMethod: not null } or IUnaryOperation { OperatorMethod: not null }
                     or ICompoundAssignmentOperation { OperatorMethod: not null })
+                {
                     return true;
+                }
+
                 return operation.ChildOperations.Any(child => ContainsCall(child, call));
             }
 
@@ -350,6 +481,7 @@ internal static partial class ScopeWalker
         private void RegisterCompletionCalls(IOperation operation)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
             if (operation is IInvocationOperation invocation)
             {
                 var method = invocation.TargetMethod;
@@ -359,35 +491,70 @@ internal static partial class ScopeWalker
                         or "ExecuteAndWaitForReplicationAsync" or "ExecuteAndWaitForAofAsync";
                 var transactionCommit = method.Name == "CommitAsync" && HasBaseType(method.ContainingType,
                     semanticModel.Compilation.GetTypeByMetadataName(PendingReadBeforeFlushAnalyzer.TransactionBaseTypeName));
+
                 if (batchFlush || transactionCommit
                     || containingNamespace == "System.Threading.Tasks" && method.Name is "ConfigureAwait" or "AsTask" or "WaitAsync" or "WhenAll" or "GetAwaiter"
                     || containingNamespace == "System.Runtime.CompilerServices" && method.Name is "GetAwaiter" or "GetResult")
+                {
                     _completionOperations.Add(operation.Syntax);
+                }
             }
+
             foreach (var child in operation.ChildOperations)
+            {
                 RegisterCompletionCalls(child);
+            }
         }
 
         private static IDelegateCreationOperation? FindDelegateCreation(IOperation operation, SyntaxNode capture)
         {
             if (operation is IDelegateCreationOperation creation && creation.Target.Syntax == capture)
+            {
                 return creation;
+            }
+
             foreach (var child in operation.ChildOperations)
-                if (FindDelegateCreation(child, capture) is { } found) return found;
+            {
+                if (FindDelegateCreation(child, capture) is { } found)
+                {
+                    return found;
+                }
+            }
+
             return null;
         }
 
         private bool IsDiscardedReference(IOperation target, IOperation value, SyntaxNode reference)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!value.Syntax.Span.Contains(reference.Span)) return false;
-            if (target is IDiscardOperation) return true;
+
+            if (!value.Syntax.Span.Contains(reference.Span))
+            {
+                return false;
+            }
+
+            if (target is IDiscardOperation)
+            {
+                return true;
+            }
+
             while (value is IConversionOperation { OperatorMethod: null } conversion)
+            {
                 value = conversion.Operand;
+            }
+
             if (target is ITupleOperation targets && value is ITupleOperation sources
                 && targets.Elements.Length == sources.Elements.Length)
+            {
                 for (var index = 0; index < targets.Elements.Length; index++)
-                    if (IsDiscardedReference(targets.Elements[index], sources.Elements[index], reference)) return true;
+                {
+                    if (IsDiscardedReference(targets.Elements[index], sources.Elements[index], reference))
+                    {
+                        return true;
+                    }
+                }
+            }
+
             return false;
         }
 
@@ -421,7 +588,9 @@ internal static partial class ScopeWalker
         private static int ComparePositions(BasicBlock block, int left, int right)
         {
             if (left == right || left is int.MinValue or int.MaxValue || right is int.MinValue or int.MaxValue)
+            {
                 return left.CompareTo(right);
+            }
             // Roslyn can merge forward-goto destinations into a block in execution order.
             // Source offsets only order positions within the same top-level operation.
             var leftIndex = OperationIndex(left);
@@ -433,8 +602,13 @@ internal static partial class ScopeWalker
                 for (var index = 0; index < block.Operations.Length; index++)
                 {
                     var span = block.Operations[index].Syntax.Span;
-                    if (span.Start <= position && position <= span.End) return index;
+
+                    if (span.Start <= position && position <= span.End)
+                    {
+                        return index;
+                    }
                 }
+
                 return block.Operations.Length;
             }
         }
@@ -442,21 +616,34 @@ internal static partial class ScopeWalker
         private int FindFirstBarrier(BasicBlock block, int entryPosition, bool started, ulong activeTransfers)
         {
             if (!started || !_barrierPositions.TryGetValue(block.Ordinal, out var positions))
+            {
                 return int.MaxValue;
+            }
+
             var index = positions.BinarySearch(entryPosition);
+
             if (index < 0)
+            {
                 index = ~index;
+            }
             else if (startPolicy != BarrierStartPolicy.Include || block != startBlock || entryPosition != startPosition)
             {
                 while (index < positions.Count && positions[index] == entryPosition)
+                {
                     index++;
+                }
             }
 
             for (; index < positions.Count; index++)
+            {
                 if (_unconditionalBarriers.Contains((block.Ordinal, positions[index]))
                     || !_transferGuards.TryGetValue((block.Ordinal, positions[index]), out var guards)
                     || guards.Any(guard => guard.TriggerBlock == block.Ordinal || (activeTransfers & guard.Flag) != 0))
+                {
                     return positions[index];
+                }
+            }
+
             return int.MaxValue;
         }
 
@@ -464,9 +651,14 @@ internal static partial class ScopeWalker
             int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
         {
             foreach (var operation in block.Operations)
+            {
                 Visit(operation, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+            }
+
             if (block.BranchValue is { } branchValue)
+            {
                 Visit(branchValue, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+            }
         }
 
         private void Visit(IOperation operation, BasicBlock block, int entryPosition, int firstBarrier,
@@ -474,9 +666,13 @@ internal static partial class ScopeWalker
             IOperation? storedValue = null)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
             if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation or INameOfOperation
                 || operation.Syntax.SpanStart >= firstBarrier)
+            {
                 return;
+            }
+
             if (operation is ILocalReferenceOperation or IParameterReferenceOperation or IDelegateCreationOperation
                 && _transferTriggers.TryGetValue(operation.Syntax, out var transferFlag))
             {
@@ -500,12 +696,17 @@ internal static partial class ScopeWalker
                 IArrayCreationOperation creation => creation.Initializer,
                 _ => null,
             };
+
             if (operation is IAnonymousObjectCreationOperation anonymous)
             {
                 // Anonymous properties are constructor arguments, not setter calls.
                 foreach (var member in anonymous.Initializers)
+                {
                     if (member is ISimpleAssignmentOperation memberAssignment)
+                    {
                         Visit(memberAssignment.Value, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+                    }
+                }
             }
             else if (operation is IDeconstructionAssignmentOperation deconstruction)
             {
@@ -514,6 +715,7 @@ internal static partial class ScopeWalker
                 VisitDeconstructionLocations(deconstruction.Target, block, entryPosition, firstBarrier, continuation,
                     started, dispatch, ref known, ref values);
                 Visit(deconstruction.Value, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+
                 if ((operation.Syntax.Span.End <= firstBarrier || TransferPosition(operation.Syntax) == firstBarrier)
                     && HasMatchingDeconstructionShape(deconstruction.Target, deconstruction.Value))
                 {
@@ -530,7 +732,10 @@ internal static partial class ScopeWalker
                 // Evaluate the receiver and indexes, then the RHS, then perform the store.
                 // A property target is not a getter call in a simple assignment.
                 foreach (var child in assignment.Target.ChildOperations)
+                {
                     Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+                }
+
                 Visit(assignment.Value, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
                 exceptionSource = assignment.Target;
             }
@@ -538,20 +743,30 @@ internal static partial class ScopeWalker
             {
                 // Capturing storage evaluates its receiver/indexes, not a property getter.
                 foreach (var child in location.Value.ChildOperations)
+                {
                     Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+                }
             }
             else if (!deconstructionStore)
             {
                 foreach (var child in operation.ChildOperations)
+                {
                     if (child != initializer && !arrayAllocation)
+                    {
                         Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+                    }
+                }
                 // Roslyn lowers conditional stores (including ??=) to assignments
                 // through captured targets. Their setters still run after the RHS.
                 if (operation is ISimpleAssignmentOperation { Target: IFlowCaptureReferenceOperation target })
+                {
                     exceptionSource = _conditions.ResolveCapturedTarget(target);
+                }
                 else if (operation is ICompoundAssignmentOperation { Target: IFlowCaptureReferenceOperation compoundTarget }
                     && _conditions.ResolveCapturedTarget(compoundTarget) is IPropertyReferenceOperation propertyTarget)
+                {
                     exceptionSource = propertyTarget;
+                }
             }
             // Barrier failure and uncaught implicit exceptions remain outside this proof.
             // Receiver checks, allocation, type initialization and dynamic binding precede
@@ -559,12 +774,12 @@ internal static partial class ScopeWalker
             var completionOperation = operation is IInvocationOperation or IAwaitOperation
                 && _completionOperations.Contains(operation.Syntax);
             // Expanded params arrays inherit the whole call's syntax, but allocate before entry.
-            var paramsAllocation = operation is IArrayCreationOperation
-                { IsImplicit: true, Parent: IArgumentOperation { ArgumentKind: ArgumentKind.ParamArray } };
+            var paramsAllocation = operation is IArrayCreationOperation { IsImplicit: true, Parent: IArgumentOperation { ArgumentKind: ArgumentKind.ParamArray } };
             var collectionTransfer = operation is IInvocationOperation { IsImplicit: true }
                 && _collectionTransfers.Contains(operation.Syntax) && operation.Syntax.Span.End == firstBarrier;
             var transferFailure = (TransferPosition(operation.Syntax) == firstBarrier || collectionTransfer) && !completionOperation
                 ? GetTransferFailure(operation, known, values) : TransferFailure.None;
+
             if (!deconstructionStoresHandled && operation.Syntax.SpanStart > entryPosition
                 // Arguments and receivers inside the origin run before acquisition completes.
                 && !(entryPosition == startPosition && origin?.Span.Contains(operation.Syntax.Span) == true)
@@ -575,8 +790,7 @@ internal static partial class ScopeWalker
                 && !(ImplicitExceptionClassifier.IsFrameworkLength(exceptionSource)
                     && exceptionSource is IPropertyReferenceOperation { Instance: { } lengthReceiver }
                     && _conditions.IsKnownNonNull(lengthReceiver, known, values))
-                && !(exceptionSource is IPropertyReferenceOperation
-                    { Property: { Name: "Value", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }, Instance: { } nullableReceiver }
+                && !(exceptionSource is IPropertyReferenceOperation { Property: { Name: "Value", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }, Instance: { } nullableReceiver }
                     && _conditions.IsKnownNonNull(nullableReceiver, known, values))
                 && !(exceptionSource is IConversionOperation nullableBoxing
                     && Exceptions.IsBoxing(nullableBoxing)
@@ -593,8 +807,10 @@ internal static partial class ScopeWalker
                     && Exceptions.MayThrow(exceptionSource) || transferFailure != TransferFailure.None))
             {
                 if (dispatch != 0)
+                {
                     // The runtime treats a throwing filter as a rejected filter.
                     Dispatch(_dispatches[dispatch]!.Next, started, known, values);
+                }
                 else if (block.FallThroughSuccessor is { } successor)
                 {
                     // Index expressions have their own exception paths. Array access itself
@@ -602,67 +818,98 @@ internal static partial class ScopeWalker
                     if (exceptionSource is IArrayElementReferenceOperation arrayAccess)
                     {
                         if (!_conditions.IsKnownNonNull(arrayAccess.ArrayReference, known, values))
+                        {
                             Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
+                        }
+
                         if (!Exceptions.HasValidConstantIndexes(arrayAccess))
+                        {
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.IndexOutOfRangeException"), started, known, values);
+                        }
+
                         if (arrayAccess.Type?.IsValueType != true
                             && !HasExactArrayElementType(arrayAccess)
                             && !IsNullArrayStore(operation, storedValue, known, values)
                             && (deconstructionStore || operation is IAssignmentOperation
                                 || operation.Parent is IArgumentOperation { Parameter.RefKind: RefKind.Ref or RefKind.Out }))
+                        {
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.ArrayTypeMismatchException"), started, known, values);
+                        }
                     }
                     else if (Exceptions.ArithmeticExceptions(exceptionSource) is { } arithmetic)
                     {
                         if (arithmetic.Overflow)
+                        {
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.OverflowException"), started, known, values);
+                        }
+
                         var divisor = exceptionSource switch
                         {
                             IBinaryOperation binary => binary.RightOperand,
                             ICompoundAssignmentOperation compound => compound.Value,
                             _ => null,
                         };
+
                         if (arithmetic.DivideByZero && (divisor is null || !_conditions.IsKnownNonZero(divisor, known, values)))
+                        {
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.DivideByZeroException"), started, known, values);
+                        }
                     }
                     else if (exceptionSource is IConversionOperation conversion && Exceptions.ConversionExceptions(conversion) is { } conversionExceptions)
                     {
                         if (conversionExceptions.InvalidCast
                             && !_conditions.IsKnownNull(conversion.Operand, known, values)
                             && !_conditions.IsKnownType(conversion.Operand, conversion.Type, semanticModel.Compilation, known, values))
+                        {
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.InvalidCastException"), started, known, values);
+                        }
+
                         if (conversionExceptions.NullReference && !_conditions.IsKnownNonNull(conversion.Operand, known, values))
+                        {
                             Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
+                        }
+
                         if (conversionExceptions.InvalidOperation && !_conditions.IsKnownNonNull(conversion.Operand, known, values))
+                        {
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.InvalidOperationException"), started, known, values);
+                        }
                         // Null lifted conversions skip numeric work; unwrapping null fails before it.
                         if (conversionExceptions.Overflow && !_conditions.IsKnownNull(conversion.Operand, known, values))
+                        {
                             Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                 implicitExceptionType: "System.OverflowException"), started, known, values);
+                        }
                     }
                     else
                     {
                         var bodyKnown = known;
                         var bodyValues = values;
+
                         if (transferFailure == TransferFailure.None
                             && exceptionSource is not IFieldReferenceOperation
                             && InitializationType(exceptionSource) is not null)
                         {
                             if (exceptionSource is IObjectCreationOperation { Type.IsReferenceType: true })
+                            {
                                 Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                     allocationOnly: true), started, known, values);
+                            }
+
                             if (!IsTypeInitialized(exceptionSource, known, values))
+                            {
                                 Dispatch(GetDispatch(successor, continuation, implicitException: true,
                                     implicitExceptionType: "System.TypeInitializationException"), started, known, values);
+                            }
                             // A body can run only after its declaring type initialized successfully.
                             RecordTypeInitialized(exceptionSource, ref bodyKnown, ref bodyValues);
                         }
+
                         Dispatch(GetDispatch(successor, continuation, implicitException: true,
                             implicitExceptionType: transferFailure == TransferFailure.TypeInitialization
                                 || exceptionSource is IFieldReferenceOperation { Field.IsStatic: true }
@@ -683,39 +930,61 @@ internal static partial class ScopeWalker
                                 || ScopeExitAnalysis.GetKnownExactExceptionType(semanticModel.Compilation, exceptionSource) is not null),
                             started, bodyKnown, bodyValues);
                     }
+
                     if (exceptionSource is IDelegateCreationOperation delegateCreation && Exceptions.DelegateCanDereferenceNull(delegateCreation, known, values))
+                    {
                         Dispatch(GetDispatch(successor, continuation, implicitException: true, nullPath: true), started, known, values);
+                    }
                     // Variant delegate operands can have different runtime delegate types.
                     if (ImplicitExceptionClassifier.DelegateTypesMayDiffer(exceptionSource))
+                    {
                         Dispatch(GetDispatch(successor, continuation, implicitException: true,
                             implicitExceptionType: "System.ArgumentException"), started, known, values);
+                    }
+
                     if (transferFailure == TransferFailure.Allocation
                         && exceptionSource is IObjectCreationOperation { Type: INamedTypeSymbol { StaticConstructors.Length: > 0 } }
                         && !IsTypeInitialized(exceptionSource, known, values))
+                    {
                         Dispatch(GetDispatch(successor, continuation, implicitException: true,
                             implicitExceptionType: "System.TypeInitializationException"), started, known, values);
+                    }
+
                     if (exceptionSource is IArrayCreationOperation arrayCreation
                         && arrayCreation.DimensionSizes.Any(size => !Exceptions.IsNonNegativeLength(size)))
+                    {
                         Dispatch(GetDispatch(successor, continuation, implicitException: true,
                             implicitExceptionType: "System.OverflowException"), started, known, values);
+                    }
                 }
             }
+
             RecordTypeInitialized(exceptionSource, ref known, ref values);
             // Construction/allocation can fail before any initializer runs.
             if (initializer is not null)
+            {
                 Visit(initializer, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+            }
+
             if (arrayAllocation)
+            {
                 foreach (var child in operation.ChildOperations)
+                {
                     Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+                }
+            }
+
             _conditions.ForgetOwnWrite(operation, ref known, ref values);
+
             if (operation is IFlowCaptureOperation captured)
+            {
                 _conditions.RecordCapturedReceiver(captured, ref known, ref values);
+            }
         }
 
         private bool HasExactArrayElementType(IArrayElementReferenceOperation access)
             => access.Type is INamedTypeSymbol { IsSealed: true }
-                || _conditions.ResolveCapturedTarget(access.ArrayReference) is IArrayCreationOperation
-                    { Type: IArrayTypeSymbol array }
+                || _conditions.ResolveCapturedTarget(access.ArrayReference) is IArrayCreationOperation { Type: IArrayTypeSymbol array }
                     && SymbolEqualityComparer.Default.Equals(array.ElementType, access.Type);
 
         private bool IsNullArrayStore(IOperation operation, IOperation? storedValue, ulong known, ulong values)
@@ -724,16 +993,28 @@ internal static partial class ScopeWalker
             return storedValue is not null && _conditions.IsKnownNull(storedValue, known, values);
         }
 
-        private enum TransferFailure { None, NullReceiver, Allocation, TypeInitialization, Unknown }
+        private enum TransferFailure
+        {
+            None,
+            NullReceiver,
+            Allocation,
+            TypeInitialization,
+            Unknown
+        }
 
         private void RecordTypeInitialized(IOperation operation, ref ulong known, ref ulong values)
         {
-            if (InitializationType(operation) is not { } type) return;
+            if (InitializationType(operation) is not { } type)
+            {
+                return;
+            }
+
             if (!_initializedTypes.TryGetValue(type, out var flag))
             {
                 flag = _conditions.ReservePathFlag();
                 _initializedTypes.Add(type, flag);
             }
+
             known |= flag;
             values |= flag;
         }
@@ -766,10 +1047,16 @@ internal static partial class ScopeWalker
             int continuation, bool started, int dispatch, ref ulong known, ref ulong values)
         {
             foreach (var child in target.ChildOperations)
+            {
                 if (target is ITupleOperation)
+                {
                     VisitDeconstructionLocations(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+                }
                 else
+                {
                     Visit(child, block, entryPosition, firstBarrier, continuation, started, dispatch, ref known, ref values);
+                }
+            }
         }
 
         private bool HasMatchingDeconstructionShape(IOperation target, IOperation value)
@@ -777,17 +1064,29 @@ internal static partial class ScopeWalker
             cancellationToken.ThrowIfCancellationRequested();
             target = _conditions.ResolveCapturedTarget(target);
             value = _conditions.ResolveCapturedTarget(value);
-            if (target is not ITupleOperation targets) return true;
+
+            if (target is not ITupleOperation targets)
+            {
+                return true;
+            }
+
             if (value is ITupleOperation sources)
+            {
                 return targets.Elements.Length == sources.Elements.Length
                     && targets.Elements.Select((element, index) => HasMatchingDeconstructionShape(element, sources.Elements[index])).All(static matches => matches);
+            }
             // A tuple local already contains its elements. Identical tuple types need no
             // element conversion or user-defined Deconstruct call before the stores.
             if (value is IConversionOperation conversion)
             {
-                if (conversion.Conversion.IsUserDefined) return false;
+                if (conversion.Conversion.IsUserDefined)
+                {
+                    return false;
+                }
+
                 value = conversion.Operand;
             }
+
             return value.Type is INamedTypeSymbol { IsTupleType: true } tupleType
                 && MatchesTupleElementTypes(targets, tupleType);
         }
@@ -795,18 +1094,31 @@ internal static partial class ScopeWalker
         private bool MatchesTupleElementTypes(ITupleOperation targets, INamedTypeSymbol source)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (targets.Elements.Length != source.TupleElements.Length) return false;
+
+            if (targets.Elements.Length != source.TupleElements.Length)
+            {
+                return false;
+            }
+
             for (var index = 0; index < targets.Elements.Length; index++)
             {
                 var target = _conditions.ResolveCapturedTarget(targets.Elements[index]);
                 var elementType = source.TupleElements[index].Type;
+
                 if (target is ITupleOperation nested)
                 {
                     if (elementType is not INamedTypeSymbol { IsTupleType: true } nestedType
-                        || !MatchesTupleElementTypes(nested, nestedType)) return false;
+                        || !MatchesTupleElementTypes(nested, nestedType))
+                    {
+                        return false;
+                    }
                 }
-                else if (!SymbolEqualityComparer.Default.Equals(target.Type, elementType)) return false;
+                else if (!SymbolEqualityComparer.Default.Equals(target.Type, elementType))
+                {
+                    return false;
+                }
             }
+
             return true;
         }
 
@@ -816,15 +1128,28 @@ internal static partial class ScopeWalker
             cancellationToken.ThrowIfCancellationRequested();
             target = _conditions.ResolveCapturedTarget(target);
             var storedValue = value;
-            if (value is not null) value = _conditions.ResolveCapturedTarget(value);
+
+            if (value is not null)
+            {
+                value = _conditions.ResolveCapturedTarget(value);
+            }
+
             if (target is ITupleOperation targets)
             {
                 var sources = value as ITupleOperation;
+
                 for (var index = 0; index < targets.Elements.Length; index++)
+                {
                     if (VisitDeconstructionStores(targets.Elements[index], sources?.Elements[index], block, entryPosition,
-                        firstBarrier, continuation, started, dispatch, ref known, ref values)) return true;
+                        firstBarrier, continuation, started, dispatch, ref known, ref values))
+                    {
+                        return true;
+                    }
+                }
+
                 return false;
             }
+
             var activeTransfers = known & values;
             var transferred = value is not null && _transferTriggers.Any(trigger => value.Syntax.Span.Contains(trigger.Key.Span)
                 && (activeTransfers & trigger.Value) != 0);
@@ -839,20 +1164,26 @@ internal static partial class ScopeWalker
         private TransferFailure GetTransferFailure(IOperation operation, ulong known, ulong values)
         {
             if (operation is ISimpleAssignmentOperation assignment)
+            {
                 operation = _conditions.ResolveCapturedTarget(assignment.Target);
+            }
+
             if (operation is IEventAssignmentOperation eventAssignment)
             {
                 if (eventAssignment.EventReference is IEventReferenceOperation { Instance: { } receiver }
                     && Exceptions.CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values))
+                {
                     return TransferFailure.NullReceiver;
+                }
+
                 return InitializationType(operation) is not null && !IsTypeInitialized(operation, known, values)
                     ? TransferFailure.TypeInitialization : TransferFailure.None;
             }
+
             return operation switch
             {
                 IObjectCreationOperation { Type.IsReferenceType: true } or IAnonymousObjectCreationOperation => TransferFailure.Allocation,
-                IObjectCreationOperation { Type: INamedTypeSymbol { StaticConstructors.Length: > 0 } }
-                    when !IsTypeInitialized(operation, known, values) => TransferFailure.TypeInitialization,
+                IObjectCreationOperation { Type: INamedTypeSymbol { StaticConstructors.Length: > 0 } } when !IsTypeInitialized(operation, known, values) => TransferFailure.TypeInitialization,
                 IDeconstructionAssignmentOperation or IDynamicInvocationOperation or IDynamicObjectCreationOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation
                     or IArrayElementReferenceOperation => TransferFailure.Unknown,
                 IInvocationOperation { Instance: { } receiver } when Exceptions.CanDereferenceNull(receiver) && !_conditions.IsKnownNonNull(receiver, known, values) => TransferFailure.NullReceiver,
@@ -863,8 +1194,7 @@ internal static partial class ScopeWalker
                     or IInvocationOperation { TargetMethod: { IsStatic: true, ContainingType.StaticConstructors.Length: > 0 } }
                     or IBinaryOperation { OperatorMethod.ContainingType.StaticConstructors.Length: > 0 }
                     or IUnaryOperation { OperatorMethod.ContainingType.StaticConstructors.Length: > 0 }
-                    or ICompoundAssignmentOperation { OperatorMethod.ContainingType.StaticConstructors.Length: > 0 }
-                    when !IsTypeInitialized(operation, known, values) => TransferFailure.TypeInitialization,
+                    or ICompoundAssignmentOperation { OperatorMethod.ContainingType.StaticConstructors.Length: > 0 } when !IsTypeInitialized(operation, known, values) => TransferFailure.TypeInitialization,
                 _ => TransferFailure.None,
             };
         }
@@ -872,16 +1202,23 @@ internal static partial class ScopeWalker
         private List<ControlFlowRegion> CollectFinallyRegions(ControlFlowRegion from, ControlFlowRegion? until = null)
         {
             var finalizers = new List<ControlFlowRegion>();
+
             foreach (var region in FlowConditions.EnumerateRegionsWithin(graph, from).TakeWhile(region => region != until))
+            {
                 if (region.Kind == ControlFlowRegionKind.Try
                     && region.EnclosingRegion?.Kind == ControlFlowRegionKind.TryAndFinally)
+                {
                     finalizers.Add(region.EnclosingRegion.NestedRegions.Last());
+                }
+            }
+
             return finalizers;
         }
 
         private int Prepend(BasicBlock? destination, int continuation, ControlFlowRegion finalizer)
         {
             var key = (destination?.Ordinal ?? -1, continuation, finalizer);
+
             if (!_continuationIds.TryGetValue(key, out var id))
             {
                 id = _continuations.Count;
@@ -918,13 +1255,17 @@ internal static partial class ScopeWalker
             {
                 var expected = branch.IsConditionalSuccessor
                     == (branch.Source.ConditionKind == ControlFlowConditionKind.WhenTrue);
+
                 if (!_conditions.Constrain(branch.Source.BranchValue, expected, ref known, ref values))
+                {
                     return;
+                }
             }
 
             if (dispatch != 0)
             {
                 var candidate = _dispatches[dispatch]!;
+
                 if (branch.Semantics is ControlFlowBranchSemantics.StructuredExceptionHandling
                     or ControlFlowBranchSemantics.Throw or ControlFlowBranchSemantics.Rethrow)
                 {
@@ -932,6 +1273,7 @@ internal static partial class ScopeWalker
                     Dispatch(candidate.Next, started, known, values);
                     return;
                 }
+
                 if (branch.Destination?.Ordinal == candidate.Handler!.FirstBlockOrdinal)
                 {
                     // Filters execute during the search pass. Only after a handler accepts
@@ -945,29 +1287,39 @@ internal static partial class ScopeWalker
             if (branch.Semantics == ControlFlowBranchSemantics.StructuredExceptionHandling)
             {
                 var resume = _continuations[continuation];
+
                 if (resume.Block >= 0)
+                {
                     _pending.Push(new(graph.Blocks[resume.Block], continuation: resume.Next, started: started,
                         known: known, values: values, dispatch: dispatch));
+                }
+
                 return;
             }
 
             if (branch.Semantics is ControlFlowBranchSemantics.Throw or ControlFlowBranchSemantics.Rethrow)
             {
                 var exception = UnwrapException(branch.Source.BranchValue);
+
                 if (branch.Semantics == ControlFlowBranchSemantics.Throw && exception is not null
                     && _conditions.IsKnownNull(exception, known, values))
                 {
                     Dispatch(GetDispatch(branch, continuation, nullPath: true), started, known, values);
                     return;
                 }
+
                 Dispatch(GetDispatch(branch, continuation), started, known, values);
+
                 if (branch.Semantics == ControlFlowBranchSemantics.Throw)
                 {
                     if (exception is ILocalReferenceOperation or IParameterReferenceOperation
                         && !_conditions.IsKnownNonNull(exception, known, values)
                         && GetExactThrownType(exception) is null)
+                    {
                         Dispatch(GetDispatch(branch, continuation, nullPath: true), started, known, values);
+                    }
                 }
+
                 return;
             }
 
@@ -980,19 +1332,45 @@ internal static partial class ScopeWalker
             ControlFlowRegion? handler, ControlFlowRegion? filter, ControlFlowRegion[] unwind,
             int continuation, int next, bool certain)
         {
-            internal ControlFlowRegion? Handler { get; } = handler;
-            internal ControlFlowRegion? Filter { get; } = filter;
-            internal ControlFlowRegion[] Unwind { get; } = unwind;
-            internal int Continuation { get; } = continuation;
-            internal int Next { get; } = next;
-            internal bool Certain { get; } = certain;
+            internal ControlFlowRegion? Handler
+            {
+                get;
+            } = handler;
+
+            internal ControlFlowRegion? Filter
+            {
+                get;
+            } = filter;
+
+            internal ControlFlowRegion[] Unwind
+            {
+                get;
+            } = unwind;
+
+            internal int Continuation
+            {
+                get;
+            } = continuation;
+
+            internal int Next
+            {
+                get;
+            } = next;
+
+            internal bool Certain
+            {
+                get;
+            } = certain;
         }
 
         private ITypeSymbol? GetExactThrownType(IOperation? exception)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
             if (exception is not ILocalReferenceOperation reference)
+            {
                 return ScopeExitAnalysis.GetExactThrownType(semanticModel, exception, cancellationToken);
+            }
 
             // Exact local types depend on the whole scope, not the current path state.
             if (!_exactThrownLocalTypes.TryGetValue(reference.Local, out var type))
@@ -1000,6 +1378,7 @@ internal static partial class ScopeWalker
                 type = ScopeExitAnalysis.GetExactThrownType(semanticModel, exception, cancellationToken);
                 _exactThrownLocalTypes.Add(reference.Local, type);
             }
+
             return type;
         }
 
@@ -1007,19 +1386,24 @@ internal static partial class ScopeWalker
             bool implicitException = false, bool allocationOnly = false, string? implicitExceptionType = null)
         {
             var key = (branch.Source.Ordinal, continuation, nullPath, implicitException, allocationOnly, implicitExceptionType);
+
             if (_dispatchIds.TryGetValue(key, out var existing))
+            {
                 return existing;
+            }
 
             var exception = UnwrapException(branch.Source.BranchValue);
             ITypeSymbol? exceptionType = GetExactThrownType(exception);
             var exactType = exceptionType is not null;
             var possiblyNull = !exactType && exception is ILocalReferenceOperation or IParameterReferenceOperation;
             exceptionType ??= possiblyNull ? exception?.Type : null;
+
             if (nullPath || exception?.ConstantValue is { HasValue: true, Value: null })
             {
                 exceptionType = _systemException?.ContainingNamespace.GetTypeMembers("NullReferenceException").FirstOrDefault();
                 exactType = true;
             }
+
             if (branch.Semantics == ControlFlowBranchSemantics.Rethrow)
             {
                 foreach (var region in FlowConditions.EnumerateRegionsWithin(graph, branch.Source.EnclosingRegion))
@@ -1031,6 +1415,7 @@ internal static partial class ScopeWalker
                     }
                 }
             }
+
             if (implicitException)
             {
                 exceptionType = nullPath
@@ -1041,8 +1426,7 @@ internal static partial class ScopeWalker
             }
 
             var unwind = CollectFinallyRegions(branch.Source.EnclosingRegion);
-            var candidates = new List<(ControlFlowRegion Handler, ControlFlowRegion? Filter,
-                ControlFlowRegion[] Unwind, int Continuation, bool Certain)>();
+            var candidates = new List<(ControlFlowRegion Handler, ControlFlowRegion? Filter, ControlFlowRegion[] Unwind, int Continuation, bool Certain)>();
             // Handlers of a containing graph (outside a lambda or local function) cannot catch here.
             foreach (var region in FlowConditions.EnumerateRegionsWithin(graph, branch.Source.EnclosingRegion))
             {
@@ -1059,8 +1443,12 @@ internal static partial class ScopeWalker
                             ? entry.NestedRegions.First(static nested => nested.Kind == ControlFlowRegionKind.Filter) : null;
                         var (possible, certain) = GetCatchApplicability(handler, exceptionType,
                             exactType, _systemException);
+
                         if (!possible)
+                        {
                             continue;
+                        }
+
                         candidates.Add((handler, filter, CollectFinallyRegions(branch.Source.EnclosingRegion, region).ToArray(),
                             CatchContinuation(handler, continuation), certain));
                     }
@@ -1068,11 +1456,13 @@ internal static partial class ScopeWalker
             }
 
             var next = 0;
+
             if (!implicitException)
             {
                 next = _dispatches.Count;
                 _dispatches.Add(new CatchDispatch(null, null, unwind.ToArray(), 0, 0, true));
             }
+
             foreach (var candidate in candidates.AsEnumerable().Reverse())
             {
                 var id = _dispatches.Count;
@@ -1080,6 +1470,7 @@ internal static partial class ScopeWalker
                     candidate.Continuation, next, candidate.Certain));
                 next = id;
             }
+
             _dispatchIds.Add(key, next);
             return next;
         }
@@ -1088,7 +1479,10 @@ internal static partial class ScopeWalker
         {
             while (operation is IConversionOperation { OperatorMethod: null } conversion
                    && (conversion.IsImplicit || conversion.Conversion.IsIdentity))
+            {
                 operation = conversion.Operand;
+            }
+
             return operation;
         }
 
@@ -1097,11 +1491,16 @@ internal static partial class ScopeWalker
             while (continuation != 0)
             {
                 var activeFinally = _continuations[continuation].Finally!;
+
                 if (handler.FirstBlockOrdinal >= activeFinally.FirstBlockOrdinal
                     && handler.LastBlockOrdinal <= activeFinally.LastBlockOrdinal)
+                {
                     break;
+                }
+
                 continuation = _continuations[continuation].Next;
             }
+
             return continuation;
         }
 
@@ -1116,15 +1515,24 @@ internal static partial class ScopeWalker
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var candidate = _dispatches[id]!;
+
                 if (candidate.Filter is { } filter)
+                {
                     Enqueue(graph.Blocks[filter.FirstBlockOrdinal], [], candidate.Continuation,
                         started, known, values, id);
+                }
                 else
+                {
                     Enqueue(candidate.Handler is { } handler ? graph.Blocks[handler.FirstBlockOrdinal]
                             : graph.Blocks[graph.Blocks.Length - 1],
                         candidate.Unwind, candidate.Continuation, started, known, values, 0);
+                }
+
                 if (candidate.Certain)
+                {
                     return;
+                }
+
                 id = candidate.Next;
             }
         }
@@ -1151,34 +1559,49 @@ internal static partial class ScopeWalker
             // A runtime subclass can add interfaces that the catch type does not implement.
             // Only class constraints restrict which catch hierarchies can overlap.
             if (depth == 32)
+            {
                 return true;
+            }
+
             foreach (var constraint in parameter.ConstraintTypes)
             {
                 if (constraint is ITypeParameterSymbol inherited)
                 {
                     if (!SatisfiesClassConstraints(catchType, inherited, depth + 1))
+                    {
                         return false;
+                    }
                 }
                 else if (constraint.TypeKind == TypeKind.Class && !HasBaseType(catchType, constraint))
+                {
                     return false;
+                }
             }
+
             return true;
         }
 
         private static bool HasBaseType(ITypeSymbol? type, ITypeSymbol? expected, int depth = 0)
         {
             if (depth == 32)
+            {
                 return false;
+            }
+
             for (; type is not null; type = type.BaseType)
             {
                 if (SymbolEqualityComparer.Default.Equals(type, expected))
                 {
                     return true;
                 }
+
                 if (type is ITypeParameterSymbol parameter
                     && parameter.ConstraintTypes.Any(constraint => HasBaseType(constraint, expected, depth + 1)))
+                {
                     return true;
+                }
             }
+
             return false;
         }
     }

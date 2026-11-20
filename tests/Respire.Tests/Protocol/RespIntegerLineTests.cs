@@ -30,10 +30,17 @@ public class RespIntegerLineTests
     private static (RespParseStatus Status, long Value, int Pos) Expected(byte[] buffer, int start)
     {
         var pos = start;
+
         if (!RespParser.TryReadLine(buffer, ref pos, out var line))
+        {
             return (RespParseStatus.NeedMoreData, 0, start);
+        }
+
         if (!RespParser.TryParseInt64(line, out var value))
+        {
             return (RespParseStatus.InvalidData, 0, start);
+        }
+
         return (RespParseStatus.Done, value, pos);
     }
 
@@ -49,6 +56,7 @@ public class RespIntegerLineTests
     {
         var expected = Expected(buffer, start);
         var actual = Actual(buffer, start);
+
         if (actual != expected)
         {
             mismatches.Add($"[{Convert.ToHexString(buffer)}] from {start}: expected {expected}, got {actual}");
@@ -60,6 +68,7 @@ public class RespIntegerLineTests
     private static void CheckAllSplits(string line, List<string> mismatches)
     {
         var full = Encoding.UTF8.GetBytes(":" + line + "\r\n:7\r\n");
+
         for (var length = 1; length <= full.Length; length++)
         {
             Check(full[..length], 1, mismatches);
@@ -70,6 +79,7 @@ public class RespIntegerLineTests
     public async Task EdgeLines_MatchScanThenParse_AtEverySplit()
     {
         var mismatches = new List<string>();
+
         foreach (var line in EdgeLines)
         {
             CheckAllSplits(line, mismatches);
@@ -87,6 +97,7 @@ public class RespIntegerLineTests
             999_999_999_999_999_999, -999_999_999_999_999_999,
             1_000_000_000_000_000_000, -1_000_000_000_000_000_000,
         ];
+
         foreach (var expected in values)
         {
             var buffer = Encoding.ASCII.GetBytes(expected.ToString(CultureInfo.InvariantCulture) + "\r\n");
@@ -106,14 +117,22 @@ public class RespIntegerLineTests
     {
         var mismatches = new List<string>();
         var random = new Random(0x5EED);
+
         for (var i = 0; i < 20_000; i++)
         {
             var digits = random.Next(1, 22);
             var builder = new StringBuilder();
+
             if (random.Next(3) == 0)
+            {
                 builder.Append('-');
+            }
+
             for (var d = 0; d < digits; d++)
+            {
                 builder.Append((char)('0' + random.Next(10)));
+            }
+
             var bytes = Encoding.ASCII.GetBytes(builder.Append("\r\n").ToString());
             Check(bytes, 0, mismatches);
             Check(bytes[..random.Next(bytes.Length)], 0, mismatches);
@@ -129,11 +148,16 @@ public class RespIntegerLineTests
         var alphabet = "0123456789-+\r\n x"u8.ToArray();
         var mismatches = new List<string>();
         var random = new Random(0xF00D);
+
         for (var i = 0; i < 50_000; i++)
         {
             var bytes = new byte[random.Next(0, 24)];
+
             for (var b = 0; b < bytes.Length; b++)
+            {
                 bytes[b] = alphabet[random.Next(alphabet.Length)];
+            }
+
             Check(bytes, 0, mismatches);
             Check(bytes, random.Next(bytes.Length + 1), mismatches);
         }

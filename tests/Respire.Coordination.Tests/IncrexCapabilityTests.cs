@@ -17,7 +17,10 @@ public class IncrexCapabilityTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return FakeRespServer.OkReply;
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                {
+                    return FakeRespServer.OkReply;
+                }
                 // First reply reports the script's successful fallback after unknown INCREX.
                 return Interlocked.Increment(ref calls) == 1
                     ? "*4\r\n:1\r\n:0\r\n:9\r\n:1\r\n"u8.ToArray()

@@ -31,10 +31,12 @@ public class ServerLockTests(RedisTestContainer fixture)
         // Its Dispose can run on another thread after an await and leave the key recorded, so use a fresh key.
         var resource = $"adapter-lock-{Guid.NewGuid():N}";
         var key = $"{{hangfire}}:{resource}";
+
         using (storageConnection.AcquireDistributedLock(resource, TimeSpan.FromSeconds(1)))
         {
             await using var control = await RespireClient.ConnectAsync(options);
             using var token = await control.ExecuteAsync(RespireCommands.String.GET, key);
+
             if (token.IsNull)
             {
                 // Tell a missing lock apart from a control client reading another database.
@@ -44,6 +46,7 @@ public class ServerLockTests(RedisTestContainer fixture)
                     $"leased database now: {fixture.IsolatedDatabase}; control client: {clientInfo.AsString()}");
             }
         }
+
         await using var after = await RespireClient.ConnectAsync(options);
         using var released = await after.ExecuteAsync(RespireCommands.String.GET, key);
         Assert.True(released.IsNull);
@@ -76,7 +79,10 @@ public class ServerLockTests(RedisTestContainer fixture)
         Assert.Throws<NotSupportedException>(() => server.Time(CommandFlags.FireAndForget));
         Assert.Throws<NotSupportedException>(() => server.DatabaseSize());
         Assert.Throws<NotSupportedException>(() => database.IdentifyEndpoint(flags: CommandFlags.DemandReplica));
-        Assert.Throws<NotSupportedException>(() => { _ = database.CreateBatch().IdentifyEndpointAsync(); });
+        Assert.Throws<NotSupportedException>(() =>
+        {
+            _ = database.CreateBatch().IdentifyEndpointAsync();
+        });
         await connection.CloseAsync();
         Assert.Throws<ObjectDisposedException>(() => server.InfoRaw());
         Assert.Throws<ObjectDisposedException>(() => connection.GetEndPoints());
@@ -97,7 +103,11 @@ public class ServerLockTests(RedisTestContainer fixture)
         var target = connection.GetServer(second.Host, second.Port);
         Assert.NotEqual(first.InfoRaw("server"), target.InfoRaw("server"));
         await using var control = await RespireClient.ConnectAsync(RespireOptions.Parse(second.IsolatedConnectionString) with { Protocol = RespireProtocol.Resp2 });
-        using (await control.ExecuteAsync(RespireCommands.Server.REPLICAOF, "127.0.0.1", 1)) { }
+
+        using (await control.ExecuteAsync(RespireCommands.Server.REPLICAOF, "127.0.0.1", 1))
+        {
+        }
+
         Assert.True(target.IsConnected);
         Assert.True(target.IsReplica);
         Assert.False(first.IsReplica);
@@ -119,18 +129,31 @@ public class ServerLockTests(RedisTestContainer fixture)
         RedisKey key = new byte[] { 0xff, 0, (byte)fixture.IsolatedDatabase };
         RedisValue token = new byte[] { 0xfe, 0, 0x80 };
         Assert.True(database.LockTake(key, token, TimeSpan.FromMinutes(1)));
+
         using (var reply = await control.ExecuteAsync(RespireCommands.String.GET, (byte[]?)key!))
+        {
             Assert.Equal((byte[]?)token, reply.AsBytes());
+        }
+
         using (var reply = await control.ExecuteAsync(RespireCommands.Key.PTTL, (byte[]?)key!))
+        {
             Assert.InRange(reply.AsInteger(), 1, 60_000);
+        }
+
         Assert.False(await database.LockTakeAsync(key, "other", TimeSpan.FromSeconds(1)));
         Assert.False(database.LockExtend(key, "other", TimeSpan.FromMinutes(2)));
         Assert.False(await database.LockReleaseAsync(key, "other"));
         Assert.True(await database.LockExtendAsync(key, token, TimeSpan.FromMinutes(2)));
+
         using (var reply = await control.ExecuteAsync(RespireCommands.Key.PTTL, (byte[]?)key!))
+        {
             Assert.InRange(reply.AsInteger(), 60_001, 120_000);
+        }
         // Expire deterministically, then replace ownership. The stale holder must never affect the replacement.
-        using (await control.ExecuteAsync(RespireCommands.Key.PEXPIRE, (byte[]?)key!, 0)) { }
+        using (await control.ExecuteAsync(RespireCommands.Key.PEXPIRE, (byte[]?)key!, 0))
+        {
+        }
+
         Assert.True(await database.LockTakeAsync(key, "replacement", TimeSpan.FromMinutes(1)));
         Assert.False(await database.LockExtendAsync(key, token, TimeSpan.FromHours(1)));
         Assert.False(database.LockRelease(key, token));
@@ -172,11 +195,13 @@ public class ServerLockTests(RedisTestContainer fixture)
         RedisChannel original = new(channelBytes.ToArray(), RedisChannel.PatternMode.Literal);
         byte[] payload = [0xfe, 0, 0x80];
         var delivered = new TaskCompletionSource<RedisValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+
         void Handler(RedisChannel actual, RedisValue value)
         {
             Assert.Equal(original, actual);
             delivered.TrySetResult(value);
         }
+
         subscriber.Subscribe(channel, Handler);
         await subscriber.SubscribeAsync(channel, Handler);
         channelBytes[0] = 0x11;

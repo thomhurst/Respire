@@ -29,12 +29,23 @@ internal sealed partial class SortedSetCommands
 
     internal static RespireSortedSetRankResult? ParseRankWithScore(in RespValue value)
     {
-        if (value.IsNull) return null;
+        if (value.IsNull)
+        {
+            return null;
+        }
+
         if (value.Type != RespireDataType.Array || value.AsArray().Length != 2)
+        {
             throw new RespireProtocolException("A sorted-set rank with score must contain exactly two elements.");
+        }
+
         var pair = value.AsArray();
+
         if (pair[0].Type != RespireDataType.Integer || pair[0].AsInteger() < 0)
+        {
             throw new RespireProtocolException("A sorted-set rank must be a nonnegative integer.");
+        }
+
         return new(pair[0].AsInteger(), ResponseReader.Double(in pair[1]));
     }
 }

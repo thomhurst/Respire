@@ -12,7 +12,10 @@ namespace Respire.IntegrationTests;
 public class ValueCodecIntegrationTests(RedisTestContainer fixture)
 {
     [ClassDataSource<RedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
-    public required RedisTestContainer CacheServer { get; init; }
+    public required RedisTestContainer CacheServer
+    {
+        get; init;
+    }
 
     [Test]
     [Arguments("brotli", 2)]
@@ -29,8 +32,11 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
         var serializer = new RespireValueCodecSerializer(RespireSerializer.Default, codec);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database, KeyPrefix = fixture.KeyPrefix,
-            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3, Serializer = serializer,
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            Database = fixture.Database,
+            KeyPrefix = fixture.KeyPrefix,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
+            Serializer = serializer,
         });
         var view = client.WithKeyPrefix($"codec:{Guid.NewGuid():N}:");
         var small = new Payload("small");
@@ -53,6 +59,7 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
         serializer.Serialize(serialized, small);
         await view.Lists.RightPushAsync("list", serialized.WrittenMemory);
         (await view.Lists.LeftPopAsync<Payload>("list")).Should().Be(small);
+
         using (var batch = view.CreateBatch())
         {
             _ = batch.Strings.Set("batch", large);
@@ -60,6 +67,7 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
             (await batch.ExecuteAsync()).ThrowIfAnyFailed();
             pending.Result.Should().Be(large);
         }
+
         await using (var transaction = view.CreateTransaction())
         {
             _ = transaction.Strings.Set("transaction", small);
@@ -67,6 +75,7 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
             await transaction.CommitAsync();
             pending.Result.Should().Be(small);
         }
+
         await view.SetAsync("number", 42);
         (await view.GetAsync<int>("number")).Should().Be(42);
         await view.SetAsync("text", "plain");
@@ -98,15 +107,21 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
         var codec = CreateCodec(algorithm);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(CacheServer.Host, CacheServer.Port)], Database = CacheServer.Database,
-            Serializer = new RespireValueCodecSerializer(RespireSerializer.Default, codec), ClientSideCache = new(),
+            Endpoints = [new(CacheServer.Host, CacheServer.Port)],
+            Database = CacheServer.Database,
+            Serializer = new RespireValueCodecSerializer(RespireSerializer.Default, codec),
+            ClientSideCache = new(),
         });
         var key = $"codec-cache:{Guid.NewGuid():N}";
         await client.SetAsync(key, new MutablePayload { Text = new string('x', 8192) });
         // Cache population must follow the write's native retirement, not only its caller.
         using var retirement = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (client.Core.ClientCache!.InspectForTests().ActiveMutationCount != 0)
+        {
             await Task.Delay(1, retirement.Token);
+        }
+
         var first = (await client.GetAsync<MutablePayload>(key))!;
         var before = client.ClientSideCache!.GetStatistics().Hits;
         first.Text = "caller mutation";
@@ -125,5 +140,12 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
     };
 
     public sealed record Payload(string Text);
-    public sealed class MutablePayload { public string Text { get; set; } = ""; }
+
+    public sealed class MutablePayload
+    {
+        public string Text
+        {
+            get; set;
+        } = "";
+    }
 }

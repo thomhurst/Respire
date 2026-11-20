@@ -56,15 +56,23 @@ public class ServerMetadataCommandTests
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
         foreach (var operation in Mutations(client.Server))
+        {
             await Assert.That(operation).ThrowsExactly<NotSupportedException>();
+        }
+
 #pragma warning disable RESP010 // This pre-cancellation test creates a separate unconnected admin client to verify metadata operations send nothing.
         await using var admin = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], AllowAdmin = true });
 #pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
+
         foreach (var operation in Mutations(admin.Server, cancellation.Token))
+        {
             await Assert.That(operation).Throws<OperationCanceledException>();
+        }
+
         await Assert.That(async () => await admin.Server.CommandInfoAsync(cancellationToken: cancellation.Token)).Throws<OperationCanceledException>();
         await Assert.That(async () => await admin.Server.ModuleListOnAllNodesAsync(cancellation.Token)).Throws<OperationCanceledException>();
         await Assert.That(async () => await client.Server.CommandInfoAsync([default])).Throws<ArgumentException>();
@@ -102,8 +110,17 @@ public class ServerMetadataCommandTests
         var discovering = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         seed.SuppressReply = command =>
         {
-            if (command == "CLUSTER SLOTS") { _ = seed.SendRawAsync(Slots(seed.Port)); return true; }
-            if (command != "CLUSTER NODES") return false;
+            if (command == "CLUSTER SLOTS")
+            {
+                _ = seed.SendRawAsync(Slots(seed.Port));
+                return true;
+            }
+
+            if (command != "CLUSTER NODES")
+            {
+                return false;
+            }
+
             discovering.TrySetResult();
             return true;
         };
@@ -118,8 +135,11 @@ public class ServerMetadataCommandTests
         await Assert.That(results.Length).IsEqualTo(2);
         await Assert.That(results.Single(x => x.Endpoint.Port == seed.Port).Value.Single()).IsEquivalentTo((byte[])[255, 0]);
         await Assert.That(results.Single(x => x.Endpoint.Port == replica.Port).Error).IsTypeOf<RespireServerException>();
+
         foreach (var node in new[] { seed, replica })
+        {
             await Assert.That(node.ReceivedArguments.Single(frame => Encoding.ASCII.GetString(frame[0]) == "COMMAND")[3]).IsEquivalentTo((byte[])[255, 0]);
+        }
     }
 
     [Test]
@@ -130,7 +150,16 @@ public class ServerMetadataCommandTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
-            SuppressReply = command => { if (command != "SAVE") return false; received.TrySetResult(); return true; },
+            SuppressReply = command =>
+            {
+                if (command != "SAVE")
+                {
+                    return false;
+                }
+
+                received.TrySetResult();
+                return true;
+            },
         };
 #pragma warning disable RESP010 // This cancellation test owns the admin client whose SAVE reply is withheld for single-node and fan-out calls.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true, Endpoints = [new("127.0.0.1", server.Port)] });
@@ -139,8 +168,15 @@ public class ServerMetadataCommandTests
         var task = allNodes ? CheckAll() : client.Server.SaveAsync(cancellation.Token).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cancellation.Cancel();
-        if (allNodes) await task.WaitAsync(TimeSpan.FromSeconds(5));
-        else await Assert.That(async () => await task.WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
+
+        if (allNodes)
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        else
+        {
+            await Assert.That(async () => await task.WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
+        }
 
         async Task CheckAll()
         {
@@ -158,8 +194,11 @@ public class ServerMetadataCommandTests
     public async Task AllMetadataMutationsFenceCachedReadsThroughSuccessOrFailure(bool allNodes, bool fail)
     {
         string[] operations = ["CONFIG REWRITE", "CONFIG RESETSTAT", "SAVE", "BGSAVE", "BGREWRITEAOF"];
+
         for (var operationIndex = 0; operationIndex < operations.Length; operationIndex++)
+        {
             await CheckMutation(operations[operationIndex], operationIndex);
+        }
 
         async Task CheckMutation(string operation, int operationIndex)
         {
@@ -172,7 +211,12 @@ public class ServerMetadataCommandTests
                     _ = server.SendRawAsync("%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
                     return true;
                 }
-                if (!command.Equals(operation, StringComparison.Ordinal)) return false;
+
+                if (!command.Equals(operation, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult(server.ReceivedConnectionIds[^1]);
                 return true;
             };
@@ -180,7 +224,10 @@ public class ServerMetadataCommandTests
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
                 Protocol = RespireProtocol.Resp2,
-                Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true, ClientSideCache = new(),
+                Endpoints = [new("127.0.0.1", server.Port)],
+                Connections = 1,
+                AllowAdmin = true,
+                ClientSideCache = new(),
             });
 #pragma warning restore RESP010
             var cache = client.Core.ClientCache!;
@@ -192,8 +239,16 @@ public class ServerMetadataCommandTests
             byte[] success = operation.StartsWith("BG", StringComparison.Ordinal)
                 ? "+Background saving started\r\n"u8.ToArray() : FakeRespServer.OkReply;
             await server.SendRawAsync(fail ? "-ERR mutation failed\r\n"u8.ToArray() : success, connection);
-            if (fail && !allNodes) await Assert.That(async () => await mutation).ThrowsExactly<RespireServerException>();
-            else await mutation.WaitAsync(TimeSpan.FromSeconds(5));
+
+            if (fail && !allNodes)
+            {
+                await Assert.That(async () => await mutation).ThrowsExactly<RespireServerException>();
+            }
+            else
+            {
+                await mutation.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+
             await Assert.That(cache.Count).IsEqualTo(0);
 
             Task MutateAll() => operation switch
@@ -228,7 +283,11 @@ public class ServerMetadataCommandTests
         await using var server = new FakeRespServer(5, "*0\r\n"u8.ToArray());
         server.SuppressReply = command =>
         {
-            if (command != "HELLO 3") return false;
+            if (command != "HELLO 3")
+            {
+                return false;
+            }
+
             _ = server.SendRawAsync("%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
             return true;
         };
@@ -236,7 +295,9 @@ public class ServerMetadataCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -265,5 +326,6 @@ public class ServerMetadataCommandTests
     ];
 
     private static byte[] Bulk(byte[] value) => [.. Encoding.ASCII.GetBytes($"${value.Length}\r\n"), .. value, 13, 10];
+
     private static byte[] Slots(int port) => Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*3\r\n$9\r\n127.0.0.1\r\n:{port}\r\n$4\r\nself\r\n");
 }

@@ -24,7 +24,9 @@ public class FencedLockWireTests
             {
                 if (activity.GetTagItem("db.operation.name") is "EVALSHA"
                     && activity.GetTagItem("server.port") is int port && port == server.Port)
+                {
                     cancellation.Cancel();
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -57,7 +59,9 @@ public class FencedLockWireTests
             {
                 if (activity.GetTagItem("db.operation.name") is "EVALSHA"
                     && activity.GetTagItem("server.port") is int port && port == server.Port)
+                {
                     cancellation.Cancel();
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -66,7 +70,12 @@ public class FencedLockWireTests
             .TryAcquireReadLockAsync("{job}:rw", TimeSpan.FromSeconds(30), cancellation.Token)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
         using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen < 2) await Task.Delay(10, cleanupTimeout.Token);
+
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(10, cleanupTimeout.Token);
+        }
+
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
         await Assert.That(server.ReceivedCommands.All(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal))).IsTrue();
     }
@@ -108,7 +117,12 @@ public class FencedLockWireTests
         using var cancellation = new CancellationTokenSource();
         var pending = attempt.Lock.ReleaseAsync(cancellation.Token).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen < 2) await Task.Delay(10, timeout.Token);
+
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         cancellation.Cancel();
         await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
         await Assert.That(attempt.Lock.IsReleased).IsTrue();
@@ -141,7 +155,12 @@ public class FencedLockWireTests
 
         var verification = attempt.Lock.VerifyStillHeldAsync().AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen < 2) await Task.Delay(5, timeout.Token);
+
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         var release = attempt.Lock.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
 
         await Assert.That(attempt.Lock.IsReleased).IsTrue();
@@ -171,7 +190,11 @@ public class FencedLockWireTests
 
         var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(1)).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen < 2) await Task.Delay(5, timeout.Token);
+
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
 
         await Assert.That(renewal.IsCompleted).IsFalse();
         await Assert.That(attempt.Lock.RemainingEstimate <= TimeSpan.FromSeconds(1)).IsTrue();
@@ -272,16 +295,34 @@ public class FencedLockWireTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
             CommandTimeout = null,
         });
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var pending = new RespireCoordination(client).TryAcquireFencedLockAsync("{job}:lease", "{job}:counter",
             TimeSpan.FromSeconds(30), cancellation.Token).AsTask();
-        while (server.CommandsSeen == 0) await Task.Delay(5, cancellation.Token);
-        if (!disconnect) cancellation.Cancel();
-        if (disconnect) await Assert.That(async () => await pending).Throws<RespireConnectionException>();
-        else await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(5, cancellation.Token);
+        }
+
+        if (!disconnect)
+        {
+            cancellation.Cancel();
+        }
+
+        if (disconnect)
+        {
+            await Assert.That(async () => await pending).Throws<RespireConnectionException>();
+        }
+        else
+        {
+            await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        }
+
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVAL", StringComparison.Ordinal))).IsEqualTo(1);
     }
 
@@ -300,7 +341,11 @@ public class FencedLockWireTests
             ActivityStopped = activity =>
             {
                 if (activity.GetTagItem("db.operation.name") is not "EVALSHA" || activity.GetTagItem("server.port") is not int port
-                    || port != server.Port) return;
+                    || port != server.Port)
+                {
+                    return;
+                }
+
                 Interlocked.Increment(ref repliesCompleted);
                 cancellation.Cancel();
             },
@@ -378,7 +423,11 @@ public class FencedLockWireTests
         var pending = new RespireCoordination(view).AcquireFencedLockAsync(
             "{job}:lease", "{job}:counter", TimeSpan.FromSeconds(10)).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (Volatile.Read(ref attempts) == 0) await Task.Delay(5, timeout.Token);
+
+        while (Volatile.Read(ref attempts) == 0)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
 
         var commandConnection = server.ReceivedConnectionIds[
             server.ReceivedCommands.ToList().IndexOf("GET tenant:{job}:lease")];
@@ -421,7 +470,12 @@ public class FencedLockWireTests
         var pending = new RespireCoordination(client).AcquireFencedLockAsync(
             "lease", "counter", TimeSpan.FromDays(30)).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!server.ReceivedCommands.Contains("PTTL lease")) await Task.Delay(5, timeout.Token);
+
+        while (!server.ReceivedCommands.Contains("PTTL lease"))
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         await Task.Delay(50, timeout.Token);
         await Assert.That(pending.IsFaulted).IsFalse();
 
@@ -460,7 +514,11 @@ public class FencedLockWireTests
         var pending = new RespireCoordination(client).AcquireFencedLockAsync(
             "lease", "counter", TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (Volatile.Read(ref attempts) == 0) await Task.Delay(5, timeout.Token);
+
+        while (Volatile.Read(ref attempts) == 0)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
 
         cancellation.Cancel();
 
@@ -513,7 +571,10 @@ public class FencedLockWireTests
         // The waiter parks after the PTTL that follows the contended attempt. Disposing earlier races
         // a command send instead of stopping the wait.
         while (Volatile.Read(ref attempts) == 0 || !server.ReceivedCommands.Contains("PTTL lease"))
+        {
             await Task.Delay(5, timeout.Token);
+        }
+
         await Task.Delay(200, timeout.Token);
 
         await client.DisposeAsync();

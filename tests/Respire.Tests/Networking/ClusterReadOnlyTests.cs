@@ -28,7 +28,11 @@ public class ClusterReadOnlyTests
         var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = received =>
         {
-            if (received != command) return false;
+            if (received != command)
+            {
+                return false;
+            }
+
             observed.TrySetResult();
             return true;
         };
@@ -51,7 +55,10 @@ public class ClusterReadOnlyTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, ConnectTimeout = RecoveryRound, CommandTimeout = null,
+            UseCluster = true,
+            Connections = 1,
+            ConnectTimeout = RecoveryRound,
+            CommandTimeout = null,
             ClusterRecoveryClock = clock,
             ReconnectPolicy = configuredPolicy ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 } : null,
             Endpoints = [new("127.0.0.1", initialSeed.Port), new("127.0.0.1", healthySeed.Port),
@@ -61,7 +68,11 @@ public class ClusterReadOnlyTests
         var initialRequest = ObserveCommand(initialSeed, "CLUSTER SLOTS");
         var healthyRequest = ObserveCommand(healthySeed, "CLUSTER SLOTS");
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        replica.SuppressReply = _ => { received.TrySetResult(); return true; };
+        replica.SuppressReply = _ =>
+        {
+            received.TrySetResult();
+            return true;
+        };
         var write = client.SetAsync("key", "value").AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var router = client.Core.Cluster!;
@@ -95,6 +106,7 @@ public class ClusterReadOnlyTests
         await using var finalSeed = new FakeRespServer(Topology(replacement.Port));
         var stalledSeeds = Enumerable.Range(0, 8)
             .Select(_ => new FakeRespServer { SuppressReply = _ => true }).ToArray();
+
         try
         {
             var options = new RespireOptions
@@ -149,7 +161,11 @@ public class ClusterReadOnlyTests
         await using var client = await ConnectAsync(seed.Port);
         var router = client.Core.Cluster!;
         var refreshing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        seed.SuppressReply = _ => { refreshing.TrySetResult(); return true; };
+        seed.SuppressReply = _ =>
+        {
+            refreshing.TrySetResult();
+            return true;
+        };
         var refresh = router.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default).AsTask();
         await refreshing.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -185,14 +201,31 @@ public class ClusterReadOnlyTests
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
         await using var replica = new FakeRespServer(ReadOnlyReply);
         var stalledRequest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var first = new FakeRespServer { SuppressReply = _ => { stalledRequest.TrySetResult(); return true; } };
-        await using var second = new FakeRespServer { SuppressReply = _ => { stalledRequest.TrySetResult(); return true; } };
+        await using var first = new FakeRespServer
+        {
+            SuppressReply = _ =>
+            {
+                stalledRequest.TrySetResult();
+                return true;
+            }
+        };
+        await using var second = new FakeRespServer
+        {
+            SuppressReply = _ =>
+            {
+                stalledRequest.TrySetResult();
+                return true;
+            }
+        };
         await using var seed = new FakeRespServer(SplitTopology(first.Port, replica.Port));
 #pragma warning disable RESP010 // Test-owned client isolates READONLY recovery routes, deadlines, and discovery state for this scenario.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, ConnectTimeout = RecoveryRound, CommandTimeout = null,
+            UseCluster = true,
+            Connections = 1,
+            ConnectTimeout = RecoveryRound,
+            CommandTimeout = null,
             ClusterRecoveryClock = clock,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
@@ -248,10 +281,14 @@ public class ClusterReadOnlyTests
                 await client.SetAsync("key", "first");
                 break;
             case "raw":
-                using (await client.ExecuteAsync("SET", "key", "first")) { }
+                using (await client.ExecuteAsync("SET", "key", "first"))
+                {
+                }
                 break;
             case "catalog":
-                using (await client.ExecuteAsync(RespireCommands.String.SET, "key", "first")) { }
+                using (await client.ExecuteAsync(RespireCommands.String.SET, "key", "first"))
+                {
+                }
                 break;
             case "fire-and-forget":
                 await client.ExecuteFireAndForgetAsync(RespireCommands.String.SET, "key", "first");
@@ -284,7 +321,11 @@ public class ClusterReadOnlyTests
         var unavailablePort = unavailable.Port;
         await using var client = await ConnectAsync(seed.Port, TimeSpan.FromSeconds(5));
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        replica.SuppressReply = _ => { received.TrySetResult(); return true; };
+        replica.SuppressReply = _ =>
+        {
+            received.TrySetResult();
+            return true;
+        };
         var write = client.SetAsync("key", "value").AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var router = client.Core.Cluster!;
@@ -313,10 +354,15 @@ public class ClusterReadOnlyTests
         await using var seed = new FakeRespServer(initial, refreshed);
         await using var client = await ConnectAsync(seed.Port);
         var refreshing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        healthy.SuppressReply = _ => { refreshing.TrySetResult(); return true; };
+        healthy.SuppressReply = _ =>
+        {
+            refreshing.TrySetResult();
+            return true;
+        };
         var write = client.SetAsync("key", "first").AsTask();
         await refreshing.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var router = client.Core.Cluster!;
+
         if (topologyUpdate)
         {
             _ = await router.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default);
@@ -329,6 +375,7 @@ public class ClusterReadOnlyTests
                 new RespireServerException($"MOVED {slot} 127.0.0.1:{replacement.Port}", "SET"),
                 source, CancellationToken.None, commandSlot: null, discovery: null, observation: default);
         }
+
         await healthy.SendRawAsync(initial);
 
         await Assert.That(await write.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
@@ -360,7 +407,12 @@ public class ClusterReadOnlyTests
         stalled.SuppressReply = command =>
         {
             var suppress = duringConnect ? command.StartsWith("CLIENT SETNAME ") : command == "CLUSTER SLOTS";
-            if (suppress) stalledRequest.TrySetResult();
+
+            if (suppress)
+            {
+                stalledRequest.TrySetResult();
+            }
+
             return suppress;
         };
         var initial = SplitTopology(stalled.Port, replica.Port);
@@ -380,25 +432,35 @@ public class ClusterReadOnlyTests
 #pragma warning restore RESP010
         seed.SuppressReply = command =>
         {
-            if (command != "CLUSTER SLOTS") return false;
+            if (command != "CLUSTER SLOTS")
+            {
+                return false;
+            }
+
             seedRequest.TrySetResult();
             return true;
         };
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         replica.SuppressReply = command =>
         {
-            if (!command.StartsWith("SET ")) return false;
+            if (!command.StartsWith("SET "))
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
         var write = client.SetAsync("key", "value").AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (cachedOwner)
         {
             var router = client.Core.Cluster!;
             router.SetSlotOwner(ClusterHash.GetSlot("key"),
                 router.GetMultiplexer(new RespireEndpoint("127.0.0.1", stalled.Port)));
         }
+
         await replica.SendRawAsync(ReadOnlyReply);
 
         await stalledRequest.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -443,11 +505,19 @@ public class ClusterReadOnlyTests
         await using var other = new FakeRespServer(manyPrimaries
             ? Topology(replacement.Port) : "-NOPERM discovery denied\r\n"u8.ToArray());
         await using var seed = new FakeRespServer(SplitTopology(other.Port, replica.Port), Topology(replacement.Port));
-        if (manyPrimaries) other.DelayReply(0, 600);
-        else seed.DelayReply(1, 600);
+
+        if (manyPrimaries)
+        {
+            other.DelayReply(0, 600);
+        }
+        else
+        {
+            seed.DelayReply(1, 600);
+        }
         // A 600 ms reply still exceeds a budget divided among 32 candidates, but the
         // correct five-second primary phase leaves ample scheduling margin on busy CI.
         await using var client = await ConnectAsync(seed.Port, TimeSpan.FromSeconds(10));
+
         if (manyPrimaries)
         {
             var router = client.Core.Cluster!;
@@ -475,7 +545,11 @@ public class ClusterReadOnlyTests
             "-NOPERM discovery denied\r\n"u8.ToArray());
         await using var client = await ConnectAsync(seed.Port, TimeSpan.FromSeconds(5));
         var refreshing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        healthy.SuppressReply = _ => { refreshing.TrySetResult(); return true; };
+        healthy.SuppressReply = _ =>
+        {
+            refreshing.TrySetResult();
+            return true;
+        };
         var write = client.SetAsync("key", "value").AsTask();
         await refreshing.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var router = client.Core.Cluster!;
@@ -545,6 +619,7 @@ public class ClusterReadOnlyTests
         private int _expired;
 
         public override long TimestampFrequency => _clock.TimestampFrequency;
+
         public override long GetTimestamp() => _clock.GetTimestamp();
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
@@ -553,7 +628,10 @@ public class ClusterReadOnlyTests
             // This fixture assumes the first timer is the READONLY recovery budget;
             // connection initialization does not schedule timers on this recovery clock.
             if (Interlocked.Exchange(ref _expired, 1) == 0)
+            {
                 _clock.Advance(dueTime);
+            }
+
             return timer;
         }
     }
@@ -568,7 +646,11 @@ public class ClusterReadOnlyTests
         var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         seed.SuppressReply = command =>
         {
-            if (command == "CLUSTER SLOTS") refreshStarted.TrySetResult();
+            if (command == "CLUSTER SLOTS")
+            {
+                refreshStarted.TrySetResult();
+            }
+
             return true;
         };
 
@@ -708,7 +790,11 @@ public class ClusterReadOnlyTests
         await using var sourceServer = new FakeRespServer(FakeRespServer.OkReply);
         sourceServer.ReplyOverride = (_, command) =>
         {
-            if (command != "CLUSTER SLOTS") return null;
+            if (command != "CLUSTER SLOTS")
+            {
+                return null;
+            }
+
             return Interlocked.Increment(ref topologyRequests) == 1
                 ? Topology(sourceServer.Port)
                 : Topology(replacement.Port);
@@ -748,7 +834,10 @@ public class ClusterReadOnlyTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null,
+            UseCluster = true,
+            Connections = 1,
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+            CommandTimeout = null,
             ClusterRecoveryClock = clock,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
@@ -757,19 +846,26 @@ public class ClusterReadOnlyTests
         var slot = ClusterHash.GetSlot("key");
         var source = await router.GetConnectionAsync(slot, CancellationToken.None, discovery: null, observation: default);
         var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        seed.SuppressReply = _ => { requested.TrySetResult(); return true; };
+        seed.SuppressReply = _ =>
+        {
+            requested.TrySetResult();
+            return true;
+        };
         var original = new RespireServerException("READONLY original rejection");
         var recovery = router.GetRedirectConnectionAsync(original, source, CancellationToken.None, slot, discovery: null, observation: default).AsTask();
         await requested.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var newer = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", replacement.Port));
         router.SetSlotOwner(slot, newer);
+
         if (connected)
         {
             _ = await router.GetRedirectConnectionAsync(
                 new RespireServerException($"MOVED {slot} 127.0.0.1:{replacement.Port}"),
                 source, CancellationToken.None, slot, discovery: null, observation: default);
         }
+
         clock.Advance(TimeSpan.FromSeconds(2));
+
         if (connected)
         {
             var recovered = await recovery.WaitAsync(TimeSpan.FromSeconds(5));
@@ -797,8 +893,11 @@ public class ClusterReadOnlyTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, ClientName = "joined-recovery",
-            ConnectTimeout = TimeSpan.FromSeconds(30), CommandTimeout = null,
+            UseCluster = true,
+            Connections = 1,
+            ClientName = "joined-recovery",
+            ConnectTimeout = TimeSpan.FromSeconds(30),
+            CommandTimeout = null,
             ClusterRecoveryClock = clock,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
@@ -807,13 +906,21 @@ public class ClusterReadOnlyTests
         var source = await router.GetConnectionAsync(100, CancellationToken.None, discovery: null, observation: default);
         seed.SuppressReply = command =>
         {
-            if (command != "CLUSTER SLOTS") return false;
+            if (command != "CLUSTER SLOTS")
+            {
+                return false;
+            }
+
             requested.TrySetResult();
             return true;
         };
         replacement.SuppressReply = command =>
         {
-            if (!command.StartsWith("CLIENT SETNAME ")) return false;
+            if (!command.StartsWith("CLIENT SETNAME "))
+            {
+                return false;
+            }
+
             connecting.TrySetResult();
             return true;
         };
@@ -851,7 +958,10 @@ public class ClusterReadOnlyTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null,
+            UseCluster = true,
+            Connections = 1,
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+            CommandTimeout = null,
             ClusterRecoveryClock = clock,
             ReconnectPolicy = configuredPolicy ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 } : null,
             Endpoints = [new("127.0.0.1", seed.Port)],
@@ -861,11 +971,16 @@ public class ClusterReadOnlyTests
         var slot = ClusterHash.GetSlot("key");
         var source = await router.GetConnectionAsync(slot, CancellationToken.None, discovery: null, observation: default);
         var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        seed.SuppressReply = _ => { requested.TrySetResult(); return true; };
+        seed.SuppressReply = _ =>
+        {
+            requested.TrySetResult();
+            return true;
+        };
         using var caller = new CancellationTokenSource();
         var original = new RespireServerException("READONLY original rejection");
         var recovery = router.GetRedirectConnectionAsync(original, source, caller.Token, slot, discovery: null, observation: default).AsTask();
         await requested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (cancelCaller)
         {
             caller.Cancel();
@@ -889,7 +1004,11 @@ public class ClusterReadOnlyTests
         await using var seed = new FakeRespServer(Topology(replica.Port));
         await using var client = await ConnectAsync(seed.Port);
         var refreshing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        seed.SuppressReply = _ => { refreshing.TrySetResult(); return true; };
+        seed.SuppressReply = _ =>
+        {
+            refreshing.TrySetResult();
+            return true;
+        };
         using var cancellation = new CancellationTokenSource();
 
         var pending = client.SetAsync("key", "value", cancellationToken: cancellation.Token).AsTask();
@@ -909,7 +1028,11 @@ public class ClusterReadOnlyTests
         {
             SuppressReply = command =>
             {
-                if (command == "CLUSTER SLOTS") slotsReceived.TrySetResult();
+                if (command == "CLUSTER SLOTS")
+                {
+                    slotsReceived.TrySetResult();
+                }
+
                 return command == "CLUSTER SLOTS";
             },
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Topology(replacement.Port) : null,
@@ -958,13 +1081,19 @@ public class ClusterReadOnlyTests
             ReplyOverride = (_, command) =>
             {
                 if (command == "CLUSTER SLOTS" && Volatile.Read(ref topologyRequests) >= 2)
+                {
                     nextRefresh.TrySetResult();
+                }
+
                 return command == "CLUSTER SLOTS" ? Topology(replacement.Port) : null;
             },
             SuppressReply = command =>
             {
                 if (command != "CLUSTER SLOTS" || Interlocked.Increment(ref topologyRequests) != 1)
+                {
                     return false;
+                }
+
                 firstRefresh.TrySetResult();
                 return true;
             },
@@ -1004,10 +1133,19 @@ public class ClusterReadOnlyTests
         {
             if (command == "CLUSTER SLOTS")
             {
-                if (seed.CommandsSeen == 2) firstRefresh.TrySetResult();
-                if (seed.CommandsSeen == 3) secondRefresh.TrySetResult();
+                if (seed.CommandsSeen == 2)
+                {
+                    firstRefresh.TrySetResult();
+                }
+
+                if (seed.CommandsSeen == 3)
+                {
+                    secondRefresh.TrySetResult();
+                }
+
                 return true;
             }
+
             return false;
         };
 
@@ -1119,6 +1257,7 @@ public class ClusterReadOnlyTests
         => Encoding.ASCII.GetBytes(
             $"*2\r\n*3\r\n:0\r\n:199\r\n*2\r\n$9\r\n127.0.0.1\r\n:{lowerPort}\r\n" +
             $"*3\r\n:200\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{upperPort}\r\n");
+
     [Test]
     public async Task UnavailableEndpointRemainsReservedAndRefusesConnections()
     {

@@ -37,6 +37,7 @@ public class TypedValueApiTests
 
         await Assert.That(methods).IsNotEmpty();
         var mapping = typeof(RespireClient).GetInterfaceMap(typeof(IRespireClient));
+
         foreach (var method in methods)
         {
             var index = Array.IndexOf(mapping.InterfaceMethods, method);
@@ -182,8 +183,11 @@ public class TypedValueApiTests
             BoundMethod((IRespireClient client) => client.SetAsync("key", double.NaN,
                 RespireExpiry.None, RespireSetWhen.Always, CancellationToken.None)),
         };
+
         foreach (var method in methods)
+        {
             await Assert.That(method.IsGenericMethod).IsTrue();
+        }
     }
 
     [Test]

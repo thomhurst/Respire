@@ -33,12 +33,36 @@ internal sealed class SharedRefreshCoordinator(TimeProvider clock, TimeSpan coal
             CancellationTokenSource cancellation, IDisposable? discoveryLease)
             => new(RefreshFlightKind.ReadOnly, slot, source, cancellation, discoveryLease);
 
-        internal RefreshFlightKind Kind { get; }
-        internal int Slot { get; }
-        internal RespireEndpoint Source { get; }
-        internal CancellationTokenSource? Cancellation { get; }
-        internal IDisposable? DiscoveryLease { get; }
-        internal TaskCompletionSource<bool> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal RefreshFlightKind Kind
+        {
+            get;
+        }
+
+        internal int Slot
+        {
+            get;
+        }
+
+        internal RespireEndpoint Source
+        {
+            get;
+        }
+
+        internal CancellationTokenSource? Cancellation
+        {
+            get;
+        }
+
+        internal IDisposable? DiscoveryLease
+        {
+            get;
+        }
+
+        internal TaskCompletionSource<bool> Completion
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         internal Task<bool> Task => Completion.Task;
         internal int Waiters;
         internal bool Completed;
@@ -55,14 +79,17 @@ internal sealed class SharedRefreshCoordinator(TimeProvider clock, TimeSpan coal
         Func<(CancellationTokenSource Cancellation, IDisposable? DiscoveryLease)> createResources)
     {
         ArgumentNullException.ThrowIfNull(createResources);
+
         lock (_gate)
         {
             var started = _current is null;
+
             if (started)
             {
                 var (cancellation, discoveryLease) = createResources();
                 _current = RefreshFlight.ForReadOnly(slot, source, cancellation, discoveryLease);
             }
+
             var flight = _current!;
             flight.Waiters++;
             return new Join(flight, started, !started && !flight.Repairs(slot, source));
@@ -83,7 +110,12 @@ internal sealed class SharedRefreshCoordinator(TimeProvider clock, TimeSpan coal
             }
 
             started = _current is null;
-            if (started) _current = RefreshFlight.ForTopology();
+
+            if (started)
+            {
+                _current = RefreshFlight.ForTopology();
+            }
+
             flight = _current!;
             flight.Waiters++;
             return true;
@@ -96,7 +128,12 @@ internal sealed class SharedRefreshCoordinator(TimeProvider clock, TimeSpan coal
         lock (_gate)
         {
             flight.Completed = true;
-            if (ReferenceEquals(_current, flight)) _current = null;
+
+            if (ReferenceEquals(_current, flight))
+            {
+                _current = null;
+            }
+
             if (failure is null && result && flight.Kind == RefreshFlightKind.Topology)
             {
                 _lastTopologyRefreshTimestamp = clock.GetTimestamp();
@@ -104,8 +141,15 @@ internal sealed class SharedRefreshCoordinator(TimeProvider clock, TimeSpan coal
             }
         }
 
-        if (failure is null) flight.Completion.TrySetResult(result);
-        else flight.Completion.TrySetException(failure);
+        if (failure is null)
+        {
+            flight.Completion.TrySetResult(result);
+        }
+        else
+        {
+            flight.Completion.TrySetException(failure);
+        }
+
         flight.Cancellation?.Dispose();
         flight.DiscoveryLease?.Dispose();
     }
@@ -115,16 +159,32 @@ internal sealed class SharedRefreshCoordinator(TimeProvider clock, TimeSpan coal
     {
         lock (_gate)
         {
-            if (flight.Waiters > 0) flight.Waiters--;
-            if (flight.Kind != RefreshFlightKind.ReadOnly || flight.Completed || flight.Waiters != 0) return null;
+            if (flight.Waiters > 0)
+            {
+                flight.Waiters--;
+            }
+
+            if (flight.Kind != RefreshFlightKind.ReadOnly || flight.Completed || flight.Waiters != 0)
+            {
+                return null;
+            }
+
             flight.Abandoned = true;
-            if (ReferenceEquals(_current, flight)) _current = null;
+
+            if (ReferenceEquals(_current, flight))
+            {
+                _current = null;
+            }
+
             return flight.Cancellation;
         }
     }
 
     internal bool IsPublished(RefreshFlight flight)
     {
-        lock (_gate) return ReferenceEquals(_current, flight);
+        lock (_gate)
+        {
+            return ReferenceEquals(_current, flight);
+        }
     }
 }

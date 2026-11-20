@@ -26,6 +26,7 @@ internal sealed partial class StreamCommands
         RespireStreamReadOptions options = default, RespireStreamId? startAt = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireStreamEntry[]>.Start();
+
         try
         {
             return owner.Attach(ReadGroupSingleBorrowedAsync(key, group, consumer, options, startAt,
@@ -49,6 +50,7 @@ internal sealed partial class StreamCommands
         string group, string consumer, RespireStreamReadOptions options = default, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireStreamReadResult[]>.Start();
+
         try
         {
             return owner.Attach(ReadGroupBorrowedAsync(streams, group, consumer, options, cancellationToken, owner.Observation));
@@ -86,6 +88,7 @@ internal sealed partial class StreamCommands
     {
         var owner = DispatchResponseSource<bool>.Start();
         Exception? failure = null;
+
         try
         {
             try
@@ -96,26 +99,47 @@ internal sealed partial class StreamCommands
                     : options.IsBlocking ? options : options with { WaitFor = BlockInterval };
             }
             catch (Exception error) { failure = error; throw; }
+
             var cursor = startAt;
+
             while (true)
             {
                 RespireStreamReadResult[] results;
+
                 try
                 {
-                    if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
+                    if (client.Core.Options.CommandHook is null)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
+
                     results = await ReadGroupBorrowedAsync([(key, cursor ?? (RespireStreamId)">")],
                         group, consumer, options, cancellationToken, owner.Observation).ConfigureAwait(false);
                 }
                 catch (Exception error) { failure = error; throw; }
+
                 var entries = results.Length == 0 ? [] : results[0].Entries;
-                if (entries.Length == 0 && startAt is not null) yield break;
+
+                if (entries.Length == 0 && startAt is not null)
+                {
+                    yield break;
+                }
+
                 foreach (var entry in entries)
                 {
-                    try { cancellationToken.ThrowIfCancellationRequested(); }
+                    try
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
                     catch (Exception error) { failure = error; throw; }
+
                     yield return entry;
                 }
-                if (startAt is not null && entries.Length != 0) cursor = entries[^1].Id;
+
+                if (startAt is not null && entries.Length != 0)
+                {
+                    cursor = entries[^1].Id;
+                }
             }
         }
         finally { FinishReadIterator(owner, failure); }

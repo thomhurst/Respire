@@ -21,8 +21,11 @@ public sealed partial class RespireClient
         var cache = ReadCache ?? throw new RespireConfigurationException(
             "Key tracking registration requires client-side caching enabled on this view.");
         var physicalKey = ResolveKey(key);
+
         if (!cache.CanTrack(in physicalKey))
+        {
             throw new ArgumentException("The key is outside the configured client cache key prefixes.", nameof(key));
+        }
 
         // Tracking registration must not inherit a cache producer's mutation fence, cached
         // response, or coalescing decision. SendTrackedAsync retains normal routing and ownership.

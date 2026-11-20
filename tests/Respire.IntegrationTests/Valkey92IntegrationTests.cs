@@ -44,7 +44,10 @@ public class Valkey92IntegrationTests(VersionedServerFixture servers)
         var destination = await servers.LeaseAsync(Image);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [source.Endpoint], Database = source.Database, Connections = 1, AllowAdmin = true,
+            Endpoints = [source.Endpoint],
+            Database = source.Database,
+            Connections = 1,
+            AllowAdmin = true,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         });
         await using var other = await RespireClient.ConnectAsync(destination.ConnectionString(protocol));
@@ -59,6 +62,7 @@ public class Valkey92IntegrationTests(VersionedServerFixture servers)
         (await client.Server.AclDigestAsync()).Should().NotBeEmpty();
         var role = $"respire-{Guid.NewGuid():N}";
         (await client.Server.AclGetRoleAsync(role)).Should().BeNull();
+
         try
         {
             await client.Server.AclSetRoleAsync(role, ["+get", "~*", "&*", "alldbs"]);
@@ -68,6 +72,7 @@ public class Valkey92IntegrationTests(VersionedServerFixture servers)
             definition.Root.AdditionalFields["databases"].AsString().Should().Be("alldbs");
         }
         finally { await client.Server.AclDeleteRolesAsync([role]); }
+
         (await client.Server.AclGetRoleAsync(role)).Should().BeNull();
     }
 }

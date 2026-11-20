@@ -13,19 +13,24 @@ public class ReplicaRedirectEvictionTests
     public async Task StoppingTargetQuiescesCapturedFailureObserverBeforeRetirementFence()
     {
         var limit = TimeSpan.FromSeconds(10);
+
         static byte[] Reply(string command) => Encoding.UTF8.GetBytes(command.StartsWith("HELLO 3", StringComparison.Ordinal)
             ? "%1\r\n$5\r\nproto\r\n:3\r\n" : command.StartsWith("GET ", StringComparison.Ordinal) ? "$1\r\nv\r\n" : "+OK\r\n");
+
         await using var target = new FakeRespServer(4) { ReplyOverride = (_, command) => Reply(command) };
         await using var source = new FakeRespServer(4) { ReplyOverride = (_, command) => Reply(command) };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", source.Port)], Connections = 1,
-            EnableReplicaRedirects = true, ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", source.Port)],
+            Connections = 1,
+            EnableReplicaRedirects = true,
+            ClientSideCache = new(),
         });
         var entry = new ReplicaRedirectTargets.Entry(client.Core, new("127.0.0.1", target.Port));
         using var release = new ManualResetEventSlim();
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         try
         {
             await entry.EnsureConnectedAsync(client.Core, default);
@@ -35,7 +40,11 @@ public class ReplicaRedirectEvictionTests
             connection.PendingCommandsFailing += () =>
             {
                 started.TrySetResult();
-                if (!release.Wait(limit)) throw new TimeoutException("Retirement observer barrier was not released.");
+
+                if (!release.Wait(limit))
+                {
+                    throw new TimeoutException("Retirement observer barrier was not released.");
+                }
             };
             entry.Observe(connection);
             connection.PendingCommandsFailing += () => completed.TrySetResult();
@@ -81,8 +90,10 @@ public class ReplicaRedirectEvictionTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", source.Port)], Connections = 1,
-            EnableReplicaRedirects = true, ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", source.Port)],
+            Connections = 1,
+            EnableReplicaRedirects = true,
+            ClientSideCache = new(),
             ReconnectPolicy = reconnect ? new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, JitterRatio = 0 } : null,
         });
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("v");
@@ -93,12 +104,19 @@ public class ReplicaRedirectEvictionTests
         listener.InstrumentPublished = (instrument, observer) =>
         {
             if (ReferenceEquals(instrument, RespireTelemetry.ClientCacheContinuityFlushes))
+            {
                 observer.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
         {
-            if (Interlocked.Increment(ref callbacks) != 1) return;
+            if (Interlocked.Increment(ref callbacks) != 1)
+            {
+                return;
+            }
+
             var remaining = client.Core.ClientCache!.Count;
+
             try
             {
                 // Bound the deliberate synchronous join so the regression fails instead
@@ -125,6 +143,7 @@ public class ReplicaRedirectEvictionTests
                 ReplyOverride = (_, command) => Encoding.UTF8.GetBytes(command.StartsWith("HELLO 3", StringComparison.Ordinal)
                     ? "%1\r\n$5\r\nproto\r\n:3\r\n" : command.StartsWith("GET ", StringComparison.Ordinal) ? "$1\r\nv\r\n" : "+OK\r\n"),
             }).ToArray();
+
         try
         {
             await using var source = new FakeRespServer(4)
@@ -134,19 +153,25 @@ public class ReplicaRedirectEvictionTests
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions()
             {
-                Endpoints = [new("127.0.0.1", source.Port)], Connections = 1,
-                EnableReplicaRedirects = true, ClientSideCache = new(),
+                Endpoints = [new("127.0.0.1", source.Port)],
+                Connections = 1,
+                EnableReplicaRedirects = true,
+                ClientSideCache = new(),
             });
+
             foreach (var target in targets.Take(ReplicaRedirectTargets.MaximumTargets))
             {
                 using var lease = await client.Core.RedirectTargets!.AcquireAsync(new("127.0.0.1", target.Port), default);
             }
+
             var callbacks = 0;
             using var listener = new MeterListener();
             listener.InstrumentPublished = (instrument, observer) =>
             {
                 if (ReferenceEquals(instrument, RespireTelemetry.ClientCacheContinuityFlushes))
+                {
                     observer.EnableMeasurementEvents(instrument);
+                }
             };
             listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
             {
@@ -166,6 +191,6 @@ public class ReplicaRedirectEvictionTests
             }).Throws<OperationCanceledException>();
             await Assert.That(callbacks).IsGreaterThan(0);
         }
-        finally { foreach (var target in targets) await target.DisposeAsync(); }
+        finally { foreach (var target in targets) { await target.DisposeAsync(); } }
     }
 }

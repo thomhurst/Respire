@@ -11,5 +11,8 @@ namespace Respire;
 public sealed class RespireHashAttribute(string keyTemplate) : Attribute
 {
     /// <summary>Gets the model's key template.</summary>
-    public string KeyTemplate { get; } = keyTemplate ?? throw new ArgumentNullException(nameof(keyTemplate));
+    public string KeyTemplate
+    {
+        get;
+    } = keyTemplate ?? throw new ArgumentNullException(nameof(keyTemplate));
 }

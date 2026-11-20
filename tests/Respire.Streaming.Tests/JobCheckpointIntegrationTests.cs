@@ -78,10 +78,12 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
             [group, "owner", entry.Value, 1, "saved", Array.Empty<byte>(), 50]);
         var user = "checkpoint-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-set"]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = user, Password = "password" });
+                with
+            { Username = user, Password = "password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(SaveScript(), [queue.StreamKey, key],
                 [group, "owner", entry.Value, 1, "denied", Array.Empty<byte>(), 0])).Throws<RespireServerException>();
             await Assert.That((await RespireJobCheckpoints.ReadAsync(admin, queue.StreamKey, entry))!.Cursor).IsEqualTo("saved");
@@ -100,14 +102,17 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
         var assembly = typeof(RespireJob<>).Assembly;
         var wrap = assembly.GetType("Respire.Streaming.JobCheckpoints")!
             .GetMethod("Complete", BindingFlags.NonPublic | BindingFlags.Static)!;
+
         foreach (var type in new[] { "JobQueueScripts", "JobGroupControls" })
-        foreach (var name in new[] { "Complete", "CompleteAndDelete", "CompleteWithMetrics", "CompleteAndDeleteWithMetrics" })
         {
-            var inner = (RespireScript)assembly.GetType("Respire.Streaming." + type)!
-                .GetField(name, BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
-            var wrapped = (RespireScript)wrap.Invoke(null, [inner])!;
-            using var loaded = await client.ExecuteAsync("SCRIPT", ["LOAD", wrapped.Source]);
-            await Assert.That(loaded.AsString().Length).IsEqualTo(40);
+            foreach (var name in new[] { "Complete", "CompleteAndDelete", "CompleteWithMetrics", "CompleteAndDeleteWithMetrics" })
+            {
+                var inner = (RespireScript)assembly.GetType("Respire.Streaming." + type)!
+                    .GetField(name, BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+                var wrapped = (RespireScript)wrap.Invoke(null, [inner])!;
+                using var loaded = await client.ExecuteAsync("SCRIPT", ["LOAD", wrapped.Source]);
+                await Assert.That(loaded.AsString().Length).IsEqualTo(40);
+            }
         }
     }
 
@@ -133,10 +138,12 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
         RespireValue[] arguments = [group, "owner", entry.Value, 1, "completed", "", "", 0, Array.Empty<byte>(), 0];
         var user = "cleanup-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-del"]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = user, Password = "password" });
+                with
+            { Username = user, Password = "password" });
             await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(script, keys, arguments)).Throws<RespireServerException>();
             await Assert.That((await RespireJobCheckpoints.ReadAsync(admin, queue.StreamKey, entry))!.Cursor).IsEqualTo("saved");
             await Assert.That((await admin.Streams.PendingSummaryAsync(queue.StreamKey, group)).Count).IsEqualTo(1);
@@ -158,7 +165,8 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
         var queue = Queue(client);
         await queue.EnqueueScheduledAsync("job", "payload", new()
         {
-            MaximumRuntime = TimeSpan.FromMilliseconds(250), Group = grouped ? "group" : null,
+            MaximumRuntime = TimeSpan.FromMilliseconds(250),
+            Group = grouped ? "group" : null,
         });
         var cursors = new ConcurrentQueue<int>();
         var handler = new Handler(async (job, token) =>
@@ -166,7 +174,12 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
             var saved = await job.ReadCheckpointAsync(token);
             var cursor = saved is null ? 0 : int.Parse(saved.Cursor);
             cursors.Enqueue(cursor);
-            if (cursor == 3) return RespireStreamWorkerResult.Ack;
+
+            if (cursor == 3)
+            {
+                return RespireStreamWorkerResult.Ack;
+            }
+
             await Assert.That(await job.SaveCheckpointAsync((cursor + 1).ToString(), [0, 255, (byte)cursor], cursor * 25, token)).IsTrue();
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return RespireStreamWorkerResult.Ack;
@@ -175,14 +188,18 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
         var worker = provider.GetRequiredService<IHostedService>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await worker.StartAsync(deadline.Token);
+
         try
         {
             await Until(async () => await client.Streams.CountAsync(queue.EventsStreamKey) == 1, deadline.Token);
             await Assert.That(cursors.ToArray()).IsEquivalentTo(new[] { 0, 1, 2, 3 });
             await Assert.That(await client.Streams.CountAsync(queue.DeadLetterStreamKey)).IsEqualTo(0);
             var entries = await client.Streams.RangeAsync(queue.StreamKey);
+
             foreach (var entry in entries)
+            {
                 await Assert.That(await RespireJobCheckpoints.ReadAsync(client, queue.StreamKey, entry.Id)).IsNull();
+            }
         }
         finally { await worker.StopAsync(deadline.Token); }
     }
@@ -220,6 +237,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
         }), "late-result", deliveryLimit: completion == 3 ? 5 : 1);
         var worker = provider.GetRequiredService<IHostedService>();
         await worker.StartAsync(deadline.Token);
+
         try
         {
             if (completion == 3)
@@ -241,10 +259,18 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
                 await Assert.That(await client.Streams.CountAsync(queue.DeadLetterStreamKey)).IsEqualTo(completion == 0 ? 0 : 1);
                 await Assert.That((await client.Streams.PendingSummaryAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup)).Count).IsEqualTo(0);
             }
+
             await Assert.That(Volatile.Read(ref calls)).IsEqualTo(1);
             var checkpoint = await delivered!.ReadCheckpointAsync(deadline.Token);
-            if (completion == 0) await Assert.That(checkpoint).IsNull();
-            else await Assert.That(checkpoint!.Cursor).IsEqualTo("finished");
+
+            if (completion == 0)
+            {
+                await Assert.That(checkpoint).IsNull();
+            }
+            else
+            {
+                await Assert.That(checkpoint!.Cursor).IsEqualTo("finished");
+            }
         }
         finally { await worker.StopAsync(deadline.Token); }
     }
@@ -275,6 +301,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
         var secondWorker = second.GetRequiredService<IHostedService>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await firstWorker.StartAsync(deadline.Token);
+
         try
         {
             var stale = await firstSaved.Task.WaitAsync(deadline.Token);
@@ -305,8 +332,13 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
         await using var first = Worker(client, new(async (job, token) =>
         {
             entered.TrySetResult();
-            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
             finally { await job.SaveCheckpointAsync("shutdown", [7], 70); }
+
             return RespireStreamWorkerResult.Ack;
         }), "first", deliveryLimit: 1);
         var worker = first.GetRequiredService<IHostedService>();
@@ -322,6 +354,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
         }), "second", deliveryLimit: 1);
         worker = second.GetRequiredService<IHostedService>();
         await worker.StartAsync(deadline.Token);
+
         try
         {
             await Assert.That((await resumed.Task.WaitAsync(deadline.Token))!.Cursor).IsEqualTo("shutdown");
@@ -349,6 +382,7 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
                 await job.SaveCheckpointAsync("retry", [], cancellationToken: token);
                 return job.RetryAfter(TimeSpan.Zero);
             }
+
             await Assert.That((await job.ReadCheckpointAsync(token))!.Cursor).IsEqualTo("retry");
             passed.TrySetResult();
             return RespireStreamWorkerResult.Ack;
@@ -356,7 +390,11 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
         var worker = provider.GetRequiredService<IHostedService>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await worker.StartAsync(deadline.Token);
-        try { await passed.Task.WaitAsync(deadline.Token); }
+
+        try
+        {
+            await passed.Task.WaitAsync(deadline.Token);
+        }
         finally { await worker.StopAsync(deadline.Token); }
     }
 
@@ -366,15 +404,24 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
     {
         var services = new ServiceCollection().AddSingleton(client).AddSingleton(handler);
         services.AddRespireJobQueue<Handler, string>("checkpoints", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
-            new() { ConsumerName = consumer, DeliveryLimit = deliveryLimit, ReadWait = TimeSpan.FromMilliseconds(20),
-                MinimumIdleTime = idle ?? TimeSpan.FromSeconds(30), RecoveryPollInterval = TimeSpan.FromMilliseconds(20) },
+            new()
+            {
+                ConsumerName = consumer,
+                DeliveryLimit = deliveryLimit,
+                ReadWait = TimeSpan.FromMilliseconds(20),
+                MinimumIdleTime = idle ?? TimeSpan.FromSeconds(30),
+                RecoveryPollInterval = TimeSpan.FromMilliseconds(20)
+            },
             new() { SchedulingPollInterval = TimeSpan.FromMilliseconds(10) });
         return services.BuildServiceProvider();
     }
 
     private static async Task Until(Func<Task<bool>> predicate, CancellationToken token)
     {
-        while (!await predicate()) await Task.Delay(10, token);
+        while (!await predicate())
+        {
+            await Task.Delay(10, token);
+        }
     }
 
     public sealed class Handler(Func<RespireJob<string>, CancellationToken, ValueTask<RespireStreamWorkerResult>> handle)

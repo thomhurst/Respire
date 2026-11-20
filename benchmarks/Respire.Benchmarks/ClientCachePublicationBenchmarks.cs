@@ -17,17 +17,22 @@ public class ClientCachePublicationBenchmarks
     private RespireClient _client = null!;
 
     [Params(false, true)]
-    public bool Coalesce { get; set; }
+    public bool Coalesce
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public async Task Setup()
     {
         ReportMemory("before-connect");
+
         try
         {
             var host = Environment.GetEnvironmentVariable("REDIS_HOST");
             var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort)
                 ? configuredPort : 6379;
+
             if (string.IsNullOrEmpty(host))
             {
                 _container = new RedisBuilder("redis:8.10").Build();
@@ -35,19 +40,31 @@ public class ClientCachePublicationBenchmarks
                 host = _container.Hostname;
                 port = _container.GetMappedPublicPort(6379);
             }
+
             _client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Endpoints = [new(host, port)], Connections = 1, Protocol = RespireProtocol.Resp3,
+                Endpoints = [new(host, port)],
+                Connections = 1,
+                Protocol = RespireProtocol.Resp3,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
                 ClientSideCache = new() { CoalesceConcurrentMisses = Coalesce, MaxSizeBytes = 1_000_000 },
             });
             var keys = Enumerable.Range(0, Population).Select(index => "cache:publication:retained:" + index).ToArray();
+
             foreach (var key in keys)
-                if (!await _client.SetAsync(key, _value)) throw new InvalidOperationException("Seed SET failed.");
+            {
+                if (!await _client.SetAsync(key, _value))
+                {
+                    throw new InvalidOperationException("Seed SET failed.");
+                }
+            }
 
             await ReadPopulation(keys);
+
             if (_client.ClientSideCache!.Count != Population)
+            {
                 throw new InvalidOperationException("The one-off population must fit the configured byte limit.");
+            }
             // No returned strings are retained by this fixture. This stage measures
             // the cache after 512 independent string misses, before any local reuse.
             ReportMemory("connected-idle");
@@ -57,7 +74,9 @@ public class ClientCachePublicationBenchmarks
 
             if (!await _client.SetAsync(_key, _value) || await ColdStringMiss() != _value
                 || await ColdMissAndFirstReuse() != 2 * _value.Length || await WarmStringHit() != _value)
+            {
                 throw new InvalidOperationException("String publication benchmark validation failed.");
+            }
         }
         catch
         {
@@ -69,8 +88,12 @@ public class ClientCachePublicationBenchmarks
     private async Task ReadPopulation(string[] keys)
     {
         foreach (var key in keys)
+        {
             if (await _client.GetStringAsync(key) != _value)
+            {
                 throw new InvalidOperationException("A population read returned the wrong value.");
+            }
+        }
     }
 
     [Benchmark]
@@ -100,10 +123,13 @@ public class ClientCachePublicationBenchmarks
         using var process = Process.GetCurrentProcess();
         Console.WriteLine("RECEIVE_MEMORY " + JsonSerializer.Serialize(new
         {
-            stage, Coalesce, population = Population,
+            stage,
+            Coalesce,
+            population = Population,
             cacheEntries = _client?.ClientSideCache?.Count ?? 0,
             cacheBytes = _client?.ClientSideCache?.GetStatistics().SizeBytes ?? 0,
-            managedBytes = GC.GetTotalMemory(false), pohBytes = info.GenerationInfo[4].SizeAfterBytes,
+            managedBytes = GC.GetTotalMemory(false),
+            pohBytes = info.GenerationInfo[4].SizeAfterBytes,
             pohFragmentedBytes = info.GenerationInfo[4].FragmentationAfterBytes,
             workingSetBytes = process.WorkingSet64,
         }));
@@ -112,8 +138,18 @@ public class ClientCachePublicationBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_client is not null) { await _client.DisposeAsync(); _client = null!; }
-        if (_container is not null) { await _container.DisposeAsync(); _container = null; }
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+            _client = null!;
+        }
+
+        if (_container is not null)
+        {
+            await _container.DisposeAsync();
+            _container = null;
+        }
+
         ReportMemory("after-dispose");
     }
 }

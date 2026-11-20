@@ -53,10 +53,16 @@ public sealed record RespireClientSideCacheOptions
     // Capacity and lifetime.
 
     /// <summary>Maximum resident cache entries. Defaults to 10,000.</summary>
-    public int MaxEntries { get; init; } = 10_000;
+    public int MaxEntries
+    {
+        get; init;
+    } = 10_000;
 
     /// <summary>Approximate maximum bytes owned by cached replies. Defaults to 64 MiB.</summary>
-    public long MaxSizeBytes { get; init; } = 64L * 1024 * 1024;
+    public long MaxSizeBytes
+    {
+        get; init;
+    } = 64L * 1024 * 1024;
 
     /// <summary>
     /// Maximum time an entry stays in the local cache, independent of the key's Redis TTL.
@@ -64,7 +70,10 @@ public sealed record RespireClientSideCacheOptions
     /// </summary>
     /// <remarks>Redis invalidations normally remove changed entries immediately. This bound limits
     /// staleness while a broken connection is still being detected.</remarks>
-    public TimeSpan? LocalExpiration { get; init; } = TimeSpan.FromMinutes(5);
+    public TimeSpan? LocalExpiration
+    {
+        get; init;
+    } = TimeSpan.FromMinutes(5);
 
     // What is cached and how Redis tracks it.
 
@@ -83,15 +92,24 @@ public sealed record RespireClientSideCacheOptions
     /// against physical keys: include any <see cref="IRespireClient.WithKeyPrefix(string)"/> prefix.
     /// The client snapshots this collection and its bytes.
     /// </remarks>
-    public IReadOnlyList<RespireKey> KeyPrefixes { get; init; } = [];
+    public IReadOnlyList<RespireKey> KeyPrefixes
+    {
+        get; init;
+    } = [];
 
     /// <summary>How Redis tracks cached keys. Defaults to <see cref="RespireClientTrackingMode.OptIn"/>.</summary>
-    public RespireClientTrackingMode TrackingMode { get; init; }
+    public RespireClientTrackingMode TrackingMode
+    {
+        get; init;
+    }
 
     /// <summary>Suppress invalidations caused by the tracking connection's own writes. Defaults to false.</summary>
     /// <remarks>Local writes must update or evict local entries themselves. Respire keeps its
     /// mutation eviction and in-flight read fences enabled, including on bypass views.</remarks>
-    public bool NoLoop { get; init; }
+    public bool NoLoop
+    {
+        get; init;
+    }
 
     // Optional behavior.
 
@@ -104,7 +122,10 @@ public sealed record RespireClientSideCacheOptions
     /// enable it for hot keys read concurrently. Each caller can cancel independently; the shared
     /// request is canceled when its last caller leaves. The physical request retains its original
     /// <see cref="RespireOptions.CommandTimeout"/> deadline; joining later does not restart it.</remarks>
-    public bool CoalesceConcurrentMisses { get; init; }
+    public bool CoalesceConcurrentMisses
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Serves individual HMGET fields from cached HGET entries and fetches only the missing fields.
@@ -114,7 +135,10 @@ public sealed record RespireClientSideCacheOptions
     /// more cache entries and allocations than exact-query caching. Results may combine values
     /// read at different times and do not form an atomic snapshot of the hash.
     /// Benchmark representative field counts and payload sizes.</remarks>
-    public bool ReuseHashFields { get; init; }
+    public bool ReuseHashFields
+    {
+        get; init;
+    }
 
     internal RespireClientSideCacheOptions ValidateAndSnapshot()
     {
@@ -130,7 +154,9 @@ public sealed record RespireClientSideCacheOptions
     private static void Require(bool condition, string optionName, string requirement)
     {
         if (!condition)
+        {
             throw new RespireConfigurationException($"RespireOptions.ClientSideCache.{optionName} {requirement}.");
+        }
     }
 }
 
@@ -148,10 +174,16 @@ public readonly record struct RespireClientSideCacheStatistics(
 public interface IRespireClientSideCache
 {
     /// <summary>Current resident entry count.</summary>
-    int Count { get; }
+    int Count
+    {
+        get;
+    }
 
     /// <summary>Approximate bytes owned by current resident entries.</summary>
-    long SizeBytes { get; }
+    long SizeBytes
+    {
+        get;
+    }
 
     /// <summary>Returns a point-in-time statistics snapshot.</summary>
     RespireClientSideCacheStatistics GetStatistics();
@@ -226,8 +258,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     // Unlike continuity, a full invalidation cannot be repaired by a redirect handshake.
     private long _fullInvalidationEpoch;
     private long _queryEpoch;
-    private readonly RequestCounters[] _requests = new RequestCounters[
-        BitOperations.RoundUpToPowerOf2((uint)Math.Clamp(Environment.ProcessorCount, 4, 64))];
+    private readonly RequestCounters[] _requests = new RequestCounters[BitOperations.RoundUpToPowerOf2((uint)Math.Clamp(Environment.ProcessorCount, 4, 64))];
     private long _invalidations;
     private long _evictions;
     private long _continuityFlushes;
@@ -251,11 +282,13 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     {
         var store = Volatile.Read(ref _store);
         long hits = 0, misses = 0;
+
         foreach (ref var counters in _requests.AsSpan())
         {
             hits += Interlocked.Read(ref counters.Hits);
             misses += Interlocked.Read(ref counters.Misses);
         }
+
         return new(
             hits,
             misses,
@@ -271,6 +304,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     internal bool TryGet(in RespireKey key, out RespValue value)
     {
         var store = Volatile.Read(ref _store);
+
         if (store.TryGet(in key, out var payload))
         {
             RecordRequest(hit: true);
@@ -294,7 +328,11 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     // caller's normal route performs the counted lookup exactly once.
     internal bool TryGetStringHit(in RespireKey key, out string? value)
     {
-        if (!Volatile.Read(ref _store).TryGetString(in key, out value)) return false;
+        if (!Volatile.Read(ref _store).TryGetString(in key, out value))
+        {
+            return false;
+        }
+
         RecordRequest(hit: true);
         return true;
     }
@@ -306,6 +344,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             value = default;
             return false;
         }
+
         RecordRequest(hit: true);
         value = payload is null ? RespValue.Null : RespValue.BulkString(payload);
         return true;
@@ -314,7 +353,12 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     internal bool TryGetHit(in QueryRequest request, out RespValue value)
     {
         var query = request.Query;
-        if (!Volatile.Read(ref _store).TryGet(in query, out value)) return false;
+
+        if (!Volatile.Read(ref _store).TryGet(in query, out value))
+        {
+            return false;
+        }
+
         RecordRequest(hit: true);
         return true;
     }
@@ -322,7 +366,12 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     internal bool TryGetStringHit(in QueryRequest request, out string? value)
     {
         var query = request.Query;
-        if (!Volatile.Read(ref _store).TryGetString(in query, out value)) return false;
+
+        if (!Volatile.Read(ref _store).TryGetString(in query, out value))
+        {
+            return false;
+        }
+
         RecordRequest(hit: true);
         return true;
     }
@@ -331,8 +380,16 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     private void RecordRequest(bool hit)
     {
         ref var counters = ref _requests[Thread.GetCurrentProcessorId() & (_requests.Length - 1)];
-        if (hit) Interlocked.Increment(ref counters.Hits);
-        else Interlocked.Increment(ref counters.Misses);
+
+        if (hit)
+        {
+            Interlocked.Increment(ref counters.Hits);
+        }
+        else
+        {
+            Interlocked.Increment(ref counters.Misses);
+        }
+
         RespireTelemetry.RecordCacheRequest(hit);
     }
 
@@ -341,8 +398,10 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     [StructLayout(LayoutKind.Explicit, Size = 128)]
     private struct RequestCounters
     {
-        [FieldOffset(0)] internal long Hits;
-        [FieldOffset(64)] internal long Misses;
+        [FieldOffset(0)]
+        internal long Hits;
+        [FieldOffset(64)]
+        internal long Misses;
     }
 
     internal bool TryPeek(in RespireKey key, out RespValue value)
@@ -352,6 +411,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             value = payload is null ? RespValue.Null : RespValue.BulkString(payload);
             return true;
         }
+
         value = default;
         return false;
     }
@@ -387,6 +447,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     {
         var store = Volatile.Read(ref _store);
         var query = request.Query;
+
         if (store.TryGet(in query, out value))
         {
             RecordRequest(hit: true);
@@ -403,6 +464,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         var primaryKey = request.PrimaryKey;
         var dependencies = CreateDependencies(operation, in query, in primaryKey);
         var canCache = CanTrackAll(dependencies);
+
         lock (_queryLock)
         {
             return RegisterQueryRead(in query, dependencies, canCache ? RentQueryRead(dependencies.Length) : null);
@@ -424,6 +486,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                         state = RentQueryDependency(in key);
                         _queryDependencies.Add(key, state);
                     }
+
                     lease.Capture(state);
                     state.Readers++;
                 }
@@ -434,6 +497,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 throw;
             }
         }
+
         return new(query, dependencies, Volatile.Read(ref _queryEpoch), Volatile.Read(ref _continuityEpoch),
             Volatile.Read(ref _store), lease is not null && !HasActiveMutation(dependencies), lease, lease?.Generation ?? 0,
             Volatile.Read(ref _fullInvalidationEpoch));
@@ -443,20 +507,41 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     {
         // Copies and the caller's abandonment finally may revisit a completed lease.
         // They own no remaining state and need not acquire the publication gate again.
-        if (token.Lease is not { } lease || Volatile.Read(ref lease.Generation) != token.LeaseGeneration) return;
+        if (token.Lease is not { } lease || Volatile.Read(ref lease.Generation) != token.LeaseGeneration)
+        {
+            return;
+        }
+
         var published = false;
+
         try
         {
-            if (!allowInsert) return;
-            lock (_queryLock)
+            if (!allowInsert)
             {
-                if (!CanPublishQuery(in token)) return;
+                return;
             }
-            var query = token.Query;
-            if (!token.Store.TryCreateEntry(in query, token.Dependencies, in response, out var entry)) return;
+
             lock (_queryLock)
             {
-                if (CanPublishQuery(in token)) published = token.Store.Set(in query, entry);
+                if (!CanPublishQuery(in token))
+                {
+                    return;
+                }
+            }
+
+            var query = token.Query;
+
+            if (!token.Store.TryCreateEntry(in query, token.Dependencies, in response, out var entry))
+            {
+                return;
+            }
+
+            lock (_queryLock)
+            {
+                if (CanPublishQuery(in token))
+                {
+                    published = token.Store.Set(in query, entry);
+                }
                 // Retire dependencies under the publication gate we already own.
                 ReleaseQueryRead(lease, token.LeaseGeneration);
             }
@@ -467,10 +552,17 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             // successful publication or another copied token has released it.
             if (Volatile.Read(ref lease.Generation) == token.LeaseGeneration)
             {
-                lock (_queryLock) ReleaseQueryRead(lease, token.LeaseGeneration);
+                lock (_queryLock)
+                {
+                    ReleaseQueryRead(lease, token.LeaseGeneration);
+                }
             }
         }
-        if (published) token.Store.Trim();
+
+        if (published)
+        {
+            token.Store.Trim();
+        }
     }
 
     internal QueryReadToken RebaseRead(in QueryReadToken token)
@@ -479,13 +571,18 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         {
             // Only a live redirect owner may move registrations. Completed copies cannot create a new owner.
             if (!CanTrackAll(token.Dependencies) || token.Lease is not { } lease || lease.Generation != token.LeaseGeneration)
+            {
                 return token with { CanCache = false, Lease = null, LeaseGeneration = 0 };
+            }
+
             var canCache = token.CanCache && token.FullInvalidationEpoch == Volatile.Read(ref _fullInvalidationEpoch);
+
             for (var index = 0; index < lease.Registered; index++)
             {
                 var stamp = lease.GetDependency(index);
                 canCache &= stamp.State.Generation == stamp.Generation;
             }
+
             ReleaseQueryRead(lease, token.LeaseGeneration);
             var query = token.Query;
             var rebased = RegisterQueryRead(in query, token.Dependencies, RentQueryRead(token.Dependencies.Length));
@@ -501,18 +598,30 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             || Volatile.Read(ref _queryEpoch) != token.QueryEpoch
             || Volatile.Read(ref _continuityEpoch) != token.ContinuityEpoch
             || Volatile.Read(ref _fullInvalidationEpoch) != token.FullInvalidationEpoch
-            || !ReferenceEquals(Volatile.Read(ref _store), token.Store)) return false;
+            || !ReferenceEquals(Volatile.Read(ref _store), token.Store))
+        {
+            return false;
+        }
+
         for (var index = 0; index < lease.Registered; index++)
         {
             var stamp = lease.GetDependency(index);
-            if (stamp.State.Generation != stamp.Generation) return false;
+
+            if (stamp.State.Generation != stamp.Generation)
+            {
+                return false;
+            }
         }
+
         return true;
     }
 
     private QueryReadLease RentQueryRead(int dependencyCount)
     {
-        if (!_queryStorage.TryRent(dependencyCount, out var lease)) return new QueryReadLease(dependencyCount);
+        if (!_queryStorage.TryRent(dependencyCount, out var lease))
+        {
+            return new QueryReadLease(dependencyCount);
+        }
         // Returned generations are negative. Publish a fresh identity before the lease escapes.
         Volatile.Write(ref lease.Generation, -lease.Generation + 1);
         return lease;
@@ -520,28 +629,45 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     private QueryDependencyState RentQueryDependency(in RespireKey key)
     {
-        if (!_queryStorage.TryRent(out var state)) return new QueryDependencyState { Key = key };
+        if (!_queryStorage.TryRent(out var state))
+        {
+            return new QueryDependencyState { Key = key };
+        }
+
         state.Key = key;
         return state;
     }
 
     private void ReleaseQueryRead(QueryReadLease lease, long generation)
     {
-        if (lease.Generation != generation) return;
+        if (lease.Generation != generation)
+        {
+            return;
+        }
         // Invalidate copied tokens before clearing or reusing any captured registration.
         Volatile.Write(ref lease.Generation, -generation);
+
         for (var index = 0; index < lease.Registered; index++)
         {
             var state = lease.GetDependency(index).State;
-            if (--state.Readers != 0) continue;
+
+            if (--state.Readers != 0)
+            {
+                continue;
+            }
+
             _queryDependencies.Remove(state.Key);
             state.Key = default;
             state.Generation = 0;
             _queryStorage.TryReturn(state);
         }
+
         lease.ClearDependencies();
         // Never wrap a reusable identity or retain a large, one-off stamp array.
-        if (generation != long.MaxValue) _queryStorage.TryReturn(lease);
+        if (generation != long.MaxValue)
+        {
+            _queryStorage.TryReturn(lease);
+        }
     }
 
     // Storage bookkeeping stays separate from active registration ownership. Every operation
@@ -563,9 +689,21 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 previous = lease;
                 lease = lease.Next;
             }
-            if (lease is null) return false;
-            if (previous is null) _leases = lease.Next;
-            else previous.Next = lease.Next;
+
+            if (lease is null)
+            {
+                return false;
+            }
+
+            if (previous is null)
+            {
+                _leases = lease.Next;
+            }
+            else
+            {
+                previous.Next = lease.Next;
+            }
+
             _leaseCount--;
             lease.Next = null;
             return true;
@@ -574,7 +712,12 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         internal bool TryRent([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out QueryDependencyState? state)
         {
             state = _states;
-            if (state is null) return false;
+
+            if (state is null)
+            {
+                return false;
+            }
+
             _states = state.Next;
             _stateCount--;
             state.Next = null;
@@ -583,7 +726,11 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
         internal void TryReturn(QueryDependencyState state)
         {
-            if (_stateCount == MaxIdleQueryStates) return;
+            if (_stateCount == MaxIdleQueryStates)
+            {
+                return;
+            }
+
             state.Next = _states;
             _states = state;
             _stateCount++;
@@ -591,16 +738,25 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
         internal void TryReturn(QueryReadLease lease)
         {
-            if (lease.Capacity > MaxPooledQueryDependencies) return;
+            if (lease.Capacity > MaxPooledQueryDependencies)
+            {
+                return;
+            }
+
             if (_leaseCount == MaxIdleQueryLeases)
             {
                 // A full scalar pool must not force every multi-key read to allocate forever.
-                if (_leases!.Capacity >= lease.Capacity) return;
+                if (_leases!.Capacity >= lease.Capacity)
+                {
+                    return;
+                }
+
                 var discarded = _leases;
                 _leases = discarded.Next;
                 discarded.Next = null;
                 _leaseCount--;
             }
+
             lease.Next = _leases;
             _leases = lease;
             _leaseCount++;
@@ -609,11 +765,26 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         internal readonly (int Leases, int States, int RetainedDependencies) Inspect()
         {
             var retained = 0;
+
             for (var state = _states; state is not null; state = state.Next)
-                if (!state.Key.Equals(default(RespireKey))) retained++;
+            {
+                if (!state.Key.Equals(default(RespireKey)))
+                {
+                    retained++;
+                }
+            }
+
             for (var lease = _leases; lease is not null; lease = lease.Next)
+            {
                 for (var index = 0; index < lease.Capacity; index++)
-                    if (lease.GetDependency(index).State is not null) retained++;
+                {
+                    if (lease.GetDependency(index).State is not null)
+                    {
+                        retained++;
+                    }
+                }
+            }
+
             return (_leaseCount, _stateCount, retained);
         }
     }
@@ -621,6 +792,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     internal ReadToken BeginRead(in RespireKey key)
     {
         var ownedKey = key.Snapshot();
+
         if (!CanTrack(in ownedKey))
         {
             // Keep owned wire arguments without registering an invalidation generation for
@@ -628,9 +800,11 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             return new ReadToken(new InflightRead(ownedKey, canCache: false) { Readers = 1 }, 0,
                 Volatile.Read(ref _continuityEpoch), Volatile.Read(ref _store));
         }
+
         while (true)
         {
             var state = _inflight.GetOrAdd(ownedKey, static key => new InflightRead(key));
+
             lock (state)
             {
                 if (state.Retired)
@@ -654,6 +828,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     internal CacheEntry? CompleteRead(in ReadToken token, in RespValue response, bool allowInsert, string? decodedText = null)
     {
         var state = token.State;
+
         lock (state)
         {
             try
@@ -668,14 +843,17 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 {
                     return token.Store.Set(state.Key, in response, decodedText);
                 }
+
                 return null;
             }
             finally
             {
                 state.Readers--;
+
                 if (state.Readers == 0)
                 {
                     state.Retired = true;
+
                     if (state.CanCache)
                     {
                         ((ICollection<KeyValuePair<RespireKey, InflightRead>>)_inflight)
@@ -707,9 +885,19 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     private bool CanTrackAll(RespireKey[] keys)
     {
-        if (_keyPrefixes.Count == 0) return true;
+        if (_keyPrefixes.Count == 0)
+        {
+            return true;
+        }
+
         foreach (var key in keys)
-            if (!CanTrack(in key)) return false;
+        {
+            if (!CanTrack(in key))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -717,8 +905,12 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         RespireClientCacheInvalidationReason reason = RespireClientCacheInvalidationReason.LocalMutation)
     {
         var removed = InvalidateState(in key);
+
         if (reason == RespireClientCacheInvalidationReason.ServerInvalidation)
+        {
             RespireTelemetry.RecordCacheEvictions(removed, "invalidation");
+        }
+
         Interlocked.Increment(ref _invalidations);
         PublishInvalidation(in key, reason);
         RespireTelemetry.ClientCacheInvalidations.Add(1);
@@ -728,6 +920,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     {
         BeginSharedReadInvalidation();
         int removed;
+
         try
         {
             if (_inflight.TryGetValue(key, out var state))
@@ -740,11 +933,16 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
             lock (_queryLock)
             {
-                if (_queryDependencies.TryGetValue(key, out var dependency)) dependency.Generation++;
+                if (_queryDependencies.TryGetValue(key, out var dependency))
+                {
+                    dependency.Generation++;
+                }
+
                 removed = Volatile.Read(ref _store).Invalidate(in key);
             }
         }
         finally { EndSharedReadInvalidation(); }
+
         return removed;
     }
 
@@ -752,6 +950,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         where TCommand : struct, IRespCommand
     {
         var metadata = command.GetClientCacheMetadata(operation);
+
         if (DisruptsClientCacheTracking(metadata, operation, in command))
         {
             throw new NotSupportedException(
@@ -762,16 +961,25 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         // Indirect writes (for example TimeSeries compaction) cannot be bounded by argument keys,
         // even when a caller supplies a narrower command declaration.
         var mutationKind = metadata.MutationKind;
+
         if (mutationKind == RawCommandKeyLayouts.MutationKind.IndirectKeys)
+        {
             return BeginUnknownMutation();
+        }
 
         var mutation = command.GetCacheMutation(operation);
-        if (mutation == RespireCacheMutation.ReadOnly) return default;
+
+        if (mutation == RespireCacheMutation.ReadOnly)
+        {
+            return default;
+        }
 
         // An indefinite consumer-group wait must not suppress unrelated reads for its
         // lifetime. Preserve the conservative admission/completion flushes instead.
         if (blocking && operation == "XREADGROUP")
+        {
             return BeginMutation(MutationFenceKind.FlushOnly, default, null);
+        }
 
         if (mutation == RespireCacheMutation.SingleKey
             && command.TryGetClientCacheKey(operation, out var singleKeyArguments)
@@ -811,7 +1019,9 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 includeReadKeys: mutation == RespireCacheMutation.MultiKey))
         {
             if (mutation == RespireCacheMutation.MultiKey || layout.Count != 1 || layout.Extra >= 0)
+            {
                 return BeginMultiKeyMutation(in arguments, layout);
+            }
 
             var key = arguments.GetArgument(layout.Start).AsKey().Snapshot();
             return BeginKeyMutation(key);
@@ -832,13 +1042,27 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         {
             case MutationFenceKind.Key:
                 var single = fence.Key;
-                if (observe) Invalidate(in single);
-                else InvalidateState(in single);
+                if (observe)
+                {
+                    Invalidate(in single);
+                }
+                else
+                {
+                    InvalidateState(in single);
+                }
                 break;
             case MutationFenceKind.Keys:
                 foreach (var key in fence.Keys!)
-                    if (observe) Invalidate(in key);
-                    else InvalidateState(in key);
+                {
+                    if (observe)
+                    {
+                        Invalidate(in key);
+                    }
+                    else
+                    {
+                        InvalidateState(in key);
+                    }
+                }
                 break;
             case MutationFenceKind.All:
             case MutationFenceKind.FlushOnly:
@@ -854,6 +1078,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         in ClientCacheCommandKey arguments, RawCommandKeyLayouts.KeyLayout layout)
     {
         var keyCapacity = layout.Count + (layout.Extra >= 0 ? 1 : 0);
+
         if (keyCapacity == 0)
         {
             return BeginUnknownMutation();
@@ -869,29 +1094,51 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         var keys = new RespireKey[keyCapacity];
         var keyCount = 0;
         var seen = keyCapacity > LinearDeduplicationLimit ? new HashSet<RespireKey>(keyCapacity) : null;
+
         for (var index = 0; index < layout.Count; index++)
         {
             var key = arguments.GetArgument(layout.Start + index * layout.Stride).AsKey().Snapshot();
-            if (seen is not null ? !seen.Add(key) : ContainsKey(keys, keyCount, in key)) continue;
+
+            if (seen is not null ? !seen.Add(key) : ContainsKey(keys, keyCount, in key))
+            {
+                continue;
+            }
+
             keys[keyCount++] = key;
         }
+
         if (layout.Extra >= 0)
         {
             var key = arguments.GetArgument(layout.Extra).AsKey().Snapshot();
+
             if (seen is not null ? seen.Add(key) : !ContainsKey(keys, keyCount, in key))
             {
                 keys[keyCount++] = key;
             }
         }
 
-        if (keyCount == 1) return BeginKeyMutation(keys[0]);
-        if (keyCount != keys.Length) Array.Resize(ref keys, keyCount);
+        if (keyCount == 1)
+        {
+            return BeginKeyMutation(keys[0]);
+        }
+
+        if (keyCount != keys.Length)
+        {
+            Array.Resize(ref keys, keyCount);
+        }
+
         return BeginKeysMutation(keys);
 
         static bool ContainsKey(RespireKey[] keys, int count, in RespireKey key)
         {
             for (var index = 0; index < count; index++)
-                if (keys[index] == key) return true;
+            {
+                if (keys[index] == key)
+                {
+                    return true;
+                }
+            }
+
             return false;
         }
     }
@@ -899,12 +1146,14 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     internal void HandlePush(in RespValue push)
     {
         var elements = push.AsArray();
+
         if (elements.Length != 2 || !elements[0].AsSpan().SequenceEqual("invalidate"u8))
         {
             return;
         }
 
         var keys = elements[1];
+
         if (keys.IsNull)
         {
             Interlocked.Increment(ref _invalidations);
@@ -948,12 +1197,16 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     {
         BeginSharedReadInvalidation();
         int removed;
+
         try
         {
             lock (_queryLock)
             {
                 if (!continuityLost && reason != RespireClientCacheInvalidationReason.ContinuityLost)
+                {
                     Interlocked.Increment(ref _fullInvalidationEpoch);
+                }
+
                 Interlocked.Increment(ref _continuityEpoch);
                 Interlocked.Increment(ref _queryEpoch);
                 var replacement = new CacheStore(_options, RecordRemoval);
@@ -961,6 +1214,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 // preserve this query-then-removal order for publication and full flushes.
                 removed = Interlocked.Exchange(ref _store, replacement).Retire();
             }
+
             if (removed > 0)
             {
                 Interlocked.Add(ref _evictions, removed);
@@ -972,6 +1226,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             }
         }
         finally { EndSharedReadInvalidation(); }
+
         PublishInvalidationForAll(continuityLost ? RespireClientCacheInvalidationReason.ContinuityLost : reason);
         return removed;
     }
@@ -982,6 +1237,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         {
             RespireTelemetry.RecordCacheEvictions(removed, reason);
         }
+
         if (continuityLost)
         {
             RespireTelemetry.ClientCacheContinuityFlushes.Add(1);
@@ -990,7 +1246,11 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     private void RecordRemoval(CacheRemoval reason)
     {
-        if (reason is CacheRemoval.Capacity or CacheRemoval.Expiration) Interlocked.Increment(ref _evictions);
+        if (reason is CacheRemoval.Capacity or CacheRemoval.Expiration)
+        {
+            Interlocked.Increment(ref _evictions);
+        }
+
         RespireTelemetry.RecordCacheEvictions(1, reason switch
         {
             CacheRemoval.Capacity => "full",
@@ -1104,6 +1364,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         if (UsesEveryArgumentAsKey(operation))
         {
             var keys = new RespireKey[query.ArgumentCount];
+
             for (var index = 0; index < keys.Length; index++)
             {
                 keys[index] = query.GetArgument(index).AsKey().Snapshot();
@@ -1115,6 +1376,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         if (operation == "JSON.MGET")
         {
             var keys = new RespireKey[query.ArgumentCount - 1];
+
             for (var index = 0; index < keys.Length; index++)
             {
                 keys[index] = query.GetArgument(index).AsKey().Snapshot();
@@ -1126,6 +1388,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         if (UsesCountedKeys(operation) && TryGetKeyCount(in query, out var count))
         {
             var keys = new RespireKey[count];
+
             for (var index = 0; index < count; index++)
             {
                 keys[index] = query.GetArgument(index + 1).AsKey().Snapshot();
@@ -1150,6 +1413,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         for (var index = 1; index < query.ArgumentCount; index++)
         {
             var argument = query.GetArgument(index);
+
             if (argument.EqualsAsciiIgnoreCase("BY") || argument.EqualsAsciiIgnoreCase("GET"))
             {
                 return true;
@@ -1234,7 +1498,12 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             internal string? GetString(in GetReadResult result)
             {
                 var value = Volatile.Read(ref _value);
-                if (value is not null) return value;
+
+                if (value is not null)
+                {
+                    return value;
+                }
+
                 value = result.GetPublicationString();
                 return value is null ? null : Interlocked.CompareExchange(ref _value, value, null) ?? value;
             }
@@ -1267,13 +1536,22 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         // Volatile or under _queryLock, and check the token's identity at every boundary.
         internal long Generation = 1;
         internal QueryReadLease? Next;
+
         internal int Capacity => (_additional?.Length ?? 0) + 1;
 
         internal void Capture(QueryDependencyState state)
         {
             var stamp = new QueryDependencyStamp(state, state.Generation);
-            if (Registered == 0) _first = stamp;
-            else _additional![Registered - 1] = stamp;
+
+            if (Registered == 0)
+            {
+                _first = stamp;
+            }
+            else
+            {
+                _additional![Registered - 1] = stamp;
+            }
+
             Registered++;
         }
 
@@ -1282,7 +1560,12 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         internal void ClearDependencies()
         {
             _first = default;
-            if (_additional is not null) Array.Clear(_additional, 0, Math.Max(0, Registered - 1));
+
+            if (_additional is not null)
+            {
+                Array.Clear(_additional, 0, Math.Max(0, Registered - 1));
+            }
+
             Registered = 0;
         }
     }
@@ -1299,8 +1582,15 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     internal sealed class InflightRead(RespireKey key, bool canCache = true)
     {
-        public RespireKey Key { get; } = key;
-        public bool CanCache { get; } = canCache;
+        public RespireKey Key
+        {
+            get;
+        } = key;
+
+        public bool CanCache
+        {
+            get;
+        } = canCache;
         public long Generation;
         public int Readers;
         public bool Retired;
@@ -1335,7 +1625,11 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         // Read and transition only under _removalLock; Retire is the only transition.
         private StoreState _state;
 
-        private enum StoreState { Active, Retired }
+        private enum StoreState
+        {
+            Active,
+            Retired
+        }
 
         public CacheStore(RespireClientSideCacheOptions options, Action<CacheRemoval> recordRemoval)
         {
@@ -1344,6 +1638,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         }
 
         public int Count => _entries.Count + _queries.Count;
+
         public long SizeBytes => Interlocked.Read(ref _sizeBytes);
 
         /// <summary>Claims flush removals atomically with individual removals, suppressing later eviction reports.</summary>
@@ -1351,7 +1646,11 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         {
             lock (_removalLock)
             {
-                if (_state == StoreState.Retired) return 0;
+                if (_state == StoreState.Retired)
+                {
+                    return 0;
+                }
+
                 var count = Count;
                 _state = StoreState.Retired;
                 return count;
@@ -1378,8 +1677,14 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 value = null;
                 return true;
             }
+
             value = entry.DecodedText;
-            if (value is not null) return true;
+
+            if (value is not null)
+            {
+                return true;
+            }
+
             value = GetString(in key, entry);
             return true;
         }
@@ -1391,6 +1696,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 result = default;
                 return false;
             }
+
             var response = entry.Payload is null ? RespValue.Null : RespValue.BulkString(entry.Payload);
             result = new(response, key.Snapshot(), this, entry, entry.DecodedText);
             return true;
@@ -1402,23 +1708,39 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             {
                 return null;
             }
+
             var value = entry.DecodedText;
-            if (value is not null) return value;
+
+            if (value is not null)
+            {
+                return value;
+            }
 
             var decoded = Encoding.UTF8.GetString(entry.Payload);
+
             lock (_removalLock)
             {
                 value = entry.DecodedText;
-                if (value is not null) return value;
+
+                if (value is not null)
+                {
+                    return value;
+                }
+
                 value = decoded;
                 // An invalidated/replaced/retired entry can still serve this borrowed
                 // lookup, but must never increase the current store's accounted size.
                 if (_state == StoreState.Retired || !_entries.TryGetValue(key, out var current)
-                    || !ReferenceEquals(current, entry)) return value;
+                    || !ReferenceEquals(current, entry))
+                {
+                    return value;
+                }
+
                 var added = CacheEntry.DecodedSize(decoded);
                 entry.SetDecodedText(decoded, added);
                 Interlocked.Add(ref _sizeBytes, added);
             }
+
             Trim();
             return value;
         }
@@ -1467,6 +1789,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         public bool TryGetString(in ClientCacheCommandKey query, out string? value)
         {
             QueryCacheEntry? entry = null;
+
             while (_queries.TryGetValue(query, out var candidate))
             {
                 if (candidate.ExpiresAt == 0 || Stopwatch.GetTimestamp() < candidate.ExpiresAt)
@@ -1486,6 +1809,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 value = null;
                 return false;
             }
+
             value = entry.DecodedText ?? GetString(in query, entry);
             return true;
         }
@@ -1494,20 +1818,32 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         {
             var response = entry.Value;
             var decoded = ResponseReader.StringOrNull(in response);
+
             if (decoded is null
                 || response.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString or RespireDataType.VerbatimString))
+            {
                 return decoded;
+            }
+
             lock (_removalLock)
             {
-                if (entry.DecodedText is { } published) return published;
+                if (entry.DecodedText is { } published)
+                {
+                    return published;
+                }
                 // As for GET entries, a removed or retired entry still serves this borrowed
                 // lookup without increasing the current store's accounted size.
                 if (_state == StoreState.Retired || !_queries.TryGetValue(query, out var current)
-                    || !ReferenceEquals(current, entry)) return decoded;
+                    || !ReferenceEquals(current, entry))
+                {
+                    return decoded;
+                }
+
                 var added = CacheEntry.DecodedSize(decoded);
                 entry.SetDecodedText(decoded, added);
                 Interlocked.Add(ref _sizeBytes, added);
             }
+
             Trim();
             return decoded;
         }
@@ -1521,7 +1857,12 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
             var payloadLength = response.IsNull ? 0 : response.AsSpan().Length;
             var size = (long)EntryOverhead + key.WireLength + payloadLength;
-            if (decodedText is not null) size += CacheEntry.DecodedSize(decodedText);
+
+            if (decodedText is not null)
+            {
+                size += CacheEntry.DecodedSize(decodedText);
+            }
+
             if (size > _options.MaxSizeBytes)
             {
                 return null;
@@ -1530,10 +1871,19 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             var payload = response.IsNull ? null : response.AsSpan().ToArray();
             var expiresAt = ExpirationTimestamp(_options.LocalExpiration);
             var entry = new CacheEntry(payload, size, expiresAt, decodedText);
+
             lock (_removalLock)
             {
-                if (_state == StoreState.Retired) return null;
-                if (_hasPublishedEntries == 0) Volatile.Write(ref _hasPublishedEntries, 1);
+                if (_state == StoreState.Retired)
+                {
+                    return null;
+                }
+
+                if (_hasPublishedEntries == 0)
+                {
+                    Volatile.Write(ref _hasPublishedEntries, 1);
+                }
+
                 if (_entries.TryGetValue(key, out var previous))
                 {
                     if (_entries.TryUpdate(key, entry, previous))
@@ -1564,6 +1914,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             }
 
             var size = EntryOverhead + query.OwnedSize + response.GetOwnedSize();
+
             for (var index = 0; index < dependencies.Length; index++)
             {
                 size += dependencies[index].WireLength;
@@ -1583,30 +1934,40 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         public bool Set(in ClientCacheCommandKey query, QueryCacheEntry entry)
         {
             lock (_dependencyLock)
-            lock (_removalLock)
             {
-                if (_state == StoreState.Retired) return false;
-                if (_hasPublishedEntries == 0) Volatile.Write(ref _hasPublishedEntries, 1);
-                if (_queries.TryGetValue(query, out var previous))
+                lock (_removalLock)
                 {
-                    if (!_queries.TryUpdate(query, entry, previous))
+                    if (_state == StoreState.Retired)
                     {
                         return false;
                     }
 
-                    RemoveDependencies(in query, previous.Dependencies);
-                    Interlocked.Add(ref _sizeBytes, entry.Size - previous.Size);
-                }
-                else if (_queries.TryAdd(query, entry))
-                {
-                    Interlocked.Add(ref _sizeBytes, entry.Size);
-                }
-                else
-                {
-                    return false;
-                }
+                    if (_hasPublishedEntries == 0)
+                    {
+                        Volatile.Write(ref _hasPublishedEntries, 1);
+                    }
 
-                AddDependencies(in query, entry.Dependencies);
+                    if (_queries.TryGetValue(query, out var previous))
+                    {
+                        if (!_queries.TryUpdate(query, entry, previous))
+                        {
+                            return false;
+                        }
+
+                        RemoveDependencies(in query, previous.Dependencies);
+                        Interlocked.Add(ref _sizeBytes, entry.Size - previous.Size);
+                    }
+                    else if (_queries.TryAdd(query, entry))
+                    {
+                        Interlocked.Add(ref _sizeBytes, entry.Size);
+                    }
+                    else
+                    {
+                        return false;
+                    }
+
+                    AddDependencies(in query, entry.Dependencies);
+                }
             }
 
             return true;
@@ -1630,16 +1991,25 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         // publishes telemetry after this method releases all cache locks.
         public int Invalidate(in RespireKey key)
         {
-            if (Volatile.Read(ref _hasPublishedEntries) == 0) return 0;
+            if (Volatile.Read(ref _hasPublishedEntries) == 0)
+            {
+                return 0;
+            }
+
             var removed = 0;
             CacheEntry? entry;
             bool reportRemoval;
+
             lock (_removalLock)
             {
                 _entries.TryRemove(key, out entry);
                 reportRemoval = entry is not null && AccountRemoval(entry.Size);
             }
-            if (reportRemoval) removed++;
+
+            if (reportRemoval)
+            {
+                removed++;
+            }
 
             lock (_dependencyLock)
             {
@@ -1651,24 +2021,32 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 foreach (var query in queries)
                 {
                     QueryCacheEntry? queryEntry;
+
                     lock (_removalLock)
                     {
                         _queries.TryRemove(query, out queryEntry);
                         reportRemoval = queryEntry is not null && AccountRemoval(queryEntry.Size);
                     }
+
                     if (queryEntry is not null)
                     {
                         RemoveDependencies(in query, queryEntry.Dependencies);
-                        if (reportRemoval) removed++;
+
+                        if (reportRemoval)
+                        {
+                            removed++;
+                        }
                     }
                 }
             }
+
             return removed;
         }
 
         private bool Remove(in RespireKey key, CacheEntry expected, CacheRemoval reason)
         {
             bool reportRemoval;
+
             lock (_removalLock)
             {
                 if (!((ICollection<KeyValuePair<RespireKey, CacheEntry>>)_entries)
@@ -1676,6 +2054,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 {
                     return false;
                 }
+
                 reportRemoval = AccountRemoval(expected.Size);
             }
 
@@ -1685,7 +2064,10 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
         private void RecordRemoval(CacheRemoval reason, bool reportRemoval)
         {
-            if (reportRemoval && reason is (CacheRemoval.Capacity or CacheRemoval.Expiration)) _recordRemoval(reason);
+            if (reportRemoval && reason is (CacheRemoval.Capacity or CacheRemoval.Expiration))
+            {
+                _recordRemoval(reason);
+            }
         }
 
         // Call under _removalLock after a successful removal, before publication can trim
@@ -1702,6 +2084,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             CacheRemoval reason)
         {
             bool reportRemoval;
+
             lock (_dependencyLock)
             {
                 lock (_removalLock)
@@ -1711,11 +2094,13 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                     {
                         return false;
                     }
+
                     reportRemoval = AccountRemoval(expected.Size);
                 }
 
                 RemoveDependencies(in query, expected.Dependencies);
             }
+
             RecordRemoval(reason, reportRemoval);
             return true;
         }
@@ -1748,6 +2133,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 }
 
                 queries.Remove(query);
+
                 if (queries.Count == 0)
                 {
                     _dependencies.Remove(dependency);
@@ -1783,10 +2169,12 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             while (IsOverCapacity)
             {
                 var removed = false;
+
                 foreach (var pair in _entries)
                 {
                     var key = pair.Key;
                     removed |= Remove(in key, pair.Value, CacheRemoval.Capacity);
+
                     if (!IsOverCapacity)
                     {
                         break;
@@ -1799,6 +2187,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                     {
                         var query = pair.Key;
                         removed |= Remove(in query, pair.Value, CacheRemoval.Capacity);
+
                         if (!IsOverCapacity)
                         {
                             break;
@@ -1818,9 +2207,19 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     {
         private string? _decodedText = decodedText;
         private long _size = size;
-        public byte[]? Payload { get; } = payload;
+
+        public byte[]? Payload
+        {
+            get;
+        } = payload;
+
         public long Size => Interlocked.Read(ref _size);
-        public long ExpiresAt { get; } = expiresAt;
+
+        public long ExpiresAt
+        {
+            get;
+        } = expiresAt;
+
         internal string? DecodedText => Volatile.Read(ref _decodedText);
 
         internal static long DecodedSize(string text) => (24L + text.Length * sizeof(char) + 7) & ~7L;
@@ -1841,10 +2240,24 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     {
         private string? _decodedText;
         private long _size = size;
-        public RespValue Value { get; } = value;
-        public RespireKey[] Dependencies { get; } = dependencies;
+
+        public RespValue Value
+        {
+            get;
+        } = value;
+
+        public RespireKey[] Dependencies
+        {
+            get;
+        } = dependencies;
+
         public long Size => Interlocked.Read(ref _size);
-        public long ExpiresAt { get; } = expiresAt;
+
+        public long ExpiresAt
+        {
+            get;
+        } = expiresAt;
+
         internal string? DecodedText => Volatile.Read(ref _decodedText);
 
         // The store's removal gate serializes accounting, publication and removal.
@@ -1892,7 +2305,10 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             MutationLease lease, long epoch)
             => (Kind, _key, _keys, _lease, _epoch) = (kind, key, keys, lease, epoch);
 
-        internal MutationFenceKind Kind { get; }
+        internal MutationFenceKind Kind
+        {
+            get;
+        }
 
         /// <summary>The fenced key when <see cref="Kind"/> is <see cref="MutationFenceKind.Key"/>.</summary>
         internal RespireKey Key => _key;
@@ -1920,6 +2336,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     internal readonly struct MutationReference(MutationLease? lease, long epoch)
     {
         internal bool IsRequired => lease is not null;
+
         internal void Release() => lease?.ReleaseNative(epoch);
     }
 }

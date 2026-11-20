@@ -5,35 +5,73 @@ namespace Respire;
 public sealed record RespireCircuitBreakerOptions
 {
     /// <summary>Failure fraction required to open the circuit, from greater than zero through one. Defaults to 0.5.</summary>
-    public double FailureRateThreshold { get; init; } = 0.5;
+    public double FailureRateThreshold
+    {
+        get; init;
+    } = 0.5;
 
     /// <summary>Minimum failures required to open the circuit. Defaults to five.</summary>
-    public int MinimumFailureCount { get; init; } = 5;
+    public int MinimumFailureCount
+    {
+        get; init;
+    } = 5;
 
     /// <summary>Maximum age of completed outcomes in the rolling history. Defaults to 30 seconds.</summary>
-    public TimeSpan SamplingWindow { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan SamplingWindow
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(30);
 
     /// <summary>Maximum number of recent completed outcomes retained, from one through 65536. Defaults to 1024.</summary>
     /// <remarks>The failure rate uses the most recent outcomes within both this count limit and SamplingWindow.</remarks>
-    public int MaximumSampleCount { get; init; } = 1024;
+    public int MaximumSampleCount
+    {
+        get; init;
+    } = 1024;
 
     /// <summary>Delay before an open circuit admits recovery probes. Defaults to five seconds.</summary>
-    public TimeSpan OpenDuration { get; init; } = TimeSpan.FromSeconds(5);
+    public TimeSpan OpenDuration
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(5);
 
     /// <summary>Successful recovery probes required to close the circuit, and maximum concurrent probes. Defaults to one.</summary>
-    public int HalfOpenProbeCount { get; init; } = 1;
+    public int HalfOpenProbeCount
+    {
+        get; init;
+    } = 1;
 
     internal void Validate()
     {
         if (!double.IsFinite(FailureRateThreshold) || FailureRateThreshold <= 0 || FailureRateThreshold > 1)
+        {
             throw new ArgumentOutOfRangeException(nameof(FailureRateThreshold));
+        }
+
         if (MaximumSampleCount is < 1 or > 65536)
+        {
             throw new ArgumentOutOfRangeException(nameof(MaximumSampleCount));
+        }
+
         if (MinimumFailureCount < 1 || MinimumFailureCount > MaximumSampleCount)
+        {
             throw new ArgumentOutOfRangeException(nameof(MinimumFailureCount));
-        if (SamplingWindow <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(SamplingWindow));
-        if (OpenDuration <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(OpenDuration));
-        if (HalfOpenProbeCount is < 1 or > 65536) throw new ArgumentOutOfRangeException(nameof(HalfOpenProbeCount));
+        }
+
+        if (SamplingWindow <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(SamplingWindow));
+        }
+
+        if (OpenDuration <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(OpenDuration));
+        }
+
+        if (HalfOpenProbeCount is < 1 or > 65536)
+        {
+            throw new ArgumentOutOfRangeException(nameof(HalfOpenProbeCount));
+        }
     }
 }
 
@@ -46,7 +84,11 @@ public sealed class RespireCircuitOpenException : RespireException
     public RespireCircuitOpenException(RespireEndpoint endpoint, TimeSpan? retryAfter)
         : base($"The circuit for endpoint {endpoint} is open.")
     {
-        if (retryAfter < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(retryAfter));
+        if (retryAfter < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(retryAfter));
+        }
+
         base.Endpoint = endpoint;
         RetryAfter = retryAfter;
         IsCommandNotSubmitted = true;
@@ -57,5 +99,8 @@ public sealed class RespireCircuitOpenException : RespireException
 
     /// <summary>Remaining recovery delay, or null when probe completion determines the next admission.</summary>
     /// <remarks>This is a snapshot, not permission to resend a command. A retry must reacquire endpoint admission.</remarks>
-    public TimeSpan? RetryAfter { get; }
+    public TimeSpan? RetryAfter
+    {
+        get;
+    }
 }

@@ -8,6 +8,7 @@ internal sealed partial class ClusterRouter
 {
     private readonly Dictionary<RespireConnectionMultiplexer, RetiredGeneration> _retiringNodes = [];
     private readonly DedicatedPoolLedger _ownedPools;
+
     internal DedicatedPoolLedger OwnedPools => _ownedPools;
     private readonly CancellationTokenSource _stopRetirement = new();
 
@@ -19,7 +20,9 @@ internal sealed partial class ClusterRouter
         internal readonly MaintenanceNotificationHandler? MaintenanceHandler = maintenanceHandler;
         internal readonly long StartedAt = Stopwatch.GetTimestamp();
         private bool _cleanupFailed;
+
         internal bool CleanupFailed => Volatile.Read(ref _cleanupFailed);
+
         internal void MarkCleanupFailed() => Volatile.Write(ref _cleanupFailed, true);
         internal readonly TaskCompletionSource Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
@@ -27,18 +30,34 @@ internal sealed partial class ClusterRouter
     private List<RetiredGeneration> DetachGenerationsLocked(RespireConnectionMultiplexer[] nodes)
     {
         List<RetiredGeneration> retirements = [];
+
         foreach (var node in nodes)
         {
-            if (_retiringNodes.ContainsKey(node)) continue;
+            if (_retiringNodes.ContainsKey(node))
+            {
+                continue;
+            }
+
             _dedicatedPools.Remove(node, out var pool);
-            if (_dedicatedMovingHandlers.Remove(node, out var movingHandler)) node.MovingHandoffPublished -= movingHandler;
+
+            if (_dedicatedMovingHandlers.Remove(node, out var movingHandler))
+            {
+                node.MovingHandoffPublished -= movingHandler;
+            }
+
             _redirectVersions.Remove(node);
-            if (_nodeStateHandlers.Remove(node, out var handler)) node.SlotStateChanged -= handler;
+
+            if (_nodeStateHandlers.Remove(node, out var handler))
+            {
+                node.SlotStateChanged -= handler;
+            }
+
             _nodeMaintenanceHandlers.Remove(node, out var maintenanceHandler);
             var retirement = new RetiredGeneration(node, pool, maintenanceHandler);
             _retiringNodes.Add(node, retirement);
             retirements.Add(retirement);
         }
+
         return retirements;
     }
 
@@ -48,6 +67,7 @@ internal sealed partial class ClusterRouter
         // Start both drains before awaiting either. A borrowed blocking lease remains
         // owned until it returns; explicit client disposal can abort both kinds of work.
         var poolDrain = retirement.DedicatedPool is { } pool ? DrainPoolAsync(pool) : Task.CompletedTask;
+
         try
         {
             try
@@ -61,11 +81,14 @@ internal sealed partial class ClusterRouter
             finally
             {
                 if (retirement.MaintenanceHandler is { } handler)
+                {
                     node.MaintenanceNotificationReceived -= handler;
+                }
             }
 
             const int maximumRetrySeconds = 30;
             var retrySeconds = 1;
+
             while (node.HasPendingCorrectionFences && !_stopRetirement.IsCancellationRequested)
             {
                 try
@@ -82,12 +105,20 @@ internal sealed partial class ClusterRouter
                         if (_logger?.IsEnabled(LogLevel.Warning) == true)
                         {
                             int retained;
-                            lock (_nodesGate) retained = _retiringNodes.Count;
+
+                            lock (_nodesGate)
+                            {
+                                retained = _retiringNodes.Count;
+                            }
+
                             _logger.ClusterFenceUnavailable(node.Host, node.Port, retrySeconds, retained, error);
                         }
                     }
                     else
+                    {
                         _logger?.ClusterFenceRetry(node.Host, node.Port, retrySeconds, error);
+                    }
+
                     await Task.Delay(TimeSpan.FromSeconds(retrySeconds), _stopRetirement.Token).ConfigureAwait(false);
                     retrySeconds = Math.Min(maximumRetrySeconds, retrySeconds * 2);
                 }
@@ -107,10 +138,18 @@ internal sealed partial class ClusterRouter
             retirement.MarkCleanupFailed();
             // Join the pool started above even when the node path failed first.
             Exception failure = error;
-            try { await poolDrain.ConfigureAwait(false); }
+
+            try
+            {
+                await poolDrain.ConfigureAwait(false);
+            }
             catch (Exception poolError) { failure = new AggregateException(error, poolError); }
+
             if (!_stopRetirement.IsCancellationRequested)
+            {
                 _logger?.ClusterRetirementFailed(node.Host, node.Port, failure);
+            }
+
             retirement.Completion.TrySetException(failure);
             return;
         }
@@ -119,8 +158,14 @@ internal sealed partial class ClusterRouter
         {
             await poolDrain.ConfigureAwait(false);
             List<DedicatedConnectionPool> corrections;
-            lock (_nodesGate) corrections = DetachCorrectionPoolsLocked(node);
+
+            lock (_nodesGate)
+            {
+                corrections = DetachCorrectionPoolsLocked(node);
+            }
+
             await Task.WhenAll(corrections.Select(DrainPoolAsync)).ConfigureAwait(false);
+
             lock (_nodesGate)
             {
                 // Shutdown releases router ownership after abortive cleanup. Unacknowledged
@@ -128,13 +173,18 @@ internal sealed partial class ClusterRouter
                 _retiringNodes.Remove(node);
                 _identities.Forget(node);
             }
+
             retirement.Completion.TrySetResult();
         }
         catch (Exception error)
         {
             retirement.MarkCleanupFailed();
+
             if (!_stopRetirement.IsCancellationRequested)
+            {
                 _logger?.ClusterGenerationCleanupFailed(node.Host, node.Port, error);
+            }
+
             retirement.Completion.TrySetException(error);
         }
     }
@@ -147,7 +197,10 @@ internal sealed partial class ClusterRouter
         }
         catch (Exception error)
         {
-            try { _logger?.ClusterRetiredPoolCleanupFailed(error); }
+            try
+            {
+                _logger?.ClusterRetiredPoolCleanupFailed(error);
+            }
             catch { /* Background retirement remains observed even if logging fails. */ }
         }
     }
@@ -157,6 +210,9 @@ internal sealed partial class ClusterRouter
     /// <summary>Observes completion of currently detached generations; late correction reservations have separate lifetimes.</summary>
     internal Task WaitForRetirementAsync()
     {
-        lock (_nodesGate) return Task.WhenAll(_retiringNodes.Values.Select(value => value.Completion.Task));
+        lock (_nodesGate)
+        {
+            return Task.WhenAll(_retiringNodes.Values.Select(value => value.Completion.Task));
+        }
     }
 }

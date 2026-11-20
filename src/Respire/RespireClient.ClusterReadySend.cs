@@ -30,19 +30,30 @@ public sealed partial class RespireClient
         where TSend : struct, IClusterReadySend<TResult>
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+
         if (cluster.IsBacklogDraining(slot))
+        {
             return SendOnReadyClusterSlowAsync<TCommand, TResult, TSend>(operation, cluster, command, cancellationToken, sender, observation);
+        }
+
         RespireConnection? connection;
         // Acquisition throws only for cancellation or disposal, and both persist. The async
         // path acquires again, then observes and publishes that failure exactly as before.
         // Both checks run before TryGetReadyConnection, so a throwing call selected no
         // connection and advanced no round-robin; repeating it has no side effects.
-        try { connection = cluster.TryAcquireReadyConnection(slot, cancellationToken); }
+        try
+        {
+            connection = cluster.TryAcquireReadyConnection(slot, cancellationToken);
+        }
         catch (Exception) { connection = null; }
+
         if (connection is null || cluster.IsBacklogDraining(slot))
+        {
             return SendOnReadyClusterSlowAsync<TCommand, TResult, TSend>(operation, cluster, command, cancellationToken, sender, observation);
+        }
 
         ValueTask<TResult> response;
+
         try
         {
             response = sender.Send(connection, operation, in command, cancellationToken, observation,
@@ -60,20 +71,26 @@ public sealed partial class RespireClient
     }
 
     /// <summary>How a ready cluster send handles a failed reply.</summary>
-    internal enum ClusterReplyFailure { Publish, Unwrap, ResumeRetired, ResumeRejected }
+    internal enum ClusterReplyFailure
+    {
+        Publish,
+        Unwrap,
+        ResumeRetired,
+        ResumeRejected
+    }
 
     // The async slow path and ClusterReadyResponse share this decision and the resume below, so
     // their filter order cannot drift.
     private static ClusterReplyFailure ClassifyReadyClusterFailure(ClusterRouter cluster, Exception error, int? slot,
         CancellationToken cancellationToken) => error switch
-    {
-        // A caller converter can throw a Redis-shaped exception after success.
-        // It must never be mistaken for a rejected command and replayed.
-        ClusterConverterException => ClusterReplyFailure.Unwrap,
-        RespireConnectionRetiredException when cluster.CanRetryRetirement(0, cancellationToken) => ClusterReplyFailure.ResumeRetired,
-        RespireServerException rejection when ClusterRouter.CanRecover(rejection, slot) => ClusterReplyFailure.ResumeRejected,
-        _ => ClusterReplyFailure.Publish,
-    };
+        {
+            // A caller converter can throw a Redis-shaped exception after success.
+            // It must never be mistaken for a rejected command and replayed.
+            ClusterConverterException => ClusterReplyFailure.Unwrap,
+            RespireConnectionRetiredException when cluster.CanRetryRetirement(0, cancellationToken) => ClusterReplyFailure.ResumeRetired,
+            RespireServerException rejection when ClusterRouter.CanRecover(rejection, slot) => ClusterReplyFailure.ResumeRejected,
+            _ => ClusterReplyFailure.Publish,
+        };
 
     private ValueTask<RespValue> ResumeReadyClusterSendAsync<TCommand>(ClusterReplyFailure failure, Exception error,
         string operation, TCommand command, RespireConnection connection, CancellationToken cancellationToken,
@@ -102,6 +119,7 @@ public sealed partial class RespireClient
             var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
             var connection = cluster.ShouldBacklog(slot) ? null : cluster.TryAcquireReadyConnection(slot, cancellationToken);
             RespValue response;
+
             if (connection is null)
             {
                 // Discovery and connection initialization borrow the same conversion owner.
@@ -111,6 +129,7 @@ public sealed partial class RespireClient
             else
             {
                 var failure = ClusterReplyFailure.Publish;
+
                 try
                 {
                     return await sender.Send(connection, operation, in command, cancellationToken, observation,
@@ -124,12 +143,14 @@ public sealed partial class RespireClient
                         ExceptionDispatchInfo.Capture(error.InnerException!).Throw();
                         throw;
                     }
+
                     response = await ResumeReadyClusterSendAsync(failure, error, operation, command, connection,
                         cancellationToken, observation).ConfigureAwait(false);
                 }
             }
 
             var transferred = false;
+
             try
             {
                 var result = sender.Convert(in response);
@@ -138,7 +159,10 @@ public sealed partial class RespireClient
             }
             finally
             {
-                if (!transferred) response.Dispose();
+                if (!transferred)
+                {
+                    response.Dispose();
+                }
             }
         }
         catch (Exception error)
@@ -202,23 +226,42 @@ public sealed partial class RespireClient
         private void Observe(ValueTask<TResult> response)
         {
             _response = response;
-            if (response.IsCompleted) Consume();
-            else response.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(_complete);
+
+            if (response.IsCompleted)
+            {
+                Consume();
+            }
+            else
+            {
+                response.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(_complete);
+            }
         }
 
         private void Recover(ValueTask<RespValue> recovery)
         {
             _recovery = recovery;
             _recovering = true;
-            if (recovery.IsCompleted) Consume();
-            else recovery.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(_complete);
+
+            if (recovery.IsCompleted)
+            {
+                Consume();
+            }
+            else
+            {
+                recovery.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(_complete);
+            }
         }
 
         private void Complete()
         {
             if (_context is { } context)
+            {
                 ExecutionContext.Run(context, static state => ((ClusterReadyResponse<TCommand, TResult, TSend>)state!).Consume(), this);
-            else Consume();
+            }
+            else
+            {
+                Consume();
+            }
         }
 
         private void Consume()
@@ -227,14 +270,22 @@ public sealed partial class RespireClient
             Exception? failure = null;
             ValueTask<RespValue> recovery = default;
             var recover = false;
+
             try
             {
-                if (_recovering) result = ConvertRecovery();
+                if (_recovering)
+                {
+                    result = ConvertRecovery();
+                }
                 else
                 {
                     var response = _response;
                     _response = default;
-                    try { result = response.GetAwaiter().GetResult(); }
+
+                    try
+                    {
+                        result = response.GetAwaiter().GetResult();
+                    }
                     catch (Exception error)
                     {
                         switch (ClassifyReadyClusterFailure(_cluster!, error, _slot, _cancellationToken))
@@ -256,8 +307,14 @@ public sealed partial class RespireClient
             }
             catch (Exception error) { failure = error; }
 
-            if (recover) Recover(recovery);
-            else Publish(result, failure);
+            if (recover)
+            {
+                Recover(recovery);
+            }
+            else
+            {
+                Publish(result, failure);
+            }
         }
 
         private TResult ConvertRecovery()
@@ -267,6 +324,7 @@ public sealed partial class RespireClient
             _recovering = false;
             var response = recovery.GetAwaiter().GetResult();
             var transferred = false;
+
             try
             {
                 var result = _sender.Convert(in response);
@@ -275,13 +333,19 @@ public sealed partial class RespireClient
             }
             finally
             {
-                if (!transferred) response.Dispose();
+                if (!transferred)
+                {
+                    response.Dispose();
+                }
             }
         }
 
         private void Publish(TResult result, Exception? failure)
         {
-            if (failure is not null) _observation.Final(failure);
+            if (failure is not null)
+            {
+                _observation.Final(failure);
+            }
             // Publishing can run the caller inline, which can recycle and re-rent this instance.
             // Release every reference first, and never catch a caller's exception here.
             _client = null;
@@ -297,8 +361,15 @@ public sealed partial class RespireClient
             // Failures can originate in a caller's cancellation callback, so dispatch them as
             // PooledResponseSource does. Reset preserves this property across pooled reuse.
             _core.RunContinuationsAsynchronously = failure is not null;
-            if (failure is null) _core.SetResult(result);
-            else _core.SetException(failure);
+
+            if (failure is null)
+            {
+                _core.SetResult(result);
+            }
+            else
+            {
+                _core.SetException(failure);
+            }
         }
 
         TResult IValueTaskSource<TResult>.GetResult(short token)
@@ -306,8 +377,14 @@ public sealed partial class RespireClient
             // GetStatus validates the token first, so a stale token throws before the try and can
             // never return this source to the pool twice. A matched token's stored failure still recycles it.
             if (_core.GetStatus(token) == ValueTaskSourceStatus.Pending)
+            {
                 throw new InvalidOperationException("The cluster response has not completed.");
-            try { return _core.GetResult(token); }
+            }
+
+            try
+            {
+                return _core.GetResult(token);
+            }
             finally { Pool.Return(this); }
         }
 
@@ -319,6 +396,7 @@ public sealed partial class RespireClient
         private readonly struct PoolPolicy : IPooledObjectPolicy<ClusterReadyResponse<TCommand, TResult, TSend>>
         {
             public ClusterReadyResponse<TCommand, TResult, TSend> Create() => new();
+
             public bool TryReset(ClusterReadyResponse<TCommand, TResult, TSend> source)
             {
                 source._core.Reset();
@@ -333,8 +411,13 @@ public sealed partial class RespireClient
             in TCommand command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
             RespireTelemetry.OperationStart durationStarted)
             where TCommand : struct, IRespCommand;
+
         TResult Convert(in RespValue response);
-        bool TransferOwnership { get; }
+
+        bool TransferOwnership
+        {
+            get;
+        }
     }
 
     // Only this variant invokes caller code; built-in string/bytes senders need no converter exception wrapper.
@@ -342,6 +425,7 @@ public sealed partial class RespireClient
         TState state, ResponseConverter<TState, TResult> converter, bool transferOwnership) : IClusterReadySend<TResult>
     {
         public bool TransferOwnership => transferOwnership;
+
         public TResult Convert(in RespValue response) => converter(state, in response);
 
         public ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
@@ -351,7 +435,10 @@ public sealed partial class RespireClient
             => connection.SendConvertedAsync(in command, this,
                 static (ClusterConvertedReadySend<TState, TResult> sender, in RespValue response) =>
                 {
-                    try { return sender.Convert(in response); }
+                    try
+                    {
+                        return sender.Convert(in response);
+                    }
                     catch (Exception error) { throw new ClusterConverterException(error); }
                 }, transferOwnership, cancellationToken, operation, observation: observation, durationStarted: durationStarted);
     }

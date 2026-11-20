@@ -33,25 +33,41 @@ public sealed class JsonBackendTests(RedisServerFixture server)
             ("Index", typeof(IndexKindTests<string>), []),
             ("Hybrid", typeof(HybridSearchTests<string>), []),
         ];
+
         foreach (var (name, type, exclusions) in suites)
-        foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
         {
-            if (method.GetCustomAttribute<FactAttribute>() is null || exclusions.Contains(method.Name)) continue;
-            foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
+            foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
             {
-                if (method.GetParameters().Length == 0) yield return [protocol, name, method.Name, null!];
-                else
+                if (method.GetCustomAttribute<FactAttribute>() is null || exclusions.Contains(method.Name))
                 {
-                    // The only applicable upstream theories take IncludeVectors, with false and true rows.
-                    if (method.GetParameters() is not [{ ParameterType: var parameterType }] || parameterType != typeof(bool))
-                        throw new InvalidOperationException("New upstream theory requires an explicit adapter.");
-                    yield return [protocol, name, method.Name, false];
-                    yield return [protocol, name, method.Name, true];
+                    continue;
+                }
+
+                foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
+                {
+                    if (method.GetParameters().Length == 0)
+                    {
+                        yield return [protocol, name, method.Name, null!];
+                    }
+                    else
+                    {
+                        // The only applicable upstream theories take IncludeVectors, with false and true rows.
+                        if (method.GetParameters() is not [{ ParameterType: var parameterType }] || parameterType != typeof(bool))
+                        {
+                            throw new InvalidOperationException("New upstream theory requires an explicit adapter.");
+                        }
+
+                        yield return [protocol, name, method.Name, false];
+                        yield return [protocol, name, method.Name, true];
+                    }
                 }
             }
         }
+
         foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
+        {
             yield return [protocol, "Index", "Hnsw", null!];
+        }
     }
 
     [Theory]
@@ -61,34 +77,51 @@ public sealed class JsonBackendTests(RedisServerFixture server)
         var store = new JsonTestStore(server, protocol);
         VectorStoreFixture[] fixtures;
         object tests;
+
         switch (suite)
         {
             case "Basic":
                 var basic = new BasicFixture(store);
-                fixtures = [basic]; tests = new BasicTests(basic); break;
+                fixtures = [basic];
+                tests = new BasicTests(basic);
+                break;
             case "NoData":
                 var noData = new NoDataFixture(store);
-                fixtures = [noData]; tests = new NoDataTests(noData); break;
+                fixtures = [noData];
+                tests = new NoDataTests(noData);
+                break;
             case "MultiVector":
                 var multi = new MultiVectorFixture(store);
-                fixtures = [multi]; tests = new MultiVectorTests(multi); break;
+                fixtures = [multi];
+                tests = new MultiVectorTests(multi);
+                break;
             case "Filter":
                 var filter = new FilterFixture(store);
-                fixtures = [filter]; tests = new FilterTestsAdapter(filter); break;
+                fixtures = [filter];
+                tests = new FilterTestsAdapter(filter);
+                break;
             case "Distance":
                 var distance = new DistanceFixture(store);
-                fixtures = [distance]; tests = new DistanceTests(distance); break;
+                fixtures = [distance];
+                tests = new DistanceTests(distance);
+                break;
             case "Index":
                 var index = new IndexFixture(store);
-                fixtures = [index]; tests = new IndexTests(index); break;
+                fixtures = [index];
+                tests = new IndexTests(index);
+                break;
             case "Hybrid":
                 var text = new TextFixture(store);
                 var multiText = new MultiTextFixture(store);
-                fixtures = [text, multiText]; tests = new HybridTests(text, multiText); break;
-            default: throw new InvalidOperationException("Unknown official suite.");
+                fixtures = [text, multiText];
+                tests = new HybridTests(text, multiText);
+                break;
+            default:
+                throw new InvalidOperationException("Unknown official suite.");
         }
 
         var initialized = new List<VectorStoreFixture>();
+
         try
         {
             // A fresh fixture per row isolates writes and deletion contracts from other upstream methods.
@@ -98,7 +131,9 @@ public sealed class JsonBackendTests(RedisServerFixture server)
                 initialized.Add(fixture);
                 await fixture.InitializeAsync();
             }
+
             var method = tests.GetType().GetMethod(methodName)!;
+
             try
             {
                 await (Task)method.Invoke(tests, includeVectors.HasValue ? [includeVectors.Value] : null)!;
@@ -111,34 +146,72 @@ public sealed class JsonBackendTests(RedisServerFixture server)
         }
         finally
         {
-            foreach (var fixture in initialized.AsEnumerable().Reverse()) await fixture.DisposeAsync();
+            foreach (var fixture in initialized.AsEnumerable().Reverse())
+            {
+                await fixture.DisposeAsync();
+            }
         }
     }
 
-    private sealed class BasicFixture(TestStore store) : BasicModelTests<string>.Fixture { public override TestStore TestStore => store; }
-    private sealed class NoDataFixture(TestStore store) : NoDataModelTests<string>.Fixture { public override TestStore TestStore => store; }
-    private sealed class MultiVectorFixture(TestStore store) : MultiVectorModelTests<string>.Fixture { public override TestStore TestStore => store; }
+    private sealed class BasicFixture(TestStore store) : BasicModelTests<string>.Fixture
+    {
+        public override TestStore TestStore => store;
+    }
+
+    private sealed class NoDataFixture(TestStore store) : NoDataModelTests<string>.Fixture
+    {
+        public override TestStore TestStore => store;
+    }
+
+    private sealed class MultiVectorFixture(TestStore store) : MultiVectorModelTests<string>.Fixture
+    {
+        public override TestStore TestStore => store;
+    }
+
     private sealed class FilterFixture(TestStore store) : FilterTests<string>.Fixture
     {
         public override TestStore TestStore => store;
+
         public override bool TestDynamic => false;
     }
-    private sealed class DistanceFixture(TestStore store) : DistanceFunctionTests<string>.Fixture { public override TestStore TestStore => store; }
-    private sealed class IndexFixture(TestStore store) : IndexKindTests<string>.Fixture { public override TestStore TestStore => store; }
-    private sealed class TextFixture(TestStore store) : HybridSearchTests<string>.VectorAndStringFixture { public override TestStore TestStore => store; }
-    private sealed class MultiTextFixture(TestStore store) : HybridSearchTests<string>.MultiTextFixture { public override TestStore TestStore => store; }
+
+    private sealed class DistanceFixture(TestStore store) : DistanceFunctionTests<string>.Fixture
+    {
+        public override TestStore TestStore => store;
+    }
+
+    private sealed class IndexFixture(TestStore store) : IndexKindTests<string>.Fixture
+    {
+        public override TestStore TestStore => store;
+    }
+
+    private sealed class TextFixture(TestStore store) : HybridSearchTests<string>.VectorAndStringFixture
+    {
+        public override TestStore TestStore => store;
+    }
+
+    private sealed class MultiTextFixture(TestStore store) : HybridSearchTests<string>.MultiTextFixture
+    {
+        public override TestStore TestStore => store;
+    }
 
     // Private adapters keep inherited, unsupported facts out of discovery. Public wrapper rows name every method executed.
     private sealed class BasicTests(BasicModelTests<string>.Fixture fixture) : BasicModelTests<string>(fixture);
+
     private sealed class NoDataTests(NoDataModelTests<string>.Fixture fixture) : NoDataModelTests<string>(fixture);
+
     private sealed class MultiVectorTests(MultiVectorModelTests<string>.Fixture fixture) : MultiVectorModelTests<string>(fixture);
+
     private sealed class FilterTestsAdapter(FilterTests<string>.Fixture fixture) : FilterTests<string>(fixture);
+
     private sealed class DistanceTests(DistanceFunctionTests<string>.Fixture fixture) : DistanceFunctionTests<string>(fixture);
+
     private sealed class IndexTests(IndexKindTests<string>.Fixture fixture) : IndexKindTests<string>(fixture)
     {
         // Upstream exposes only a Flat fact. Reuse its complete protected contract for Redis HNSW.
         public Task Hnsw() => Test(Microsoft.Extensions.VectorData.IndexKind.Hnsw);
     }
+
     private sealed class HybridTests(HybridSearchTests<string>.VectorAndStringFixture text, HybridSearchTests<string>.MultiTextFixture multi)
         : HybridSearchTests<string>(text, multi);
 }

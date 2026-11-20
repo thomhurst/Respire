@@ -34,11 +34,13 @@ public class ConnectionFailureDiagnosticsTests
     public async Task ExhaustedSeedsNameEveryEndpointAndPreserveEveryFailure(bool defaultSeed)
     {
         var options = new RespireOptions { UseCluster = true };
+
         if (!defaultSeed)
         {
             options.Endpoints.Add(new("cache.example", 6380));
             options.Endpoints.Add(new("2001:db8::1", 6381));
         }
+
         var first = defaultSeed ? new RespireEndpoint("localhost") : options.Endpoints[0];
         var attempts = new List<RespireEndpoint>();
         var failures = new List<Exception>();
@@ -61,13 +63,18 @@ public class ConnectionFailureDiagnosticsTests
 
         RespireEndpoint[] expected = defaultSeed ? [first] : [.. options.Endpoints];
         await Assert.That(attempts.SequenceEqual(expected)).IsTrue();
+
         foreach (var endpoint in expected)
+        {
             await Assert.That(error!.Message).Contains(endpoint.ToString());
+        }
+
         await Assert.That(error!.Message).Contains("network reachability");
         await Assert.That(error.Endpoint).IsNull();
         var causes = error.InnerException is AggregateException aggregate
             ? aggregate.InnerExceptions.ToArray() : [error.InnerException!];
         await Assert.That(causes.Length).IsEqualTo(failures.Count);
+
         for (var index = 0; index < causes.Length; index++)
         {
             var cause = (RespireConnectionException)causes[index];

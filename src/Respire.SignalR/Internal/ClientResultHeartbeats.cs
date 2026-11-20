@@ -30,12 +30,18 @@ internal sealed class ClientResultHeartbeats(RespirePubSub bus, ClientResultsMan
 
     internal void Receive(string invocationId)
     {
-        if (_pending.TryGetValue(invocationId, out var pending)) pending.Receive();
+        if (_pending.TryGetValue(invocationId, out var pending))
+        {
+            pending.Receive();
+        }
     }
 
     private async Task SendAsync(Forwarded forwarded, CancellationToken token)
     {
-        try { await bus.PublishAsync(forwarded.Channel, forwarded.Payload, token).ConfigureAwait(false); }
+        try
+        {
+            await bus.PublishAsync(forwarded.Channel, forwarded.Payload, token).ConfigureAwait(false);
+        }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception error) { RedisLog.InternalMessageFailed(logger, error); }
     }
@@ -43,6 +49,7 @@ internal sealed class ClientResultHeartbeats(RespirePubSub bus, ClientResultsMan
     internal async Task RunAsync()
     {
         using var timer = new PeriodicTimer(Interval);
+
         try
         {
             while (await timer.WaitForNextTickAsync(bus.Stopping).ConfigureAwait(false))
@@ -50,12 +57,17 @@ internal sealed class ClientResultHeartbeats(RespirePubSub bus, ClientResultsMan
                 foreach (var (id, pending) in _pending)
                 {
                     if (pending.HasExpired())
+                    {
                         await results.TryCompleteResult(pending.ConnectionId,
                             CompletionMessage.WithError(id, "The connection's server is unavailable (client-result heartbeat lost)."))
                             .ConfigureAwait(false);
+                    }
                 }
 
-                if (_forwarded.IsEmpty) continue;
+                if (_forwarded.IsEmpty)
+                {
+                    continue;
+                }
                 // Bound publication so a broken route cannot stall checks for other servers.
                 using var sending = CancellationTokenSource.CreateLinkedTokenSource(bus.Stopping);
                 sending.CancelAfter(Interval);
@@ -72,13 +84,17 @@ internal sealed class ClientResultHeartbeats(RespirePubSub bus, ClientResultsMan
         private readonly Lock _gate = new();
         private long? _lastSeen;
         private bool _expired;
+
         internal string ConnectionId => connectionId;
 
         internal void Receive()
         {
             lock (_gate)
             {
-                if (!_expired) _lastSeen = Stopwatch.GetTimestamp();
+                if (!_expired)
+                {
+                    _lastSeen = Stopwatch.GetTimestamp();
+                }
             }
         }
 
@@ -86,7 +102,11 @@ internal sealed class ClientResultHeartbeats(RespirePubSub bus, ClientResultsMan
         {
             lock (_gate)
             {
-                if (_expired || _lastSeen is not { } lastSeen || Stopwatch.GetElapsedTime(lastSeen) < Timeout) return false;
+                if (_expired || _lastSeen is not { } lastSeen || Stopwatch.GetElapsedTime(lastSeen) < Timeout)
+                {
+                    return false;
+                }
+
                 return _expired = true;
             }
         }

@@ -22,7 +22,10 @@ public class ClientCacheComparisonBenchmarks
     private readonly string _value = "Hello, client cache!";
 
     [Params(false, true)]
-    public bool Missing { get; set; }
+    public bool Missing
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public async Task Setup()
@@ -30,6 +33,7 @@ public class ClientCacheComparisonBenchmarks
         var host = Environment.GetEnvironmentVariable("REDIS_HOST");
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort)
             ? configuredPort : 6379;
+
         if (string.IsNullOrEmpty(host))
         {
             _redisContainer = new RedisBuilder("redis:8.10").Build();
@@ -44,6 +48,7 @@ public class ClientCacheComparisonBenchmarks
         controlOptions.AllowAdmin = true; // INFO commandstats is a setup-only validation probe.
         _control = await ConnectionMultiplexer.ConnectAsync(controlOptions);
         _controlDb = _control.GetDatabase();
+
         if (!Missing)
         {
             await _controlDb.StringSetAsync(_key, _value);
@@ -84,19 +89,23 @@ public class ClientCacheComparisonBenchmarks
         var beforeControl = await GetServerGetCount();
         await _controlDb.StringGetAsync(_key);
         var beforeHits = await GetServerGetCount();
+
         if (beforeHits != beforeControl + 1)
         {
             throw new InvalidOperationException("GET counter control failed; use an isolated Redis instance.");
         }
+
         for (var i = 0; i < 8; i++)
         {
             var expected = Missing ? null : _value;
+
             if (await StackExchange_Get_ClientCacheHit() != expected ||
                 await Respire_Get_ClientCacheHit() != expected)
             {
                 throw new InvalidOperationException("Client-cache benchmark returned an unexpected value.");
             }
         }
+
         if (await GetServerGetCount() != beforeHits)
         {
             throw new InvalidOperationException("Client-cache benchmark reads reached Redis after priming.");
@@ -115,10 +124,12 @@ public class ClientCacheComparisonBenchmarks
         var info = (string?)await _controlDb.ExecuteAsync("INFO", "commandstats")
             ?? throw new InvalidOperationException("Redis did not return command statistics.");
         var line = info.Split('\n').SingleOrDefault(static line => line.StartsWith("cmdstat_get:", StringComparison.Ordinal));
+
         if (line is null)
         {
             return 0;
         }
+
         var calls = line["cmdstat_get:".Length..].Split(',').Single(static field => field.StartsWith("calls=", StringComparison.Ordinal));
         return long.Parse(calls["calls=".Length..], System.Globalization.CultureInfo.InvariantCulture);
     }
@@ -130,6 +141,7 @@ public class ClientCacheComparisonBenchmarks
         await _respire.DisposeAsync();
         await _stackExchange.DisposeAsync();
         await _control.DisposeAsync();
+
         if (_redisContainer is not null)
         {
             await _redisContainer.DisposeAsync();

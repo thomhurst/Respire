@@ -22,13 +22,19 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [endpoint],
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [endpoint],
             CircuitBreaker = new() { MinimumFailureCount = 1, OpenDuration = TimeSpan.FromMinutes(1) },
         });
 #pragma warning restore RESP010
         var admission = client.Core.Circuits!.Acquire(endpoint, default);
-        try { admission.Failed(new RespireConnectionException("Injected endpoint failure."), default); }
+
+        try
+        {
+            admission.Failed(new RespireConnectionException("Injected endpoint failure."), default);
+        }
         finally { admission.Dispose(); }
+
         using var capture = new Capture(serverPort: server.Port);
         await Assert.That(async () => await client.Strings.GetStringAsync("key")).Throws<RespireCircuitOpenException>();
         var item = capture.Items.Single();
@@ -47,13 +53,18 @@ public partial class ErrorMetricsTests
         // Nearest can retain the primary's endpoint and then pick a replica whose circuit is open.
         var primary = new RespireEndpoint("primary.example", 6380);
         var rejected = new RespireCircuitOpenException(new RespireEndpoint("replica.example", 6381), retryAfter: null);
+
         if (observed)
         {
             using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
             observation.UseEndpoint(primary);
             observation.Final(rejected);
         }
-        else RespireTelemetry.RecordError(rejected, internallyHandled: false, endpoint: primary);
+        else
+        {
+            RespireTelemetry.RecordError(rejected, internallyHandled: false, endpoint: primary);
+        }
+
         var item = capture.Items.Single();
         await Assert.That(item.Tags["server.address"]).IsEqualTo("replica.example");
         await Assert.That(item.Tags["server.port"]).IsEqualTo(6381);
@@ -63,7 +74,7 @@ public partial class ErrorMetricsTests
     public async Task ClusterWideFireAndForgetNamesTheRejectingMaster()
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = RespireMetricGroups.Resiliency | RespireMetricGroups.Command });
+        { Groups = RespireMetricGroups.Resiliency | RespireMetricGroups.Command });
         await using var first = new FakeRespServer(16, FakeRespServer.OkReply);
         await using var second = new FakeRespServer(16, FakeRespServer.OkReply);
         var topology = Encoding.ASCII.GetBytes(
@@ -74,12 +85,21 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true, ThreadPoolMonitoring = false,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = true,
+            ThreadPoolMonitoring = false,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", seed.Port)],
             TestingStreamFactory = async (host, port, cancellationToken) =>
             {
-                if (port == Volatile.Read(ref refusedPort)) throw new SocketException((int)SocketError.ConnectionRefused);
+                if (port == Volatile.Read(ref refusedPort))
+                {
+                    throw new SocketException((int)SocketError.ConnectionRefused);
+                }
+
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, cancellationToken);
@@ -102,7 +122,11 @@ public partial class ErrorMetricsTests
             ActivityStarted = activity =>
             {
                 if (activity.GetTagItem("db.operation.name")?.ToString() != "SCRIPT"
-                    || (int)activity.GetTagItem("server.port")! != rejecting.Port || retirement is not null) return;
+                    || (int)activity.GetTagItem("server.port")! != rejecting.Port || retirement is not null)
+                {
+                    return;
+                }
+
                 Volatile.Write(ref refusedPort, rejecting.Port);
                 retirement = rejecting.RetireAsync();
             },
@@ -110,18 +134,28 @@ public partial class ErrorMetricsTests
         ActivitySource.AddActivityListener(listener);
         using var capture = new Capture();
         await Assert.That(async () => await client.ExecuteFireAndForgetAsync("SCRIPT", ["FLUSH"])).Throws<Exception>();
-        if (retirement is not null) await retirement;
+
+        if (retirement is not null)
+        {
+            await retirement;
+        }
         // Fire-and-forget completes once written, so the healthy server can parse it afterwards.
         using var received = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!healthy.ReceivedCommands.Contains("SCRIPT FLUSH")) await Task.Delay(1, received.Token);
+
+        while (!healthy.ReceivedCommands.Contains("SCRIPT FLUSH"))
+        {
+            await Task.Delay(1, received.Token);
+        }
+
         var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
         await Assert.That(final.Tags["server.port"]).IsEqualTo(rejecting.Port);
     }
+
     [Test]
     public async Task ClusterWideFireAndForgetCancellationNamesNoOtherMaster()
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = RespireMetricGroups.Resiliency | RespireMetricGroups.Command });
+        { Groups = RespireMetricGroups.Resiliency | RespireMetricGroups.Command });
         await using var first = new FakeRespServer(16, FakeRespServer.OkReply);
         await using var second = new FakeRespServer(16, FakeRespServer.OkReply);
         var topology = Encoding.ASCII.GetBytes(
@@ -131,8 +165,12 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true, ThreadPoolMonitoring = false,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = true,
+            ThreadPoolMonitoring = false,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
@@ -143,7 +181,10 @@ public partial class ErrorMetricsTests
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
             ActivityStarted = activity =>
             {
-                if (activity.GetTagItem("db.operation.name")?.ToString() == "SCRIPT") cancellation.Cancel();
+                if (activity.GetTagItem("db.operation.name")?.ToString() == "SCRIPT")
+                {
+                    cancellation.Cancel();
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -167,11 +208,15 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
-            Endpoints = [new("127.0.0.1", port)], ConnectTimeout = TimeSpan.FromSeconds(2),
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", port)],
+            ConnectTimeout = TimeSpan.FromSeconds(2),
         });
 #pragma warning restore RESP010
         using var capture = new Capture();
+
         if (route == "transaction")
         {
             await using var transaction = client.CreateTransaction();
@@ -191,9 +236,14 @@ public partial class ErrorMetricsTests
             await Assert.That(() => first.Result).Throws<Exception>();
             await Assert.That(() => second.Result).Throws<Exception>();
         }
+
         var finals = capture.Items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
         await Assert.That(finals.Length).IsGreaterThanOrEqualTo(2);
-        foreach (var item in finals) await Assert.That(item.Tags["server.port"]).IsEqualTo(port);
+
+        foreach (var item in finals)
+        {
+            await Assert.That(item.Tags["server.port"]).IsEqualTo(port);
+        }
     }
 
     [Test]
@@ -212,8 +262,16 @@ public partial class ErrorMetricsTests
         var command = new Commands.RawCommand(FakeRespServer.PingFrame);
         await Assert.That(async () =>
         {
-            if (route == "send") using (await connection.SendAsync(command, cancelled.Token, observation: observation)) { }
-            else _ = await connection.EnqueuePinnedAsync(command, cancelled.Token, "PING", observation);
+            if (route == "send")
+            {
+                using (await connection.SendAsync(command, cancelled.Token, observation: observation))
+                {
+                }
+            }
+            else
+            {
+                _ = await connection.EnqueuePinnedAsync(command, cancelled.Token, "PING", observation);
+            }
         }).Throws<Exception>();
         await Assert.That(observation.Endpoint).IsNull();
     }
@@ -229,7 +287,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            MaxInflightCommands = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -272,7 +332,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            MaxInflightCommands = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -326,7 +388,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -389,8 +453,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "primary",
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "primary",
             ConnectTimeout = TimeSpan.FromSeconds(2),
         });
 #pragma warning restore RESP010
@@ -416,8 +483,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null, observation: default);
@@ -433,8 +503,14 @@ public partial class ErrorMetricsTests
         using var capture = new Capture();
         await Assert.That(async () =>
         {
-            if (route == "function") await client.Functions.FlushAsync();
-            else await client.Scripts.FlushAsync();
+            if (route == "function")
+            {
+                await client.Functions.FlushAsync();
+            }
+            else
+            {
+                await client.Scripts.FlushAsync();
+            }
         }).Throws<RespireServerException>();
         var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
         await Assert.That(final.Tags["server.port"]).IsEqualTo(failingPort);
@@ -461,8 +537,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         using var capture = new Capture();
@@ -487,7 +566,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         await using var transaction = await client.CreateTransactionAsync(["balance"]);
@@ -509,7 +590,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         await using var transaction = await client.CreateTransactionAsync(["balance"]);
@@ -549,8 +632,10 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
-            Endpoints = [new("127.0.0.1", server.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
 #pragma warning restore RESP010
         // Models a failover: the shared pin records a primary multiplexer that has since been replaced.
@@ -574,8 +659,10 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
-            Endpoints = [new("127.0.0.1", server.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
 #pragma warning restore RESP010
         await using var replaced = RespireConnectionMultiplexer.Create("127.0.0.1", 1);
@@ -601,15 +688,22 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
-            Endpoints = [new("127.0.0.1", server.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
 #pragma warning restore RESP010
         var router = client.Core.ReadRouter;
         // An entry the router no longer tracks models a replica removed from the read topology.
         await using var removed = new ReadEndpointRouter.Entry(new("removed.example", 6390), client.Core, router);
         var affinity = new ReadAffinity { Replica = removed };
-        if (shared) router.Cursors.PinShared(RespireReadFrom.Replica, affinity);
+
+        if (shared)
+        {
+            router.Cursors.PinShared(RespireReadFrom.Replica, affinity);
+        }
+
         using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         await Assert.That(async () => await router.GetCursorConnectionAsync(
                 RespireReadFrom.Replica, shared ? null : affinity, isContinuation: true, CancellationToken.None, observation))
@@ -628,8 +722,10 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
-            Endpoints = [new("127.0.0.1", server.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
 #pragma warning restore RESP010
         var router = client.Core.ReadRouter;
@@ -657,8 +753,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
-            CommandTimeout = TimeSpan.FromMilliseconds(300), Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            MaxInflightCommands = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(300),
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         // The unanswered GET fills the only in-flight slot until the next command's deadline expires.
@@ -682,7 +781,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            MaxInflightCommands = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -704,7 +805,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            MaxInflightCommands = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -730,7 +833,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            MaxInflightCommands = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -756,7 +861,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         await using var transaction = await client.CreateTransactionAsync(["balance"]);
@@ -786,7 +893,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Endpoints = [new("127.0.0.1", seed.Port)],
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         await using var stream = new ResetFailingStream([1, 2, 3]);
@@ -820,8 +929,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         using var batch = client.WithReadFrom(RespireReadFrom.Replica).CreateBatch();
@@ -849,9 +961,11 @@ public partial class ErrorMetricsTests
             "*1\r\n*8\r\n+library_name\r\n$6\r\nsample\r\n+engine\r\n$3\r\nLUA\r\n" +
             "+functions\r\n*1\r\n*6\r\n+name\r\n$5\r\nother\r\n+description\r\n$-1\r\n" +
             $"+flags\r\n*0\r\n+library_code\r\n${Encoding.UTF8.GetByteCount(source)}\r\n{source}\r\n");
+
         byte[]? Reply(string command) => command.StartsWith("FCALL ", StringComparison.Ordinal)
             ? "-ERR Function not found\r\n"u8.ToArray()
             : command.StartsWith("FUNCTION LIST", StringComparison.Ordinal) ? library : null;
+
         await using var first = new FakeRespServer(16, FakeRespServer.OkReply) { ReplyOverride = (_, command) => Reply(command) };
         await using var second = new FakeRespServer(16, FakeRespServer.OkReply) { ReplyOverride = (_, command) => Reply(command) };
         var topology = Encoding.ASCII.GetBytes(
@@ -861,8 +975,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var owner = ClusterHash.GetSlot(key) <= 8191 ? first : second;
@@ -888,8 +1005,12 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
-            ClusterTopologyRefreshInterval = null, ConnectTimeout = TimeSpan.FromSeconds(2),
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            ClusterTopologyRefreshInterval = null,
+            ConnectTimeout = TimeSpan.FromSeconds(2),
             Endpoints = [new("127.0.0.1", port)],
         });
 #pragma warning restore RESP010
@@ -897,8 +1018,16 @@ public partial class ErrorMetricsTests
         await Assert.That(async () =>
         {
             // SCRIPT FLUSH discovers every master before it sends anything.
-            if (clusterWide) using (await client.ExecuteAsync("SCRIPT", ["FLUSH"])) { }
-            else await client.Strings.GetStringAsync("key");
+            if (clusterWide)
+            {
+                using (await client.ExecuteAsync("SCRIPT", ["FLUSH"]))
+                {
+                }
+            }
+            else
+            {
+                await client.Strings.GetStringAsync("key");
+            }
         }).Throws<Exception>();
         var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
         await Assert.That(final.Tags["server.address"]).IsEqualTo("127.0.0.1");
@@ -921,7 +1050,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         using var batch = client.CreateBatch();
@@ -930,8 +1061,14 @@ public partial class ErrorMetricsTests
         // Every queued command succeeds, so only the final publication reports the acknowledgement failure.
         await Assert.That(async () =>
         {
-            if (aof) await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
-            else await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero);
+            if (aof)
+            {
+                await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
+            }
+            else
+            {
+                await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero);
+            }
         }).Throws<Exception>();
         await Assert.That(queued.Result).IsTrue();
         var item = capture.Items.Single();
@@ -957,7 +1094,8 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         using var capture = new Capture(serverPort: server.Port);
@@ -967,9 +1105,17 @@ public partial class ErrorMetricsTests
         {
             switch (surface)
             {
-                case "string": await client.Strings.GetStringAsync("key"); break;
-                case "bytes": await client.Strings.GetBytesAsync("key"); break;
-                default: using (await client.ExecuteAsync("GET", ["key"])) break;
+                case "string":
+                    await client.Strings.GetStringAsync("key");
+                    break;
+                case "bytes":
+                    await client.Strings.GetBytesAsync("key");
+                    break;
+                default:
+                    using (await client.ExecuteAsync("GET", ["key"]))
+                    {
+                        break;
+                    }
             }
         }).Throws<RespireServerException>();
         var item = capture.Items.Single();
@@ -987,15 +1133,28 @@ public partial class ErrorMetricsTests
         var dispatch = ownerKind == "dispatch" ? DispatchResponseSource<int>.Start() : null;
         var pending = ownerKind == "deferred" ? new RespirePending<int>() : null;
         var observation = dispatch?.Observation ?? pending?.Observation ?? RespireTelemetry.ErrorObservation.Rent(force: true);
+
         try
         {
             observation.UseEndpoint(new("first.example", 6380));
             observation.Handled(new RespireServerException("MOVED 42 second.example:6381"));
             observation.UseEndpoint(new("second.example", 6381));
             var failure = new IOException("connection lost");
-            if (dispatch is not null) dispatch.Fail(failure);
-            else if (pending is not null) { pending.Fail(failure); pending.ReportError(); }
-            else observation.Final(failure);
+
+            if (dispatch is not null)
+            {
+                dispatch.Fail(failure);
+            }
+            else if (pending is not null)
+            {
+                pending.Fail(failure);
+                pending.ReportError();
+            }
+            else
+            {
+                observation.Final(failure);
+            }
+
             var items = capture.Items.ToArray();
             await Assert.That(items.Length).IsEqualTo(2);
             await Assert.That(items[0].Tags["server.address"]).IsEqualTo("first.example");
@@ -1014,6 +1173,7 @@ public partial class ErrorMetricsTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         using var capture = new Capture();
+
         if (dispatchOwner)
         {
             var first = DispatchResponseSource<int>.Start();
@@ -1029,6 +1189,7 @@ public partial class ErrorMetricsTests
             using var next = RespireTelemetry.ErrorObservation.Rent(force: true);
             next.Final(new OperationCanceledException());
         }
+
         var item = capture.Items.Single();
         await Assert.That(item.Tags.ContainsKey("server.address")).IsFalse();
         await Assert.That(item.Tags.ContainsKey("server.port")).IsFalse();
@@ -1044,6 +1205,7 @@ public partial class ErrorMetricsTests
         var dispatch = ownerKind == "dispatch" ? DispatchResponseSource<int>.Start() : null;
         var pending = ownerKind == "deferred" ? new RespirePending<int>() : null;
         var observation = dispatch?.Observation ?? pending?.Observation ?? RespireTelemetry.ErrorObservation.Rent(force: true);
+
         try
         {
             observation.UseEndpoint(new("last.example", 6399));
@@ -1051,16 +1213,27 @@ public partial class ErrorMetricsTests
                 index % 2 == 0 ? new IOException() : new RespireServerException("WRONGTYPE private-key"),
                 index % 2 == 0 ? new("network.example", 6380) : new("server.example", 6381)));
             await Assert.That(capture.Items.Count).IsEqualTo(64);
+
             foreach (var item in capture.Items)
+            {
                 await Assert.That(item.Tags["server.port"]).IsEqualTo(
                     Equals(item.Tags["redis.client.errors.category"], "network") ? 6380 : 6381);
+            }
             // An older borrower's late report must not replace the last selected endpoint.
             await Assert.That(observation.Endpoint).IsEqualTo(new RespireEndpoint("last.example", 6399));
         }
         finally
         {
-            if (dispatch is not null) dispatch.CompleteInternal();
-            else if (pending is not null) { pending.Fail(new IOException()); pending.ReportError(); }
+            if (dispatch is not null)
+            {
+                dispatch.CompleteInternal();
+            }
+            else if (pending is not null)
+            {
+                pending.Fail(new IOException());
+                pending.ReportError();
+            }
+
             observation.Dispose();
         }
     }

@@ -33,7 +33,12 @@ public static class RespireOutputCacheServiceCollectionExtensions
             .Validate(options => options.HasValidTaggingMode, "TaggingMode must be a defined value.")
             .Validate(options => options.HasValidGenerationNamespace, "GenerationAware tagging requires a nonempty Redis hash tag in InstanceName.")
             .ValidateOnStart();
-        if (configure is not null) services.Configure(configure);
+
+        if (configure is not null)
+        {
+            services.Configure(configure);
+        }
+
         services.TryAddSingleton(provider => new RespireOutputCacheStore(
             clientFactory(provider), provider.GetRequiredService<IOptions<RespireOutputCacheOptions>>().Value,
             provider.GetRequiredService<ILogger<RespireOutputCacheStore>>()));
@@ -52,9 +57,13 @@ internal sealed class OutputCacheCleanupService(RespireOutputCacheStore store,
     {
         var settings = options.Value; // Resolve and validate before constructing the timer.
         using var timer = new PeriodicTimer(settings.CleanupInterval, settings.TimeProvider);
+
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
-            try { await store.CollectExpiredTagsAsync(stoppingToken).ConfigureAwait(false); }
+            try
+            {
+                await store.CollectExpiredTagsAsync(stoppingToken).ConfigureAwait(false);
+            }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
             catch (Exception error) { logger.OutputCacheTagCleanupFailed(error); }
         }

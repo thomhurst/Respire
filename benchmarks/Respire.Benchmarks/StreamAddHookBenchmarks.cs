@@ -14,10 +14,16 @@ public class StreamAddHookBenchmarks
     private readonly (string Field, RespireValue Value)[] _fields = [("field", "value")];
 
     [Params("Ordinary", "Idempotent", "Fallback")]
-    public string Route { get; set; } = "Ordinary";
+    public string Route
+    {
+        get; set;
+    } = "Ordinary";
 
     [Params(false, true)]
-    public bool Hooks { get; set; }
+    public bool Hooks
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public async Task Setup()
@@ -27,7 +33,9 @@ public class StreamAddHookBenchmarks
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(_server.Hostname, _server.GetMappedPublicPort(6379))],
-            Connections = 1, Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
+            Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            ThreadPoolMonitoring = false,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             CommandHook = Hooks ? new Observer() : null,
             RetryPolicy = Route == "Ordinary" ? null : new()
@@ -36,7 +44,11 @@ public class StreamAddHookBenchmarks
                 MaxCommandRetryCategory = RespireCommandRetryCategory.WriteChecked,
             },
         });
-        if (await Append() is null) throw new InvalidOperationException("XADD did not return an ID.");
+
+        if (await Append() is null)
+        {
+            throw new InvalidOperationException("XADD did not return an ID.");
+        }
     }
 
     [Benchmark]
@@ -45,14 +57,24 @@ public class StreamAddHookBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_client is not null) await _client.DisposeAsync();
-        if (_server is not null) await _server.DisposeAsync();
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+        }
+
+        if (_server is not null)
+        {
+            await _server.DisposeAsync();
+        }
     }
 
     private sealed class Observer : RespireCommandHook
     {
         public override object? OnExecuting(RespireCommandContext context) => null;
+
         public override void OnCompleted(RespireCommandContext context, object? state,
-            RespireCommandOutcome outcome, Exception? error) { }
+            RespireCommandOutcome outcome, Exception? error)
+        {
+        }
     }
 }

@@ -72,26 +72,33 @@ public class DispatchAdmissionArchitectureTests
     public async Task ReadOnlyDeclarationsStayInAuditedFactories(bool net11)
     {
         var calls = 0;
+
         foreach (var source in TestInspectionSource.Library(net11).Trees)
         {
             var root = source.Tree.GetRoot();
+
             foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>()
                 .Where(IsReadOnlyFactory))
             {
                 calls++;
                 await Assert.That(IsAuditedFactoryCaller(source.Path, invocation)).IsTrue();
             }
+
             if (source.Path == "LibrarySource/Respire/Commands/ReadOnlyCommand.cs")
             {
                 var owner = root.DescendantNodes().OfType<StructDeclarationSyntax>()
                     .Single(type => type.Identifier.ValueText == "ReadOnlyCommand");
                 var constructor = owner.Members.OfType<ConstructorDeclarationSyntax>().Single();
                 await Assert.That(constructor.Modifiers.Any(token => token.Text == "private")).IsTrue();
+
                 foreach (var factory in owner.Members.OfType<MethodDeclarationSyntax>()
                     .Where(method => method.Identifier.ValueText is "ForAuditedScript" or "ForNodeRead"))
+                {
                     await Assert.That(factory.ParameterList.Parameters.All(parameter => parameter.Default is null)).IsTrue();
+                }
             }
         }
+
         await Assert.That(calls).IsEqualTo(4);
     }
 
@@ -121,17 +128,35 @@ public class DispatchAdmissionArchitectureTests
             invocation.Expression is MemberAccessExpressionSyntax access && IsInflightReceiver(access.Expression)
             && access.Name.Identifier.ValueText is "TryEnqueue" or "TryEnqueueDiscard").ToArray();
         var publishers = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var publication in publications)
         {
             var method = publication.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault();
-            if (method is null || !methods.Contains(method)) errors.Add("Native publication outside a reviewed method.");
-            else publishers.Add(method.Identifier.ValueText);
+
+            if (method is null || !methods.Contains(method))
+            {
+                errors.Add("Native publication outside a reviewed method.");
+            }
+            else
+            {
+                publishers.Add(method.Identifier.ValueText);
+            }
         }
-        if (!publishers.SetEquals(PublicationMethods)) errors.Add("Native publication inventory changed.");
+
+        if (!publishers.SetEquals(PublicationMethods))
+        {
+            errors.Add("Native publication inventory changed.");
+        }
+
         foreach (var driver in new[] { "TryEnqueue", "SendStreamedSetAsync" })
         {
             var drivers = methods.Where(item => item.Identifier.ValueText == driver).ToArray();
-            if (drivers.Length == 0) errors.Add($"Missing admission driver {driver}.");
+
+            if (drivers.Length == 0)
+            {
+                errors.Add($"Missing admission driver {driver}.");
+            }
+
             foreach (var method in drivers)
             {
                 // The short TryEnqueue overload only forwards to the guarded overload. Any
@@ -139,26 +164,40 @@ public class DispatchAdmissionArchitectureTests
                 if (driver == "TryEnqueue" && method.ExpressionBody?.Expression is InvocationExpressionSyntax forward
                     && InvokedName(forward) == driver
                     && !forward.DescendantNodes().OfType<InvocationExpressionSyntax>().Any())
+                {
                     continue;
+                }
+
                 var calls = method.DescendantNodes().OfType<InvocationExpressionSyntax>().ToArray();
                 var guard = calls.Where(call => InvokedName(call) == "ValidateDispatchAdmission")
                     .Select(call => call.SpanStart).DefaultIfEmpty(int.MaxValue).Min();
                 var dispatch = calls.Where(call => InvokedName(call) is "Write" or "TryEnqueue" or "TryEnqueueDiscard"
                     or "TryEnqueueDirect" or "TryEnqueueGathered" or "AppendStreamingPreludeAsync" or "AppendStreamingStart" or "AppendStreamingEnd")
                     .Select(call => call.SpanStart).DefaultIfEmpty(int.MaxValue).Min();
-                if (guard == int.MaxValue || guard >= dispatch) errors.Add($"Admission does not precede dispatch in {driver}.");
+
+                if (guard == int.MaxValue || guard >= dispatch)
+                {
+                    errors.Add($"Admission does not precede dispatch in {driver}.");
+                }
             }
         }
+
         foreach (var owner in owners)
+        {
             foreach (var reference in owner.DescendantNodes().OfType<SimpleNameSyntax>()
                 .Where(name => HelperCallers.ContainsKey(name.Identifier.ValueText)))
             {
                 var caller = reference.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault()?.Identifier.ValueText;
                 var invocation = reference.Parent as InvocationExpressionSyntax
                     ?? reference.Parent?.Parent as InvocationExpressionSyntax;
+
                 if (invocation is null || caller is null || !HelperCallers[reference.Identifier.ValueText].Contains(caller, StringComparer.Ordinal))
+                {
                     errors.Add($"Unreviewed publication helper reference in {caller ?? "non-method member"}.");
+                }
             }
+        }
+
         return errors;
     }
 

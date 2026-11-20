@@ -18,7 +18,9 @@ public class ClusterShardedPubSubIntegrationTests(SharedRedisClusterFixture fixt
         var cluster = fixture.Cluster;
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Protocol = (RespireProtocol)protocol, Connections = 1,
+            UseCluster = true,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
             Endpoints = [new(cluster.Host, cluster.Port(0))],
         });
         byte[] prefix = [.. Encoding.UTF8.GetBytes($"{{{fixture.ReserveSlot(node: 0)}}}:"), 255, 0, (byte)'*'];
@@ -54,7 +56,9 @@ public class ClusterShardedPubSubIntegrationTests(SharedRedisClusterFixture fixt
         var cluster = fixture.Cluster;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Protocol = (RespireProtocol)protocol, Connections = 1,
+            UseCluster = true,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
             Endpoints = { new RespireEndpoint(cluster.Host, cluster.Port(0)) },
         });
         // Hash tags keep the binary suffix in the routed channel while selecting three owners.
@@ -82,13 +86,21 @@ public class ClusterShardedPubSubIntegrationTests(SharedRedisClusterFixture fixt
         subscription.IsDisposed.Should().BeFalse();
         await subscription.DisposeAsync();
         (await subscription.Completion).Should().Be(RespireSubscriptionEndReason.Disposed);
-        foreach (var channel in channels) (await client.PublishShardedAsync(channel, "unsubscribed", deadline.Token)).Should().Be(0);
+
+        foreach (var channel in channels)
+        {
+            (await client.PublishShardedAsync(channel, "unsubscribed", deadline.Token)).Should().Be(0);
+        }
 
         async Task PublishAndReadAll(string text)
         {
             foreach (var channel in channels)
+            {
                 (await client.PublishShardedAsync(channel, Encoding.UTF8.GetBytes(text), deadline.Token)).Should().Be(1);
+            }
+
             var received = new HashSet<RespireChannel>();
+
             for (var i = 0; i < channels.Length; i++)
             {
                 (await reader.MoveNextAsync()).Should().BeTrue();
@@ -96,6 +108,7 @@ public class ClusterShardedPubSubIntegrationTests(SharedRedisClusterFixture fixt
                 reader.Current.Text.Should().Be(text);
                 received.Add(reader.Current.Channel);
             }
+
             received.Should().BeEquivalentTo(channels);
         }
     }

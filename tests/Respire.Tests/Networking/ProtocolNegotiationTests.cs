@@ -38,7 +38,10 @@ public class ProtocolNegotiationTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Username = "user", Password = "secret", Database = 2, ClientName = "fallback",
+            Username = "user",
+            Password = "secret",
+            Database = 2,
+            ClientName = "fallback",
         });
 #pragma warning restore RESP010
         await client.PingAsync();
@@ -67,6 +70,7 @@ public class ProtocolNegotiationTests
         await using var client = await RespireClient.ConnectAsync(Options(server) with { Connections = 2 });
 #pragma warning restore RESP010
         var shapes = new HashSet<Respire.Protocol.RespireDataType>();
+
         for (var index = 0; index < 4; index++)
         {
             using var raw = await client.ExecuteAsync((RespireCommand)"HGETALL", ["hash"]);
@@ -75,12 +79,17 @@ public class ProtocolNegotiationTests
             await Assert.That(raw[0].AsString()).IsEqualTo("a");
             await Assert.That(raw[1].AsString()).IsEqualTo("1");
         }
+
         await Assert.That(shapes).IsEquivalentTo([Respire.Protocol.RespireDataType.Map, Respire.Protocol.RespireDataType.Array]);
+
         for (var index = 0; index < 4; index++)
+        {
             // The scripted peer always returns one field; HGETALL exercises both RESP2 and RESP3 shapes.
 #pragma warning disable RESP011
             await Assert.That(await client.Hashes.GetAllAsync("hash"))
                 .IsEquivalentTo(new Dictionary<string, string> { ["a"] = "1" });
+        }
+
 #pragma warning restore RESP011
         await Assert.That(server.ReceivedCommands.Count(command => command == "HELLO 3")).IsEqualTo(2);
         await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(2);
@@ -115,7 +124,9 @@ public class ProtocolNegotiationTests
         await using var server = new FakeRespServer(Encoding.ASCII.GetBytes(reply));
         await Assert.That(async () => await RespireClient.ConnectAsync(Options(server) with
         {
-            Password = "secret", Database = 2, ClientName = "not initialized",
+            Password = "secret",
+            Database = 2,
+            ClientName = "not initialized",
         })).Throws<RespireException>();
         await server.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["HELLO 3 AUTH default secret"], CollectionOrdering.Matching);
@@ -140,20 +151,26 @@ public class ProtocolNegotiationTests
     {
         await using var server = new FakeRespServer(Encoding.ASCII.GetBytes("-" + error + "\r\n"));
         RespireConnectionException? failure = null;
+
         try
         {
             await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
                 new RespireConnectionOptions { Protocol = protocol, EnableClientTracking = tracking });
         }
         catch (RespireConnectionException exception) { failure = exception; }
+
         await Assert.That(failure).IsNotNull();
         await Assert.That(failure!.Message).Contains($"HELLO failed for 127.0.0.1:{server.Port}: {error}");
         await Assert.That(failure.Message.Contains("protocol=2", StringComparison.Ordinal)).IsEqualTo(expectHint);
         await Assert.That(failure.InnerException).IsTypeOf<RespireServerException>();
         await Assert.That(failure.InnerException!.Message).Contains(error);
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("HELLO 3");
+
         if (!tracking)
+        {
             await Assert.That(server.ReceivedCommands).IsEquivalentTo(["HELLO 3"], CollectionOrdering.Matching);
+        }
+
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("AUTH "))).IsFalse();
     }
 
@@ -202,7 +219,11 @@ public class ProtocolNegotiationTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
         {
-            SuppressReply = command => { received.TrySetResult(); return true; },
+            SuppressReply = command =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         using var cancellation = new CancellationTokenSource();
         var connecting = RespireClient.ConnectAsync(Options(server), cancellation.Token).AsTask();
@@ -228,7 +249,12 @@ public class ProtocolNegotiationTests
         {
             CommandTimeout = TimeSpan.FromMilliseconds(500),
         })).Throws<RespireException>();
-        if (!disconnect) await server.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
+
+        if (!disconnect)
+        {
+            await server.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["HELLO 3"], CollectionOrdering.Matching);
     }
 
@@ -246,6 +272,7 @@ public class ProtocolNegotiationTests
 
     private static RespireOptions Options(FakeRespServer server) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+        Endpoints = [new("127.0.0.1", server.Port)],
+        Connections = 1,
     };
 }

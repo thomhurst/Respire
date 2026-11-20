@@ -8,13 +8,13 @@ public class PackageFilesRemovalModule : Module
     protected override Task ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Cleaning up old package files...");
-        
+
         var packagesDirectory = new DirectoryInfo("../artifacts/packages");
-        
+
         if (packagesDirectory.Exists)
         {
             var oldFiles = packagesDirectory.GetFiles("*.nupkg", SearchOption.AllDirectories);
-            
+
             foreach (var file in oldFiles)
             {
                 try
@@ -27,7 +27,7 @@ public class PackageFilesRemovalModule : Module
                     context.Logger.LogWarning(ex, "Failed to delete old package: {FileName}", file.Name);
                 }
             }
-            
+
             context.Logger.LogInformation("Cleaned up {Count} old package files", oldFiles.Length);
         }
         else
@@ -36,7 +36,7 @@ public class PackageFilesRemovalModule : Module
             packagesDirectory.Create();
             context.Logger.LogInformation("Created packages directory: {Directory}", packagesDirectory.FullName);
         }
-        
+
         return Task.CompletedTask;
     }
 }

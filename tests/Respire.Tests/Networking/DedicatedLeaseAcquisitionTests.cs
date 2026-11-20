@@ -40,11 +40,18 @@ public class DedicatedLeaseAcquisitionTests
         var state = new RouteState(replacement);
         var pending = RentAsync(original, state).AsTask();
         Task? retirement = null;
+
         try
         {
             await entered.Task.WaitAsync(Limit);
-            if (retirePool) retirement = original.RetireAsync().AsTask();
+
+            if (retirePool)
+            {
+                retirement = original.RetireAsync().AsTask();
+            }
+
             release.TrySetResult();
+
             if (retirePool && connectTimeout)
             {
                 var lease = await pending.WaitAsync(Limit);
@@ -61,19 +68,29 @@ public class DedicatedLeaseAcquisitionTests
                 await Assert.That(state.Selections).IsEqualTo(0);
                 await Assert.That(state.Retirements).IsEqualTo(0);
             }
+
             await Assert.That(state.Completions).IsEqualTo(1);
-            if (retirement is not null) await retirement.WaitAsync(Limit);
+
+            if (retirement is not null)
+            {
+                await retirement.WaitAsync(Limit);
+            }
         }
         finally
         {
             release.TrySetResult();
+
             try
             {
                 var lease = await pending.WaitAsync(Limit);
                 lease.Pool.Return(lease.Connection);
             }
             catch (Exception) when (pending.IsCompleted) { }
-            if (retirement is not null) await retirement.WaitAsync(Limit);
+
+            if (retirement is not null)
+            {
+                await retirement.WaitAsync(Limit);
+            }
         }
     }
 
@@ -86,8 +103,10 @@ public class DedicatedLeaseAcquisitionTests
 #pragma warning disable RESP010 // Test-owned client isolates stale pool selection from the healthy replacement circuit.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], UseCluster = true,
-            CircuitBreaker = new() { MinimumFailureCount = 1 }, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            UseCluster = true,
+            CircuitBreaker = new() { MinimumFailureCount = 1 },
+            ThreadPoolMonitoring = false,
         });
 #pragma warning restore RESP010
         await using var replacement = new DedicatedConnectionPool(
@@ -100,14 +119,25 @@ public class DedicatedLeaseAcquisitionTests
             // A different publication is stale even before the old pool starts stopping.
             MovingPublication = new object(),
         };
-        if (!stalePublication) await original.RetireAsync();
+
+        if (!stalePublication)
+        {
+            await original.RetireAsync();
+        }
+
         var circuits = client.Core.Circuits!;
         var admission = circuits.Acquire(endpoint, default);
-        try { admission.Failed(new RespireConnectionException("Injected old endpoint failure."), default); }
+
+        try
+        {
+            admission.Failed(new RespireConnectionException("Injected old endpoint failure."), default);
+        }
         finally { admission.Dispose(); }
+
         var state = new RouteState(replacement);
         var lease = await DedicatedLeaseAcquisition.RentAsync(original, new TestRoute(state), default,
             reuseIdle: true, DedicatedLeaseKind.Ordinary, observation: default, circuits: circuits);
+
         try
         {
             await Assert.That(lease.Pool).IsSameReferenceAs(replacement);
@@ -136,6 +166,7 @@ public class DedicatedLeaseAcquisitionTests
         await using var original = new DedicatedConnectionPool("127.0.0.1", 9001, RespireConnectionOptions.Default, null);
         await original.RetireAsync();
         var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+
         try
         {
             // A redirect source or an earlier selection must not own a later pool's handshake failure.
@@ -241,7 +272,10 @@ public class DedicatedLeaseAcquisitionTests
 #pragma warning disable RESP010 // Test-owned client keeps a warmed dedicated pool for the rental allocation probe.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, UseCluster = cluster,
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            UseCluster = cluster,
         });
 #pragma warning restore RESP010
         var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
@@ -259,18 +293,29 @@ public class DedicatedLeaseAcquisitionTests
     private static long Measure(ClientCore core, DedicatedConnectionPool pool, bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
             var pending = core.Cluster is { } cluster
                 ? cluster.RentDedicatedConnectionAsync(pool, slot: null, CancellationToken.None, discovery: null, observation: default)
                 : core.RentDedicatedConnectionAsync(pool, CancellationToken.None, observation: default);
-            if (!pending.IsCompletedSuccessfully) throw new InvalidOperationException("Warm idle rental must complete synchronously.");
+
+            if (!pending.IsCompletedSuccessfully)
+            {
+                throw new InvalidOperationException("Warm idle rental must complete synchronously.");
+            }
+
 #pragma warning disable RESP009 // The preceding completion guard proves the warmed rental cannot block this allocation measurement.
             var lease = pending.Result;
 #pragma warning restore RESP009
             lease.Pool.Return(lease.Connection);
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -295,8 +340,11 @@ public class DedicatedLeaseAcquisitionTests
     private readonly struct TestRoute(RouteState state) : IDedicatedLeaseRoute
     {
         public void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(state.IsDisposed, state);
+
         public bool CanRetry(int attempt, CancellationToken cancellationToken) => !state.IsDisposed;
+
         public void RecordRetirement(Exception error, int attempt) => state.Retirements++;
+
         public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken,
             RespireTelemetry.ErrorObservation observation)
         {
@@ -306,7 +354,9 @@ public class DedicatedLeaseAcquisitionTests
             return state.SelectionGate is { } gate
                 ? new(gate.Task.WaitAsync(cancellationToken)) : ValueTask.FromResult(state.Replacement);
         }
+
         public void SetTerminalError(Exception error) => state.TerminalError = error;
+
         public void Dispose() => state.Completions++;
     }
 }

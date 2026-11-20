@@ -30,6 +30,7 @@ public class RespireStartupConnectionTests
     {
         await using var server = new RespireFakeServer();
         var services = CreateServices();
+
         if (keyed)
         {
             services.AddKeyedRespire("cache", _ => server.CreateOptions() with { Connections = 1 });
@@ -62,8 +63,16 @@ public class RespireStartupConnectionTests
     {
         await using var server = new RespireFakeServer();
         var services = CreateServices();
-        if (keyed) services.AddKeyedRespire("cache", _ => server.CreateOptions());
-        else services.AddRespire(_ => server.CreateOptions());
+
+        if (keyed)
+        {
+            services.AddKeyedRespire("cache", _ => server.CreateOptions());
+        }
+        else
+        {
+            services.AddRespire(_ => server.CreateOptions());
+        }
+
         services.Configure<RespireStartupOptions>(keyed ? "cache" : Microsoft.Extensions.Options.Options.DefaultName,
             options => options.ConnectOnStart = false);
         await using var provider = services.BuildServiceProvider();

@@ -28,7 +28,9 @@ internal sealed partial class RespireConnection
 
         // Read only after awaiting the fill task (including its failure), which publishes all state.
         internal bool IsComplete => _remaining == 0;
+
         internal ReadOnlyMemory<byte> ConsumedPrefix => _consumedPrefix;
+
         internal Exception? UnknownPositionReadError => _unknownPositionReadError;
 
         // Consume and copy the previous result before starting another fill. Completed tasks
@@ -38,9 +40,14 @@ internal sealed partial class RespireConnection
             lock (_bufferOwnershipGate)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
+
                 if (_activeFill is { IsCompleted: false })
+                {
                     throw new InvalidOperationException("A streamed SET chunk fill is already active.");
+                }
+
                 var inlineRead = source.GetType() == typeof(MemoryStream);
+
                 if (!inlineRead && _sourceCancellation is null)
                 {
                     _sourceCancellation = new CancellationTokenSource();
@@ -54,6 +61,7 @@ internal sealed partial class RespireConnection
                         ObserveCancellationCallbacks(reader._sourceCancellationCallbacks);
                     }, this);
                 }
+
                 var chunk = _chunk ??= _pool.Rent(StreamChunkSize);
                 // Exact MemoryStream reads cannot invoke custom synchronous work. Derived streams
                 // remain offloaded because their ReadAsync override may block before returning.
@@ -70,7 +78,12 @@ internal sealed partial class RespireConnection
         private Task<ReadOnlyMemory<byte>> ReadInlineFill(byte[] chunk, CancellationToken cancellationToken)
         {
             var fill = ReadChunkAsync(chunk, cancellationToken);
-            if (!fill.IsCompletedSuccessfully) return fill.AsTask();
+
+            if (!fill.IsCompletedSuccessfully)
+            {
+                return fill.AsTask();
+            }
+
             var result = fill.Result;
             // The task describes a slice of the reader's single buffer, not a payload snapshot.
             // Reuse it only after the previous chunk has been copied by the transport. A shorter
@@ -80,6 +93,7 @@ internal sealed partial class RespireConnection
                 _completedInlineFill = Task.FromResult(result);
                 _completedInlineLength = result.Length;
             }
+
             return _completedInlineFill;
         }
 
@@ -91,6 +105,7 @@ internal sealed partial class RespireConnection
             _unknownPositionReadError = null;
             var target = (int)Math.Min(StreamChunkSize, _remaining);
             var filled = 0;
+
             try
             {
                 while (filled < target)
@@ -98,6 +113,7 @@ internal sealed partial class RespireConnection
                     // Cancellation between reads has a known position. A source exception does not.
                     cancellationToken.ThrowIfCancellationRequested();
                     int read;
+
                     try
                     {
                         var operation = source.ReadAsync(chunk.AsMemory(filled, target - filled),
@@ -109,9 +125,15 @@ internal sealed partial class RespireConnection
                         _unknownPositionReadError = error;
                         throw;
                     }
-                    if (read == 0) throw new EndOfStreamException("Stream ended before its declared SET length.");
+
+                    if (read == 0)
+                    {
+                        throw new EndOfStreamException("Stream ended before its declared SET length.");
+                    }
+
                     filled += read;
                 }
+
                 _remaining -= filled;
                 return chunk.AsMemory(0, filled);
             }
@@ -127,9 +149,14 @@ internal sealed partial class RespireConnection
         {
             byte[]? chunk;
             Task<ReadOnlyMemory<byte>>? activeFill;
+
             lock (_bufferOwnershipGate)
             {
-                if (_disposed) return;
+                if (_disposed)
+                {
+                    return;
+                }
+
                 _disposed = true;
                 chunk = _chunk;
                 _chunk = null;
@@ -145,15 +172,29 @@ internal sealed partial class RespireConnection
                 _sourceCancellationCallbacks = _sourceCancellation.CancelAsync();
                 ObserveCancellationCallbacks(_sourceCancellationCallbacks);
             }
+
             _ = ReleaseResourcesAsync(activeFill, chunk, _sourceCancellationCallbacks);
         }
 
         private async Task ReleaseResourcesAsync(Task? fill, byte[]? chunk, Task? callbacks)
         {
-            try { if (fill is not null) await fill.ConfigureAwait(false); }
+            try
+            {
+                if (fill is not null)
+                {
+                    await fill.ConfigureAwait(false);
+                }
+            }
             catch { /* The original streamed SET owns its failure. */ }
-            finally { if (chunk is not null) _pool.Return(chunk); }
-            try { if (callbacks is not null) await callbacks.ConfigureAwait(false); }
+            finally { if (chunk is not null) { _pool.Return(chunk); } }
+
+            try
+            {
+                if (callbacks is not null)
+                {
+                    await callbacks.ConfigureAwait(false);
+                }
+            }
             catch { /* A source callback cannot escape upload cleanup. */ }
             finally { _sourceCancellation?.Dispose(); }
         }

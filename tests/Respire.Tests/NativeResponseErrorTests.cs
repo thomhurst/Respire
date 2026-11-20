@@ -23,8 +23,13 @@ public class NativeResponseErrorTests
         using var capture = new Capture();
         var (source, consume) = Rent(shape, true);
         source.TrySetResult(RespValue.PooledAggregate(RespireDataType.Array, new RespValue[1], 2));
-        try { await Assert.That(consume).ThrowsExactly<IndexOutOfRangeException>(); }
+
+        try
+        {
+            await Assert.That(consume).ThrowsExactly<IndexOutOfRangeException>();
+        }
         finally { source.ReleaseRef(); }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(0);
     }
@@ -45,6 +50,7 @@ public class NativeResponseErrorTests
             : new RespireProtocolException("conversion failure");
         PendingResponse source;
         Task consume;
+
         if (shape is "converted" or "cancel")
         {
             var converted = ConvertedPendingResponseSource<Exception, int>.Rent(expected,
@@ -62,20 +68,34 @@ public class NativeResponseErrorTests
         source.TrySetResult(RespValue.PooledAggregate(
             shape is "raw" or "string" or "bytes" ? RespireDataType.Error : RespireDataType.Array, new RespValue[1], 2));
         Exception? actual = null;
-        try { await consume; }
+
+        try
+        {
+            await consume;
+        }
         catch (Exception error) { actual = error; }
         finally { source.ReleaseRef(); }
+
         if (shape is "converted" or "cancel")
+        {
             await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
-        else await Assert.That(actual).IsTypeOf<RespireServerException>();
+        }
+        else
+        {
+            await Assert.That(actual).IsTypeOf<RespireServerException>();
+        }
+
         if (shape == "cancel")
         {
             await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
         }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         await Assert.That(capture.Items.Single().Category).IsEqualTo(shape switch
         {
-            "cancel" => "cancelled", "raw" or "string" or "bytes" => "server", _ => "other",
+            "cancel" => "cancelled",
+            "raw" or "string" or "bytes" => "server",
+            _ => "other",
         });
         await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(0);
     }
@@ -95,15 +115,25 @@ public class NativeResponseErrorTests
         source.TrySetException(expected);
         source.ReleaseRef();
         Exception? actual = null;
-        try { await consume(); }
+
+        try
+        {
+            await consume();
+        }
         catch (Exception error) { actual = error; }
+
         await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
         await Assert.That(capture.Items.Single().Attempts).IsEqualTo(3);
         var (reused, reuseConsume) = Rent(shape, true);
         reused.TrySetResult(RespValue.Integer(1));
         reused.ReleaseRef();
-        try { await reuseConsume(); }
+
+        try
+        {
+            await reuseConsume();
+        }
         catch (RespireProtocolException) { }
+
         await Assert.That(reused.ErrorAttempts).IsEqualTo(0);
     }
 
@@ -117,14 +147,21 @@ public class NativeResponseErrorTests
         using var capture = new Capture(() =>
         {
             if (source.InspectForTests().ReferenceCount != 1)
+            {
                 throw new InvalidOperationException("Caller still owns the source.");
+            }
         });
         var pending = source.Task;
         source.TrySetResult(RespValue.Integer(1));
         Exception? actual = null;
-        try { _ = await pending; }
+
+        try
+        {
+            _ = await pending;
+        }
         catch (Exception error) { actual = error; }
         finally { source.ReleaseRef(); }
+
         await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         await Assert.That(capture.CallbackFailure).IsNull();
@@ -140,15 +177,22 @@ public class NativeResponseErrorTests
         var expected = new RespireProtocolException("conversion failure");
         var completion = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
         Exception? actual = null;
+
         try
         {
             var result = PooledResponseSource<Exception, int>.Create(
                 asynchronous ? new(completion.Task) : new(RespValue.Integer(1)), expected,
                 static (Exception error, in RespValue _) => throw error);
-            if (asynchronous) completion.SetResult(RespValue.Integer(1));
+
+            if (asynchronous)
+            {
+                completion.SetResult(RespValue.Integer(1));
+            }
+
             _ = await result;
         }
         catch (Exception error) { actual = error; }
+
         await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
     }
@@ -178,6 +222,7 @@ public class NativeResponseErrorTests
         var completion = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
         Exception? actual = null;
         Task<int>? task = null;
+
         try
         {
             var converted = PooledResponseSource<Exception?, int>.Create(
@@ -185,19 +230,42 @@ public class NativeResponseErrorTests
                 static (Exception? error, in RespValue _) => error is null ? 1 : throw error,
                 observation: owner);
             task = converted.AsTask();
-            if (asynchronous) completion.SetResult(response);
+
+            if (asynchronous)
+            {
+                completion.SetResult(response);
+            }
+
             _ = await task;
         }
         catch (Exception error) { actual = error; }
-        if (expected is null) await Assert.That(actual).IsTypeOf<IndexOutOfRangeException>();
-        else await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
+
+        if (expected is null)
+        {
+            await Assert.That(actual).IsTypeOf<IndexOutOfRangeException>();
+        }
+        else
+        {
+            await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
+        }
+
         if (outcome == "cancel")
         {
             await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
-            if (asynchronous) await Assert.That(task!.IsCanceled).IsTrue();
+
+            if (asynchronous)
+            {
+                await Assert.That(task!.IsCanceled).IsTrue();
+            }
         }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
-        if (outcome == "cancel") await Assert.That(capture.Items.Single().Category).IsEqualTo("cancelled");
+
+        if (outcome == "cancel")
+        {
+            await Assert.That(capture.Items.Single().Category).IsEqualTo("cancelled");
+        }
+
         await Assert.That(owner.PublishFinal(new IOException())).IsFalse();
     }
 
@@ -221,32 +289,60 @@ public class NativeResponseErrorTests
         using var capture = new Capture(() =>
         {
             if (source.InspectForTests().ReferenceCount != 1)
+            {
                 throw new InvalidOperationException("Caller reference was not released.");
+            }
         });
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         var expected = new IOException("transport failure");
-        if (outcome == "server") source.TrySetResult(RespValue.Error("WRONGTYPE private data"));
-        else if (outcome == "cancel") source.TrySetCanceled(cancellation.Token);
-        else source.TrySetException(expected);
+
+        if (outcome == "server")
+        {
+            source.TrySetResult(RespValue.Error("WRONGTYPE private data"));
+        }
+        else if (outcome == "cancel")
+        {
+            source.TrySetCanceled(cancellation.Token);
+        }
+        else
+        {
+            source.TrySetException(expected);
+        }
+
         var task = consume();
         Exception? actual = null;
-        try { await task; }
+
+        try
+        {
+            await task;
+        }
         catch (Exception error) { actual = error; }
+
         await Assert.That(source.CommandName).IsEqualTo("GET");
         source.ReleaseRef();
-        if (outcome == "transport") await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
-        else if (outcome == "server") await Assert.That(actual).IsTypeOf<RespireServerException>();
+
+        if (outcome == "transport")
+        {
+            await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
+        }
+        else if (outcome == "server")
+        {
+            await Assert.That(actual).IsTypeOf<RespireServerException>();
+        }
         else
         {
             await Assert.That(task.IsCanceled).IsTrue();
             await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
         }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         await Assert.That(capture.Items.Single().Internal).IsFalse();
         await Assert.That(capture.Items.Single().Category).IsEqualTo(outcome switch
         {
-            "transport" => "network", "cancel" => "cancelled", _ => "server",
+            "transport" => "network",
+            "cancel" => "cancelled",
+            _ => "server",
         });
         await Assert.That(capture.CallbackFailure).IsNull();
     }
@@ -262,9 +358,14 @@ public class NativeResponseErrorTests
         using var capture = new Capture();
         var (source, consume) = Rent(shape, false);
         source.TrySetException(new IOException());
-        try { await consume(); }
+
+        try
+        {
+            await consume();
+        }
         catch (IOException) { }
         finally { source.ReleaseRef(); }
+
         await Assert.That(capture.Items.Count).IsEqualTo(0);
     }
 
@@ -282,8 +383,13 @@ public class NativeResponseErrorTests
         var (source, consume) = Rent(shape, true, owner);
         source.TrySetException(new IOException());
         source.ReleaseRef();
-        try { await consume(); }
+
+        try
+        {
+            await consume();
+        }
         catch (IOException) { }
+
         await Assert.That(capture.Items.Count).IsEqualTo(2);
         await Assert.That(capture.Items.Last().Attempts).IsEqualTo(1);
         await Assert.That(owner.PublishFinal(new IOException())).IsFalse();
@@ -303,20 +409,30 @@ public class NativeResponseErrorTests
         var expected = new RespireProtocolException("conversion or input failure");
         var completion = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
         Exception? actual = null;
+
         try
         {
             ValueTask<RespValue> input = asynchronous ? new(completion.Task)
                 : inputFails ? ValueTask.FromException<RespValue>(expected) : new(RespValue.Integer(1));
             var result = PooledResponseSource<Exception, int>.Create(input, expected,
                 static (Exception error, in RespValue _) => throw error, observation: owner);
+
             if (asynchronous)
             {
-                if (inputFails) completion.SetException(expected);
-                else completion.SetResult(RespValue.Integer(1));
+                if (inputFails)
+                {
+                    completion.SetException(expected);
+                }
+                else
+                {
+                    completion.SetResult(RespValue.Integer(1));
+                }
             }
+
             _ = await result;
         }
         catch (Exception error) { actual = error; }
+
         await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
         await Assert.That(capture.Items.Count).IsEqualTo(2);
         await Assert.That(capture.Items.Last().Attempts).IsEqualTo(1);
@@ -332,13 +448,27 @@ public class NativeResponseErrorTests
         using var capture = new Capture();
         var expected = new IOException();
         var source = new PendingResponsePool(1).Rent(observeErrors: true);
-        if (!asynchronous) source.TrySetException(expected);
+
+        if (!asynchronous)
+        {
+            source.TrySetException(expected);
+        }
+
         var converted = PooledResponseSource<int, long>.Create(source.Task, 0,
             static (int _, in RespValue value) => value.AsInteger());
-        if (asynchronous) source.TrySetException(expected);
-        try { _ = await converted; }
+
+        if (asynchronous)
+        {
+            source.TrySetException(expected);
+        }
+
+        try
+        {
+            _ = await converted;
+        }
         catch (IOException error) { await Assert.That(ReferenceEquals(error, expected)).IsTrue(); }
         finally { source.ReleaseRef(); }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
     }
 
@@ -372,10 +502,20 @@ public class NativeResponseErrorTests
         var converted = PooledResponseSource<int, RespValue>.Create(
             asynchronous ? new(completion.Task) : new(response), 0,
             static (int _, in RespValue value) => value, transferOwnership: transfer);
-        if (asynchronous) completion.SetResult(response);
+
+        if (asynchronous)
+        {
+            completion.SetResult(response);
+        }
+
         var result = await converted;
         await Assert.That(elements[0].Type == RespireDataType.Integer).IsEqualTo(transfer);
-        if (transfer) result.Dispose();
+
+        if (transfer)
+        {
+            result.Dispose();
+        }
+
         await Assert.That(capture.Items.Count).IsEqualTo(0);
     }
 
@@ -391,19 +531,28 @@ public class NativeResponseErrorTests
         using var capture = new Capture(() =>
         {
             if (elements[0].Type == RespireDataType.Integer)
+            {
                 throw new InvalidOperationException("Response still owns its elements.");
+            }
         });
         var completion = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+
         try
         {
             var converted = PooledResponseSource<int, int>.Create(
                 asynchronous ? new(completion.Task) : new(response), 0,
                 static (int _, in RespValue value) => throw new RespireProtocolException("conversion failure"),
                 transferOwnership: true);
-            if (asynchronous) completion.SetResult(response);
+
+            if (asynchronous)
+            {
+                completion.SetResult(response);
+            }
+
             _ = await converted;
         }
         catch (RespireProtocolException) { }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         await Assert.That(capture.CallbackFailure).IsNull();
     }
@@ -416,6 +565,7 @@ public class NativeResponseErrorTests
         var pool = new PendingResponsePool(1);
         CompletePooledConversion(pool);
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1_000; i++)
         {
             var native = ConvertedPendingResponseSource<int, long>.Rent(0,
@@ -423,27 +573,51 @@ public class NativeResponseErrorTests
             var task = native.Task;
             native.TrySetResult(RespValue.Integer(42));
             native.ReleaseRef();
-            if (task.GetAwaiter().GetResult() != 42) throw new InvalidOperationException();
+
+            if (task.GetAwaiter().GetResult() != 42)
+            {
+                throw new InvalidOperationException();
+            }
+
             var text = StringPendingResponseSource.Rent("GET", observeErrors: true);
             var textTask = text.Task;
             text.SetDirectResult("value");
             text.TrySetResult(default);
             text.ReleaseRef();
-            if (textTask.GetAwaiter().GetResult() != "value") throw new InvalidOperationException();
+
+            if (textTask.GetAwaiter().GetResult() != "value")
+            {
+                throw new InvalidOperationException();
+            }
+
             var bytes = BytesPendingResponseSource.Rent("GET", observeErrors: true);
             var bytesTask = bytes.Task;
             bytes.SetDirectResult(null);
             bytes.TrySetResult(default);
             bytes.ReleaseRef();
-            if (bytesTask.GetAwaiter().GetResult() is not null) throw new InvalidOperationException();
+
+            if (bytesTask.GetAwaiter().GetResult() is not null)
+            {
+                throw new InvalidOperationException();
+            }
+
             CompletePooledConversion(pool);
 #pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             var result = PooledResponseSource<int, long>.Create(new(RespValue.Integer(42)), 0,
                 static (int _, in RespValue value) => value.AsInteger()).GetAwaiter().GetResult();
+
 #pragma warning restore RESP009
-            if (result != 42) throw new InvalidOperationException();
-            if (allocate) Volatile.Write(ref _allocationAnchor, new byte[37]);
+            if (result != 42)
+            {
+                throw new InvalidOperationException();
+            }
+
+            if (allocate)
+            {
+                Volatile.Write(ref _allocationAnchor, new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -454,8 +628,12 @@ public class NativeResponseErrorTests
             static (int _, in RespValue value) => value.AsInteger());
         raw.TrySetResult(RespValue.Integer(42));
         raw.ReleaseRef();
+
 #pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
-        if (converted.GetAwaiter().GetResult() != 42) throw new InvalidOperationException();
+        if (converted.GetAwaiter().GetResult() != 42)
+        {
+            throw new InvalidOperationException();
+        }
 #pragma warning restore RESP009
     }
 
@@ -466,27 +644,45 @@ public class NativeResponseErrorTests
         {
             var source = new PendingResponsePool(1).Rent(true, "GET", observeErrors, observation);
             var task = source.Task;
-            return (source, async () => { using var value = await task; });
+            return (source, async () =>
+            {
+                using var value = await task;
+            }
+            );
         }
+
         if (shape == "converted")
         {
             var source = ConvertedPendingResponseSource<int, long>.Rent(0,
                 static (int _, in RespValue value) => value.AsInteger(), false, "GET",
                 observeErrors: observeErrors, observation: observation);
             var task = source.Task;
-            return (source, async () => { _ = await task; });
+            return (source, async () =>
+            {
+                _ = await task;
+            }
+            );
         }
+
         if (shape == "string")
         {
             var source = StringPendingResponseSource.Rent("GET", observeErrors: observeErrors, observation: observation);
             var task = source.Task;
-            return (source, async () => { _ = await task; });
+            return (source, async () =>
+            {
+                _ = await task;
+            }
+            );
         }
         else
         {
             var source = BytesPendingResponseSource.Rent("GET", observeErrors: observeErrors, observation: observation);
             var task = source.Task;
-            return (source, async () => { _ = await task; });
+            return (source, async () =>
+            {
+                _ = await task;
+            }
+            );
         }
     }
 
@@ -495,30 +691,51 @@ public class NativeResponseErrorTests
         private readonly MeterListener _listener = new();
         internal readonly ConcurrentQueue<(bool Internal, int Attempts, string Category)> Items = new();
         internal Exception? CallbackFailure;
+
         internal Capture(Action? onMeasurement = null)
         {
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (ReferenceEquals(instrument.Meter, RespireTelemetry.Meter) && instrument.Name == "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
                 var internallyHandled = false;
                 var attempts = 0;
                 var category = "";
+
                 foreach (var tag in tags)
                 {
-                    if (tag.Key == "redis.client.errors.internal") internallyHandled = (bool)tag.Value!;
-                    if (tag.Key == "redis.client.operation.retry_attempts") attempts = (int)tag.Value!;
-                    if (tag.Key == "redis.client.errors.category") category = (string)tag.Value!;
+                    if (tag.Key == "redis.client.errors.internal")
+                    {
+                        internallyHandled = (bool)tag.Value!;
+                    }
+
+                    if (tag.Key == "redis.client.operation.retry_attempts")
+                    {
+                        attempts = (int)tag.Value!;
+                    }
+
+                    if (tag.Key == "redis.client.errors.category")
+                    {
+                        category = (string)tag.Value!;
+                    }
                 }
+
                 Items.Enqueue((internallyHandled, attempts, category));
-                try { onMeasurement?.Invoke(); }
+
+                try
+                {
+                    onMeasurement?.Invoke();
+                }
                 catch (Exception error) { CallbackFailure = error; }
             });
             _listener.Start();
         }
+
         public void Dispose() => _listener.Dispose();
     }
 }

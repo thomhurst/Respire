@@ -21,6 +21,7 @@ public class DedicatedPoolSizingTests
         var first = pool.RentAsync(deadline.Token).AsTask();
         await entered.Task.WaitAsync(deadline.Token);
         var second = pool.RentAsync(deadline.Token).AsTask();
+
         try
         {
             await Assert.That(pool.CaptureRetirementState().Connecting).IsEqualTo(1);
@@ -87,11 +88,16 @@ public class DedicatedPoolSizingTests
             PushHandler = (in Respire.Protocol.RespValue _) =>
             {
                 entered.TrySetResult();
-                if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Receive callback was not released.");
+
+                if (!release.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    throw new TimeoutException("Receive callback was not released.");
+                }
             },
         }, null);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var connection = await pool.RentAsync(deadline.Token);
+
         try
         {
             await server.SendRawAsync(">2\r\n+notice\r\n+value\r\n"u8.ToArray());
@@ -125,6 +131,7 @@ public class DedicatedPoolSizingTests
         var first = pool.RentAsync(deadline.Token).AsTask();
         await entered.Task.WaitAsync(deadline.Token);
         var next = pool.RentAsync(deadline.Token).AsTask();
+
         try
         {
             await Assert.That(next.IsCompleted).IsFalse();
@@ -150,11 +157,13 @@ public class DedicatedPoolSizingTests
         var pending = pool.RentAsync(deadline.Token).AsTask();
         var stop = dispose ? pool.DisposeAsync().AsTask() : pool.RetireAsync().AsTask();
         await Assert.That(async () => await pending.WaitAsync(deadline.Token)).ThrowsExactly<ObjectDisposedException>();
+
         if (!dispose)
         {
             await Assert.That(connection.IsConnected).IsTrue();
             await Assert.That(stop.IsCompleted).IsFalse();
         }
+
         pool.Return(connection);
         await stop.WaitAsync(deadline.Token);
         await Assert.That(connection.IsConnected).IsFalse();
@@ -189,8 +198,17 @@ public class DedicatedPoolSizingTests
         await using var pool = CreatePool(server, new() { MaximumIdle = maximumIdle });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var connections = new List<RespireConnection>();
-        for (var index = 0; index < 7; index++) connections.Add(await pool.RentAsync(deadline.Token));
-        foreach (var connection in connections) pool.Return(connection);
+
+        for (var index = 0; index < 7; index++)
+        {
+            connections.Add(await pool.RentAsync(deadline.Token));
+        }
+
+        foreach (var connection in connections)
+        {
+            pool.Return(connection);
+        }
+
         await Assert.That(connections.Count(connection => connection.IsConnected)).IsEqualTo(maximumIdle);
     }
 
@@ -201,7 +219,10 @@ public class DedicatedPoolSizingTests
         await using var server = new FakeRespServer(3, FakeRespServer.PongReply);
         await using var pool = CreatePool(server, new()
         {
-            MinimumSize = 2, MaximumIdle = 3, IdleTimeout = TimeSpan.FromSeconds(10), TimeProvider = clock,
+            MinimumSize = 2,
+            MaximumIdle = 3,
+            IdleTimeout = TimeSpan.FromSeconds(10),
+            TimeProvider = clock,
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await Assert.That(pool.CaptureRetirementState().Connecting).IsEqualTo(0);
@@ -234,18 +255,30 @@ public class DedicatedPoolSizingTests
         await using var server = new FakeRespServer(total, FakeRespServer.PongReply);
         await using var pool = CreatePool(server, new()
         {
-            MinimumSize = 2, MaximumIdle = total, IdleTimeout = TimeSpan.FromSeconds(1), TimeProvider = clock,
+            MinimumSize = 2,
+            MaximumIdle = total,
+            IdleTimeout = TimeSpan.FromSeconds(1),
+            TimeProvider = clock,
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var connections = new List<RespireConnection>();
-        for (var index = 0; index < total; index++) connections.Add(await pool.RentAsync(deadline.Token));
-        foreach (var connection in connections) pool.Return(connection);
+
+        for (var index = 0; index < total; index++)
+        {
+            connections.Add(await pool.RentAsync(deadline.Token));
+        }
+
+        foreach (var connection in connections)
+        {
+            pool.Return(connection);
+        }
         // Leave the disconnected socket registered as idle, just as after a peer disconnect.
         await connections[disconnectedIndex].DisposeAsync();
         clock.Advance(TimeSpan.FromSeconds(1));
         await Assert.That(connections.Count(connection => connection.IsConnected)).IsEqualTo(2);
         clock.Advance(TimeSpan.FromSeconds(1));
         await Assert.That(connections.Count(connection => connection.IsConnected)).IsEqualTo(2);
+
         foreach (var connection in connections.Where(connection => connection.IsConnected))
         {
             using var response = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
@@ -260,7 +293,10 @@ public class DedicatedPoolSizingTests
         await using var server = new FakeRespServer(3, FakeRespServer.PongReply);
         await using var pool = CreatePool(server, new()
         {
-            MinimumSize = 2, MaximumIdle = 3, IdleTimeout = TimeSpan.FromSeconds(1), TimeProvider = clock,
+            MinimumSize = 2,
+            MaximumIdle = 3,
+            IdleTimeout = TimeSpan.FromSeconds(1),
+            TimeProvider = clock,
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var first = await pool.RentAsync(deadline.Token);
@@ -279,6 +315,7 @@ public class DedicatedPoolSizingTests
         await Assert.That(second.IsConnected).IsTrue();
         await Assert.That(third.IsConnected).IsTrue();
         clock.Advance(TimeSpan.FromSeconds(1));
+
         foreach (var connection in new[] { second, third })
         {
             using var response = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
@@ -295,7 +332,10 @@ public class DedicatedPoolSizingTests
         await using var server = new FakeRespServer(3, FakeRespServer.OkReply);
         await using var pool = CreatePool(server, new()
         {
-            MinimumSize = 2, MaximumIdle = 2, IdleTimeout = TimeSpan.FromSeconds(1), TimeProvider = clock,
+            MinimumSize = 2,
+            MaximumIdle = 2,
+            IdleTimeout = TimeSpan.FromSeconds(1),
+            TimeProvider = clock,
         }, database: 1);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var first = await pool.RentAsync(deadline.Token);
@@ -305,6 +345,7 @@ public class DedicatedPoolSizingTests
         server.GateCommand("SELECT", release.Task, () => entered.TrySetResult());
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var pending = pool.RentAsync(cancellation.Token, reuseIdle: false).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(deadline.Token);
@@ -368,12 +409,15 @@ public class DedicatedPoolSizingTests
         const int rounds = 8;
         await using var server = new FakeRespServer(rounds * 2, FakeRespServer.PongReply);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
         for (var round = 0; round < rounds; round++)
         {
             var clock = new PoolClock();
             await using var pool = CreatePool(server, new()
             {
-                MaximumSize = 2, IdleTimeout = TimeSpan.FromSeconds(1), TimeProvider = clock,
+                MaximumSize = 2,
+                IdleTimeout = TimeSpan.FromSeconds(1),
+                TimeProvider = clock,
             });
             var idle = await pool.RentAsync(deadline.Token);
             var borrowed = await pool.RentAsync(deadline.Token);
@@ -387,19 +431,30 @@ public class DedicatedPoolSizingTests
             var returning = Task.Run(async () =>
             {
                 await start.Task;
+
                 try
                 {
                     // Retirement and expiry must preserve the renter's ownership until return.
                     // Explicit disposal is allowed to abort a borrowed connection.
-                    if (!dispose) await Assert.That(borrowed.IsConnected).IsTrue();
+                    if (!dispose)
+                    {
+                        await Assert.That(borrowed.IsConnected).IsTrue();
+                    }
                 }
                 finally { pool.Return(borrowed); }
             });
             var stopping = Task.Run(async () =>
             {
                 await start.Task;
-                if (dispose) await pool.DisposeAsync();
-                else await pool.RetireAsync();
+
+                if (dispose)
+                {
+                    await pool.DisposeAsync();
+                }
+                else
+                {
+                    await pool.RetireAsync();
+                }
             });
             start.TrySetResult();
             await Task.WhenAll(expiry, returning, stopping).WaitAsync(deadline.Token);
@@ -431,31 +486,43 @@ public class DedicatedPoolSizingTests
         {
             await start.Task;
             var connection = await pool.RentAsync(deadline.Token);
+
             try
             {
                 lock (gate)
                 {
                     active++;
                     peak = Math.Max(peak, active);
-                    if (++arrivals == 2) pairEntered.TrySetResult();
+
+                    if (++arrivals == 2)
+                    {
+                        pairEntered.TrySetResult();
+                    }
                 }
+
                 await releaseFirstPair.Task.WaitAsync(deadline.Token);
                 using var response = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
                 await Assert.That(response.AsString()).IsEqualTo("PONG");
             }
             finally
             {
-                lock (gate) active--;
+                lock (gate)
+                {
+                    active--;
+                }
+
                 pool.Return(connection);
             }
         })).ToArray();
         start.TrySetResult();
+
         try
         {
             await pairEntered.Task.WaitAsync(deadline.Token);
             await Assert.That(pool.CaptureRetirementState().Borrowed).IsEqualTo(2);
         }
         finally { releaseFirstPair.TrySetResult(); }
+
         await Task.WhenAll(borrowers).WaitAsync(deadline.Token);
         await Assert.That(peak).IsEqualTo(2);
     }
@@ -464,7 +531,9 @@ public class DedicatedPoolSizingTests
         int database = 0, RespireMaintenanceNotificationMode maintenance = RespireMaintenanceNotificationMode.Disabled)
         => new("127.0.0.1", server.Port, new RespireConnectionOptions
         {
-            Protocol = RespireProtocol.Resp2, DedicatedPool = sizing, Database = database,
+            Protocol = RespireProtocol.Resp2,
+            DedicatedPool = sizing,
+            Database = database,
             MaintenanceNotifications = maintenance,
         }, null);
 
@@ -474,16 +543,34 @@ public class DedicatedPoolSizingTests
         private readonly List<ManualTimer> _timers = [];
         private long _ticks;
         internal Action? BeforeNextTimestampRead;
-        internal int ActiveTimers { get { lock (_gate) return _timers.Count; } }
+
+        internal int ActiveTimers
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _timers.Count;
+                }
+            }
+        }
+
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
         public override long GetTimestamp()
         {
             var beforeRead = BeforeNextTimestampRead;
             BeforeNextTimestampRead = null;
             beforeRead?.Invoke();
-            lock (_gate) return _ticks;
+
+            lock (_gate)
+            {
+                return _ticks;
+            }
         }
+
         public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch.AddTicks(GetTimestamp());
+
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = new ManualTimer(this, callback, state);
@@ -494,17 +581,29 @@ public class DedicatedPoolSizingTests
         internal void Advance(TimeSpan elapsed)
         {
             ManualTimer[] due;
+
             lock (_gate)
             {
                 _ticks += elapsed.Ticks;
                 due = _timers.Where(timer => timer.Due <= _ticks).ToArray();
+
                 foreach (var timer in due)
                 {
-                    if (timer.Period > TimeSpan.Zero) timer.Due = _ticks + timer.Period.Ticks;
-                    else _timers.Remove(timer);
+                    if (timer.Period > TimeSpan.Zero)
+                    {
+                        timer.Due = _ticks + timer.Period.Ticks;
+                    }
+                    else
+                    {
+                        _timers.Remove(timer);
+                    }
                 }
             }
-            foreach (var timer in due) timer.Fire();
+
+            foreach (var timer in due)
+            {
+                timer.Fire();
+            }
         }
 
         private sealed class ManualTimer(PoolClock clock, TimerCallback callback, object? state) : ITimer
@@ -512,26 +611,53 @@ public class DedicatedPoolSizingTests
             private int _disposed;
             internal long Due;
             internal TimeSpan Period;
-            internal void Fire() { if (Volatile.Read(ref _disposed) == 0) callback(state); }
+
+            internal void Fire()
+            {
+                if (Volatile.Read(ref _disposed) == 0)
+                {
+                    callback(state);
+                }
+            }
+
             public bool Change(TimeSpan dueTime, TimeSpan period)
             {
                 lock (clock._gate)
                 {
-                    if (Volatile.Read(ref _disposed) != 0) return false;
+                    if (Volatile.Read(ref _disposed) != 0)
+                    {
+                        return false;
+                    }
+
                     clock._timers.Remove(this);
                     Period = period;
-                    if (dueTime == Timeout.InfiniteTimeSpan) return true;
+
+                    if (dueTime == Timeout.InfiniteTimeSpan)
+                    {
+                        return true;
+                    }
+
                     Due = clock._ticks + dueTime.Ticks;
                     clock._timers.Add(this);
                     return true;
                 }
             }
+
             public void Dispose()
             {
                 Interlocked.Exchange(ref _disposed, 1);
-                lock (clock._gate) clock._timers.Remove(this);
+
+                lock (clock._gate)
+                {
+                    clock._timers.Remove(this);
+                }
             }
-            public ValueTask DisposeAsync() { Dispose(); return default; }
+
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return default;
+            }
         }
     }
 }

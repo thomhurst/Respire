@@ -1,5 +1,5 @@
-using System.Net;
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using Docker.DotNet;
 
@@ -13,10 +13,19 @@ internal static class ContainerPortCollision
     internal static bool IsMatch(Exception error, int[] selectedPorts)
     {
         var message = DockerMessage(error);
-        if (message is null) return false;
+
+        if (message is null)
+        {
+            return false;
+        }
+
         var networkingFailure = message.StartsWith(NetworkingPrefix, StringComparison.Ordinal);
+
         if (selectedPorts.Length != 0 && IsAddresslessTcpBindCollision(message))
+        {
             return true;
+        }
+
         foreach (var port in selectedPorts)
         {
             var address = "127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture);
@@ -24,18 +33,27 @@ internal static class ContainerPortCollision
             // or the container destination. Keep the full networking prefix and bind suffix.
             if (networkingFailure
                 && message.EndsWith($"): failed to bind host port {address}/tcp: address already in use", StringComparison.Ordinal))
+            {
                 return true;
+            }
             // Moby's port allocator and Linux bindTCPOrUDP error formats.
             if (message.EndsWith($"Bind for {address} failed: port is already allocated", StringComparison.Ordinal))
+            {
                 return true;
+            }
             // Some engines report the allocator's wildcard address even for a loopback binding.
             // Accept it only with the full networking prefix, so a bare 0.0.0.0 message stays non-retryable.
             if (networkingFailure
                 && message.EndsWith($"): Bind for 0.0.0.0:{port.ToString(CultureInfo.InvariantCulture)} failed: port is already allocated", StringComparison.Ordinal))
+            {
                 return true;
+            }
+
             if (message.Contains($"failed to bind host port for {address}:", StringComparison.Ordinal)
                 && message.EndsWith("/tcp: address already in use", StringComparison.Ordinal))
+            {
                 return true;
+            }
             // Docker Desktop forwards the platform's TCP bind error. Permission-denied,
             // reserved-port and unknown messages deliberately remain non-retryable.
             if (message.StartsWith("Ports are not available:", StringComparison.OrdinalIgnoreCase)
@@ -43,8 +61,11 @@ internal static class ContainerPortCollision
                     || message.Contains($"listen tcp4 {address}: bind: ", StringComparison.Ordinal))
                 && (message.EndsWith(": bind: address already in use", StringComparison.Ordinal)
                     || message.EndsWith(": bind: Only one usage of each socket address (protocol/network address/port) is normally permitted.", StringComparison.Ordinal)))
+            {
                 return true;
+            }
         }
+
         return false;
     }
 
@@ -64,7 +85,10 @@ internal static class ContainerPortCollision
     {
         // Docker has no typed port-conflict subtype. Both matchers require the structured HTTP 500 response.
         if (error is not DockerApiException { StatusCode: HttpStatusCode.InternalServerError, ResponseBody: { } body })
+        {
             return null;
+        }
+
         try
         {
             using var response = JsonDocument.Parse(body);
@@ -79,10 +103,20 @@ internal static class ContainerPortCollision
     {
         const string binding = "): failed to bind host port for 127.0.0.1::";
         const string suffix = "/tcp: address already in use";
+
         if (!message.StartsWith(NetworkingPrefix, StringComparison.Ordinal)
-            || !message.EndsWith(suffix, StringComparison.Ordinal)) return false;
+            || !message.EndsWith(suffix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
         var bindingIndex = message.IndexOf(binding, NetworkingPrefix.Length, StringComparison.Ordinal);
-        if (bindingIndex < 0) return false;
+
+        if (bindingIndex < 0)
+        {
+            return false;
+        }
+
         var destination = message.AsSpan(bindingIndex + binding.Length);
         destination = destination[..^suffix.Length];
         var separator = destination.LastIndexOf(':');

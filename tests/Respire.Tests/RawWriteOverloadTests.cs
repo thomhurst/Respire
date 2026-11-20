@@ -22,6 +22,7 @@ public class RawWriteOverloadTests
             arrayValue: value.StartsWith("new byte[]", StringComparison.Ordinal) ? "(ReadOnlyMemory<byte>)" + value : value);
         await Assert.That(compilation.GetDiagnostics().Where(item => item.Severity == DiagnosticSeverity.Error).ToArray()).IsEmpty();
         var semantic = compilation.GetSemanticModel(compilation.SyntaxTrees.Single());
+
         foreach (var call in calls)
         {
             var method = (IMethodSymbol?)semantic.GetSymbolInfo(call).Symbol;
@@ -40,6 +41,7 @@ public class RawWriteOverloadTests
         var (compilation, calls) = CompileCalls(value, typeArgument);
         await Assert.That(compilation.GetDiagnostics().Where(item => item.Severity == DiagnosticSeverity.Error).ToArray()).IsEmpty();
         var semantic = compilation.GetSemanticModel(compilation.SyntaxTrees.Single());
+
         foreach (var call in calls)
         {
             var method = (IMethodSymbol?)semantic.GetSymbolInfo(call).Symbol;
@@ -71,6 +73,7 @@ public class RawWriteOverloadTests
         var (compilation, calls) = CompileSource(source, languageVersion);
         await Assert.That(compilation.GetDiagnostics().Where(item => item.Severity == DiagnosticSeverity.Error).ToArray()).IsEmpty();
         var semantic = compilation.GetSemanticModel(compilation.SyntaxTrees.Single());
+
         foreach (var call in calls)
         {
             var method = (IMethodSymbol?)semantic.GetSymbolInfo(call).Symbol;
@@ -105,6 +108,7 @@ public class RawWriteOverloadTests
         var (compilation, calls) = CompileSource(source);
         await Assert.That(compilation.GetDiagnostics().Where(item => item.Severity == DiagnosticSeverity.Error).ToArray()).IsEmpty();
         var semantic = compilation.GetSemanticModel(compilation.SyntaxTrees.Single());
+
         for (var index = 0; index < calls.Length; index++)
         {
             var method = (IMethodSymbol?)semantic.GetSymbolInfo(calls[index]).Symbol;
@@ -121,8 +125,11 @@ public class RawWriteOverloadTests
         var (compilation, calls) = CompileCalls("null");
         var errors = compilation.GetDiagnostics().Where(item => item.Severity == DiagnosticSeverity.Error).ToArray();
         await Assert.That(errors.Length).IsEqualTo(calls.Length);
+
         foreach (var error in errors)
+        {
             await Assert.That(error.Id).IsEqualTo("CS0121");
+        }
     }
 
     private static (CSharpCompilation Compilation, InvocationExpressionSyntax[] Calls) CompileCalls(

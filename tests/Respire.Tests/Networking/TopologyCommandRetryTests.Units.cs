@@ -24,14 +24,18 @@ public partial class TopologyCommandRetryTests
         await using var transaction = client.CreateTransaction();
         var read = transaction.GetString("{key}:read");
         var increment = transaction.Increment("{key}:counter");
+
         if (expected == 1)
+        {
             await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireConnectionException>();
+        }
         else
         {
             await transaction.CommitAsync();
             await Assert.That(read.Result).IsEqualTo("value");
             await Assert.That(increment.Result).IsEqualTo(2L);
         }
+
         await Assert.That(execs).IsEqualTo(expected);
         await Assert.That(server.ReceivedCommands.Count(c => c == "GET {key}:read")).IsEqualTo(expected);
     }
@@ -47,7 +51,11 @@ public partial class TopologyCommandRetryTests
         var queues = 0;
         await using var source = UnitServer((_, _) => "-EXECABORT discarded\r\n"u8.ToArray(), command =>
         {
-            if (command != "GET key") return null;
+            if (command != "GET key")
+            {
+                return null;
+            }
+
             return Interlocked.Increment(ref queues) == 1 ? TryAgain
                 : Encoding.ASCII.GetBytes($"-{redirect} {ClusterHash.GetSlot("key")} 127.0.0.1:{target.Port}\r\n");
         });
@@ -57,6 +65,7 @@ public partial class TopologyCommandRetryTests
 #pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         var read = transaction.GetString("key");
+
         if (redirect == "ASK")
         {
             await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireConnectionException>();
@@ -68,6 +77,7 @@ public partial class TopologyCommandRetryTests
             await transaction.CommitAsync();
             await Assert.That(read.Result).IsEqualTo("value");
         }
+
         await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(1L);
         await Assert.That(events.GetValueOrDefault(redirect == "ASK" ? "exhausted" : "succeeded")).IsEqualTo(1L);
     }
@@ -141,15 +151,25 @@ public partial class TopologyCommandRetryTests
         Task? stopping = null;
         await using var survivor = UnitServer((_, _) => "*1\r\n$5\r\nvalue\r\n"u8.ToArray());
         await using var owner = UnitServer((_, _) => null);
+
         byte[] Map() => Volatile.Read(ref failedOver) == 0 ? SplitSlots(survivor.Port, owner.Port) : Slots(survivor.Port);
+
         var survivorReply = survivor.ReplyOverride!;
         survivor.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map()
             : command == "GET key" && !transaction ? Value : survivorReply(id, command);
         var ownerReply = owner.ReplyOverride!;
         owner.ReplyOverride = (id, command) =>
         {
-            if (command == "CLUSTER SLOTS") return Map();
-            if (command != (transaction ? "EXEC" : "GET key")) return ownerReply(id, command);
+            if (command == "CLUSTER SLOTS")
+            {
+                return Map();
+            }
+
+            if (command != (transaction ? "EXEC" : "GET key"))
+            {
+                return ownerReply(id, command);
+            }
+
             Volatile.Write(ref failedOver, 1);
             stopping = owner.DisposeAsync().AsTask();
             owner.CloseConnections();
@@ -160,7 +180,12 @@ public partial class TopologyCommandRetryTests
         { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
 #pragma warning restore RESP010
         await Assert.That(await ReadUnitAsync(client, transaction, default)).IsEqualTo("value");
-        if (stopping is not null) await stopping;
+
+        if (stopping is not null)
+        {
+            await stopping;
+        }
+
         await Assert.That(owner.ReceivedCommands.Count(c => c == "GET key")).IsEqualTo(1);
         await Assert.That(survivor.ReceivedCommands.Count(c => c == "GET key")).IsEqualTo(1);
     }
@@ -189,7 +214,11 @@ public partial class TopologyCommandRetryTests
         var result = await group.ExecuteAsync(async (client, token) =>
         {
             clients.Add(client);
-            try { return await ReadUnitAsync(client, transaction, token); }
+
+            try
+            {
+                return await ReadUnitAsync(client, transaction, token);
+            }
             catch (RespireServerException)
             {
                 Volatile.Write(ref down, 1);
@@ -215,6 +244,7 @@ public partial class TopologyCommandRetryTests
             await unit.CommitAsync(token);
             return read.Result;
         }
+
         using var batch = client.CreateBatch();
         var value = batch.GetString("key");
         await batch.ExecuteAsync(token);
@@ -227,16 +257,38 @@ public partial class TopologyCommandRetryTests
         var transactions = new ConcurrentDictionary<int, bool>();
         server.ReplyOverride = (id, command) =>
         {
-            if (command == "PING") return FakeRespServer.PongReply;
-            if (command == "CLUSTER SLOTS") return Slots(server.Port);
-            if (command == "MULTI") { transactions[id] = true; return FakeRespServer.OkReply; }
-            if (command == "EXEC") { transactions[id] = false; return exec(command, server); }
+            if (command == "PING")
+            {
+                return FakeRespServer.PongReply;
+            }
+
+            if (command == "CLUSTER SLOTS")
+            {
+                return Slots(server.Port);
+            }
+
+            if (command == "MULTI")
+            {
+                transactions[id] = true;
+                return FakeRespServer.OkReply;
+            }
+
+            if (command == "EXEC")
+            {
+                transactions[id] = false;
+                return exec(command, server);
+            }
+
             return transactions.GetValueOrDefault(id) ? queued?.Invoke(command) ?? "+QUEUED\r\n"u8.ToArray() : null;
         };
         return server;
     }
 
-    private static byte[]? Close(FakeRespServer server) { server.CloseConnections(); return null; }
+    private static byte[]? Close(FakeRespServer server)
+    {
+        server.CloseConnections();
+        return null;
+    }
 
     [Test]
     [Arguments(false, false)]
@@ -266,14 +318,26 @@ public partial class TopologyCommandRetryTests
             _ = warm.GetString("key");
             await warm.TryExecuteAsync();
         }
+
         var sent = server.ReceivedCommands.Count(c => c == "GET key");
         var admission = client.Core.Circuits!.Acquire(new("127.0.0.1", server.Port), default);
-        try { admission.Failed(new RespireConnectionException("Injected failure."), default); }
+
+        try
+        {
+            admission.Failed(new RespireConnectionException("Injected failure."), default);
+        }
         finally { admission.Dispose(); }
+
         await Assert.That(async () =>
         {
-            if (group is null) await ReadUnitAsync(client, transaction, default);
-            else await group.ExecuteAsync((member, token) => ReadUnitAsync(member, transaction, token), RespireCommandRetryCategory.ReadOnly);
+            if (group is null)
+            {
+                await ReadUnitAsync(client, transaction, default);
+            }
+            else
+            {
+                await group.ExecuteAsync((member, token) => ReadUnitAsync(member, transaction, token), RespireCommandRetryCategory.ReadOnly);
+            }
         }).ThrowsExactly<RespireCircuitOpenException>();
         await Assert.That(server.ReceivedCommands.Count(c => c == "GET key")).IsEqualTo(sent);
         await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(0L);

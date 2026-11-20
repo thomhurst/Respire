@@ -38,8 +38,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
-            Endpoints = [new("127.0.0.1", primary.Port)], ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ClusterTopologyRefreshInterval = null,
             TestingStreamFactory = async (host, port, cancellationToken) =>
             {
                 if (port == unavailable.Port)
@@ -48,7 +51,9 @@ public partial class ErrorMetricsTests
                     await release.Task.WaitAsync(cancellationToken);
                     throw expected;
                 }
+
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, cancellationToken);
@@ -64,14 +69,20 @@ public partial class ErrorMetricsTests
         var original = await router.GetReadConnectionAsync(slot, RespireReadFrom.Replica, deadline.Token, observation: default);
         var response = original.SendCheckedAsync(new Cmd1(Verbs.Get, "key"), deadline.Token).AsTask();
         using var capture = new Capture(throwOnMeasurement: true, commandMetrics: commandMetrics);
+
         try
         {
             var selection = router.GetHedgeConnectionAsync(slot, RespireReadFrom.Replica, original, deadline.Token).AsTask();
             await attempted.Task.WaitAsync(deadline.Token);
-            if (lateActivation) RespireMetrics.Configure(new()
+
+            if (lateActivation)
             {
-                Groups = RespireMetricGroups.Resiliency | (commandMetrics ? RespireMetricGroups.Command : RespireMetricGroups.None),
-            });
+                RespireMetrics.Configure(new()
+                {
+                    Groups = RespireMetricGroups.Resiliency | (commandMetrics ? RespireMetricGroups.Command : RespireMetricGroups.None),
+                });
+            }
+
             release.TrySetResult();
             await Assert.That(await selection.WaitAsync(deadline.Token)).IsNull();
             await replica.SendRawAsync("$2\r\nok\r\n"u8.ToArray());
@@ -102,14 +113,21 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", unavailable.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", unavailable.Port)],
         });
 #pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true, commandMetrics: commandMetrics);
         var error = await Assert.That(() =>
         {
-            if (single) _ = client.Streams.ReadAllAsync("events", batchSize: batchSize);
-            else _ = client.Streams.ReadAllAsync([("events", new RespireStreamId("0-0"))], batchSize: batchSize);
+            if (single)
+            {
+                _ = client.Streams.ReadAllAsync("events", batchSize: batchSize);
+            }
+            else
+            {
+                _ = client.Streams.ReadAllAsync([("events", new RespireStreamId("0-0"))], batchSize: batchSize);
+            }
         }).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(error!.ParamName).IsEqualTo("batchSize");
         await Assert.That(capture.Items.Count).IsEqualTo(1);

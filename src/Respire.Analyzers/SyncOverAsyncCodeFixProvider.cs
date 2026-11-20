@@ -16,7 +16,12 @@ namespace Respire.Analyzers;
 public sealed class SyncOverAsyncCodeFixProvider : CodeFixProvider
 {
     private const string Title = "Await the Respire operation";
-    public override ImmutableArray<string> FixableDiagnosticIds { get; } = ImmutableArray.Create(DiagnosticIds.SyncOverAsync);
+
+    public override ImmutableArray<string> FixableDiagnosticIds
+    {
+        get;
+    } = ImmutableArray.Create(DiagnosticIds.SyncOverAsync);
+
     public override FixAllProvider GetFixAllProvider() => WellKnownFixAllProviders.BatchFixer;
 
     public override async Task RegisterCodeFixesAsync(CodeFixContext context)
@@ -24,18 +29,34 @@ public sealed class SyncOverAsyncCodeFixProvider : CodeFixProvider
         var cancellationToken = context.CancellationToken;
         var root = await context.Document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
         var model = await context.Document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
-        if (root is null || model is null) return;
+
+        if (root is null || model is null)
+        {
+            return;
+        }
+
         foreach (var diagnostic in context.Diagnostics)
         {
             var node = root.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true);
             var operation = model.GetOperation(node, cancellationToken);
-            if (operation is null || SyncOverAsyncAnalyzer.GetAwaitable(operation)?.Syntax is not ExpressionSyntax operand) continue;
+
+            if (operation is null || SyncOverAsyncAnalyzer.GetAwaitable(operation)?.Syntax is not ExpressionSyntax operand)
+            {
+                continue;
+            }
             // Timed/cancellable Wait overloads have different semantics. Never discard their arguments.
-            if (operation is IInvocationOperation { TargetMethod.Name: "Wait", Arguments.Length: > 0 }) continue;
+            if (operation is IInvocationOperation { TargetMethod.Name: "Wait", Arguments.Length: > 0 })
+            {
+                continue;
+            }
 
             ExpressionSyntax replacement = SyntaxFactory.AwaitExpression(operand.WithoutTrivia());
+
             if (node.Parent is not ExpressionStatementSyntax)
+            {
                 replacement = SyntaxFactory.ParenthesizedExpression(replacement);
+            }
+
             replacement = replacement.WithTriviaFrom(node).WithAdditionalAnnotations(Formatter.Annotation, Simplifier.Annotation);
             // The removed blocking suffix can contain comments on the operand, member name,
             // or invocation parentheses. Move its trivia after the await expression, keeping
@@ -48,20 +69,29 @@ public sealed class SyncOverAsyncCodeFixProvider : CodeFixProvider
             // method/local function can also gain async if its remaining returns still compile.
             var function = node.Ancestors().FirstOrDefault(n => n is AnonymousFunctionExpressionSyntax
                 or LocalFunctionStatementSyntax or BaseMethodDeclarationSyntax or AccessorDeclarationSyntax);
+
             if (function is MethodDeclarationSyntax method && !method.Modifiers.Any(SyntaxKind.AsyncKeyword)
                 && SyncOverAsyncAnalyzer.IsTask(model.GetDeclaredSymbol(method, cancellationToken)?.ReturnType))
+            {
                 updatedRoot = root.ReplaceNode(method, method.ReplaceNode(node, replacement)
                     .AddModifiers(SyntaxFactory.Token(SyntaxKind.AsyncKeyword)).WithAdditionalAnnotations(Formatter.Annotation));
+            }
             else if (function is LocalFunctionStatementSyntax local && !local.Modifiers.Any(SyntaxKind.AsyncKeyword)
                 && SyncOverAsyncAnalyzer.IsTask((model.GetDeclaredSymbol(local, cancellationToken) as IMethodSymbol)?.ReturnType))
+            {
                 updatedRoot = root.ReplaceNode(local, local.ReplaceNode(node, replacement)
                     .AddModifiers(SyntaxFactory.Token(SyntaxKind.AsyncKeyword)).WithAdditionalAnnotations(Formatter.Annotation));
+            }
 
             var updated = context.Document.WithSyntaxRoot(updatedRoot);
             var updatedModel = await updated.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
             // This also rejects lock bodies, constructors, expression trees, and incompatible returns.
             if (updatedModel is null || updatedModel.GetDiagnostics(cancellationToken: cancellationToken)
-                .Any(d => d.Severity == DiagnosticSeverity.Error)) continue;
+                .Any(d => d.Severity == DiagnosticSeverity.Error))
+            {
+                continue;
+            }
+
             context.RegisterCodeFix(CodeAction.Create(Title, _ => Task.FromResult(updated), Title), diagnostic);
         }
     }

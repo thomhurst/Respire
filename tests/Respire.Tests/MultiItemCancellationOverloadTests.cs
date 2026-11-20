@@ -18,26 +18,37 @@ public class MultiItemCancellationOverloadTests
     public async Task EveryParamsFacetCommand_HasASingleItemCancellationOverload()
     {
         var missing = new List<string>();
+
         foreach (var type in typeof(RespireClient).Assembly.GetExportedTypes()
                      .Where(type => type.IsInterface && type.Name.EndsWith("Commands", StringComparison.Ordinal)
                          && !type.Name.StartsWith("IRespireBatch", StringComparison.Ordinal)))
         {
             var methods = type.GetMethods();
+
             foreach (var method in methods)
             {
                 var parameters = method.GetParameters();
-                if (parameters.Length == 0 || !IsParamsSpan(parameters[^1])) continue;
+
+                if (parameters.Length == 0 || !IsParamsSpan(parameters[^1]))
+                {
+                    continue;
+                }
+
                 var expected = parameters.Select(parameter => parameter.ParameterType).ToArray();
                 expected[^1] = expected[^1].GetGenericArguments()[0];
                 expected = [.. expected, typeof(CancellationToken)];
+
                 if (!methods.Any(candidate => candidate.Name == method.Name
                     && candidate.GetGenericArguments().Length == method.GetGenericArguments().Length
                     && candidate.GetParameters().Length == expected.Length
                     && candidate.GetParameters().Select(parameter => parameter.ParameterType)
                         .Zip(expected).All(pair => TypesEquivalent(pair.First, pair.Second))))
+                {
                     missing.Add($"{type.Name}.{method.Name}");
+                }
             }
         }
+
         await Assert.That(missing).IsEmpty();
     }
 
@@ -45,6 +56,7 @@ public class MultiItemCancellationOverloadTests
     public async Task EveryMultiKeyFacetCommand_HasASingleKeyOverload()
     {
         var missing = new List<string>();
+
         foreach (var type in typeof(RespireClient).Assembly.GetExportedTypes()
                      .Concat([typeof(Json.RespireJsonClient), typeof(TimeSeries.RespireTimeSeriesClient),
                          typeof(Probabilistic.RespireProbabilisticClient)])
@@ -56,14 +68,25 @@ public class MultiItemCancellationOverloadTests
                          || type == typeof(Probabilistic.RespireProbabilisticClient)))
         {
             var methods = type.GetMethods();
+
             foreach (var method in methods)
             {
                 var parameters = method.GetParameters();
-                if (!parameters.Any(parameter => parameter.ParameterType == typeof(CancellationToken))) continue;
+
+                if (!parameters.Any(parameter => parameter.ParameterType == typeof(CancellationToken)))
+                {
+                    continue;
+                }
+
                 var expected = parameters.Select(parameter => parameter.ParameterType).ToArray();
                 var index = Array.FindIndex(expected, type => type == typeof(ReadOnlySpan<RespireKey>)
                     || type == typeof(RespireKey[]) || type == typeof(IReadOnlyList<RespireKey>));
-                if (index < 0) continue;
+
+                if (index < 0)
+                {
+                    continue;
+                }
+
                 expected[index] = typeof(RespireKey);
                 // The single-key sorted-set overload already required every option and retains
                 // its positional contract. The multi-key overload moved the now-required wait
@@ -74,14 +97,18 @@ public class MultiItemCancellationOverloadTests
                 {
                     expected = [typeof(RespireKey), typeof(long), typeof(bool), typeof(TimeSpan?), typeof(CancellationToken)];
                 }
+
                 if (!methods.Any(candidate => candidate.Name == method.Name
                     && candidate.GetGenericArguments().Length == method.GetGenericArguments().Length
                     && candidate.GetParameters().Length == expected.Length
                     && candidate.GetParameters().Select(parameter => parameter.ParameterType)
                         .Zip(expected).All(pair => TypesEquivalent(pair.First, pair.Second))))
+                {
                     missing.Add($"{type.Name}.{method.Name}");
+                }
             }
         }
+
         await Assert.That(missing).IsEmpty();
     }
 
@@ -106,9 +133,11 @@ public class MultiItemCancellationOverloadTests
             }
 
             var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+
             foreach (var method in methods)
             {
                 var parameters = method.GetParameters();
+
                 if (parameters.Length == 0 || !IsParamsSpan(parameters[^1]))
                 {
                     continue;
@@ -350,6 +379,7 @@ public class MultiItemCancellationOverloadTests
         }
 
         var parameters = candidate.GetParameters();
+
         if (parameters.Length != expected.Length
             || parameters[^1].ParameterType != typeof(CancellationToken)
             || parameters[^1].IsOptional
@@ -384,16 +414,19 @@ public class MultiItemCancellationOverloadTests
         {
             return left.GenericParameterPosition == right.GenericParameterPosition;
         }
+
         if (left.IsArray && right.IsArray)
         {
             return left.GetArrayRank() == right.GetArrayRank()
                 && left.IsSZArray == right.IsSZArray
                 && TypesEquivalent(left.GetElementType()!, right.GetElementType()!);
         }
+
         if ((left.IsByRef && right.IsByRef) || (left.IsPointer && right.IsPointer))
         {
             return TypesEquivalent(left.GetElementType()!, right.GetElementType()!);
         }
+
         return left.IsGenericType && right.IsGenericType
             && left.GetGenericTypeDefinition() == right.GetGenericTypeDefinition()
             && left.GetGenericArguments().Zip(right.GetGenericArguments())
@@ -411,7 +444,9 @@ public class MultiItemCancellationOverloadTests
 
     private static class OtherNamespace
     {
-        public sealed class Task<T> { }
+        public sealed class Task<T>
+        {
+        }
     }
 
     private static string Describe(Type type)
@@ -420,10 +455,12 @@ public class MultiItemCancellationOverloadTests
         {
             return $"T{type.GenericParameterPosition}";
         }
+
         if (type.IsArray)
         {
             return $"{Describe(type.GetElementType()!)}[]";
         }
+
         return type.IsGenericType
             ? $"{type.Name[..type.Name.IndexOf('`')]}<{string.Join(", ", type.GetGenericArguments().Select(Describe))}>"
             : type.FullName ?? type.Name;
@@ -441,22 +478,39 @@ public class MultiItemCancellationOverloadTests
     {
         public ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
             => DeleteAsync([key], cancellationToken);
+
         public ValueTask<long> UnlinkAsync(RespireKey key, CancellationToken cancellationToken)
             => UnlinkAsync([key], cancellationToken);
+
         public ValueTask<long> TouchAsync(RespireKey key, CancellationToken cancellationToken)
             => TouchAsync([key], cancellationToken);
+
         public ValueTask<string?[]> SortAsync(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         public ValueTask<T?[]> SortAsync<T>(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         public ValueTask<long> SortStoreAsync(RespireKey key, RespireKey destination, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         public ValueTask<RespireKey?> RandomAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         public ValueTask<bool> MoveAsync(RespireKey key, int database, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         public ValueTask<bool> MoveAsync(RespireKey key, int database, bool replace, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
-        public Overload LastOverload { get; private set; }
+        public Overload LastOverload
+        {
+            get; private set;
+        }
 
-        public int LastKeyCount { get; private set; }
+        public int LastKeyCount
+        {
+            get; private set;
+        }
 
-        public CancellationToken LastToken { get; private set; }
+        public CancellationToken LastToken
+        {
+            get; private set;
+        }
 
         public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys)
             => Record(Overload.Params, keys.Length, CancellationToken.None);

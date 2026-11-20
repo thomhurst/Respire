@@ -7,7 +7,10 @@ namespace Respire.StressTests.Clients;
 /// </summary>
 internal interface IStressClient : IAsyncDisposable
 {
-    string Name { get; }
+    string Name
+    {
+        get;
+    }
 
     ValueTask PingAsync();
 

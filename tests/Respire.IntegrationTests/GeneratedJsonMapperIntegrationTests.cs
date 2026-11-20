@@ -24,6 +24,7 @@ public class GeneratedJsonMapperIntegrationTests(ModernRedisTestContainer fixtur
         var json = new RespireJsonClient(client.WithKeyPrefix($"mapper:{Guid.NewGuid():N}:"));
         var model = new JsonMappedCustomer("ü:{}", "姓名😀", null);
         var key = JsonMappedCustomerJsonMapper.GetKey(model);
+
         try
         {
             (await JsonMappedCustomerJsonMapper.SetAsync(json, model)).Should().BeTrue();

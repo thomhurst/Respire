@@ -74,6 +74,7 @@ public class PublicApiLifecycleTests
         return names.Select(name =>
         {
             var path = Path.Combine(directory, name + ".dll");
+
             if (!File.Exists(path))
             {
                 throw new FileNotFoundException($"Expected shipping assembly '{name}' is missing from validation.", path);

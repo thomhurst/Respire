@@ -8,10 +8,15 @@ internal readonly struct VectorCommand(Verb verb, RespireValue key, ReadOnlyMemo
     RespireVectorEncoding encoding, RespireValue[] before, RespireValue[] after) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+
     public RespireCommandRetryCategory RetryCategory => verb.RetryCategory;
+
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
+
     public ReadCommandKind ReadKind => verb.ReadKind;
+
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
+
     public bool HasOpaqueCursor => verb.HasOpaqueCursor;
 
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
@@ -28,7 +33,12 @@ internal readonly struct VectorCommand(Verb verb, RespireValue key, ReadOnlyMemo
             (encoding == RespireVectorEncoding.Fp32 ? 2 : 2 + vector.Length));
         writer.WriteRaw(verb.Bulk);
         key.WriteTo(ref writer);
-        foreach (var argument in before) argument.WriteTo(ref writer);
+
+        foreach (var argument in before)
+        {
+            argument.WriteTo(ref writer);
+        }
+
         if (encoding == RespireVectorEncoding.Fp32)
         {
             writer.WriteRaw(CommandOptionFrames.FP32);
@@ -38,8 +48,16 @@ internal readonly struct VectorCommand(Verb verb, RespireValue key, ReadOnlyMemo
         {
             writer.WriteRaw(CommandOptionFrames.VALUES);
             writer.WriteBulkInteger(vector.Length);
-            foreach (var component in vector.Span) ((RespireValue)component).WriteTo(ref writer);
+
+            foreach (var component in vector.Span)
+            {
+                ((RespireValue)component).WriteTo(ref writer);
+            }
         }
-        foreach (var argument in after) argument.WriteTo(ref writer);
+
+        foreach (var argument in after)
+        {
+            argument.WriteTo(ref writer);
+        }
     }
 }

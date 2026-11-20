@@ -27,7 +27,10 @@ public partial record MapperJsonModel(string Id,
 public abstract class MapperBenchmarkInputs
 {
     [Params(false, true)]
-    public bool Populated { get; set; }
+    public bool Populated
+    {
+        get; set;
+    }
 
     protected MapperHashModel Hash = null!;
     protected MapperVectorHashModel VectorHash = null!;
@@ -63,11 +66,13 @@ public abstract class MapperBenchmarkInputs
         var generatedFields = MapperVectorHashModelHashMapper.ToFields(VectorHash);
         Require(VectorFields.Count == generatedFields.Count && VectorFields.All(pair =>
             generatedFields.TryGetValue(pair.Key, out var value) && pair.Value.AsSpan().SequenceEqual(value)), "binary hash write");
+
         if (VectorHash.Embedding is not null)
         {
             Require(!ReferenceEquals(generatedFields["Embedding"], VectorHash.Embedding), "generated write snapshot");
             Require(!ReferenceEquals(VectorFields["Embedding"], VectorHash.Embedding), "handwritten write snapshot");
         }
+
         Require(MapperHashModelHashMapper.GetKey(Hash).Equals(HandwrittenMapper.HashKey(Hash)), "hash key");
         Require(MapperJsonModelJsonMapper.GetKey(Json).Equals(HandwrittenMapper.JsonKey(Json)), "JSON key");
         CheckDefinition(MapperVectorHashModelSearchSchema.Definition, HandwrittenMapper.HashDefinition());
@@ -101,7 +106,11 @@ public abstract class MapperBenchmarkInputs
     {
         Require(copy.Id == VectorHash.Id, "binary hash scalar read");
         Require(copy.Embedding is null ? VectorHash.Embedding is null : copy.Embedding.AsSpan().SequenceEqual(VectorHash.Embedding), "binary hash vector read");
-        if (copy.Embedding is not null) Require(!ReferenceEquals(copy.Embedding, VectorFields["Embedding"]), "read snapshot");
+
+        if (copy.Embedding is not null)
+        {
+            Require(!ReferenceEquals(copy.Embedding, VectorFields["Embedding"]), "read snapshot");
+        }
     }
 
     private static void CheckDefinition(RespireSearchIndexDefinition generated, RespireSearchIndexDefinition handwritten)
@@ -120,45 +129,114 @@ public abstract class MapperBenchmarkInputs
 
     private static void Require(bool condition, string operation)
     {
-        if (!condition) throw new InvalidOperationException("Mapper benchmark mismatch: " + operation);
+        if (!condition)
+        {
+            throw new InvalidOperationException("Mapper benchmark mismatch: " + operation);
+        }
     }
 
     private static void Reject(Action action)
     {
-        try { action(); }
+        try
+        {
+            action();
+        }
         catch (ArgumentException) { return; }
+
         throw new InvalidOperationException("Mapper accepted an invalid vector.");
     }
 }
 
 public class GeneratedMapperBenchmarks : MapperBenchmarkInputs
 {
-    [Benchmark] public Dictionary<string, string> HashWrite() => MapperHashModelHashMapper.ToFields(Hash);
-    [Benchmark] public MapperHashModel HashRead() => MapperHashModelHashMapper.FromFields(HashFields);
-    [Benchmark] public RespireKey HashKey() => MapperHashModelHashMapper.GetKey(Hash);
-    [Benchmark] public byte[] JsonWrite() => MapperJsonModelJsonMapper.ToJson(Json);
-    [Benchmark] public MapperJsonModel? JsonRead() => MapperJsonModelJsonMapper.FromJson(JsonBytes);
-    [Benchmark] public RespireKey JsonKey() => MapperJsonModelJsonMapper.GetKey(Json);
-    [Benchmark] public Dictionary<string, byte[]> VectorHashWrite() => MapperVectorHashModelHashMapper.ToFields(VectorHash);
-    [Benchmark] public MapperVectorHashModel VectorHashRead() => MapperVectorHashModelHashMapper.FromFields(VectorFields);
-    [Benchmark] public RespireSearchIndexDefinition HashDefinition() => MapperVectorHashModelSearchSchema.Definition;
-    [Benchmark] public RespireSearchIndexDefinition JsonDefinition() => MapperJsonModelSearchSchema.Definition;
-    [Benchmark] public MapperVectorHashModel HashValidate() { MapperVectorHashModelSearchSchema.Validate(VectorHash); return VectorHash; }
-    [Benchmark] public MapperJsonModel JsonValidate() { MapperJsonModelSearchSchema.Validate(Json); return Json; }
+    [Benchmark]
+    public Dictionary<string, string> HashWrite() => MapperHashModelHashMapper.ToFields(Hash);
+
+    [Benchmark]
+    public MapperHashModel HashRead() => MapperHashModelHashMapper.FromFields(HashFields);
+
+    [Benchmark]
+    public RespireKey HashKey() => MapperHashModelHashMapper.GetKey(Hash);
+
+    [Benchmark]
+    public byte[] JsonWrite() => MapperJsonModelJsonMapper.ToJson(Json);
+
+    [Benchmark]
+    public MapperJsonModel? JsonRead() => MapperJsonModelJsonMapper.FromJson(JsonBytes);
+
+    [Benchmark]
+    public RespireKey JsonKey() => MapperJsonModelJsonMapper.GetKey(Json);
+
+    [Benchmark]
+    public Dictionary<string, byte[]> VectorHashWrite() => MapperVectorHashModelHashMapper.ToFields(VectorHash);
+
+    [Benchmark]
+    public MapperVectorHashModel VectorHashRead() => MapperVectorHashModelHashMapper.FromFields(VectorFields);
+
+    [Benchmark]
+    public RespireSearchIndexDefinition HashDefinition() => MapperVectorHashModelSearchSchema.Definition;
+
+    [Benchmark]
+    public RespireSearchIndexDefinition JsonDefinition() => MapperJsonModelSearchSchema.Definition;
+
+    [Benchmark]
+    public MapperVectorHashModel HashValidate()
+    {
+        MapperVectorHashModelSearchSchema.Validate(VectorHash);
+        return VectorHash;
+    }
+
+    [Benchmark]
+    public MapperJsonModel JsonValidate()
+    {
+        MapperJsonModelSearchSchema.Validate(Json);
+        return Json;
+    }
 }
 
 public class HandwrittenMapperBenchmarks : MapperBenchmarkInputs
 {
-    [Benchmark] public Dictionary<string, string> HashWrite() => HandwrittenMapper.ToFields(Hash);
-    [Benchmark] public MapperHashModel HashRead() => HandwrittenMapper.FromFields(HashFields);
-    [Benchmark] public RespireKey HashKey() => HandwrittenMapper.HashKey(Hash);
-    [Benchmark] public byte[] JsonWrite() => HandwrittenMapper.ToJson(Json);
-    [Benchmark] public MapperJsonModel? JsonRead() => HandwrittenMapper.FromJson(JsonBytes);
-    [Benchmark] public RespireKey JsonKey() => HandwrittenMapper.JsonKey(Json);
-    [Benchmark] public Dictionary<string, byte[]> VectorHashWrite() => HandwrittenMapper.ToFields(VectorHash);
-    [Benchmark] public MapperVectorHashModel VectorHashRead() => HandwrittenMapper.VectorFromFields(VectorFields);
-    [Benchmark] public RespireSearchIndexDefinition HashDefinition() => HandwrittenMapper.HashDefinition();
-    [Benchmark] public RespireSearchIndexDefinition JsonDefinition() => HandwrittenMapper.JsonDefinition();
-    [Benchmark] public MapperVectorHashModel HashValidate() { HandwrittenMapper.Validate(VectorHash); return VectorHash; }
-    [Benchmark] public MapperJsonModel JsonValidate() { HandwrittenMapper.Validate(Json); return Json; }
+    [Benchmark]
+    public Dictionary<string, string> HashWrite() => HandwrittenMapper.ToFields(Hash);
+
+    [Benchmark]
+    public MapperHashModel HashRead() => HandwrittenMapper.FromFields(HashFields);
+
+    [Benchmark]
+    public RespireKey HashKey() => HandwrittenMapper.HashKey(Hash);
+
+    [Benchmark]
+    public byte[] JsonWrite() => HandwrittenMapper.ToJson(Json);
+
+    [Benchmark]
+    public MapperJsonModel? JsonRead() => HandwrittenMapper.FromJson(JsonBytes);
+
+    [Benchmark]
+    public RespireKey JsonKey() => HandwrittenMapper.JsonKey(Json);
+
+    [Benchmark]
+    public Dictionary<string, byte[]> VectorHashWrite() => HandwrittenMapper.ToFields(VectorHash);
+
+    [Benchmark]
+    public MapperVectorHashModel VectorHashRead() => HandwrittenMapper.VectorFromFields(VectorFields);
+
+    [Benchmark]
+    public RespireSearchIndexDefinition HashDefinition() => HandwrittenMapper.HashDefinition();
+
+    [Benchmark]
+    public RespireSearchIndexDefinition JsonDefinition() => HandwrittenMapper.JsonDefinition();
+
+    [Benchmark]
+    public MapperVectorHashModel HashValidate()
+    {
+        HandwrittenMapper.Validate(VectorHash);
+        return VectorHash;
+    }
+
+    [Benchmark]
+    public MapperJsonModel JsonValidate()
+    {
+        HandwrittenMapper.Validate(Json);
+        return Json;
+    }
 }

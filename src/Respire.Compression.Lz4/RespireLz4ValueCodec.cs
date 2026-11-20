@@ -15,7 +15,10 @@ public sealed class RespireLz4ValueCodec : RespireValueCodec
         : base(3, options, allowReservedAlgorithm: true)
     {
         if (level != 0 && level is not (>= 3 and <= 12))
+        {
             throw new ArgumentOutOfRangeException(nameof(level), "LZ4 level must be 0 or between 3 and 12.");
+        }
+
         _level = (LZ4Level)level;
     }
 
@@ -23,12 +26,21 @@ public sealed class RespireLz4ValueCodec : RespireValueCodec
     protected override byte[] Compress(ReadOnlySpan<byte> payload)
     {
         var capacity = LZ4Codec.MaximumOutputSize(payload.Length);
-        if (capacity <= 0) throw new InvalidDataException("LZ4 input exceeds its supported block size.");
+
+        if (capacity <= 0)
+        {
+            throw new InvalidDataException("LZ4 input exceeds its supported block size.");
+        }
+
         var buffer = ArrayPool<byte>.Shared.Rent(capacity);
+
         try
         {
             if (!TryCompress(payload, buffer.AsSpan(0, capacity), out var written))
+            {
                 throw new InvalidDataException("LZ4 could not encode the value within its output bound.");
+            }
+
             return buffer.AsSpan(0, written).ToArray();
         }
         finally
@@ -49,6 +61,8 @@ public sealed class RespireLz4ValueCodec : RespireValueCodec
     protected override void Decompress(ReadOnlySpan<byte> payload, Span<byte> destination)
     {
         if (LZ4Codec.Decode(payload, destination) != destination.Length)
+        {
             throw new InvalidDataException("LZ4 payload is malformed or has an unexpected decoded length.");
+        }
     }
 }

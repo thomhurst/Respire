@@ -42,15 +42,22 @@ public class ClusterAdministrationParserTests
                 RespValue.Array(RespValue.BulkString("host"), RespValue.Integer(6379))), RespValue.Integer(9));
         var error = await Assert.That(() =>
         {
-            if (replicas) _ = ClusterAdministrationParser.Replicas(in reply);
-            else _ = ClusterAdministrationParser.Slots(in reply);
+            if (replicas)
+            {
+                _ = ClusterAdministrationParser.Replicas(in reply);
+            }
+            else
+            {
+                _ = ClusterAdministrationParser.Slots(in reply);
+            }
         }).ThrowsExactly<RespireProtocolException>();
         await Assert.That(error!.Message).Contains("row 1");
         await Assert.That(error.InnerException).IsTypeOf<RespireProtocolException>();
     }
 
     [Test]
-    [Arguments(false)] [Arguments(true)]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task SlotResultsOwnOptionalAndFutureFields(bool resp3)
     {
         var metadata = Encoding.ASCII.GetBytes(resp3 ? "%2\r\n+hostname\r\n+announced\r\n+future\r\n$2\r\n"
@@ -60,7 +67,8 @@ public class ClusterAdministrationParserTests
         var position = 0;
         await Assert.That(RespParser.TryParseValue(wire, ref position, out var reply)).IsEqualTo(RespParseStatus.Done);
         var result = ClusterAdministrationParser.Slots(in reply);
-        reply.Dispose(); wire.AsSpan().Clear();
+        reply.Dispose();
+        wire.AsSpan().Clear();
         var row = result.Single();
         await Assert.That(row.Slots).IsEqualTo(new RespireClusterSlotRange(0, 16383));
         await Assert.That(row.Primary.Endpoint).IsNull();
@@ -80,7 +88,8 @@ public class ClusterAdministrationParserTests
         var bytes = Encoding.ASCII.GetBytes("replica host:6379@16379,hostname slave,future primary 1 2 3 connected 0-5 [6-<-peer] future-token\n");
         var reply = RespValue.Array(RespValue.BulkString(bytes));
         var result = ClusterAdministrationParser.Replicas(in reply);
-        reply.Dispose(); bytes.AsSpan().Clear();
+        reply.Dispose();
+        bytes.AsSpan().Clear();
         var node = result.Single();
         await Assert.That(node.Id).IsEqualTo("replica");
         await Assert.That(node.Address).IsEqualTo("host:6379@16379,hostname");
@@ -98,7 +107,8 @@ public class ClusterAdministrationParserTests
         var reply = WithNode(RespValue.Array(RespValue.BulkString("host"), RespValue.Integer(6379),
             RespValue.BulkString("id"), RespValue.Array(), RespValue.BulkString(bytes)));
         var result = ClusterAdministrationParser.Slots(in reply);
-        reply.Dispose(); bytes.AsSpan().Clear();
+        reply.Dispose();
+        bytes.AsSpan().Clear();
         await Assert.That(result[0].Primary.AdditionalValues.Single().AsBytes()).IsEquivalentTo(new byte[] { 255, 0 });
     }
 
@@ -112,8 +122,13 @@ public class ClusterAdministrationParserTests
     }
 
     [Test]
-    [Arguments("BUMPED")] [Arguments("STILL -1")] [Arguments("OTHER 1")] [Arguments("BUMPED 1 2")]
-    [Arguments("BUMPED 18446744073709551616")] [Arguments("BUMPED  1")] [Arguments("STILL +1")]
+    [Arguments("BUMPED")]
+    [Arguments("STILL -1")]
+    [Arguments("OTHER 1")]
+    [Arguments("BUMPED 1 2")]
+    [Arguments("BUMPED 18446744073709551616")]
+    [Arguments("BUMPED  1")]
+    [Arguments("STILL +1")]
     public async Task MalformedEpochIsRejected(string text)
     {
         var reply = RespValue.SimpleString(text);
@@ -142,17 +157,26 @@ public class ClusterAdministrationParserTests
             WithMetadata(RespValue.Array(RespValue.BulkString("duplicate"), RespValue.Integer(1),
                 RespValue.BulkString("duplicate"), RespValue.Integer(2))),
         ];
+
         foreach (var reply in malformed)
+        {
             await Assert.That(() => ClusterAdministrationParser.Slots(in reply)).ThrowsExactly<RespireProtocolException>();
+        }
+
         RespValue[] invalidReplicas = [RespValue.Integer(1), RespValue.Array(RespValue.Integer(1)),
             RespValue.Array(RespValue.BulkString("")), RespValue.Array(RespValue.BulkString("incomplete")),
             RespValue.Array(RespValue.BulkString("a :0 slave b 0 0 0 connected\nb :0 slave a 0 0 0 connected"))];
+
         foreach (var reply in invalidReplicas)
+        {
             await Assert.That(() => ClusterAdministrationParser.Replicas(in reply)).ThrowsExactly<RespireProtocolException>();
+        }
     }
 
     private static RespValue Row(RespValue start, RespValue end, RespValue node) => RespValue.Array(RespValue.Array(start, end, node));
+
     private static RespValue WithNode(RespValue node) => Row(RespValue.Integer(0), RespValue.Integer(1), node);
+
     private static RespValue WithMetadata(RespValue metadata)
         => WithNode(RespValue.Array(RespValue.BulkString("host"), RespValue.Integer(6379), RespValue.BulkString("id"), metadata));
 }

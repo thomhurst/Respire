@@ -18,7 +18,7 @@ namespace Microsoft.Extensions.Caching.StackExchangeRedis;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class RedisCacheSetAndRemoveTests(RedisTestContainer fixture)
 {
-[Test]
+    [Test]
     public void GetMissingKeyReturnsNull()
     {
         using var cache = UpstreamCache.Create(fixture);
@@ -175,6 +175,7 @@ public class RedisCacheSetAndRemoveTests(RedisTestContainer fixture)
     }
 
     static string Hex(byte[] value) => BitConverter.ToString(value);
+
     static string Hex(string value) => Hex(Encoding.UTF8.GetBytes(value));
 
     private static string Me([CallerMemberName] string caller = "") => caller;

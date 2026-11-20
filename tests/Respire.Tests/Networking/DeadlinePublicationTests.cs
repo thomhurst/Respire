@@ -30,7 +30,11 @@ public class DeadlinePublicationTests
         var command = new AcceptanceCommand(() =>
         {
             published = connection.InspectForTests().Inflight.TryPeek(out var source);
-            if (published) observed = source.Deadline;
+
+            if (published)
+            {
+                observed = source.Deadline;
+            }
         });
         await SendAsync(connection, command, expected, path, direct);
         await Assert.That(published).IsTrue();
@@ -54,21 +58,32 @@ public class DeadlinePublicationTests
         {
             SuppressReply = command =>
             {
-                if (command != "PING") return false;
+                if (command != "PING")
+                {
+                    return false;
+                }
+
                 firstSeen.TrySetResult();
                 return true;
             },
         };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new RespireConnectionOptions { CommandTimeout = TimeSpan.FromMinutes(5), MaxInflightCommands = 1 });
-        var first = connection.SendAsync(new AcceptanceCommand(static () => { }), armCommandDeadline: false).AsTask();
+        var first = connection.SendAsync(
+            new AcceptanceCommand(static () =>
+            {
+            }),
+            armCommandDeadline: false
+        ).AsTask();
         await firstSeen.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var expected = CommandDeadline.At(Environment.TickCount64 + 60_000).Relax(1234);
         var accepted = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
         var command = new AcceptanceCommand(() =>
         {
             if (connection.InspectForTests().Inflight.TryPeek(out var source))
+            {
                 accepted.SetResult(source.Deadline.RawValue);
+            }
         });
         var second = SendAsync(connection, command, expected, path, direct);
         await Assert.That(second.IsCompleted).IsFalse();
@@ -96,8 +111,15 @@ public class DeadlinePublicationTests
         var elapsed = (TimeSpan?)typeof(RespireConnection)
             .GetMethod("GetDiagnosticElapsed", BindingFlags.NonPublic | BindingFlags.Static)!
             .Invoke(null, [timestamp, now]);
-        if (expectedMilliseconds < 0) await Assert.That(elapsed).IsNull();
-        else await Assert.That(elapsed).IsEqualTo((TimeSpan?)TimeSpan.FromMilliseconds(expectedMilliseconds));
+
+        if (expectedMilliseconds < 0)
+        {
+            await Assert.That(elapsed).IsNull();
+        }
+        else
+        {
+            await Assert.That(elapsed).IsEqualTo((TimeSpan?)TimeSpan.FromMilliseconds(expectedMilliseconds));
+        }
     }
 
     [Test]
@@ -139,9 +161,13 @@ public class DeadlinePublicationTests
     private readonly struct AcceptanceCommand(Action accepted, int sizeHint = 0) : IRespCommand
     {
         public int GetWriteSizeHint() => sizeHint;
+
         public AcceptanceCommand WithSizeHint(int bound) => new(accepted, bound);
+
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer) => writer.WriteRaw(FakeRespServer.PingFrame);
+
         public void OnAccepted() => accepted();
     }
 }

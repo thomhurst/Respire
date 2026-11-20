@@ -39,7 +39,12 @@ public class ServerAclCommandTests
                 _ = server.SendRawAsync("%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
                 return true;
             }
-            if (!command.StartsWith("ACL SETUSER ", StringComparison.Ordinal)) return false;
+
+            if (!command.StartsWith("ACL SETUSER ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             received.TrySetResult(server.ReceivedConnectionIds[^1]);
             return true;
         };
@@ -47,7 +52,10 @@ public class ServerAclCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true, ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            AllowAdmin = true,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -57,8 +65,16 @@ public class ServerAclCommandTests
         await Assert.That(cache.Count).IsEqualTo(0);
         Insert(cache);
         await server.SendRawAsync(fail ? "-ERR invalid rule\r\n"u8.ToArray() : FakeRespServer.OkReply, connection);
-        if (fail && !allNodes) await Assert.That(async () => await mutation).ThrowsExactly<RespireServerException>();
-        else await mutation.WaitAsync(TimeSpan.FromSeconds(5));
+
+        if (fail && !allNodes)
+        {
+            await Assert.That(async () => await mutation).ThrowsExactly<RespireServerException>();
+        }
+        else
+        {
+            await mutation.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
         await Assert.That(cache.Count).IsEqualTo(0);
 
         async Task MutateAll()
@@ -156,8 +172,17 @@ public class ServerAclCommandTests
         var discovering = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         seed.SuppressReply = command =>
         {
-            if (command == "CLUSTER SLOTS") { _ = seed.SendRawAsync(Slots(seed.Port)); return true; }
-            if (command != "CLUSTER NODES") return false;
+            if (command == "CLUSTER SLOTS")
+            {
+                _ = seed.SendRawAsync(Slots(seed.Port));
+                return true;
+            }
+
+            if (command != "CLUSTER NODES")
+            {
+                return false;
+            }
+
             discovering.TrySetResult();
             return true;
         };
@@ -165,7 +190,10 @@ public class ServerAclCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, AllowAdmin = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            AllowAdmin = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         byte[] username = [255, 0];
@@ -180,6 +208,7 @@ public class ServerAclCommandTests
         await Assert.That(results.Length).IsEqualTo(2);
         await Assert.That(results.Single(x => x.Endpoint.Port == seed.Port).Value).IsTrue();
         await Assert.That(results.Single(x => x.Endpoint.Port == replica.Port).Error).IsTypeOf<RespireServerException>();
+
         foreach (var node in new[] { seed, replica })
         {
             var frame = node.ReceivedArguments.Single(x => Encoding.ASCII.GetString(x[0]) == "ACL");
@@ -194,7 +223,16 @@ public class ServerAclCommandTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
-            SuppressReply = command => { if (command != "ACL LOG") return false; received.TrySetResult(); return true; },
+            SuppressReply = command =>
+            {
+                if (command != "ACL LOG")
+                {
+                    return false;
+                }
+
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
@@ -209,6 +247,8 @@ public class ServerAclCommandTests
 
     private static ValueTask<RespireClient> Connect(FakeRespServer server, bool admin)
         => RespireClient.ConnectAsync(new RespireOptions { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = admin });
+
     private static byte[] Bulk(byte[] value) => [.. Encoding.ASCII.GetBytes($"${value.Length}\r\n"), .. value, 13, 10];
+
     private static byte[] Slots(int port) => Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*3\r\n$9\r\n127.0.0.1\r\n:{port}\r\n$4\r\nself\r\n");
 }

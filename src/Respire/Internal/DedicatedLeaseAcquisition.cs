@@ -6,13 +6,18 @@ namespace Respire.Internal;
 internal interface IDedicatedLeaseRoute : IDisposable
 {
     void ThrowIfDisposed();
+
     bool CanRetry(int attempt, CancellationToken cancellationToken);
+
     void RecordRetirement(Exception error, int attempt);
+
     bool TryExcludeFailedCandidate(DedicatedConnectionPool pool, Exception error, CancellationToken cancellationToken) => false;
+
     // Routes record each candidate they dial on the observation. RentAsync has already cleared
     // the retired pool's endpoint, so an unnamed selection failure is not misattributed.
     ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation);
+
     void SetTerminalError(Exception error);
 }
 
@@ -57,6 +62,7 @@ internal static class DedicatedLeaseAcquisition
         try
         {
             var retirements = 0;
+
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -64,12 +70,17 @@ internal static class DedicatedLeaseAcquisition
                 // A failed private handshake belongs to the pool being rented, including a
                 // replacement selected after retirement or a rejected read candidate.
                 observation.UseEndpoint(pool.Endpoint, cancellationToken);
+
                 try
                 {
                     // A stale selection must reselect before consulting the old endpoint's history.
                     if (circuits is not null)
+                    {
                         ObjectDisposedException.ThrowIf(pool.IsStopping || !pool.IsMovingPublicationCurrent, pool);
+                    }
+
                     var admission = circuits?.Acquire(pool.Endpoint, cancellationToken) ?? default;
+
                     try
                     {
                         var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle, kind: kind,
@@ -89,7 +100,12 @@ internal static class DedicatedLeaseAcquisition
                     observation.UseEndpoint(null);
                     var replacement = await route.SelectReplacementAsync(cancellationToken, observation).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (ReferenceEquals(replacement, pool)) throw;
+
+                    if (ReferenceEquals(replacement, pool))
+                    {
+                        throw;
+                    }
+
                     pool = replacement;
                 }
                 catch (Exception error) when (route.TryExcludeFailedCandidate(pool, error, cancellationToken))

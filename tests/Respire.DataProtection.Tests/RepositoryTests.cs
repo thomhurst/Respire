@@ -37,7 +37,8 @@ public class RepositoryTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)],
-            Database = fixture.Database, KeyPrefix = fixture.KeyPrefix,
+            Database = fixture.Database,
+            KeyPrefix = fixture.KeyPrefix,
             Protocol = RespireProtocol.Resp3,
             ClientSideCache = new(),
         });
@@ -68,7 +69,8 @@ public class RepositoryTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)],
-            Database = fixture.Database, KeyPrefix = fixture.KeyPrefix,
+            Database = fixture.Database,
+            KeyPrefix = fixture.KeyPrefix,
             ReplicaEndpoints = [new("127.0.0.1", 1)],
             ReadFrom = RespireReadFrom.Replica,
         });
@@ -93,8 +95,12 @@ public class RepositoryTests(RedisTestContainer fixture)
         var original = key.ToArray();
         var services = new ServiceCollection();
         var repository = registerThroughBuilder ? null : new RespireXmlRepository(() => client, key);
+
         if (registerThroughBuilder)
+        {
             services.AddDataProtection().PersistKeysToRespire(() => client, new RespireKey(key.AsMemory()));
+        }
+
         Array.Fill(key, (byte)'x');
         using var provider = services.BuildServiceProvider();
         repository ??= (RespireXmlRepository)provider.GetRequiredService<IOptions<KeyManagementOptions>>().Value.XmlRepository!;
@@ -191,6 +197,7 @@ public class RepositoryTests(RedisTestContainer fixture)
         var respireServices = new ServiceCollection();
         respireServices.AddDataProtection().SetApplicationName("shared-app")
             .PersistKeysToRespire(() => client, key);
+
         using (var respireProvider = respireServices.BuildServiceProvider())
         {
             var respire = respireProvider.GetRequiredService<IDataProtectionProvider>().CreateProtector("purpose");
@@ -211,7 +218,14 @@ public class RepositoryTests(RedisTestContainer fixture)
         var calls = 0;
         var services = new ServiceCollection();
         var builder = services.AddDataProtection();
-        var result = builder.PersistKeysToRespire(() => { calls++; return client; }, $"keys:{Guid.NewGuid():N}");
+        var result = builder.PersistKeysToRespire(
+            () =>
+            {
+                calls++;
+                return client;
+            },
+            $"keys:{Guid.NewGuid():N}"
+        );
         using var provider = services.BuildServiceProvider();
         var repository = provider.GetRequiredService<IOptions<KeyManagementOptions>>().Value.XmlRepository!;
         await Assert.That(ReferenceEquals(builder, result)).IsTrue();
@@ -237,6 +251,7 @@ public class RepositoryTests(RedisTestContainer fixture)
             return provider.GetRequiredService<IRespireClient>();
         }, new RespireKey(keyBytes.AsMemory()));
         Array.Fill(keyBytes, (byte)'x');
+
         using (var provider = services.BuildServiceProvider())
         {
             var repository = provider.GetRequiredService<IOptions<KeyManagementOptions>>().Value.XmlRepository!;
@@ -259,6 +274,7 @@ public class RepositoryTests(RedisTestContainer fixture)
         services.AddSingleton<IRespireClient>(_ => client = RespireClient.Create(RespireOptions.Parse(fixture.ConnectionString)));
         services.AddDataProtection().PersistKeysToRespireFromServices(
             provider => provider.GetRequiredService<IRespireClient>(), key);
+
         await using (var provider = services.BuildServiceProvider())
         {
             var repository = provider.GetRequiredService<IOptions<KeyManagementOptions>>().Value.XmlRepository!;
@@ -267,6 +283,7 @@ public class RepositoryTests(RedisTestContainer fixture)
             await Assert.That(client).IsNotNull();
             await Assert.That(repository.GetAllElements().Count).IsEqualTo(1);
         }
+
         await Assert.That(async () => await client!.Lists.RangeAsync(key)).Throws<ObjectDisposedException>();
     }
 }

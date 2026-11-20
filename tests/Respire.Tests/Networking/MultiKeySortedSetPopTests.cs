@@ -29,10 +29,16 @@ public class MultiKeySortedSetPopTests
         RespireKey[] keys = ["missing", "key"];
         var pending = queue.SortedSets.PopMany(keys, 2, true);
         keys[1] = "changed";
+
         if (transaction is not null)
+        {
             await transaction.CommitAsync();
+        }
         else
+        {
             await batch!.ExecuteAsync();
+        }
+
         await Assert.That(pending.Result!.Value.Key).IsEqualTo((RespireKey)"key");
         await Assert.That(pending.Result.Value.Entries).IsEquivalentTo([new RespireSortedSetEntry("a", 1), new RespireSortedSetEntry("b", 2)], CollectionOrdering.Matching);
         await Assert.That(server.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC"))
@@ -66,6 +72,7 @@ public class MultiKeySortedSetPopTests
         byte[] member = [0xfe, 0, 0x42];
         RespireKey selected;
         byte[] value;
+
         using (var reply = many
             ? RespValue.Array(RespValue.BulkString(key), RespValue.Array(
                 RespValue.Array(RespValue.BulkString(member), RespValue.Double(1.5))))
@@ -84,6 +91,7 @@ public class MultiKeySortedSetPopTests
                 value = result.Entry.Member;
             }
         }
+
         Array.Clear(key);
         Array.Clear(member);
         await Assert.That(selected).IsEqualTo((RespireKey)new byte[] { 0xff, 0 });
@@ -103,6 +111,7 @@ public class MultiKeySortedSetPopTests
             RespValue.Array(RespValue.BulkString("key"), RespValue.Array(RespValue.BulkString("7"))),
             RespValue.Array(RespValue.BulkString("key"), RespValue.Array(RespValue.Array(RespValue.BulkString("7")))),
         ];
+
         foreach (var reply in malformed)
         {
             using (reply)
@@ -111,6 +120,7 @@ public class MultiKeySortedSetPopTests
                 await Assert.That(() => SortedSetCommands.ParsePopMany<int>(client, in reply)).Throws<RespireProtocolException>();
             }
         }
+
         var missing = RespValue.Null;
         await Assert.That(SortedSetCommands.ParsePopMany(in missing, default)).IsNull();
         await Assert.That(SortedSetCommands.ParsePopMany<int>(client, in missing)).IsNull();
@@ -128,6 +138,7 @@ public class MultiKeySortedSetPopTests
         var valid = Encoding.ASCII.GetBytes(prefix + "$1\r\n7\r\n$3\r\n1.5\r\n");
         await using var server = new FakeRespServer(2, invalid, valid);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
         if (many)
         {
             await Assert.That(async () => await client.SortedSets.PopManyAsync<int>(["key"]))
@@ -151,23 +162,47 @@ public class MultiKeySortedSetPopTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         Func<Task>[] invalid =
         [
-            async () => { await client.SortedSets.PopManyAsync([]); },
-            async () => { await client.SortedSets.PopManyAsync(["key"], 0); },
-            async () => { await client.SortedSets.PopManyAsync(["key"], -1); },
-            async () => { await client.SortedSets.PopManyAsync(["key"], waitFor: TimeSpan.FromSeconds(-2)); },
-            async () => { await client.SortedSets.PopAsync([], TimeSpan.Zero); },
-            async () => { await client.SortedSets.PopAsync(["key"], TimeSpan.FromSeconds(-2)); },
+            async () =>
+            {
+                await client.SortedSets.PopManyAsync([]);
+            },
+            async () =>
+            {
+                await client.SortedSets.PopManyAsync(["key"], 0);
+            },
+            async () =>
+            {
+                await client.SortedSets.PopManyAsync(["key"], -1);
+            },
+            async () =>
+            {
+                await client.SortedSets.PopManyAsync(["key"], waitFor: TimeSpan.FromSeconds(-2));
+            },
+            async () =>
+            {
+                await client.SortedSets.PopAsync([], TimeSpan.Zero);
+            },
+            async () =>
+            {
+                await client.SortedSets.PopAsync(["key"], TimeSpan.FromSeconds(-2));
+            },
         ];
+
         foreach (var command in invalid)
+        {
             await Assert.That(command).Throws<ArgumentException>();
+        }
+
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
+
         foreach (var sortedSets in new[] { batch.SortedSets, transaction.SortedSets })
         {
             await Assert.That(() => sortedSets.PopMany([])).Throws<ArgumentException>();
             await Assert.That(() => sortedSets.PopMany(["key"], 0)).Throws<ArgumentOutOfRangeException>();
             await Assert.That(() => sortedSets.PopMany(["key"], -1)).Throws<ArgumentOutOfRangeException>();
         }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
@@ -181,7 +216,11 @@ public class MultiKeySortedSetPopTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("BZ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("BZ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -229,16 +268,23 @@ public class MultiKeySortedSetPopTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         RespireKey[] keys = ["{sets}:first", "{sets}:second"];
         RespireKey returned;
+
         if (scalar)
+        {
             returned = (await view.SortedSets.PopAsync(keys, TimeSpan.FromSeconds(1), path == "one-max"))!.Value.Key;
+        }
         else if (path is "immediate" or "many-blocking")
+        {
             returned = (await (path == "many-blocking" ? view.SortedSets.PopManyAsync(keys, waitFor: TimeSpan.FromSeconds(1)) : view.SortedSets.PopManyAsync(keys)))!.Value.Key;
+        }
         else if (path == "batch")
         {
             using var batch = view.CreateBatch();
@@ -253,6 +299,7 @@ public class MultiKeySortedSetPopTests
             await transaction.CommitAsync();
             returned = pending.Result!.Value.Key;
         }
+
         await Assert.That(returned).IsEqualTo((RespireKey)"{sets}:second");
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         var expected = path switch
@@ -274,7 +321,9 @@ public class MultiKeySortedSetPopTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");

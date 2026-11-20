@@ -86,22 +86,38 @@ public sealed partial class RespireClient
     private readonly struct ClusterBacklogCommand(IRespCommandWrapper command) : IRespCommandWrapper
     {
         public void Write(ref RespWriter writer) => command.Write(ref writer);
+
         public int GetWriteSizeHint() => command.GetWriteSizeHint();
+
         public bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
+
         public bool TryGetArgument(int index, out RespireValue value) => command.TryGetArgument(index, out value);
+
         public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
+
         public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
             => command.TryGetClientCacheKey(operation, out key);
+
         public ReadCommandKind ReadKind => command.ReadKind;
+
         public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
+
         public int CursorArgumentIndex => command.CursorArgumentIndex;
+
         public bool HasOpaqueCursor => command.HasOpaqueCursor;
+
         public bool IsConnectionProtocol => command.IsConnectionProtocol;
+
         public ClientSideCacheCoordinator.MutationFence GetMutationFence() => command.GetMutationFence();
+
         public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
+
         public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);
+
         public void ValidateAdmission() => command.ValidateAdmission();
+
         public CancellationToken GetResponseCancellationToken(CancellationToken token) => command.GetResponseCancellationToken(token);
+
         public void OnAccepted() => command.OnAccepted();
     }
 
@@ -114,6 +130,7 @@ public sealed partial class RespireClient
         var acquisition = new CommandAcquisitionScope(callerToken, deadline, _core.Options.CommandTimeout);
         var cluster = _core.Cluster!;
         var discoveryObservation = observation.IsEmpty ? null : new BacklogDiscoveryObservation(observation);
+
         try
         {
             cluster.ValidateBacklogAdmission(slot, readFrom, callerToken);
@@ -124,9 +141,13 @@ public sealed partial class RespireClient
                     discoveryObservation?.Observation ?? default)).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (acquisition.IsCallerCancellation(error))
-        { throw new OperationCanceledException(error.Message, error, callerToken); }
+        {
+            throw new OperationCanceledException(error.Message, error, callerToken);
+        }
         catch (OperationCanceledException error) when (acquisition.IsDeadlineCancellation(error))
-        { throw acquisition.CreateTimeout(operation, _core, cause: error); }
+        {
+            throw acquisition.CreateTimeout(operation, _core, cause: error);
+        }
         finally
         {
             discoveryObservation?.Detach();

@@ -1,9 +1,9 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using System.Threading.Channels;
 using System.Collections;
 using System.Reflection;
+using System.Threading.Channels;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting;
@@ -44,17 +44,33 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         await using var host = await BackplaneHost.StartAsync(fixture.ConnectionString, Guid.NewGuid().ToString("N"), false, false);
         using var caller = new CancellationTokenSource();
         using var disconnected = new CancellationTokenSource();
+
         async Task StopAsync()
         {
-            if (cancelCaller) caller.Cancel();
+            if (cancelCaller)
+            {
+                caller.Cancel();
+            }
+
             var disposing = ((IAsyncDisposable)host.Manager).DisposeAsync().AsTask();
-            if (disconnect) disconnected.Cancel();
+
+            if (disconnect)
+            {
+                disconnected.Cancel();
+            }
+
             await disposing;
         }
+
         var connection = new ShutdownBoundaryConnection(disconnected.Token, duringWrite, StopAsync);
         await host.Manager.OnConnectedAsync(connection);
         var pending = host.Manager.InvokeConnectionAsync<int>(connection.ConnectionId, "answer", [], caller.Token);
-        if (!duringWrite) await StopAsync();
+
+        if (!duringWrite)
+        {
+            await StopAsync();
+        }
+
         if (cancelCaller)
         {
             var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10))).Throws<OperationCanceledException>();
@@ -67,6 +83,7 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
             await Assert.That(error!.Message).IsEqualTo("SignalR backplane disposed.");
             await Assert.That(pending.IsFaulted).IsTrue();
         }
+
         await Assert.That(connection.InvocationId).IsNotEmpty();
         await Assert.That(host.Manager.TryGetReturnType(connection.InvocationId, out _)).IsFalse();
         await Assert.That(PendingClientResults(host.Manager)).IsEqualTo(0);
@@ -78,12 +95,20 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         : HubConnectionContext(new DefaultConnectionContext(Guid.NewGuid().ToString("N")), new(), NullLoggerFactory.Instance)
     {
         public override CancellationToken ConnectionAborted => disconnected;
-        internal string InvocationId { get; private set; } = "";
+
+        internal string InvocationId
+        {
+            get; private set;
+        } = "";
 
         public override async ValueTask WriteAsync(HubMessage message, CancellationToken cancellationToken = default)
         {
             InvocationId = ((InvocationMessage)message).InvocationId!;
-            if (!duringWrite) return;
+
+            if (!duringWrite)
+            {
+                return;
+            }
             // Join real manager shutdown inside the virtual write, before the initial-send catch executes.
             await stop();
             cancellationToken.ThrowIfCancellationRequested();
@@ -102,17 +127,29 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         using var answer = positive.Connection.On("answer", [], static (_, _) => Task.FromResult<object?>(7), null!);
         using var caller = new CancellationTokenSource();
         using var disconnected = new CancellationTokenSource();
+
         void Cancel()
         {
-            if (cancelCaller) caller.Cancel();
+            if (cancelCaller)
+            {
+                caller.Cancel();
+            }
+
             disconnected.Cancel();
         }
+
         var connection = new WriteBoundaryConnection(disconnected.Token, duringWrite, Cancel);
         await host.Manager.OnConnectedAsync(connection);
+
         try
         {
             var pending = host.Manager.InvokeConnectionAsync<int>(connection.ConnectionId, "answer", [], caller.Token);
-            if (!duringWrite) Cancel();
+
+            if (!duringWrite)
+            {
+                Cancel();
+            }
+
             if (cancelCaller)
             {
                 var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
@@ -125,10 +162,12 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
                 await Assert.That(error!.Message).Contains("disconnected");
                 await Assert.That(pending.IsFaulted).IsTrue();
             }
+
             await Assert.That(connection.InvocationId).IsNotEmpty();
             await Assert.That(host.Manager.TryGetReturnType(connection.InvocationId, out _)).IsFalse();
         }
         finally { Cancel(); await host.Manager.OnDisconnectedAsync(connection); }
+
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await Assert.That(await host.Manager.InvokeConnectionAsync<int>(positive.Id, "answer", [], deadline.Token)).IsEqualTo(7);
     }
@@ -137,12 +176,20 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         : HubConnectionContext(new DefaultConnectionContext(Guid.NewGuid().ToString("N")), new(), NullLoggerFactory.Instance)
     {
         public override CancellationToken ConnectionAborted => disconnected;
-        internal string InvocationId { get; private set; } = "";
+
+        internal string InvocationId
+        {
+            get; private set;
+        } = "";
 
         public override ValueTask WriteAsync(HubMessage message, CancellationToken cancellationToken = default)
         {
             InvocationId = ((InvocationMessage)message).InvocationId!;
-            if (!duringWrite) return ValueTask.CompletedTask;
+
+            if (!duringWrite)
+            {
+                return ValueTask.CompletedTask;
+            }
             // Deterministically cancel after the manager's lookup, inside the actual virtual write boundary.
             cancel();
             return ValueTask.FromCanceled(cancellationToken);
@@ -181,17 +228,30 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         await using var remote = await second.ConnectAsync("remote", false);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var handler = remote.Connection.On("never", [], (_, _) => { entered.TrySetResult(); return release.Task; }, null!);
+        using var handler = remote.Connection.On(
+            "never",
+            [],
+            (_, _) =>
+            {
+                entered.TrySetResult();
+                return release.Task;
+            },
+            null!
+        );
         using var cancellation = new CancellationTokenSource();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pending = first.Manager.InvokeConnectionAsync<int>(remote.Id, "never", [], cancellation.Token);
+
         try
         {
             await entered.Task.WaitAsync(deadline.Token);
             await Assert.That(PendingClientResults(second.Manager)).IsEqualTo(1);
             cancellation.Cancel();
+
             if (microsoftCaller)
+            {
                 await Assert.That(async () => await pending).ThrowsExactly<HubException>();
+            }
             else
             {
                 var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
@@ -200,7 +260,10 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
             }
             // The client handler remains blocked and connected. Only receiver expiry can retire this owner.
             while (PendingClientResults(second.Manager) != 0)
+            {
                 await Task.Delay(10, deadline.Token);
+            }
+
             await second.Manager.SendConnectionAsync(remote.Id, "message", ["still-connected"]);
             await remote.ExpectAsync("still-connected");
         }
@@ -247,7 +310,8 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         await first.Manager.AddToGroupAsync(remote.Id, "Case");
         await first.Manager.AddToGroupAsync(remote.Id, "case");
         await first.Manager.SendGroupsAsync(["Case", "case"], "message", ["both"]);
-        await remote.ExpectAsync("both"); await remote.ExpectAsync("both");
+        await remote.ExpectAsync("both");
+        await remote.ExpectAsync("both");
         await first.Manager.RemoveFromGroupAsync(remote.Id, "Case");
         await first.Manager.SendGroupAsync("case", "message", ["remaining"]);
         await remote.ExpectAsync("remaining");
@@ -277,9 +341,19 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         await using var remote = await second.ConnectAsync("remote", false);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var handler = remote.Connection.On("pending", [], (_, _) => { entered.TrySetResult(); return release.Task; }, null!);
+        using var handler = remote.Connection.On(
+            "pending",
+            [],
+            (_, _) =>
+            {
+                entered.TrySetResult();
+                return release.Task;
+            },
+            null!
+        );
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pending = first.Manager.InvokeConnectionAsync<int>(remote.Id, "pending", [], deadline.Token);
+
         try
         {
             await entered.Task.WaitAsync(deadline.Token);
@@ -310,15 +384,20 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         var sender = first.Manager;
 
         await sender.SendAllAsync("message", ["all"]);
-        await local.ExpectAsync("all"); await remote.ExpectAsync("all"); await other.ExpectAsync("all");
+        await local.ExpectAsync("all");
+        await remote.ExpectAsync("all");
+        await other.ExpectAsync("all");
         await sender.SendAllExceptAsync("message", ["except"], [local.Id]);
-        await remote.ExpectAsync("except"); await other.ExpectAsync("except");
+        await remote.ExpectAsync("except");
+        await other.ExpectAsync("except");
         await sender.SendConnectionAsync(remote.Id, "message", ["connection"]);
         await remote.ExpectAsync("connection");
         await sender.SendUserAsync("alice", "message", ["user"]);
-        await local.ExpectAsync("user"); await remote.ExpectAsync("user");
+        await local.ExpectAsync("user");
+        await remote.ExpectAsync("user");
         await sender.SendConnectionsAsync([local.Id, other.Id], "message", ["connections"]);
-        await local.ExpectAsync("connections"); await other.ExpectAsync("connections");
+        await local.ExpectAsync("connections");
+        await other.ExpectAsync("connections");
 
         // Remote membership completion acknowledges a live subscription before the next publish.
         await sender.AddToGroupAsync(remote.Id, "group");
@@ -332,9 +411,13 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         await sender.SendGroupsAsync(["group", ""], "message", ["groups"]);
         await remote.ExpectAsync("groups");
         await sender.SendUsersAsync(["alice", "bob"], "message", ["users"]);
-        await local.ExpectAsync("users"); await remote.ExpectAsync("users"); await other.ExpectAsync("users");
+        await local.ExpectAsync("users");
+        await remote.ExpectAsync("users");
+        await other.ExpectAsync("users");
         await sender.SendAllAsync("message", ["end"]);
-        await local.ExpectAsync("end"); await remote.ExpectAsync("end"); await other.ExpectAsync("end");
+        await local.ExpectAsync("end");
+        await remote.ExpectAsync("end");
+        await other.ExpectAsync("end");
         await Assert.That(local.Messages.Reader.TryRead(out _)).IsFalse();
         await Assert.That(remote.Messages.Reader.TryRead(out _)).IsFalse();
         await Assert.That(other.Messages.Reader.TryRead(out _)).IsFalse();
@@ -383,9 +466,19 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
             .ThrowsExactly<HubException>();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var late = remote.Connection.On("late", [], (_, _) => { entered.TrySetResult(); return release.Task; }, null!);
+        using var late = remote.Connection.On(
+            "late",
+            [],
+            (_, _) =>
+            {
+                entered.TrySetResult();
+                return release.Task;
+            },
+            null!
+        );
         using var cancellation = new CancellationTokenSource();
         var pending = first.Manager.InvokeConnectionAsync<int>(remote.Id, "late", [], cancellation.Token);
+
         try
         {
             await entered.Task.WaitAsync(deadline.Token);
@@ -395,6 +488,7 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
             await Assert.That(pending.IsCanceled).IsTrue();
         }
         finally { cancellation.Cancel(); release.TrySetResult(99); }
+
         using var answer = remote.Connection.On("answer", [], static (_, _) => Task.FromResult<object?>(7), null!);
         await Assert.That(await first.Manager.InvokeConnectionAsync<int>(remote.Id, "answer", [], deadline.Token)).IsEqualTo(7);
     }
@@ -438,9 +532,19 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         await using var remote = await second.ConnectAsync("remote", messagePack);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var handler = remote.Connection.On("pending", [], (_, _) => { entered.TrySetResult(); return release.Task; }, null!);
+        using var handler = remote.Connection.On(
+            "pending",
+            [],
+            (_, _) =>
+            {
+                entered.TrySetResult();
+                return release.Task;
+            },
+            null!
+        );
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var pending = first.Manager.InvokeConnectionAsync<int>(remote.Id, "pending", [], cancellation.Token);
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -469,17 +573,22 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
             .GetValue(heartbeats)!;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(10));
+
         while (true)
         {
             foreach (var entry in pending.Values)
             {
                 var gate = entry!.GetType().GetField("_gate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(entry)!;
+
                 lock ((System.Threading.Lock)gate)
                 {
                     if (entry.GetType().GetField("_lastSeen", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(entry) is not null)
+                    {
                         return;
+                    }
                 }
             }
+
             await Task.Delay(10, deadline.Token);
         }
     }
@@ -493,8 +602,18 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         await using var remote = await second.ConnectAsync("remote", false);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var handler = remote.Connection.On("pending", [], (_, _) => { entered.TrySetResult(); return release.Task; }, null!);
+        using var handler = remote.Connection.On(
+            "pending",
+            [],
+            (_, _) =>
+            {
+                entered.TrySetResult();
+                return release.Task;
+            },
+            null!
+        );
         var pending = first.Manager.InvokeConnectionAsync<int>(remote.Id, "pending", [], CancellationToken.None);
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -538,6 +657,7 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
 public sealed class BackplaneTestHub : Hub
 {
     public string Identity() => Context.ConnectionId;
+
     public void Disconnect() => Context.Abort();
 }
 
@@ -550,6 +670,7 @@ internal sealed class TestUserIdProvider : IUserIdProvider
 internal sealed class BackplaneHost(WebApplication application) : IAsyncDisposable
 {
     internal WebApplication Application => application;
+
     internal HubLifetimeManager<BackplaneTestHub> Manager => application.Services.GetRequiredService<HubLifetimeManager<BackplaneTestHub>>();
 
     internal static async Task<BackplaneHost> StartAsync(string connectionString, string prefix, bool microsoft,
@@ -560,6 +681,7 @@ internal sealed class BackplaneHost(WebApplication application) : IAsyncDisposab
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton<IUserIdProvider, TestUserIdProvider>();
         var signalr = builder.Services.AddSignalR().AddMessagePackProtocol();
+
         if (microsoft)
         {
             var options = RespireOptions.Parse(connectionString);
@@ -574,14 +696,29 @@ internal sealed class BackplaneHost(WebApplication application) : IAsyncDisposab
             builder.Services.AddRespire(_ => RespireOptions.Parse(connectionString) with { UseCluster = cluster });
             signalr.AddRespire(options =>
             {
-                options.ChannelPrefix = prefix; options.UseShardedPubSub = sharded;
-                if (ackTimeout is { } timeout) options.GroupAckTimeout = timeout;
-                if (remoteResultTimeout is { } resultTimeout) options.RemoteClientResultTimeout = resultTimeout;
+                options.ChannelPrefix = prefix;
+                options.UseShardedPubSub = sharded;
+
+                if (ackTimeout is { } timeout)
+                {
+                    options.GroupAckTimeout = timeout;
+                }
+
+                if (remoteResultTimeout is { } resultTimeout)
+                {
+                    options.RemoteClientResultTimeout = resultTimeout;
+                }
             });
         }
+
         var app = builder.Build();
         app.MapHub<BackplaneTestHub>("/hub");
-        try { await app.StartAsync(); return new(app); }
+
+        try
+        {
+            await app.StartAsync();
+            return new(app);
+        }
         catch { await app.DisposeAsync(); throw; }
     }
 
@@ -592,10 +729,16 @@ internal sealed class BackplaneHost(WebApplication application) : IAsyncDisposab
             options.Transports = HttpTransportType.LongPolling;
             options.HttpMessageHandlerFactory = _ => application.GetTestServer().CreateHandler();
         });
-        if (messagePack) builder.AddMessagePackProtocol();
+
+        if (messagePack)
+        {
+            builder.AddMessagePackProtocol();
+        }
+
         var connection = builder.Build();
         var messages = Channel.CreateUnbounded<string>();
         connection.On<string>("message", value => messages.Writer.TryWrite(value));
+
         try
         {
             await connection.StartAsync();
@@ -606,18 +749,26 @@ internal sealed class BackplaneHost(WebApplication application) : IAsyncDisposab
         catch { await connection.DisposeAsync(); throw; }
     }
 
-    public async ValueTask DisposeAsync() { await application.StopAsync(); await application.DisposeAsync(); }
+    public async ValueTask DisposeAsync()
+    {
+        await application.StopAsync();
+        await application.DisposeAsync();
+    }
 }
 
 internal sealed class Peer(HubConnection connection, string id, Channel<string> messages) : IAsyncDisposable
 {
     internal HubConnection Connection => connection;
+
     internal string Id => id;
+
     internal Channel<string> Messages => messages;
+
     internal async Task ExpectAsync(string expected)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await Assert.That(await messages.Reader.ReadAsync(deadline.Token)).IsEqualTo(expected);
     }
+
     public ValueTask DisposeAsync() => connection.DisposeAsync();
 }

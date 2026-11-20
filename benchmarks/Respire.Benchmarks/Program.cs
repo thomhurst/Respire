@@ -1,6 +1,6 @@
-﻿using BenchmarkDotNet.Configs;
-using BenchmarkDotNet.Running;
+using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Jobs;
+using BenchmarkDotNet.Running;
 
 var config = DefaultConfig.Instance
     .WithOptions(ConfigOptions.DisableOptimizationsValidator);

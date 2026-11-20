@@ -24,12 +24,24 @@ public class CredentialProviderTests
         var provider = new Provider();
         var options = new RespireOptions
         {
-            Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1,
-            CredentialProvider = provider, Username = "ignored", Password = "ignored", Protocol = protocol,
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Connections = 1,
+            CredentialProvider = provider,
+            Username = "ignored",
+            Password = "ignored",
+            Protocol = protocol,
         };
-        await using (var first = await RespireClient.ConnectAsync(options)) { }
+
+        await using (var first = await RespireClient.ConnectAsync(options))
+        {
+        }
+
         provider.Current = new("user", "second");
-        await using (var second = await RespireClient.ConnectAsync(options)) { }
+
+        await using (var second = await RespireClient.ConnectAsync(options))
+        {
+        }
+
         await Assert.That(provider.Calls).IsEqualTo(2);
         await Assert.That(server.ReceivedCommands)
             .IsEquivalentTo(protocol == RespireProtocol.Resp2
@@ -51,6 +63,7 @@ public class CredentialProviderTests
     {
         await using var server = new FakeRespServer(System.Text.Encoding.UTF8.GetBytes(
             $"-{errorCode} invalid password private-token for private-user\r\n"));
+
         try
         {
             await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
@@ -78,6 +91,7 @@ public class CredentialProviderTests
             Failure = typed ? new RespireAuthenticationException("private-token")
                 : new InvalidOperationException("private-token"),
         };
+
         try
         {
             await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
@@ -89,6 +103,7 @@ public class CredentialProviderTests
             await Assert.That(error.ToString().Contains("private-token", StringComparison.Ordinal)).IsFalse();
             await Assert.That(error.InnerException).IsNull();
         }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
@@ -108,17 +123,28 @@ public class CredentialProviderTests
         await using var server = Server();
         server.ReplyOverride = (_, command) =>
         {
-            if (command.StartsWith("HELLO ", StringComparison.Ordinal)) return Hello;
+            if (command.StartsWith("HELLO ", StringComparison.Ordinal))
+            {
+                return Hello;
+            }
+
             if (command == "GET key")
+            {
                 return Volatile.Read(ref renewed) == 0 ? "$3\r\nold\r\n"u8.ToArray() : "$3\r\nnew\r\n"u8.ToArray();
+            }
+
             return FakeRespServer.OkReply;
         };
         server.SuppressReply = command => command == "AUTH user second";
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-            Protocol = RespireProtocol.Resp3, CredentialProvider = provider, CredentialTimeProvider = clock,
-            CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10), ConnectTimeout = Limit,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            CredentialProvider = provider,
+            CredentialTimeProvider = clock,
+            CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
+            ConnectTimeout = Limit,
             ClientSideCache = new()
             {
                 CoalesceConcurrentMisses = coalesce,
@@ -131,7 +157,9 @@ public class CredentialProviderTests
             try
             {
                 if (!invalidation.Reasons.HasFlag(RespireClientCacheInvalidationReason.ContinuityLost))
+                {
                     throw new InvalidOperationException("Renewal must invalidate tracking continuity.");
+                }
                 // The first flush may dispatch before AUTH. Keep that callback alive across
                 // the fence and synchronously read once Redis has received the replacement.
                 renewalReceived.Task.WaitAsync(Limit).GetAwaiter().GetResult();
@@ -191,19 +219,37 @@ public class CredentialProviderTests
         listener.InstrumentPublished = (instrument, observer) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.authentication.refresh")
+            {
                 observer.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             int? port = null;
             string? stage = null, outcome = null;
+
             foreach (var tag in tags)
             {
-                if (tag.Key == "server.port") port = (int)tag.Value!;
-                if (tag.Key == "respire.authentication.stage") stage = (string)tag.Value!;
-                if (tag.Key == "respire.authentication.outcome") outcome = (string)tag.Value!;
+                if (tag.Key == "server.port")
+                {
+                    port = (int)tag.Value!;
+                }
+
+                if (tag.Key == "respire.authentication.stage")
+                {
+                    stage = (string)tag.Value!;
+                }
+
+                if (tag.Key == "respire.authentication.outcome")
+                {
+                    outcome = (string)tag.Value!;
+                }
             }
-            if (port == server.Port) events.Enqueue((stage, outcome));
+
+            if (port == server.Port)
+            {
+                events.Enqueue((stage, outcome));
+            }
         });
         listener.Start();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
@@ -213,7 +259,7 @@ public class CredentialProviderTests
         clock.Advance(TimeSpan.FromSeconds(20));
         await connection.CredentialRefreshCompletion!.WaitAsync(Limit);
         await Assert.That(events.ToArray()).IsEquivalentTo(new (string?, string?)[]
-            { ("reauthenticate", "success"), ("no-expiry", "success") });
+        { ("reauthenticate", "success"), ("no-expiry", "success") });
         clock.Advance(TimeSpan.FromDays(1));
         await Assert.That(provider.Calls).IsEqualTo(2);
         await Assert.That(connection.IsConnected).IsTrue();
@@ -290,6 +336,7 @@ public class CredentialProviderTests
         await Assert.That(connection.CaptureTimeoutDiagnostics().InflightCount).IsEqualTo(1);
         await Assert.That(pending.IsCompleted).IsFalse();
         await server.SendRawAsync(accept ? FakeRespServer.OkReply : "-WRONGPASS rejected\r\n"u8.ToArray());
+
         if (accept)
         {
             await pending.WaitAsync(Limit);
@@ -330,6 +377,7 @@ public class CredentialProviderTests
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "AUTH user first", "AUTH user second" });
 
         await server.SendRawAsync(accept ? FakeRespServer.OkReply : "-WRONGPASS rejected\r\n"u8.ToArray());
+
         if (accept)
         {
             using var reply = await pending.WaitAsync(Limit);
@@ -364,6 +412,7 @@ public class CredentialProviderTests
         using var cancellation = new CancellationTokenSource();
         var pending = StartSend(connection, "raw", false, cancellation.Token);
         await Assert.That(connection.CaptureTimeoutDiagnostics().InflightCount).IsEqualTo(1);
+
         if (outcome == "cancel")
         {
             cancellation.Cancel();
@@ -373,10 +422,18 @@ public class CredentialProviderTests
         }
         else
         {
-            if (outcome == "dispose") await connection.DisposeAsync().AsTask().WaitAsync(Limit);
-            else clock.Advance(TimeSpan.FromSeconds(10));
+            if (outcome == "dispose")
+            {
+                await connection.DisposeAsync().AsTask().WaitAsync(Limit);
+            }
+            else
+            {
+                clock.Advance(TimeSpan.FromSeconds(10));
+            }
+
             await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<RespireConnectionException>();
         }
+
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "AUTH user first", "AUTH user second" });
     }
 
@@ -397,7 +454,11 @@ public class CredentialProviderTests
             {
                 CredentialCacheInvalidation = () =>
                 {
-                    if (phase == "enqueue") retirement ??= retiringConnection!.RetireAsync();
+                    if (phase == "enqueue")
+                    {
+                        retirement ??= retiringConnection!.RetireAsync();
+                    }
+
                     return 0;
                 },
             });
@@ -408,28 +469,45 @@ public class CredentialProviderTests
         var accepted = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await UntilAsync(() => server.ReceivedCommands.Contains("PING"));
         provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
-        if (phase == "provider") provider.Pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (phase == "delay") retirement = connection.RetireAsync();
+
+        if (phase == "provider")
+        {
+            provider.Pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        if (phase == "delay")
+        {
+            retirement = connection.RetireAsync();
+        }
+
         clock.Advance(TimeSpan.FromSeconds(20));
+
         if (phase == "provider")
         {
             await UntilAsync(() => Volatile.Read(ref provider.Calls) == 2);
             retirement = connection.RetireAsync();
             provider.Pending!.TrySetResult(provider.Current);
         }
+
         if (phase == "auth-enqueued")
         {
             await UntilAsync(() => server.ReceivedCommands.Contains("AUTH user second"));
             retirement = connection.RetireAsync();
             clock.Advance(TimeSpan.FromSeconds(60));
         }
+
         await connection.CredentialRefreshCompletion!.WaitAsync(Limit);
         await Assert.That(retirement).IsNotNull();
         await Assert.That(retirement!.IsCompleted).IsFalse();
         await Assert.That(connection.IsConnected).IsTrue();
         await Assert.That(accepted.IsCompleted).IsFalse();
         await server.SendRawAsync(FakeRespServer.PongReply);
-        if (phase == "auth-enqueued") await server.SendRawAsync(FakeRespServer.OkReply);
+
+        if (phase == "auth-enqueued")
+        {
+            await server.SendRawAsync(FakeRespServer.OkReply);
+        }
+
         using var reply = await accepted.WaitAsync(Limit);
         await Assert.That(reply.AsString()).IsEqualTo("PONG");
         await retirement.WaitAsync(Limit);
@@ -475,19 +553,37 @@ public class CredentialProviderTests
         listener.InstrumentPublished = (instrument, observer) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.authentication.refresh")
+            {
                 observer.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             int? port = null;
             string? stage = null, outcome = null;
+
             foreach (var tag in tags)
             {
-                if (tag.Key == "server.port") port = (int)tag.Value!;
-                if (tag.Key == "respire.authentication.stage") stage = (string)tag.Value!;
-                if (tag.Key == "respire.authentication.outcome") outcome = (string)tag.Value!;
+                if (tag.Key == "server.port")
+                {
+                    port = (int)tag.Value!;
+                }
+
+                if (tag.Key == "respire.authentication.stage")
+                {
+                    stage = (string)tag.Value!;
+                }
+
+                if (tag.Key == "respire.authentication.outcome")
+                {
+                    outcome = (string)tag.Value!;
+                }
             }
-            if (port == serverPort) events.Enqueue((stage, outcome));
+
+            if (port == serverPort)
+            {
+                events.Enqueue((stage, outcome));
+            }
         });
         listener.Start();
         return listener;
@@ -496,6 +592,7 @@ public class CredentialProviderTests
     private static async Task StartSend(RespireConnection connection, string kind, bool direct, CancellationToken cancellationToken = default)
     {
         var ping = new BoundedPingCommand(direct ? 65_537 : FakeRespServer.PingFrame.Length);
+
         switch (kind)
         {
             case "string":
@@ -509,14 +606,20 @@ public class CredentialProviderTests
                 await connection.SendFireAndForgetAsync(ping, cancellationToken);
                 break;
             case "prefix":
-                using (await connection.SendPrefixedCheckedAsync(ping, ping, cancellationToken)) { }
+                using (await connection.SendPrefixedCheckedAsync(ping, ping, cancellationToken))
+                {
+                }
                 break;
             case "transaction":
                 using (await connection.SendTransactionAsync(direct ? LargePingFrame() : FakeRespServer.PingFrame,
-                    1, cancellationToken)) { }
+                    1, cancellationToken))
+                {
+                }
                 break;
             default:
-                using (await connection.SendAsync(ping, cancellationToken)) { }
+                using (await connection.SendAsync(ping, cancellationToken))
+                {
+                }
                 break;
         }
     }
@@ -524,13 +627,16 @@ public class CredentialProviderTests
     private readonly struct BoundedPingCommand(int sizeHint) : IRespCommand
     {
         public int GetWriteSizeHint() => sizeHint;
+
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer) => writer.WriteRaw(FakeRespServer.PingFrame);
     }
 
     private static byte[] LargePingFrame()
     {
         var buffer = new WriteBuffer(70_000);
+
         try
         {
             var writer = new RespWriter(buffer);
@@ -629,6 +735,7 @@ public class CredentialProviderTests
             new RespireConnectionOptions { CredentialProvider = provider }, cancellationToken: cancellation.Token);
         await UntilAsync(() => provider.Calls == 1);
         cancellation.Cancel();
+
         try
         {
             await pending.WaitAsync(Limit);
@@ -638,6 +745,7 @@ public class CredentialProviderTests
         {
             await Assert.That(error.CancellationToken).IsEqualTo(cancellation.Token);
         }
+
         provider.Pending.SetResult(provider.Current);
     }
 
@@ -661,9 +769,22 @@ public class CredentialProviderTests
     {
         var clock = new Clock();
         var provider = ExpiringProvider(clock);
-        if (kind == "null") provider.Current = null!;
-        if (kind == "expired") provider.Current = new("user", "secret", clock.GetUtcNow());
-        if (kind == "failure") provider.Failure = new InvalidOperationException("acquisition failed");
+
+        if (kind == "null")
+        {
+            provider.Current = null!;
+        }
+
+        if (kind == "expired")
+        {
+            provider.Current = new("user", "secret", clock.GetUtcNow());
+        }
+
+        if (kind == "failure")
+        {
+            provider.Failure = new InvalidOperationException("acquisition failed");
+        }
+
         await using var server = Server();
         await Assert.That(async () => await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             Options(server, provider, clock))).ThrowsExactly<RespireAuthenticationException>();
@@ -743,7 +864,11 @@ public class CredentialProviderTests
             {
                 CredentialCacheInvalidation = () =>
                 {
-                    if (Interlocked.Increment(ref flushes) == 2) clock.Advance(TimeSpan.FromSeconds(40));
+                    if (Interlocked.Increment(ref flushes) == 2)
+                    {
+                        clock.Advance(TimeSpan.FromSeconds(40));
+                    }
+
                     return 0;
                 },
             });
@@ -808,11 +933,17 @@ public class CredentialProviderTests
         listener.InstrumentPublished = (instrument, observer) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.client_cache.continuity_flushes")
+            {
                 observer.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
         {
-            if (!observe.Value) return;
+            if (!observe.Value)
+            {
+                return;
+            }
+
             Interlocked.Increment(ref failures);
             throw new InvalidOperationException("observer failed");
         });
@@ -821,7 +952,12 @@ public class CredentialProviderTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             Options(server, provider, clock) with
             {
-                CredentialCacheInvalidation = () => { observe.Value = true; Interlocked.Increment(ref flushes); return 0; },
+                CredentialCacheInvalidation = () =>
+                {
+                    observe.Value = true;
+                    Interlocked.Increment(ref flushes);
+                    return 0;
+                },
             });
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
         server.SuppressReply = command => command == "AUTH user second";
@@ -844,14 +980,21 @@ public class CredentialProviderTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new("127.0.0.1", server.Port) }, CredentialProvider = provider, Protocol = RespireProtocol.Resp2,
-            CredentialTimeProvider = clock, CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
+            Endpoints = { new("127.0.0.1", server.Port) },
+            CredentialProvider = provider,
+            Protocol = RespireProtocol.Resp2,
+            CredentialTimeProvider = clock,
+            CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
         });
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
         provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
         server.ReplyOverride = (_, command) =>
         {
-            if (command == "MULTI") clock.Advance(TimeSpan.FromSeconds(20));
+            if (command == "MULTI")
+            {
+                clock.Advance(TimeSpan.FromSeconds(20));
+            }
+
             return command.StartsWith("SET ", StringComparison.Ordinal) ? "+QUEUED\r\n"u8.ToArray()
                 : command == "EXEC" ? "*1\r\n+OK\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
@@ -877,19 +1020,37 @@ public class CredentialProviderTests
         listener.InstrumentPublished = (instrument, observer) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.authentication.refresh")
+            {
                 observer.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             int? port = null;
             string? stage = null, outcome = null;
+
             foreach (var tag in tags)
             {
-                if (tag.Key == "server.port") port = (int)tag.Value!;
-                if (tag.Key == "respire.authentication.stage") stage = (string)tag.Value!;
-                if (tag.Key == "respire.authentication.outcome") outcome = (string)tag.Value!;
+                if (tag.Key == "server.port")
+                {
+                    port = (int)tag.Value!;
+                }
+
+                if (tag.Key == "respire.authentication.stage")
+                {
+                    stage = (string)tag.Value!;
+                }
+
+                if (tag.Key == "respire.authentication.outcome")
+                {
+                    outcome = (string)tag.Value!;
+                }
             }
-            if (port == server.Port && stage == "unchanged") observed.TrySetResult(outcome);
+
+            if (port == server.Port && stage == "unchanged")
+            {
+                observed.TrySetResult(outcome);
+            }
         });
         listener.Start();
         var logger = new FailingLogger();
@@ -918,11 +1079,17 @@ public class CredentialProviderTests
         {
             if (instrument.Meter.Name == "Respire"
                 && instrument.Name is "respire.authentication.refresh" or "respire.client_cache.continuity_flushes")
+            {
                 observer.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
         {
-            if (!observe.Value || observedConnection is null) return;
+            if (!observe.Value || observedConnection is null)
+            {
+                return;
+            }
+
 #pragma warning disable RESP009 // A synchronous metrics observer must re-enter command admission without blocking renewal.
             using var reply = observedConnection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask()
                 .WaitAsync(Limit).GetAwaiter().GetResult();
@@ -933,11 +1100,16 @@ public class CredentialProviderTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             Options(server, provider, clock) with
             {
-                CredentialCacheInvalidation = () => { observe.Value = true; return 0; },
+                CredentialCacheInvalidation = () =>
+                {
+                    observe.Value = true;
+                    return 0;
+                },
             });
         observedConnection = connection;
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
         provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
+
         if (advanceFromReply)
         {
             // Force the clock callback onto this connection's serial completion worker.
@@ -945,7 +1117,11 @@ public class CredentialProviderTests
             var suppressed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             server.SuppressReply = command =>
             {
-                if (command != "PING") return false;
+                if (command != "PING")
+                {
+                    return false;
+                }
+
                 suppressed.TrySetResult();
                 return true;
             };
@@ -957,13 +1133,17 @@ public class CredentialProviderTests
             await server.SendRawAsync("+PONG\r\n"u8.ToArray());
             await advance.WaitAsync(Limit);
         }
-        else clock.Advance(TimeSpan.FromSeconds(20));
+        else
+        {
+            clock.Advance(TimeSpan.FromSeconds(20));
+        }
 
         async Task AdvanceFromReplyAsync()
         {
             using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false);
             clock.Advance(TimeSpan.FromSeconds(20));
         }
+
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(30)));
         await Assert.That(Volatile.Read(ref completed)).IsEqualTo(3);
         await Assert.That(connection.IsConnected).IsTrue();
@@ -980,18 +1160,33 @@ public class CredentialProviderTests
         listener.InstrumentPublished = (instrument, observer) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.authentication.refresh")
+            {
                 observer.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             var port = 0;
             var stage = "";
+
             foreach (var tag in tags)
             {
-                if (tag.Key == "server.port") port = (int)tag.Value!;
-                if (tag.Key == "respire.authentication.stage") stage = (string)tag.Value!;
+                if (tag.Key == "server.port")
+                {
+                    port = (int)tag.Value!;
+                }
+
+                if (tag.Key == "respire.authentication.stage")
+                {
+                    stage = (string)tag.Value!;
+                }
             }
-            if (port != server.Port) return;
+
+            if (port != server.Port)
+            {
+                return;
+            }
+
             stages.Enqueue(stage);
             throw new InvalidOperationException("listener failed");
         });
@@ -1030,11 +1225,13 @@ public class CredentialProviderTests
             });
 
         provider.Failure = new InvalidOperationException("provider unavailable");
+
         for (var day = 0; day < 5; day++)
         {
             await UntilAsync(() => clock.HasDelay(TimeSpan.FromDays(1)));
             clock.Advance(TimeSpan.FromDays(1));
         }
+
         await UntilAsync(() => provider.Calls == 2 && clock.HasDelay(TimeSpan.FromDays(1)));
 
         clock.Advance(TimeSpan.FromDays(1));
@@ -1051,7 +1248,8 @@ public class CredentialProviderTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new("127.0.0.1", server.Port) }, CredentialProvider = new Provider(),
+            Endpoints = { new("127.0.0.1", server.Port) },
+            CredentialProvider = new Provider(),
             Protocol = protocol,
         });
         await Assert.That(async () => await client.SubscribeAsync("channel")).ThrowsExactly<RespireConfigurationException>();
@@ -1075,9 +1273,14 @@ public class CredentialProviderTests
     private static RespireConnectionOptions Options(FakeRespServer server, Provider provider, Clock clock)
         => new RespireOptions
         {
-            Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1, CredentialProvider = provider, Protocol = RespireProtocol.Resp2,
-            CredentialTimeProvider = clock, CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
-            CredentialRefreshRetryDelay = TimeSpan.FromSeconds(1), ConnectTimeout = Limit,
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Connections = 1,
+            CredentialProvider = provider,
+            Protocol = RespireProtocol.Resp2,
+            CredentialTimeProvider = clock,
+            CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
+            CredentialRefreshRetryDelay = TimeSpan.FromSeconds(1),
+            ConnectTimeout = Limit,
         }.ToConnectionOptions();
 
     private static Provider ExpiringProvider(Clock clock)
@@ -1086,7 +1289,11 @@ public class CredentialProviderTests
     private static async Task UntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(Limit);
-        while (!condition()) await Task.Delay(5, timeout.Token);
+
+        while (!condition())
+        {
+            await Task.Delay(5, timeout.Token);
+        }
     }
 
     private sealed class Provider : IRespireCredentialProvider
@@ -1099,21 +1306,40 @@ public class CredentialProviderTests
         public ValueTask<RespireCredentials> GetCredentialsAsync(CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref Calls);
-            if (Failure is { } error) throw error;
-            if (Pending is { } pending) return new(pending.Task);
+
+            if (Failure is { } error)
+            {
+                throw error;
+            }
+
+            if (Pending is { } pending)
+            {
+                return new(pending.Task);
+            }
+
             return ValueTask.FromResult(Current);
         }
     }
 
     private sealed class FailingLogger : Microsoft.Extensions.Logging.ILogger
     {
-        public System.Collections.Concurrent.ConcurrentQueue<string> Messages { get; } = new();
+        public System.Collections.Concurrent.ConcurrentQueue<string> Messages
+        {
+            get;
+        } = new();
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
         public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
             TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            if (eventId.Id != 4001) return;
+            if (eventId.Id != 4001)
+            {
+                return;
+            }
+
             Messages.Enqueue(formatter(state, exception));
             throw new InvalidOperationException("logger failed");
         }

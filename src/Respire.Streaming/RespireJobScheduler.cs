@@ -61,20 +61,36 @@ public sealed class RespireJobScheduler<T>
     /// Catch-up backlog persists for later passes. Repeating a pass after a lost reply cannot duplicate a committed tick.</remarks>
     public async ValueTask<int> RunDueAsync(int maximumTicks = 64, CancellationToken cancellationToken = default)
     {
-        if (maximumTicks is < 1 or > 256) throw new ArgumentOutOfRangeException(nameof(maximumTicks));
+        if (maximumTicks is < 1 or > 256)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maximumTicks));
+        }
+
         var now = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
         var enqueued = 0;
+
         for (var examined = 0; examined < maximumTicks;)
         {
             using var due = await _client.Scripts.ExecuteAsync(RecurringJobScripts.ReadDue, [.. _keys],
                 [now, maximumTicks - examined], cancellationToken).ConfigureAwait(false);
-            if (due.Count == 0) break;
+
+            if (due.Count == 0)
+            {
+                break;
+            }
+
             var beforeBatch = enqueued;
+
             for (var i = 0; i < due.Count; i++)
             {
                 examined++;
                 var row = due[i];
-                if (row.Count == 1) continue; // This schedule is not due at the pass's time snapshot.
+
+                if (row.Count == 1)
+                {
+                    continue; // This schedule is not due at the pass's time snapshot.
+                }
+
                 var scheduleId = row[0].AsString();
                 var json = row[1].AsString();
                 var original = long.Parse(row[2].AsString(), CultureInfo.InvariantCulture);
@@ -82,6 +98,7 @@ public sealed class RespireJobScheduler<T>
                     ?? throw new InvalidOperationException("The recurring schedule definition is invalid.");
                 var cron = definition.Cron is { } expression ? CronExpression.Parse(expression) : null;
                 var tick = original;
+
                 if (definition.Policy == RespireJobMissedTickPolicy.Skip)
                 {
                     tick = definition.Interval is { } interval
@@ -89,6 +106,7 @@ public sealed class RespireJobScheduler<T>
                         : new DateTimeOffset(cron!.GetPreviousOccurrence(DateTimeOffset.FromUnixTimeMilliseconds(now).UtcDateTime,
                             inclusive: true)!.Value).ToUnixTimeMilliseconds();
                 }
+
                 var next = Next(tick, definition.Interval, cron);
                 var jobId = "recurring:" + definition.Revision + ":" + tick.ToString(CultureInfo.InvariantCulture);
                 using var trace = new JobEnqueueTrace();
@@ -97,8 +115,13 @@ public sealed class RespireJobScheduler<T>
                         definition.Payload, tick, trace.Parent, trace.State], cancellationToken).ConfigureAwait(false);
                 trace.Succeeded = true;
             }
-            if (enqueued == beforeBatch) break;
+
+            if (enqueued == beforeBatch)
+            {
+                break;
+            }
         }
+
         return enqueued;
     }
 
@@ -110,6 +133,7 @@ public sealed class RespireJobScheduler<T>
             var maximum = DateTimeOffset.MaxValue.ToUnixTimeMilliseconds();
             return milliseconds > maximum - after ? null : after + milliseconds;
         }
+
         var next = cron!.GetNextOccurrence(DateTimeOffset.FromUnixTimeMilliseconds(after).UtcDateTime);
         return next is { } value ? new DateTimeOffset(value).ToUnixTimeMilliseconds() : null;
     }

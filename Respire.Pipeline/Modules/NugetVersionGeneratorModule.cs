@@ -126,6 +126,7 @@ internal sealed record GitVersionDetails(
     {
         var commitHash = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "rev-parse", "HEAD");
         var shortCommitHash = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "rev-parse", "--short=8", "HEAD");
+
         if (settings.ReleaseVersion is not null)
         {
             return await CreateReleaseVersionAsync(settings, repositoryRoot, branchName,
@@ -135,6 +136,7 @@ internal sealed record GitVersionDetails(
         var latestVersionTag = await GetLatestStableVersionTagAsync(repositoryRoot, cancellationToken, logger);
 
         var baseVersion = ParseVersion(latestVersionTag) ?? ParseVersion(settings.BaseVersion);
+
         if (baseVersion is null)
         {
             throw new InvalidOperationException($"Versioning:BaseVersion must be a semantic version. Actual value: {settings.BaseVersion}");
@@ -164,6 +166,7 @@ internal sealed record GitVersionDetails(
         string commitHash, string shortCommitHash, CancellationToken cancellationToken)
     {
         var target = ParseVersion(settings.ReleaseVersion);
+
         if (target is null || target.ToString() != settings.ReleaseVersion)
         {
             throw new InvalidOperationException("Versioning:ReleaseVersion must be a canonical X.Y.Z version without a prefix or suffix.");
@@ -239,6 +242,7 @@ internal sealed record GitVersionDetails(
         }
 
         var match = VersionTagRegex.Match(value);
+
         if (!match.Success)
         {
             return null;
@@ -265,7 +269,12 @@ internal sealed record GitVersionDetails(
     private static string SanitizeNuGetIdentifier(string value)
     {
         var sanitized = Regex.Replace(value.ToLowerInvariant(), "[^0-9a-z-]+", "-").Trim('-');
-        if (sanitized.Length > 0 && sanitized.All(char.IsAsciiDigit)) return $"branch-{sanitized}";
+
+        if (sanitized.Length > 0 && sanitized.All(char.IsAsciiDigit))
+        {
+            return $"branch-{sanitized}";
+        }
+
         return string.IsNullOrWhiteSpace(sanitized) ? "branch" : sanitized;
     }
 

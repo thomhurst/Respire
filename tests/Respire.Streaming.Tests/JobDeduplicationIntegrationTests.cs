@@ -30,6 +30,7 @@ public class JobDeduplicationIntegrationTests(RedisTestContainer redis)
         var shortened = await Shorten(client, queue);
         await queue.EnqueueAsync("job", "duplicate", TimeSpan.FromMilliseconds(1));
         var expiry = await Expiry(client, queue);
+
         if (winner % 2 == 0)
         {
             await Assert.That(entry.GetString("_respire.job.deduplication")).IsEqualTo("Extend");
@@ -58,10 +59,15 @@ public class JobDeduplicationIntegrationTests(RedisTestContainer redis)
         var queue = Queue(client);
         var options = new RespireJobEnqueueOptions
         {
-            DeduplicationMode = RespireJobDeduplicationMode.Extend, DeduplicationWindow = Window,
-            Delay = TimeSpan.FromMinutes(5), TimeToLive = TimeSpan.FromMinutes(10), Priority = 7, Group = "group",
+            DeduplicationMode = RespireJobDeduplicationMode.Extend,
+            DeduplicationWindow = Window,
+            Delay = TimeSpan.FromMinutes(5),
+            TimeToLive = TimeSpan.FromMinutes(10),
+            Priority = 7,
+            Group = "group",
         };
         RespireJobEnqueueResult first;
+
         if (transactional)
         {
             await using var transaction = client.CreateTransaction();
@@ -70,8 +76,12 @@ public class JobDeduplicationIntegrationTests(RedisTestContainer redis)
             await transaction.CommitAsync();
             first = pending.Result;
         }
-        else first = scheduled ? await queue.EnqueueScheduledAsync("job", "first", options)
+        else
+        {
+            first = scheduled ? await queue.EnqueueScheduledAsync("job", "first", options)
             : await queue.EnqueueAsync(RespireJobDeduplicationMode.Extend, "job", "first", Window);
+        }
+
         var stream = queue.StreamKey + (scheduled ? ":scheduled" : "");
         var before = (await client.Streams.ReadAsync(stream)).Single();
         var groupedBefore = await client.SortedSets.CountAsync(queue.StreamKey + ":group-jobs");
@@ -82,7 +92,9 @@ public class JobDeduplicationIntegrationTests(RedisTestContainer redis)
             i % 2 == 0 ? queue.EnqueueAsync("job", "replacement", TimeSpan.FromMilliseconds(1)).AsTask()
                 : queue.EnqueueScheduledAsync("job", "replacement", new()
                 {
-                    Priority = -1, Delay = TimeSpan.FromDays(1), DeduplicationWindow = TimeSpan.FromMilliseconds(1),
+                    Priority = -1,
+                    Delay = TimeSpan.FromDays(1),
+                    DeduplicationWindow = TimeSpan.FromMilliseconds(1),
                 }).AsTask()));
         await Assert.That(duplicates.All(result => !result.Enqueued && result.EntryId == first.EntryId)).IsTrue();
         await Assert.That(await Expiry(client, queue)).IsGreaterThan(shortenedExpiry + 3_000_000);
@@ -187,7 +199,8 @@ public class JobDeduplicationIntegrationTests(RedisTestContainer redis)
         var queue = Queue(client);
         var first = await queue.EnqueueScheduledAsync("job", "first", new()
         {
-            DeduplicationMode = RespireJobDeduplicationMode.Extend, DeduplicationWindow = Window,
+            DeduplicationMode = RespireJobDeduplicationMode.Extend,
+            DeduplicationWindow = Window,
             TimeToLive = TimeSpan.FromMinutes(1),
         });
         await client.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
@@ -213,10 +226,12 @@ public class JobDeduplicationIntegrationTests(RedisTestContainer redis)
         var expiry = await Expiry(admin, queue);
         var user = "dedup-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-set"]);
+
         try
         {
             await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
-                with { Username = user, Password = "password" });
+                with
+            { Username = user, Password = "password" });
             await Assert.That(async () => await Queue(client).EnqueueAsync("job", "second")).Throws<RespireServerException>();
             await Assert.That(async () => await Queue(client).EnqueueScheduledAsync("job", "second", new())).Throws<RespireServerException>();
             await Assert.That(await Expiry(admin, queue)).IsEqualTo(expiry);
@@ -228,10 +243,14 @@ public class JobDeduplicationIntegrationTests(RedisTestContainer redis)
 
     private ValueTask<RespireClient> Connect(int protocol = 3)
         => RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+
     private static RespireJobQueue<string> Queue(IRespireClient client) => new(client, "deduplication", Encoding.UTF8.GetBytes);
+
     private static string Key(RespireJobQueue<string> queue) => queue.StreamKey + ":dedup:" + Convert.ToHexString(SHA256.HashData("job"u8));
+
     private static ValueTask<long> Expiry(IRespireClient client, RespireJobQueue<string> queue)
         => client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return redis.call('PEXPIRETIME', KEYS[1])"), [Key(queue)], []);
+
     private static ValueTask<long> Shorten(IRespireClient client, RespireJobQueue<string> queue)
         => client.Scripts.ExecuteIntegerAsync(RespireScript.Create("""
             redis.call('PEXPIRE', KEYS[1], 300000)

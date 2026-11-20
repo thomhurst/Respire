@@ -16,9 +16,17 @@ public sealed partial class RespireConnectionMultiplexer
     /// <inheritdoc />
     public EndPoint[] GetEndPoints(bool configuredOnly = false)
     {
-        lock (_gate) ThrowIfClosed();
-        if (configuredOnly) return _configuration.Endpoints.Concat(_configuration.ReplicaEndpoints)
+        lock (_gate)
+        {
+            ThrowIfClosed();
+        }
+
+        if (configuredOnly)
+        {
+            return _configuration.Endpoints.Concat(_configuration.ReplicaEndpoints)
             .Distinct().Select(ToEndPoint).ToArray();
+        }
+
         var client = DefaultDatabase.Client;
         return Wait(Run(async token =>
         {
@@ -47,49 +55,80 @@ public sealed partial class RespireConnectionMultiplexer
     public IServer GetServer(EndPoint endpoint, object? asyncState = null)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
-        if (asyncState is not null) throw Compatibility.Unsupported("asyncState");
+
+        if (asyncState is not null)
+        {
+            throw Compatibility.Unsupported("asyncState");
+        }
+
         var native = FromEndPoint(endpoint);
+
         lock (_gate)
         {
             ThrowIfClosed();
+
             if (!_servers.TryGetValue(native, out var server))
             {
                 // A physical server handle must never redirect to a different node or own the wrapped client.
                 var client = RespireClient.Create(_configuration with
                 {
-                    Endpoints = [native], ReplicaEndpoints = [], SentinelPrimaryName = null,
-                    UseCluster = false, ReadFrom = RespireReadFrom.Primary, Connections = 1, ClientSideCache = null,
+                    Endpoints = [native],
+                    ReplicaEndpoints = [],
+                    SentinelPrimaryName = null,
+                    UseCluster = false,
+                    ReadFrom = RespireReadFrom.Primary,
+                    Connections = 1,
+                    ClientSideCache = null,
                 });
                 server = new(this, client, ToEndPoint(native));
                 _servers.Add(native, server);
             }
+
             return server;
         }
     }
 
     /// <inheritdoc />
     public IServer GetServer(string host, int port, object? asyncState = null) => GetServer(new DnsEndPoint(host, port), asyncState);
+
     /// <inheritdoc />
     public IServer GetServer(IPAddress host, int port) => GetServer(new IPEndPoint(host, port));
+
     /// <inheritdoc />
     public IServer GetServer(string hostAndPort, object? asyncState = null)
     {
         var options = ConfigurationOptions.Parse(hostAndPort);
-        if (options.EndPoints.Count != 1) throw new ArgumentException("Specify exactly one endpoint.", nameof(hostAndPort));
+
+        if (options.EndPoints.Count != 1)
+        {
+            throw new ArgumentException("Specify exactly one endpoint.", nameof(hostAndPort));
+        }
+
         return GetServer(options.EndPoints[0], asyncState);
     }
+
     /// <inheritdoc />
     public IServer GetServer(RedisKey key, object? asyncState = null, CommandFlags flags = CommandFlags.None)
     {
-        if (asyncState is not null) throw Compatibility.Unsupported("asyncState");
+        if (asyncState is not null)
+        {
+            throw Compatibility.Unsupported("asyncState");
+        }
+
         return GetServer(DefaultDatabase.IdentifyEndpoint(key, flags)!);
     }
+
     /// <inheritdoc />
     public IServer[] GetServers() => GetEndPoints().Select(endpoint => GetServer(endpoint)).ToArray();
+
     /// <inheritdoc />
     public ISubscriber GetSubscriber(object? asyncState = null)
     {
-        if (asyncState is not null) throw Compatibility.Unsupported("asyncState");
+        if (asyncState is not null)
+        {
+            throw Compatibility.Unsupported("asyncState");
+        }
+
         lock (_gate)
         {
             ThrowIfClosed();

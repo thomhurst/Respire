@@ -23,11 +23,20 @@ try
     using (var chat = new ChatClientBuilder(new DemoChatClient()).UseRespireChatHistory(store, conversationId).Build())
     {
         var second = await chat.GetResponseAsync([new(ChatRole.User, "What is my name?")], cancellationToken: deadline.Token);
-        if (second.Text != "Your name is Ada.") throw new InvalidOperationException("Redis chat history was not loaded.");
+
+        if (second.Text != "Your name is Ada.")
+        {
+            throw new InvalidOperationException("Redis chat history was not loaded.");
+        }
+
         Console.WriteLine(second.Text);
     }
+
     if ((await store.ReadAsync(conversationId, cancellationToken: deadline.Token)).Count != 4)
+    {
         throw new InvalidOperationException("The two turns were not persisted.");
+    }
+
     Console.WriteLine("Redis multi-turn history sample passed.");
 }
 finally
@@ -50,5 +59,8 @@ internal sealed class DemoChatClient : IChatClient
         CancellationToken cancellationToken = default) => throw new NotSupportedException("This demo uses non-streaming responses.");
 
     public object? GetService(Type serviceType, object? serviceKey = null) => null;
-    public void Dispose() { }
+
+    public void Dispose()
+    {
+    }
 }

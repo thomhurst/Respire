@@ -27,7 +27,7 @@ public class PackProjectsModule : Module<CommandResult[]>
 
         var version = NugetVersionGeneratorModule.GetGeneratedVersion();
         var results = new List<CommandResult>();
-        
+
         foreach (var project in packageProjects)
         {
             var result = await context.Tools.DotNet.PackAsync(new DotNetPackOptions
@@ -38,7 +38,7 @@ public class PackProjectsModule : Module<CommandResult[]>
                 Output = "../artifacts/packages",
                 Properties = NugetVersionGeneratorModule.CreateVersionProperties(version)
             }, cancellationToken: cancellationToken);
-            
+
             results.Add(result);
         }
 

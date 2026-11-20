@@ -50,7 +50,11 @@ public partial class ReplicaRedirectTests
         await using var target = TrackedTarget();
         target.SuppressReply = command =>
         {
-            if (!command.StartsWith("EVAL ")) return false;
+            if (!command.StartsWith("EVAL "))
+            {
+                return false;
+            }
+
             submitted.TrySetResult();
             return true;
         };
@@ -71,21 +75,37 @@ public partial class ReplicaRedirectTests
         var response = client.ExecuteWithCorrectionAsync(execution, RespireClient.CorrectionOrdering.FenceFirst,
             state: 0, correct: (_, identity) =>
             {
-                if (identity.Endpoint.Port != target.Port) throw new InvalidOperationException("Wrong correction target");
+                if (identity.Endpoint.Port != target.Port)
+                {
+                    throw new InvalidOperationException("Wrong correction target");
+                }
+
                 corrected = true;
                 return default;
             }).AsTask();
+
         try
         {
             await WaitForPhaseAsync(submitted.Task);
             await Assert.That(execution.ConnectionIdentity.Endpoint.Port).IsEqualTo(target.Port);
             target.GateCommand("CLIENT KILL ID 99", releaseFence.Task, () => fencing.TrySetResult());
-            if (failure == "cancel") caller.Cancel();
+
+            if (failure == "cancel")
+            {
+                caller.Cancel();
+            }
             // The server holds EVAL's reply, so its source stays live while the existing
             // deadline sweep advances past it. Expiration cannot race redirect setup.
             if (failure == "timeout")
+            {
                 await Assert.That(execution.Connection.ExpireOldestCommandForTesting()).IsTrue();
-            if (failure == "lost-reply") target.CloseConnection(0);
+            }
+
+            if (failure == "lost-reply")
+            {
+                target.CloseConnection(0);
+            }
+
             await WaitForPhaseAsync(fencing.Task);
             await Assert.That(response.IsCompleted).IsFalse();
             await Assert.That(corrected).IsFalse();
@@ -93,15 +113,30 @@ public partial class ReplicaRedirectTests
             await Assert.That(client.Core.OwnedPools.Count > pools).IsTrue();
         }
         finally { releaseFence.TrySetResult(); }
+
         if (failure == "cancel")
         {
-            var error = await Assert.That(async () => { using var reply = await response; }).Throws<OperationCanceledException>();
+            var error = await Assert.That(async () =>
+            {
+                using var reply = await response;
+            }).Throws<OperationCanceledException>();
             await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
         }
         else if (failure == "timeout")
-            await Assert.That(async () => { using var reply = await response; }).Throws<RespireTimeoutException>();
+        {
+            await Assert.That(async () =>
+            {
+                using var reply = await response;
+            }).Throws<RespireTimeoutException>();
+        }
         else
-            await Assert.That(async () => { using var reply = await response; }).Throws<RespireConnectionException>();
+        {
+            await Assert.That(async () =>
+            {
+                using var reply = await response;
+            }).Throws<RespireConnectionException>();
+        }
+
         await Assert.That(corrected).IsTrue();
         await Assert.That(source.ReceivedCommands.Contains("CLIENT KILL ID 41")).IsFalse();
         await Assert.That(client.Core.OwnedPools.Count).IsEqualTo(pools);
@@ -110,8 +145,11 @@ public partial class ReplicaRedirectTests
         async Task WaitForPhaseAsync(Task phase)
         {
             await Task.WhenAny(phase, response).WaitAsync(TimeSpan.FromSeconds(5));
+
             if (phase.IsCompleted)
+            {
                 await phase;
+            }
             else
             {
                 using var unexpected = await response;
@@ -141,7 +179,11 @@ public partial class ReplicaRedirectTests
         await Assert.That(async () =>
         {
             using var reply = await client.ExecuteWithCorrectionAsync(execution, RespireClient.CorrectionOrdering.FenceFirst,
-                state: 0, correct: (_, _) => { corrected = true; return default; });
+                state: 0, correct: (_, _) =>
+                {
+                    corrected = true;
+                    return default;
+                });
         }).Throws<RespireServerException>();
         await Assert.That(corrected).IsFalse();
         await Assert.That(target.ReceivedCommands.Any(command => command.StartsWith("EVAL"))).IsFalse();
@@ -158,7 +200,10 @@ public partial class ReplicaRedirectTests
 #pragma warning restore RESP010
         await client.EnsureReliableCorrectionOrderingAsync();
         var execution = await client.StartTrackedScriptExecutionAsync(RespireScript.Create("return 1"), ["key"], [], default);
-        var error = await Assert.That(async () => { using var reply = await execution.ConsumeResponseAsync(); })
+        var error = await Assert.That(async () =>
+            {
+                using var reply = await execution.ConsumeResponseAsync();
+            })
             .Throws<RespireServerException>();
         await Assert.That(error!.Code).IsEqualTo("REDIRECT");
         await Assert.That(target.CommandsSeen).IsEqualTo(0);
@@ -176,18 +221,29 @@ public partial class ReplicaRedirectTests
         {
             ShouldListenTo = static source => source.Name == "Respire",
             Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = activity => { lock (activities) activities.Add(activity); },
+            ActivityStopped = activity =>
+            {
+                lock (activities)
+                {
+                    activities.Add(activity);
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
         using var meter = new MeterListener();
         meter.InstrumentPublished = (instrument, capture) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
                 capture.EnableMeasurementEvents(instrument);
+            }
         };
         meter.SetMeasurementEventCallback<double>((_, _, tags, _) =>
         {
-            lock (durations) durations.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            lock (durations)
+            {
+                durations.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            }
         });
         meter.Start();
         await using var target = TrackedTarget();
@@ -202,13 +258,32 @@ public partial class ReplicaRedirectTests
         var script = RespireScript.Create("return 1");
         var execution = await client.StartTrackedScriptExecutionAsync(script, ["key"], [], default,
             requireReliableCorrectionOrdering: true);
+
         if (fail)
-            await Assert.That(async () => { using var reply = await execution.ConsumeResponseAsync(); }).Throws<RespireServerException>();
-        else { using var reply = await execution.ConsumeResponseAsync(); }
+        {
+            await Assert.That(async () =>
+            {
+                using var reply = await execution.ConsumeResponseAsync();
+            }).Throws<RespireServerException>();
+        }
+        else
+        {
+            using var reply = await execution.ConsumeResponseAsync();
+        }
+
         Activity trace;
         Dictionary<string, object?> duration;
-        lock (activities) trace = activities.Single(activity => Equals(activity.GetTagItem("db.stored_procedure.name"), script.Sha1));
-        lock (durations) duration = durations.Single(tags => Equals(tags.GetValueOrDefault("db.operation.name"), script.EvalShaOperation));
+
+        lock (activities)
+        {
+            trace = activities.Single(activity => Equals(activity.GetTagItem("db.stored_procedure.name"), script.Sha1));
+        }
+
+        lock (durations)
+        {
+            duration = durations.Single(tags => Equals(tags.GetValueOrDefault("db.operation.name"), script.EvalShaOperation));
+        }
+
         await Assert.That(trace.GetTagItem("server.port")).IsEqualTo(target.Port);
         await Assert.That(trace.Status == ActivityStatusCode.Error).IsEqualTo(fail);
         await Assert.That(duration["server.port"]).IsEqualTo(target.Port);

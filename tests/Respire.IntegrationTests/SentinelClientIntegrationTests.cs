@@ -17,7 +17,8 @@ public class SentinelClientIntegrationTests
         // Each case owns a container with private server processes; failover never targets a shared fixture.
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
-            Server = server, Topology = RespireContainerTopology.Sentinel,
+            Server = server,
+            Topology = RespireContainerTopology.Sentinel,
         }, deadline.Token);
         await using var client = await RespireSentinelClient.ConnectAsync(fixture.SentinelEndpoints[0],
             fixture.CreateOptions() with { AllowAdmin = true }, deadline.Token);
@@ -29,11 +30,13 @@ public class SentinelClientIntegrationTests
         (await client.ReplicasAsync(name, deadline.Token)).Should().NotBeEmpty();
         // Fixture readiness requires quorum, which can precede discovery of every peer.
         var peers = await client.SentinelsAsync(name, deadline.Token);
+
         while (peers.Length < fixture.SentinelEndpoints.Count - 1)
         {
             await Task.Delay(100, deadline.Token);
             peers = await client.SentinelsAsync(name, deadline.Token);
         }
+
         peers.Should().HaveCount(fixture.SentinelEndpoints.Count - 1);
         (await client.MyIdAsync(deadline.Token)).Should().HaveLength(40);
         (await client.CheckQuorumAsync(name, deadline.Token)).Should().StartWith("OK");
@@ -56,11 +59,13 @@ public class SentinelClientIntegrationTests
         // Exercise real failover only inside this disposable fixture.
         await client.FailoverAsync(name, deadline.Token);
         RespireSentinelPrimary promoted;
+
         do
         {
             await Task.Delay(100, deadline.Token);
             promoted = await client.PrimaryAsync(name, deadline.Token);
         } while (promoted.Endpoint == primary.Endpoint);
+
         (await client.ReplicasAsync(name, deadline.Token)).Should().Contain(item => item.Endpoint == primary.Endpoint);
     }
 }

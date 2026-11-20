@@ -30,13 +30,22 @@ public sealed class RespireCredentials
     }
 
     /// <summary>ACL username, or null for the default user.</summary>
-    public string? Username { get; }
+    public string? Username
+    {
+        get;
+    }
 
     /// <summary>Password or access token. Treat this value as a secret.</summary>
-    public string Password { get; }
+    public string Password
+    {
+        get;
+    }
 
     /// <summary>Expiry of these credentials, or null when no proactive renewal is needed.</summary>
-    public DateTimeOffset? ExpiresAt { get; }
+    public DateTimeOffset? ExpiresAt
+    {
+        get;
+    }
 
     internal bool IsSameAs(RespireCredentials other)
         => ExpiresAt == other.ExpiresAt && Username == other.Username

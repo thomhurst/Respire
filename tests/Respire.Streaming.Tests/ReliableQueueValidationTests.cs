@@ -34,12 +34,21 @@ public class ReliableQueueValidationTests
         await Assert.That(proxy.CommandCalls).IsEqualTo(0);
     }
 
-    public interface IResolvingClient : IRespireClient, IRespireNameResolver { }
+    public interface IResolvingClient : IRespireClient, IRespireNameResolver
+    {
+    }
 
     public class AliasingClient : DispatchProxy
     {
-        public string Suffix { get; set; } = "";
-        public int CommandCalls { get; private set; }
+        public string Suffix
+        {
+            get; set;
+        } = "";
+
+        public int CommandCalls
+        {
+            get; private set;
+        }
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {

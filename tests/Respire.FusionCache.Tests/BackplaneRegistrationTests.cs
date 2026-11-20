@@ -21,7 +21,8 @@ public class BackplaneRegistrationTests(RedisTestContainer fixture)
         var options = RespireOptions.Parse(fixture.ConnectionString) with
         {
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
-            Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            Connections = 1,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         };
         await using var firstClient = await RespireClient.ConnectAsync(options);
         await using var secondClient = await RespireClient.ConnectAsync(options);
@@ -40,8 +41,12 @@ public class BackplaneRegistrationTests(RedisTestContainer fixture)
         await Assert.That(await second.GetOrDefaultAsync("key", -1)).IsEqualTo(42);
         await first.SetAsync("key", 43);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (await second.GetOrDefaultAsync("key", -1, token: deadline.Token) != 43)
+        {
             await Task.Delay(10, deadline.Token);
+        }
+
         await firstProvider.DisposeAsync();
         await secondProvider.DisposeAsync();
         await firstClient.SetAsync(prefix + "still-alive", "yes");

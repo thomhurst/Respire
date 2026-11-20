@@ -14,13 +14,22 @@ public static class RespireJobMetrics
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentException.ThrowIfNullOrWhiteSpace(streamKey);
-        if (minutes is < 1 or > 1440) throw new ArgumentOutOfRangeException(nameof(minutes));
+
+        if (minutes is < 1 or > 1440)
+        {
+            throw new ArgumentOutOfRangeException(nameof(minutes));
+        }
+
         using var reply = await client.Scripts.ExecuteAsync(JobMetricsScripts.Read, [streamKey + ":metrics"],
             [minutes], cancellationToken).ConfigureAwait(false);
         var result = new RespireJobMetricBucket[reply.Count];
+
         for (var i = 0; i < result.Length; i++)
+        {
             result[i] = new(DateTimeOffset.FromUnixTimeSeconds(reply[i][0].AsInteger() * 60),
                 reply[i][1].AsInteger(), reply[i][2].AsInteger());
+        }
+
         return result;
     }
 }

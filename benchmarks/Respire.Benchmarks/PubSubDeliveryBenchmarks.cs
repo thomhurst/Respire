@@ -17,7 +17,10 @@ public class PubSubDeliveryBenchmarks
     private IAsyncEnumerator<RespireMessage>[] _readers = null!;
 
     [Params(1, 4)]
-    public int Subscribers { get; set; }
+    public int Subscribers
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public void Setup()
@@ -25,10 +28,10 @@ public class PubSubDeliveryBenchmarks
         _client = RespireClient.Create(new RespireOptions { Endpoints = [new("localhost", 6379)] });
         var hub = _client.Core.Hub;
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
-        var routes = (ByteRouteDictionary<List<RespireSubscription>>[])
-            typeof(SubscriptionHub).GetField("_routes", flags)!.GetValue(hub)!;
+        var routes = (ByteRouteDictionary<List<RespireSubscription>>[])typeof(SubscriptionHub).GetField("_routes", flags)!.GetValue(hub)!;
         var subscriptions = new List<RespireSubscription>();
         _readers = new IAsyncEnumerator<RespireMessage>[Subscribers];
+
         for (var i = 0; i < Subscribers; i++)
         {
             var subscription = new RespireSubscription(hub, RespireSubscriptionKind.Channel,
@@ -36,6 +39,7 @@ public class PubSubDeliveryBenchmarks
             subscriptions.Add(subscription);
             _readers[i] = subscription.GetAsyncEnumerator();
         }
+
         routes[(int)RespireSubscriptionKind.Channel].Add("events", subscriptions);
         _frame = RespValue.Array(RespValue.BulkString("message"),
             RespValue.BulkString("events"), RespValue.BulkString("payload"));
@@ -49,8 +53,11 @@ public class PubSubDeliveryBenchmarks
             : [Expression.Constant(0L), value];
         _dispatch = Expression.Lambda<PushFrame>(
             Expression.Call(Expression.Constant(hub), method, arguments), value).Compile();
+
         if (RouteAndConsume() != Subscribers * 7)
+        {
             throw new InvalidOperationException("The dispatch fixture did not deliver every payload.");
+        }
     }
 
     [Benchmark]
@@ -58,13 +65,19 @@ public class PubSubDeliveryBenchmarks
     {
         _dispatch(in _frame);
         var bytes = 0;
+
         foreach (var reader in _readers)
         {
             var next = reader.MoveNextAsync();
+
             if (!next.IsCompletedSuccessfully || !next.Result)
+            {
                 throw new InvalidOperationException("A buffered dispatch did not complete synchronously.");
+            }
+
             bytes += reader.Current.Payload.Length;
         }
+
         return bytes;
     }
 
@@ -72,7 +85,10 @@ public class PubSubDeliveryBenchmarks
     public async Task Cleanup()
     {
         foreach (var reader in _readers)
+        {
             await reader.DisposeAsync();
+        }
+
         await _client.DisposeAsync();
         _frame.Dispose();
     }

@@ -24,7 +24,10 @@ public class TrackedReplicaRedirectIntegrationTests
         var port = server.GetMappedPublicPort(6379);
         await using var admin = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(server.Hostname, port)], Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Endpoints = [new(server.Hostname, port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            AllowAdmin = true,
         });
         var script = RespireScript.Create("return redis.call('SET', KEYS[1], 'latent')");
         await admin.Scripts.LoadAsync(script);
@@ -38,23 +41,56 @@ public class TrackedReplicaRedirectIntegrationTests
         using var caller = new CancellationTokenSource();
         var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var attempts = 0;
-        using (await admin.ExecuteAsync("CLIENT", ["PAUSE", 30000, "WRITE"])) { }
+
+        using (await admin.ExecuteAsync("CLIENT", ["PAUSE", 30000, "WRITE"]))
+        {
+        }
+
         try
         {
             var execution = await client.StartTrackedScriptExecutionAsync(script, ["key"], [], caller.Token,
                 requireReliableCorrectionOrdering: true,
-                onSerialized: _ => { if (Interlocked.Increment(ref attempts) == 2) submitted.TrySetResult(); });
+                onSerialized: _ =>
+                {
+                    if (Interlocked.Increment(ref attempts) == 2)
+                    {
+                        submitted.TrySetResult();
+                    }
+                });
             var response = client.ExecuteWithCorrectionAsync(execution, RespireClient.CorrectionOrdering.FenceFirst).AsTask();
             await submitted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(execution.ConnectionIdentity.Endpoint.Port).IsEqualTo(port);
-            if (failure == "cancel") caller.Cancel();
-            if (failure == "lost-reply") await execution.Connection.DisposeAsync();
+
+            if (failure == "cancel")
+            {
+                caller.Cancel();
+            }
+
+            if (failure == "lost-reply")
+            {
+                await execution.Connection.DisposeAsync();
+            }
+
             Exception? observed = null;
-            try { using var reply = await response; }
+
+            try
+            {
+                using var reply = await response;
+            }
             catch (Exception error) { observed = error; }
+
             await Assert.That(observed).IsNotNull();
-            if (failure == "cancel") await Assert.That(observed).IsAssignableTo<OperationCanceledException>();
-            if (failure == "timeout") await Assert.That(observed).IsAssignableTo<RespireTimeoutException>();
+
+            if (failure == "cancel")
+            {
+                await Assert.That(observed).IsAssignableTo<OperationCanceledException>();
+            }
+
+            if (failure == "timeout")
+            {
+                await Assert.That(observed).IsAssignableTo<RespireTimeoutException>();
+            }
+
             using var clients = await admin.ExecuteAsync("CLIENT", ["LIST", "ID", execution.ConnectionIdentity.ServerClientId]);
             await Assert.That(clients.AsString()).IsEqualTo("");
             await Assert.That(client.Core.OwnedPools.Count).IsEqualTo(pools);

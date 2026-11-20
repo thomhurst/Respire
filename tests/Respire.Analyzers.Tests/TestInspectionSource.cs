@@ -40,10 +40,16 @@ internal static class TestInspectionSource
             _compilation = new(() => CreateCompilation(Trees.Select(item => item.Tree)));
         }
 
-        public SourceConfiguration Configuration { get; }
+        public SourceConfiguration Configuration
+        {
+            get;
+        }
 
         /// <summary>Trees in resource order; each carries its embedded resource path as <see cref="SyntaxTree.FilePath"/>.</summary>
-        public IReadOnlyList<(string Path, SyntaxTree Tree)> Trees { get; }
+        public IReadOnlyList<(string Path, SyntaxTree Tree)> Trees
+        {
+            get;
+        }
 
         /// <summary>One binding of every production tree; semantic models from it are safe to request concurrently.</summary>
         public CSharpCompilation Compilation => _compilation.Value;
@@ -76,8 +82,12 @@ internal static class TestInspectionSource
         return reader.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line =>
         {
             var parts = line.Trim().Split('|');
+
             if (parts.Length != 2 || parts[0].Length == 0 || parts[1].Length == 0)
+            {
                 throw new InvalidOperationException("Invalid source configuration: " + line);
+            }
+
             return new SourceConfiguration(parts[0], parts[1].Split(',', StringSplitOptions.RemoveEmptyEntries));
         }).ToArray();
     }
@@ -94,14 +104,21 @@ internal static class TestInspectionSource
     {
         var assembly = typeof(TestInspectionSource).Assembly;
         var sources = new List<(string Path, string Text)>();
+
         foreach (var resource in assembly.GetManifestResourceNames())
         {
             var path = resource.Replace('\\', '/');
-            if (!path.StartsWith("LibrarySource/", StringComparison.Ordinal)) continue;
+
+            if (!path.StartsWith("LibrarySource/", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
             using var stream = OpenResource(resource);
             using var reader = new StreamReader(stream);
             sources.Add((path, reader.ReadToEnd()));
         }
+
         return sources.ToArray();
     }
 
@@ -118,14 +135,22 @@ internal static class TestInspectionSource
         semanticModel ??= CreateCompilation([root.SyntaxTree]).GetSemanticModel(root.SyntaxTree);
         var members = new List<string>();
         var declarations = FindOwnerDeclarations(root).Concat(FindDerivedDeclarations(root, semanticModel));
+
         foreach (var (declaration, name) in declarations)
         {
             if (declaration is not ClassDeclarationSyntax owner)
+            {
                 throw new InvalidOperationException($"Unsupported inspection owner kind: {name} ({declaration.Kind()})");
+            }
+
             if (owner.ParameterList is { } primaryConstructor)
+            {
                 members.Add($"{name} | constructor {owner.Identifier.ValueText}({Parameters(primaryConstructor)})");
+            }
+
             members.AddRange(FindAccessibleMembers(owner, name));
         }
+
         return members.ToArray();
     }
 
@@ -134,11 +159,18 @@ internal static class TestInspectionSource
     {
         foreach (var declaration in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
         {
-            if (semanticModel.GetDeclaredSymbol(declaration) is not { } symbol || !HasOwnerBase(symbol)) continue;
+            if (semanticModel.GetDeclaredSymbol(declaration) is not { } symbol || !HasOwnerBase(symbol))
+            {
+                continue;
+            }
             // Nested members of an inventoried type are already visited recursively.
             if (declaration.Ancestors().OfType<TypeDeclarationSyntax>().Any(parent =>
                 semanticModel.GetDeclaredSymbol(parent) is { } containing
-                && (Owners.Contains(containing.ToDisplayString()) || HasOwnerBase(containing)))) continue;
+                && (Owners.Contains(containing.ToDisplayString()) || HasOwnerBase(containing))))
+            {
+                continue;
+            }
+
             yield return (declaration, symbol.ToDisplayString());
         }
     }
@@ -147,7 +179,13 @@ internal static class TestInspectionSource
     private static bool HasOwnerBase(INamedTypeSymbol symbol)
     {
         for (var parent = symbol.BaseType; parent is not null; parent = parent.BaseType)
-            if (Owners.Contains(parent.ToDisplayString())) return true;
+        {
+            if (Owners.Contains(parent.ToDisplayString()))
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -160,17 +198,32 @@ internal static class TestInspectionSource
             // Interface implementations and implicit interface members remain callable.
             if (!modifiers.Any(SyntaxKind.PublicKeyword) && !modifiers.Any(SyntaxKind.InternalKeyword)
                 && !modifiers.Any(SyntaxKind.ProtectedKeyword) && ExplicitInterface(member) is null
-                && !(owner is InterfaceDeclarationSyntax && !modifiers.Any(SyntaxKind.PrivateKeyword))) continue;
+                && !(owner is InterfaceDeclarationSyntax && !modifiers.Any(SyntaxKind.PrivateKeyword)))
+            {
+                continue;
+            }
             // Borrowed instance state belongs in the designated view. Static members and
             // accessible nested types can bypass that borrowing boundary and require review.
             if (inspectionView && !modifiers.Any(SyntaxKind.StaticKeyword) && !modifiers.Any(SyntaxKind.ConstKeyword)
-                && member is not BaseTypeDeclarationSyntax and not DelegateDeclarationSyntax) continue;
-            foreach (var key in MemberKeys(member)) yield return name + " | " + key;
+                && member is not BaseTypeDeclarationSyntax and not DelegateDeclarationSyntax)
+            {
+                continue;
+            }
+
+            foreach (var key in MemberKeys(member))
+            {
+                yield return name + " | " + key;
+            }
+
             if (member is TypeDeclarationSyntax nested)
             {
                 var isView = Owners.Contains(name) && nested.Identifier.ValueText == "TestInspection";
+
                 foreach (var key in FindAccessibleMembers(nested, name + "." + nested.Identifier.ValueText
-                    + Arity(nested.TypeParameterList), isView)) yield return key;
+                    + Arity(nested.TypeParameterList), isView))
+                {
+                    yield return key;
+                }
             }
         }
     }
@@ -180,11 +233,19 @@ internal static class TestInspectionSource
     {
         foreach (var declaration in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
         {
-            if (declaration.Ancestors().OfType<TypeDeclarationSyntax>().Any()) continue;
+            if (declaration.Ancestors().OfType<TypeDeclarationSyntax>().Any())
+            {
+                continue;
+            }
+
             var namespaces = declaration.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().Reverse()
                 .Select(space => string.Concat(space.Name.DescendantTokens().Select(token => token.ValueText)));
             var name = string.Join('.', namespaces.Append(declaration.Identifier.ValueText));
-            if (Owners.Contains(name)) yield return (declaration, name);
+
+            if (Owners.Contains(name))
+            {
+                yield return (declaration, name);
+            }
         }
     }
 
@@ -206,7 +267,9 @@ internal static class TestInspectionSource
             if (compilation.GetTypeByMetadataName(owner + "+TestInspection") is not
                 { TypeKind: TypeKind.Struct, IsRefLikeType: true } view
                 || !SymbolEqualityComparer.Default.Equals(view.ContainingAssembly, compilation.Assembly))
+            {
                 throw new InvalidOperationException("Unresolved designated inspection view: " + owner + ".TestInspection");
+            }
         }
     }
 
@@ -218,8 +281,7 @@ internal static class TestInspectionSource
         semanticModel ??= CreateCompilation([root.SyntaxTree]).GetSemanticModel(root.SyntaxTree);
         var factoryUses = root.DescendantNodes().OfType<SimpleNameSyntax>()
             .Where(name => name.Identifier.ValueText == FactoryName && !name.Ancestors()
-                .OfType<InvocationExpressionSyntax>().Any(call => call.Expression is IdentifierNameSyntax
-                    { Identifier.Text: "nameof" } && semanticModel.GetOperation(call) is INameOfOperation))
+                .OfType<InvocationExpressionSyntax>().Any(call => call.Expression is IdentifierNameSyntax { Identifier.Text: "nameof" } && semanticModel.GetOperation(call) is INameOfOperation))
             .Select(name => $"line {name.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: {name.Parent}");
         var constructions = root.DescendantNodes().OfType<BaseObjectCreationExpressionSyntax>()
             .Where(creation => IsForbiddenViewConstruction(creation, semanticModel))
@@ -230,30 +292,33 @@ internal static class TestInspectionSource
     /// <summary>Allows construction only inside the exact designated factory of the matching owner.</summary>
     private static bool IsForbiddenViewConstruction(BaseObjectCreationExpressionSyntax creation, SemanticModel semanticModel)
     {
-        if (semanticModel.GetTypeInfo(creation).Type is not INamedTypeSymbol
-            { Name: "TestInspection", ContainingType: { } owner } view || !Owners.Contains(owner.ToDisplayString())) return false;
+        if (semanticModel.GetTypeInfo(creation).Type is not INamedTypeSymbol { Name: "TestInspection", ContainingType: { } owner } view || !Owners.Contains(owner.ToDisplayString()))
+        {
+            return false;
+        }
+
         var method = creation.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault();
         return method is null || semanticModel.GetDeclaredSymbol(method) is not
-            { Name: FactoryName, IsStatic: false, Arity: 0, Parameters.Length: 0, DeclaredAccessibility: Microsoft.CodeAnalysis.Accessibility.Internal } factory
+        { Name: FactoryName, IsStatic: false, Arity: 0, Parameters.Length: 0, DeclaredAccessibility: Microsoft.CodeAnalysis.Accessibility.Internal } factory
             || !SymbolEqualityComparer.Default.Equals(factory.ReturnType, view)
             || !SymbolEqualityComparer.Default.Equals(factory.ContainingType, owner);
     }
 
     /// <summary>Finds interface implementations callable despite lacking accessibility modifiers.</summary>
-    private static ExplicitInterfaceSpecifierSyntax? ExplicitInterface(MemberDeclarationSyntax member)
-        => member switch
-        {
-            MethodDeclarationSyntax method => method.ExplicitInterfaceSpecifier,
-            PropertyDeclarationSyntax property => property.ExplicitInterfaceSpecifier,
-            IndexerDeclarationSyntax indexer => indexer.ExplicitInterfaceSpecifier,
-            EventDeclarationSyntax @event => @event.ExplicitInterfaceSpecifier,
-            _ => null
-        };
+    private static ExplicitInterfaceSpecifierSyntax? ExplicitInterface(MemberDeclarationSyntax member) => member switch
+    {
+        MethodDeclarationSyntax method => method.ExplicitInterfaceSpecifier,
+        PropertyDeclarationSyntax property => property.ExplicitInterfaceSpecifier,
+        IndexerDeclarationSyntax indexer => indexer.ExplicitInterfaceSpecifier,
+        EventDeclarationSyntax @event => @event.ExplicitInterfaceSpecifier,
+        _ => null
+    };
 
     /// <summary>Produces stable declaration keys without incorporating implementation bodies or parameter names.</summary>
     private static IEnumerable<string> MemberKeys(MemberDeclarationSyntax member)
     {
         var prefix = ExplicitInterface(member) is { } specifier ? TypeText(specifier.Name) + "." : "";
+
         switch (member)
         {
             case MethodDeclarationSyntax method:
@@ -273,12 +338,16 @@ internal static class TestInspectionSource
                 break;
             case BaseFieldDeclarationSyntax field:
                 foreach (var variable in field.Declaration.Variables)
+                {
                     yield return $"{(field is EventFieldDeclarationSyntax ? "event" : "field")} {variable.Identifier.ValueText} : {TypeText(field.Declaration.Type)}";
+                }
                 break;
             case TypeDeclarationSyntax type:
                 var kind = type.Keyword.ValueText;
                 if (type is RecordDeclarationSyntax record)
+                {
                     kind = record.ClassOrStructKeyword.IsKind(SyntaxKind.StructKeyword) ? "record struct" : "record class";
+                }
                 kind = (type.Modifiers.Any(SyntaxKind.ReadOnlyKeyword) ? "readonly " : "")
                     + (type.Modifiers.Any(SyntaxKind.RefKeyword) ? "ref " : "") + kind;
                 yield return $"{kind} {type.Identifier.ValueText}{Arity(type.TypeParameterList)}({Parameters(type.ParameterList)})";
@@ -308,7 +377,12 @@ internal static class TestInspectionSource
     private static string AccessorShape(BasePropertyDeclarationSyntax property)
     {
         var accessibility = ExplicitInterface(property) is not null ? "explicit" : Accessibility(property.Modifiers);
-        if (accessibility.Length == 0 && property.Parent is InterfaceDeclarationSyntax) accessibility = "public";
+
+        if (accessibility.Length == 0 && property.Parent is InterfaceDeclarationSyntax)
+        {
+            accessibility = "public";
+        }
+
         var accessors = property.AccessorList is { } list
             ? string.Join(", ", list.Accessors.OrderBy(accessor => accessor.Keyword.ValueText, StringComparer.Ordinal)
                 .Select(accessor => (Accessibility(accessor.Modifiers) is { Length: > 0 } access ? access + " " : "")
@@ -320,11 +394,21 @@ internal static class TestInspectionSource
     /// <summary>Normalizes combined accessibility modifiers for reviewed property signatures.</summary>
     private static string Accessibility(SyntaxTokenList modifiers)
     {
-        if (modifiers.Any(SyntaxKind.PublicKeyword)) return "public";
+        if (modifiers.Any(SyntaxKind.PublicKeyword))
+        {
+            return "public";
+        }
+
         if (modifiers.Any(SyntaxKind.PrivateKeyword))
+        {
             return modifiers.Any(SyntaxKind.ProtectedKeyword) ? "private protected" : "private";
+        }
+
         if (modifiers.Any(SyntaxKind.ProtectedKeyword))
+        {
             return modifiers.Any(SyntaxKind.InternalKeyword) ? "protected internal" : "protected";
+        }
+
         return modifiers.Any(SyntaxKind.InternalKeyword) ? "internal" : "";
     }
 

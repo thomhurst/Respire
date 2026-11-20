@@ -17,6 +17,7 @@ public class ReplicaPolicyConsistencyTests
     {
         var library = TestInspectionSource.Library(net11);
         var enumRoot = library.Tree("LibrarySource/Respire/RespireReadFrom.cs").GetRoot();
+
         foreach (var (path, methodName, variable, excluded) in new[]
         {
             ("LibrarySource/Respire/RespireClient.ReplicaReadySend.cs", "TryGetDirectReplicaConnection", "_readFrom", true),
@@ -34,6 +35,7 @@ public class ReplicaPolicyConsistencyTests
             await Assert.That(IsBranchGate(pattern, excluded)).IsTrue();
             var compilation = TestInspectionSource.CreateCompilation([root.SyntaxTree, enumRoot.SyntaxTree]);
             var model = compilation.GetSemanticModel(root.SyntaxTree);
+
             foreach (var policy in Enum.GetValues<RespireReadFrom>())
             {
                 var eligible = Matches(pattern.Pattern, (int)policy, model) != excluded;
@@ -60,13 +62,24 @@ public class ReplicaPolicyConsistencyTests
     private static bool IsBranchGate(IsPatternExpressionSyntax pattern, bool excluded)
     {
         SyntaxNode current = pattern;
+
         while (current.Parent is not IfStatementSyntax)
         {
-            if (current.Parent is ParenthesizedExpressionSyntax parentheses) current = parentheses;
+            if (current.Parent is ParenthesizedExpressionSyntax parentheses)
+            {
+                current = parentheses;
+            }
             else if (current.Parent is BinaryExpressionSyntax binary
-                && binary.IsKind(excluded ? SyntaxKind.LogicalOrExpression : SyntaxKind.LogicalAndExpression)) current = binary;
-            else return false;
+                && binary.IsKind(excluded ? SyntaxKind.LogicalOrExpression : SyntaxKind.LogicalAndExpression))
+            {
+                current = binary;
+            }
+            else
+            {
+                return false;
+            }
         }
+
         return current.Parent is IfStatementSyntax branch && branch.Condition == current;
     }
 
@@ -92,14 +105,13 @@ public class ReplicaPolicyConsistencyTests
     }
 
     // Fail on an unrecognized shape rather than silently approving a changed policy predicate.
-    private static bool Matches(PatternSyntax pattern, int value, SemanticModel model)
-        => pattern switch
-        {
-            ConstantPatternSyntax constant when model.GetConstantValue(constant.Expression) is { HasValue: true, Value: int policy } => value == policy,
-            ParenthesizedPatternSyntax parentheses => Matches(parentheses.Pattern, value, model),
-            UnaryPatternSyntax unary when unary.IsKind(SyntaxKind.NotPattern) => !Matches(unary.Pattern, value, model),
-            BinaryPatternSyntax binary when binary.IsKind(SyntaxKind.OrPattern) => Matches(binary.Left, value, model) || Matches(binary.Right, value, model),
-            BinaryPatternSyntax binary when binary.IsKind(SyntaxKind.AndPattern) => Matches(binary.Left, value, model) && Matches(binary.Right, value, model),
-            _ => throw new InvalidOperationException("Unrecognized replica policy predicate: " + pattern)
-        };
+    private static bool Matches(PatternSyntax pattern, int value, SemanticModel model) => pattern switch
+    {
+        ConstantPatternSyntax constant when model.GetConstantValue(constant.Expression) is { HasValue: true, Value: int policy } => value == policy,
+        ParenthesizedPatternSyntax parentheses => Matches(parentheses.Pattern, value, model),
+        UnaryPatternSyntax unary when unary.IsKind(SyntaxKind.NotPattern) => !Matches(unary.Pattern, value, model),
+        BinaryPatternSyntax binary when binary.IsKind(SyntaxKind.OrPattern) => Matches(binary.Left, value, model) || Matches(binary.Right, value, model),
+        BinaryPatternSyntax binary when binary.IsKind(SyntaxKind.AndPattern) => Matches(binary.Left, value, model) && Matches(binary.Right, value, model),
+        _ => throw new InvalidOperationException("Unrecognized replica policy predicate: " + pattern)
+    };
 }

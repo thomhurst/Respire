@@ -5,9 +5,17 @@ namespace Respire.Streaming;
 
 internal interface IJobDelivery
 {
-    string Id { get; }
+    string Id
+    {
+        get;
+    }
+
     void Attach(JobProgress progress);
-    byte[]? Result { get; }
+
+    byte[]? Result
+    {
+        get;
+    }
 }
 
 internal sealed class JobProgress(IRespireClient client, string stream, string events, string group,
@@ -27,9 +35,22 @@ internal sealed class JobProgress(IRespireClient client, string stream, string e
     {
         ArgumentNullException.ThrowIfNull(cursor);
         ArgumentNullException.ThrowIfNull(state);
-        if (StrictUtf8.GetByteCount(cursor) > 1024) throw new ArgumentOutOfRangeException(nameof(cursor));
-        if (state.Length > 4096) throw new ArgumentOutOfRangeException(nameof(state));
-        if (percent is < 0 or > 100) throw new ArgumentOutOfRangeException(nameof(percent));
+
+        if (StrictUtf8.GetByteCount(cursor) > 1024)
+        {
+            throw new ArgumentOutOfRangeException(nameof(cursor));
+        }
+
+        if (state.Length > 4096)
+        {
+            throw new ArgumentOutOfRangeException(nameof(state));
+        }
+
+        if (percent is < 0 or > 100)
+        {
+            throw new ArgumentOutOfRangeException(nameof(percent));
+        }
+
         var key = checkpointKey ?? throw new InvalidOperationException("Enable MaximumRuntime when enqueueing a resumable job.");
         JobQueueScheduling.ValidateKeys(client, [stream, key]);
         return await client.Scripts.ExecuteIntegerAsync(groupLease ? JobCheckpoints.LeasedSave : JobCheckpoints.Save,
@@ -41,8 +62,12 @@ internal sealed class JobProgress(IRespireClient client, string stream, string e
     {
         ArgumentNullException.ThrowIfNull(message);
         var policy = options ?? Defaults;
+
         if (StrictUtf8.GetByteCount(message) > policy.MaximumLogLineBytes)
+        {
             throw new ArgumentOutOfRangeException(nameof(message), "The log line exceeds MaximumLogLineBytes.");
+        }
+
         token.ThrowIfCancellationRequested();
         var key = JobLogKeys.ForJob(stream, jobId);
         JobQueueScheduling.ValidateKeys(client, [stream, key]);

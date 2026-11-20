@@ -418,17 +418,21 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
         await resources.Database.HashSetAsync(key, [new HashEntry(binaryField, "binary"), new HashEntry("a", "A")]);
         await Assert.That(await resources.Client.Hashes.GetManyAsync(key, "a", "missing"))
             .IsEquivalentTo(new string?[] { "A", null });
+
         using (var mixed = await resources.Client.ExecuteAsync("HMGET", physicalKey, "a", binaryField, "missing", binaryField))
         {
             await Assert.That(mixed.Select(value => value.IsNull ? null : value.AsString()).ToArray())
                 .IsEquivalentTo(new string?[] { "A", "binary", null, "binary" });
         }
+
         var hits = resources.Client.ClientSideCache!.GetStatistics().Hits;
+
         using (var cached = await resources.Client.ExecuteAsync("HMGET", physicalKey, binaryField, "missing"))
         {
             await Assert.That(cached[0].AsString()).IsEqualTo("binary");
             await Assert.That(cached[1].IsNull).IsTrue();
         }
+
         await Assert.That(resources.Client.ClientSideCache.GetStatistics().Hits - hits).IsEqualTo(2);
         await resources.Database.HashSetAsync(key, binaryField, "changed");
         await WaitForCacheEvictionAsync(resources.Client);
@@ -478,9 +482,11 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
     private static async Task<long> FindClientIdAsync(IDatabase database, string clientName)
     {
         var list = (string?)await database.ExecuteAsync("CLIENT", "LIST") ?? string.Empty;
+
         foreach (var line in list.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
             var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
             if (!fields.Contains($"name={clientName}", StringComparer.Ordinal))
             {
                 continue;
@@ -505,6 +511,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
         params Func<Task>[] reads)
     {
         var initialHits = client.ClientSideCache!.GetStatistics().Hits;
+
         foreach (var read in reads)
         {
             await read();
@@ -522,6 +529,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         while (!condition())
         {
             await Task.Delay(10, timeout.Token);
@@ -537,9 +545,20 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
             Database = multiplexer.GetDatabase().WithKeyPrefix(keyPrefix);
         }
 
-        public RespireClient Client { get; }
-        public ConnectionMultiplexer Multiplexer { get; }
-        public IDatabase Database { get; }
+        public RespireClient Client
+        {
+            get;
+        }
+
+        public ConnectionMultiplexer Multiplexer
+        {
+            get;
+        }
+
+        public IDatabase Database
+        {
+            get;
+        }
 
         public static async Task<Resources> CreateAsync(
             RedisTestContainer fixture,
@@ -559,6 +578,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
             RespireClient client, Func<Task<ConnectionMultiplexer>> connectMultiplexer, string keyPrefix)
         {
             ConnectionMultiplexer multiplexer;
+
             try
             {
                 multiplexer = await connectMultiplexer();

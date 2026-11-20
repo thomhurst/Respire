@@ -43,8 +43,15 @@ public class SubscriptionCommandHookTests
         var hook = new RecordingHook { ThrowOnCompleted = true };
         server.SuppressReply = command =>
         {
-            if (command.StartsWith(SubscribeName(kind) + " ", StringComparison.Ordinal)) setupReceived.TrySetResult();
-            else teardownReceived.TrySetResult();
+            if (command.StartsWith(SubscribeName(kind) + " ", StringComparison.Ordinal))
+            {
+                setupReceived.TrySetResult();
+            }
+            else
+            {
+                teardownReceived.TrySetResult();
+            }
+
             return true;
         };
 #pragma warning disable RESP010 // This subscription hook scenario owns its client and setup/teardown confirmation state.
@@ -113,7 +120,11 @@ public class SubscriptionCommandHookTests
         var received = Signal();
         server.SuppressReply = command =>
         {
-            if (command != "UNSUBSCRIBE ch") return false;
+            if (command != "UNSUBSCRIBE ch")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -122,7 +133,12 @@ public class SubscriptionCommandHookTests
             if (context.Command == "UNSUBSCRIBE")
             {
                 var duplicate = subscription.DisposeAsync();
-                if (!duplicate.IsCompletedSuccessfully) throw new InvalidOperationException("Reentrant disposal did not finish synchronously.");
+
+                if (!duplicate.IsCompletedSuccessfully)
+                {
+                    throw new InvalidOperationException("Reentrant disposal did not finish synchronously.");
+                }
+
                 _ = duplicate.AsTask();
             }
         };
@@ -143,19 +159,30 @@ public class SubscriptionCommandHookTests
     {
         await using var server = Server();
         var received = Signal();
-        server.SuppressReply = _ => { received.TrySetResult(); return true; };
+        server.SuppressReply = _ =>
+        {
+            received.TrySetResult();
+            return true;
+        };
         var hook = new RecordingHook { ThrowOnCompleted = true };
 #pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = RespireClient.Create(Options(server, hook));
 #pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
-        if (!pending) cancellation.Cancel();
+
+        if (!pending)
+        {
+            cancellation.Cancel();
+        }
+
         var setup = client.SubscribeAsync("ch", cancellationToken: cancellation.Token);
+
         if (pending)
         {
             await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
             cancellation.Cancel();
         }
+
         var error = await Failure(async () => _ = await setup);
         await Assert.That(error is OperationCanceledException).IsTrue();
         var completion = hook.Completed.Single();
@@ -195,7 +222,10 @@ public class SubscriptionCommandHookTests
         var recovered = Signal();
         client.ConnectionStateChanged += change =>
         {
-            if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
+            if (change.State == RespireConnectionState.Connected)
+            {
+                recovered.TrySetResult();
+            }
         };
         server.CloseConnection(server.ReceivedConnectionIds[0]);
         await recovered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -218,7 +248,10 @@ public class SubscriptionCommandHookTests
         Task<string?>? nested = null;
         hook.Before = context =>
         {
-            if (context.Command == "SUBSCRIBE") nested = client.GetStringAsync("key").AsTask();
+            if (context.Command == "SUBSCRIBE")
+            {
+                nested = client.GetStringAsync("key").AsTask();
+            }
         };
         await using var subscription = await client.SubscribeAsync("ch");
         await Assert.That(await nested!).IsEqualTo("OK");
@@ -250,12 +283,16 @@ public class SubscriptionCommandHookTests
 
     private static string SubscribeName(RespireSubscriptionKind kind) => kind switch
     {
-        RespireSubscriptionKind.Pattern => "PSUBSCRIBE", RespireSubscriptionKind.Sharded => "SSUBSCRIBE", _ => "SUBSCRIBE",
+        RespireSubscriptionKind.Pattern => "PSUBSCRIBE",
+        RespireSubscriptionKind.Sharded => "SSUBSCRIBE",
+        _ => "SUBSCRIBE",
     };
 
     private static string UnsubscribeName(RespireSubscriptionKind kind) => kind switch
     {
-        RespireSubscriptionKind.Pattern => "PUNSUBSCRIBE", RespireSubscriptionKind.Sharded => "SUNSUBSCRIBE", _ => "UNSUBSCRIBE",
+        RespireSubscriptionKind.Pattern => "PUNSUBSCRIBE",
+        RespireSubscriptionKind.Sharded => "SUNSUBSCRIBE",
+        _ => "UNSUBSCRIBE",
     };
 
     private static byte[] Confirmation(string operation)
@@ -269,8 +306,12 @@ public class SubscriptionCommandHookTests
 
     private static RespireOptions Options(FakeRespServer server, RespireCommandHook hook) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-        Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5), CommandHook = hook,
+        Endpoints = [new("127.0.0.1", server.Port)],
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromSeconds(5),
+        CommandHook = hook,
         ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(20), JitterRatio = 0, MaxAttempts = 2 },
     };
 
@@ -278,8 +319,12 @@ public class SubscriptionCommandHookTests
 
     private static async Task<Exception> Failure(Func<Task> action)
     {
-        try { await action(); }
+        try
+        {
+            await action();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure.");
     }
 
@@ -289,16 +334,22 @@ public class SubscriptionCommandHookTests
         internal bool ThrowOnCompleted;
         internal readonly ConcurrentQueue<RespireCommandContext> Entered = new();
         internal readonly ConcurrentQueue<(RespireCommandContext Context, object? State, RespireCommandOutcome Outcome, Exception? Error)> Completed = new();
+
         public override object? OnExecuting(RespireCommandContext context)
         {
             Entered.Enqueue(context);
             Before?.Invoke(context);
             return context;
         }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Completed.Enqueue((context, state, outcome, error));
-            if (ThrowOnCompleted) throw new InvalidOperationException("Observer failure");
+
+            if (ThrowOnCompleted)
+            {
+                throw new InvalidOperationException("Observer failure");
+            }
         }
     }
 }

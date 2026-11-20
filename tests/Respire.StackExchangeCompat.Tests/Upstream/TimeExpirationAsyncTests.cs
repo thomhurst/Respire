@@ -20,18 +20,21 @@ namespace Microsoft.Extensions.Caching.StackExchangeRedis;
 [NotInParallel]
 public class TimeExpirationAsyncTests(RedisTestContainer fixture)
 {
-// async twin to UpstreamCache.ThrowsArgumentOutOfRange
+    // async twin to UpstreamCache.ThrowsArgumentOutOfRange
     static async Task ThrowsArgumentOutOfRangeAsync(Func<Task> test, string paramName, string message, object actualValue)
     {
         var ex = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(test);
+
         if (paramName is not null)
         {
             Assert.Equal(paramName, ex.ParamName);
         }
+
         if (message is not null)
         {
             Assert.StartsWith(message, ex.Message); // can have "\r\nParameter name:" etc
         }
+
         if (actualValue is not null)
         {
             Assert.Equal(actualValue, ex.ActualValue);
@@ -139,6 +142,7 @@ public class TimeExpirationAsyncTests(RedisTestContainer fixture)
             await Task.Delay(TimeSpan.FromSeconds(0.5));
             result = await cache.GetAsync(key);
         }
+
         Assert.Null(result);
     }
 

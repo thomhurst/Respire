@@ -46,7 +46,10 @@ internal sealed partial class SentinelDiscoveryState
     // an overlapping resolution protects that endpoint from older omission evidence.
     internal DiscoveryRound BeginDiscovery(CancellationToken cancellationToken = default)
     {
-        lock (_gate) return new(this, cancellationToken);
+        lock (_gate)
+        {
+            return new(this, cancellationToken);
+        }
     }
 
     internal sealed class DiscoveryRound : IDisposable
@@ -70,13 +73,21 @@ internal sealed partial class SentinelDiscoveryState
                 _hasReport |= complete;
                 // SENTINEL SENTINELS excludes the reporting Sentinel itself.
                 Refresh(reporter);
-                foreach (var peer in peers) Refresh(peer);
+
+                foreach (var peer in peers)
+                {
+                    Refresh(peer);
+                }
             }
         }
 
         private void Refresh(RespireEndpoint endpoint)
         {
-            if (!_owner._learned.TryGetValue(endpoint, out var learned)) return;
+            if (!_owner._learned.TryGetValue(endpoint, out var learned))
+            {
+                return;
+            }
+
             learned.Reports++;
             learned.MissedDiscoveries = 0;
         }
@@ -85,15 +96,27 @@ internal sealed partial class SentinelDiscoveryState
         {
             lock (_owner._gate)
             {
-                if (!_hasReport || _cancellationToken.IsCancellationRequested) return;
+                if (!_hasReport || _cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 _hasReport = false;
+
                 foreach (var (endpoint, state, reports) in _initial)
                 {
                     if (!_owner._learned.TryGetValue(endpoint, out var current)
-                        || !ReferenceEquals(state, current) || state.Reports != reports) continue;
+                        || !ReferenceEquals(state, current) || state.Reports != reports)
+                    {
+                        continue;
+                    }
+
                     state.MissedDiscoveries = Math.Min(MissedDiscoveriesBeforeRemoval, state.MissedDiscoveries + 1);
+
                     if (state.ConnectionFailed && state.MissedDiscoveries == MissedDiscoveriesBeforeRemoval)
+                    {
                         _owner.TryRemove(endpoint);
+                    }
                 }
             }
         }
@@ -104,10 +127,17 @@ internal sealed partial class SentinelDiscoveryState
         lock (_gate)
         {
             if (!_known.TryGetValue(membership.Endpoint, out var version) || version != membership.Version
-                || !_learned.TryGetValue(membership.Endpoint, out var learned)) return;
+                || !_learned.TryGetValue(membership.Endpoint, out var learned))
+            {
+                return;
+            }
+
             learned.ConnectionFailed = !succeeded;
+
             if (!succeeded && learned.MissedDiscoveries == MissedDiscoveriesBeforeRemoval)
+            {
                 TryRemove(membership.Endpoint);
+            }
         }
     }
     private readonly Lock _gate = new();
@@ -123,17 +153,29 @@ internal sealed partial class SentinelDiscoveryState
 
     internal SentinelEpochEvidence EpochEvidence
     {
-        get { lock (_gate) return _epochEvidence; }
+        get
+        {
+            lock (_gate)
+            {
+                return _epochEvidence;
+            }
+        }
     }
 
     internal bool IsNewerConfiguration(long? epoch)
     {
-        lock (_gate) return _epochEvidence.IsNewer(epoch);
+        lock (_gate)
+        {
+            return _epochEvidence.IsNewer(epoch);
+        }
     }
 
     internal bool IsCurrentConfiguration(RespireEndpoint primary, long? epoch)
     {
-        lock (_gate) return _epochEvidence.IsCurrent(primary, epoch);
+        lock (_gate)
+        {
+            return _epochEvidence.IsCurrent(primary, epoch);
+        }
     }
 
     internal bool TryObserveConfiguration(RespireEndpoint primary, long? epoch, string[]? addresses = null)
@@ -148,13 +190,18 @@ internal sealed partial class SentinelDiscoveryState
 
     internal void WarnMissingEpoch(ILogger? logger, RespireEndpoint sentinel)
     {
-        if (logger is null || Interlocked.Exchange(ref _missingEpochWarning, 1) != 0) return;
+        if (logger is null || Interlocked.Exchange(ref _missingEpochWarning, 1) != 0)
+        {
+            return;
+        }
+
         try
         {
             LogMissingEpoch(logger, sentinel);
         }
         catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
-        { /* Diagnostic providers must not prevent failover. */ }
+        { /* Diagnostic providers must not prevent failover. */
+        }
     }
 
     [LoggerMessage(EventId = 140, Level = LogLevel.Warning, Message = "Sentinel {Sentinel} did not provide a configuration epoch. Discovery relies on ROLE and switch evidence; any previously observed epoch remains enforced.")]
@@ -167,28 +214,42 @@ internal sealed partial class SentinelDiscoveryState
         {
             var rejection = _epochEvidence.Accept(primary, epoch, addresses, validatedPeer, out var next);
             _epochEvidence = next;
+
             if (rejection == SentinelConfigurationRejection.Superseded)
+            {
                 throw new RespireConnectionException($"Sentinel configuration for {primary} was superseded during validation.") { Endpoint = primary };
+            }
+
             if (rejection == SentinelConfigurationRejection.DifferentPeer)
+            {
                 throw new RespireConnectionException($"Sentinel configuration for {primary} connected to a different owner at the same epoch.") { Endpoint = primary };
+            }
         }
     }
-
 
     internal SentinelDiscoveryState(IEnumerable<RespireEndpoint> configured)
     {
         foreach (var endpoint in configured)
+        {
             if (_known.TryAdd(endpoint, _membershipVersion + 1))
             {
                 _membershipVersion++;
                 _endpoints.Add(endpoint);
             }
+        }
+
         _configuredCount = _known.Count;
     }
 
     private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    internal RespireEndpoint[] Snapshot() { lock (_gate) return _endpoints.ToArray(); }
+    internal RespireEndpoint[] Snapshot()
+    {
+        lock (_gate)
+        {
+            return _endpoints.ToArray();
+        }
+    }
 
     internal readonly record struct Membership(RespireEndpoint Endpoint, long Version);
 
@@ -200,8 +261,12 @@ internal sealed partial class SentinelDiscoveryState
         {
             changed = _changed.Task;
             var result = new Membership[_endpoints.Count];
+
             for (var i = 0; i < result.Length; i++)
+            {
                 result[i] = new(_endpoints[i], _known[_endpoints[i]]);
+            }
+
             return result;
         }
     }
@@ -219,16 +284,22 @@ internal sealed partial class SentinelDiscoveryState
     internal bool TryAdd(RespireEndpoint endpoint)
     {
         TaskCompletionSource changed;
+
         lock (_gate)
         {
             if (_known.Count - _configuredCount == MaximumDiscoveredEndpoints
-                || !_known.TryAdd(endpoint, _membershipVersion + 1)) return false;
+                || !_known.TryAdd(endpoint, _membershipVersion + 1))
+            {
+                return false;
+            }
+
             _membershipVersion++;
             _endpoints.Add(endpoint);
             _learned.Add(endpoint, new());
             changed = _changed;
             _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
+
         changed.TrySetResult();
         return true;
     }
@@ -238,17 +309,24 @@ internal sealed partial class SentinelDiscoveryState
     internal bool TryRemove(RespireEndpoint endpoint)
     {
         TaskCompletionSource changed;
+
         lock (_gate)
         {
             var index = _endpoints.FindIndex(_configuredCount,
                 candidate => SentinelEndpointIdentity.EndpointComparer.Instance.Equals(candidate, endpoint));
-            if (index < 0) return false;
+
+            if (index < 0)
+            {
+                return false;
+            }
+
             _known.Remove(_endpoints[index]);
             _learned.Remove(_endpoints[index]);
             _endpoints.RemoveAt(index);
             changed = _changed;
             _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
+
         changed.TrySetResult();
         return true;
     }

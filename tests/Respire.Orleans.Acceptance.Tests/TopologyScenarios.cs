@@ -39,6 +39,7 @@ public partial class SiloScenarios
         Assert.Empty(before.Members);
         Assert.Equal(0, before.Version.Version);
         await redis.BeginMigration(source, target, slot, key);
+
         try
         {
             if (exerciseAsk)
@@ -46,8 +47,11 @@ public partial class SiloScenarios
                 var entry = new MembershipEntry
                 {
                     SiloAddress = SiloAddress.New(new IPEndPoint(IPAddress.Loopback, 11001), 1),
-                    HostName = "localhost", SiloName = "migration-probe", Status = SiloStatus.Joining,
-                    StartTime = DateTime.UtcNow, IAmAliveTime = DateTime.UtcNow
+                    HostName = "localhost",
+                    SiloName = "migration-probe",
+                    Status = SiloStatus.Joining,
+                    StartTime = DateTime.UtcNow,
+                    IAmAliveTime = DateTime.UtcNow
                 };
                 var accepted = await table.InsertRow(entry, before.Version.Next());
                 var inserted = await table.ReadRow(entry.SiloAddress);
@@ -118,11 +122,17 @@ public partial class SiloScenarios
             var node = replica;
             await ClusterDeployment.Until(async () => ((string)(await redis.Control(node).ExecuteAsync("ROLE"))[0]!) == "master", deadline.Token);
         }
+
         await grain.SetValue(43);
         Assert.Equal(activation, await grain.GetActivation());
         var reader = silo.Host.Services.GetRequiredService<ReminderDeliveries>().Received.Reader;
         (Guid Activation, int Value) delivered;
-        do { delivered = await reader.ReadAsync(deadline.Token); } while (delivered.Value != 43);
+
+        do
+        {
+            delivered = await reader.ReadAsync(deadline.Token);
+        } while (delivered.Value != 43);
+
         Assert.Equal(activation, delivered.Activation);
         await using var joined = BuildSilo(connections, serviceId, clusterId);
         await joined.Start();
@@ -153,16 +163,26 @@ public partial class SiloScenarios
         await survivor.Start();
         var start = new ProcessStartInfo(Environment.ProcessPath!)
         {
-            UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
         };
+
         if (string.Equals(Path.GetFileNameWithoutExtension(Environment.ProcessPath), "dotnet", StringComparison.OrdinalIgnoreCase))
+        {
             start.ArgumentList.Add(typeof(SiloScenarios).Assembly.Location);
+        }
+
         foreach (var argument in new[] { "--child-silo", redis.DataEndpoints[0].ToString(), serviceId, clusterId })
+        {
             start.ArgumentList.Add(argument);
+        }
+
         using var child = Process.Start(start)!;
         var stdout = child.StandardOutput.ReadToEndAsync();
         var stderr = child.StandardError.ReadToEndAsync();
+
         try
         {
             var table = survivor.Host.Services.GetRequiredService<IMembershipTable>();
@@ -190,7 +210,11 @@ public partial class SiloScenarios
         }
         finally
         {
-            if (!child.HasExited) child.Kill(entireProcessTree: true);
+            if (!child.HasExited)
+            {
+                child.Kill(entireProcessTree: true);
+            }
+
             await child.WaitForExitAsync();
             Console.WriteLine(await stdout);
             Console.WriteLine(await stderr);
@@ -210,8 +234,11 @@ public partial class SiloScenarios
 
     private static RespireOptions ClusterOptions(ClusterDeployment redis) => new()
     {
-        Endpoints = [new("127.0.0.1", redis.Port(0))], UseCluster = true, Connections = 1,
+        Endpoints = [new("127.0.0.1", redis.Port(0))],
+        UseCluster = true,
+        Connections = 1,
         Protocol = Environment.GetEnvironmentVariable("RESPIRE_TEST_PROTOCOL") == "2" ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
-        ConnectTimeout = TimeSpan.FromSeconds(3), CommandTimeout = TimeSpan.FromSeconds(10)
+        ConnectTimeout = TimeSpan.FromSeconds(3),
+        CommandTimeout = TimeSpan.FromSeconds(10)
     };
 }

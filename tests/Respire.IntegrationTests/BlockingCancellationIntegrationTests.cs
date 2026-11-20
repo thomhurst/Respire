@@ -20,7 +20,9 @@ public class BlockingCancellationIntegrationTests
         await redis.StartAsync();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = protocol, Connections = 1, AllowAdmin = true,
+            Protocol = protocol,
+            Connections = 1,
+            AllowAdmin = true,
             Endpoints = [new(redis.Hostname, redis.GetMappedPublicPort(6379))],
             DedicatedPool = new() { UnblockOnCancel = true, MaximumSize = 1 },
         });
@@ -29,17 +31,25 @@ public class BlockingCancellationIntegrationTests
         var original = await pool.RentAsync(deadline.Token);
         var id = await original.EnsureServerClientIdAsync(deadline.Token);
         pool.Return(original);
+
         for (var index = 0; index < 1000; index++)
         {
             using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
             var pending = client.Lists.LeftPopAsync("jobs", waitFor: null, cancellation.Token).AsTask();
+
             while (true)
             {
                 using var list = await client.ExecuteAsync("CLIENT", ["LIST", "ID", id.ToString(CultureInfo.InvariantCulture)],
                     cancellationToken: deadline.Token);
-                if (list.AsString()!.Contains("flags=b", StringComparison.Ordinal)) break;
+
+                if (list.AsString()!.Contains("flags=b", StringComparison.Ordinal))
+                {
+                    break;
+                }
+
                 await Task.Delay(1, deadline.Token);
             }
+
             cancellation.Cancel();
             await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
             var reused = await pool.RentAsync(deadline.Token);

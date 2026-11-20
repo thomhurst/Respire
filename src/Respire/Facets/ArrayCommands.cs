@@ -257,7 +257,6 @@ internal sealed partial class ArrayCommands(RespireClient client) : IRespireArra
     public ValueTask<ulong> RingAsync(RespireKey key, long size, RespireValue value, CancellationToken cancellationToken)
         => RingAsync(key, size, [value], cancellationToken);
 
-
     public ValueTask<ulong[]> GrepAsync(RespireKey key, RespireArrayBound start, RespireArrayBound end, params ReadOnlySpan<RespireArrayPredicate> predicates)
         => GrepAsync(key, start, end, predicates, default, CancellationToken.None);
 
@@ -422,15 +421,35 @@ internal sealed partial class ArrayCommands(RespireClient client) : IRespireArra
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
         var reverse = start > end;
         var admitFirstPage = client.Core.Options.CommandHook is not null;
+
         while (true)
         {
-            if (!admitFirstPage) cancellationToken.ThrowIfCancellationRequested();
+            if (!admitFirstPage)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             admitFirstPage = false;
             var page = await ScanPageAsync(key, start, end, pageSize, cancellationToken).ConfigureAwait(false);
-            if (page.Length == 0) yield break;
-            foreach (var item in page) { cancellationToken.ThrowIfCancellationRequested(); yield return item; }
+
+            if (page.Length == 0)
+            {
+                yield break;
+            }
+
+            foreach (var item in page)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return item;
+            }
+
             var last = page[^1].Index;
-            if (reverse ? last <= end : last >= end) yield break;
+
+            if (reverse ? last <= end : last >= end)
+            {
+                yield break;
+            }
+
             start = reverse ? last - 1 : last + 1;
         }
     }
@@ -445,15 +464,35 @@ internal sealed partial class ArrayCommands(RespireClient client) : IRespireArra
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
         var reverse = start > end;
         var admitFirstPage = client.Core.Options.CommandHook is not null;
+
         while (true)
         {
-            if (!admitFirstPage) cancellationToken.ThrowIfCancellationRequested();
+            if (!admitFirstPage)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             admitFirstPage = false;
             var page = await ScanPageAsync<T>(key, start, end, pageSize, cancellationToken).ConfigureAwait(false);
-            if (page.Length == 0) yield break;
-            foreach (var item in page) { cancellationToken.ThrowIfCancellationRequested(); yield return item; }
+
+            if (page.Length == 0)
+            {
+                yield break;
+            }
+
+            foreach (var item in page)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return item;
+            }
+
             var last = page[^1].Index;
-            if (reverse ? last <= end : last >= end) yield break;
+
+            if (reverse ? last <= end : last >= end)
+            {
+                yield break;
+            }
+
             start = reverse ? last - 1 : last + 1;
         }
     }

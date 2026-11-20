@@ -35,9 +35,13 @@ public class ValkeySlotMigrationCommandTests
         ];
         var actual = target.ReceivedArguments.Where(row => Encoding.UTF8.GetString(row[0]) == "CLUSTER").ToArray();
         await Assert.That(actual.Length).IsEqualTo(expected.Length);
+
         for (var index = 0; index < actual.Length; index++)
+        {
             await Assert.That(actual[index].Select(bytes => Encoding.UTF8.GetString(bytes)))
                 .IsEquivalentTo(expected[index], CollectionOrdering.Matching);
+        }
+
         await Assert.That(seed.ConnectionAccepted.IsCompleted).IsFalse();
     }
 
@@ -72,13 +76,19 @@ public class ValkeySlotMigrationCommandTests
                     shape == "flush-mode" ? (RespireServerFlushMode)99 : RespireServerFlushMode.Default);
                 return;
             }
+
             RespireValkeySlotMigrationGroup[] groups = shape switch
             {
-                "empty" => [], "null-group" => [null!], "null-slots" => [new("id", null!)],
-                "empty-slots" => [new("id", [])], "empty-id" => [new("", [new(0, 0)])],
+                "empty" => [],
+                "null-group" => [null!],
+                "null-slots" => [new("id", null!)],
+                "empty-slots" => [new("id", [])],
+                "empty-id" => [new("", [new(0, 0)])],
                 "whitespace-id" => [new("id\tother", [new(0, 0)])],
-                "negative" => [new("id", [new(-1, 0)])], "large" => [new("id", [new(0, 16384)])],
-                "reverse" => [new("id", [new(2, 1)])], "overlap" => [new("id", [new(0, 2), new(2, 3)])],
+                "negative" => [new("id", [new(-1, 0)])],
+                "large" => [new("id", [new(0, 16384)])],
+                "reverse" => [new("id", [new(2, 1)])],
+                "overlap" => [new("id", [new(0, 2), new(2, 3)])],
                 _ => [new("id", [new(0, 2)]), new("other", [new(1, 3)])],
             };
             await node.ClusterMigrateSlotsAsync(groups);
@@ -156,8 +166,13 @@ public class ValkeySlotMigrationCommandTests
         var received = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         target.SuppressReply = command =>
         {
-            if (!command.StartsWith("CLUSTER ", StringComparison.Ordinal)) return false;
-            received.TrySetResult(target.ReceivedConnectionIds[^1]); return true;
+            if (!command.StartsWith("CLUSTER ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            received.TrySetResult(target.ReceivedConnectionIds[^1]);
+            return true;
         };
         // This tracked client belongs to the migration fence/socket-release scenario.
 #pragma warning disable RESP010
@@ -170,12 +185,18 @@ public class ValkeySlotMigrationCommandTests
         var connection = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(cache.Count).IsEqualTo(0);
         Insert();
+
         if (cancel)
         {
             cancellation.Cancel();
             await Assert.That(async () => await pending).Throws<OperationCanceledException>();
         }
-        else { await target.SendRawAsync(FakeRespServer.OkReply, connection); await pending; }
+        else
+        {
+            await target.SendRawAsync(FakeRespServer.OkReply, connection);
+            await pending;
+        }
+
         await Assert.That(cache.Count).IsEqualTo(0);
         await target.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("CLUSTER ", StringComparison.Ordinal))).IsEqualTo(1);
@@ -193,16 +214,26 @@ public class ValkeySlotMigrationCommandTests
     {
         switch (operation)
         {
-            case "start": await node.ClusterMigrateSlotsAsync([new("target", [new(0, 1)])], token); break;
-            case "cancel": await node.ClusterCancelSlotMigrationsAsync(token); break;
-            case "flush": await node.ClusterFlushSlotAsync(0, cancellationToken: token); break;
-            default: await node.ClusterGetSlotMigrationsAsync(token); break;
+            case "start":
+                await node.ClusterMigrateSlotsAsync([new("target", [new(0, 1)])], token);
+                break;
+            case "cancel":
+                await node.ClusterCancelSlotMigrationsAsync(token);
+                break;
+            case "flush":
+                await node.ClusterFlushSlotAsync(0, cancellationToken: token);
+                break;
+            default:
+                await node.ClusterGetSlotMigrationsAsync(token);
+                break;
         }
     }
 
     private static RespireOptions Options(int port, int protocol) => new()
     {
-        Endpoints = [new("127.0.0.1", port)], AllowAdmin = true, Connections = 1,
+        Endpoints = [new("127.0.0.1", port)],
+        AllowAdmin = true,
+        Connections = 1,
         Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
     };

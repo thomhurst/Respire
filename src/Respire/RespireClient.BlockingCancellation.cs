@@ -28,12 +28,16 @@ public sealed partial class RespireClient
                 if ((control.NetworkPeerAddress is { } peer && peer == connection.NetworkPeerAddress
                         && control.NetworkPeerPort == connection.NetworkPeerPort)
                     || (control.Port == 0 && connection.Port == 0 && control.PeerKey == connection.PeerKey))
+                {
                     return SendUnblockableAsync(connection, control, command, cancellationToken,
                         errorAttempts, observation, sendAsking);
+                }
             }
             catch (Exception error) when (error is RespireConnectionException or RespireConnectionRetiredException)
-            { /* No healthy control socket: retain abandon-on-cancel. */ }
+            { /* No healthy control socket: retain abandon-on-cancel. */
+            }
         }
+
         return SendBlockingFrameAsync(connection, command, cancellationToken, errorAttempts, observation, sendAsking);
     }
 
@@ -54,6 +58,7 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         long id;
+
         try
         {
             id = await connection.EnsureServerClientIdAsync(cancellationToken).ConfigureAwait(false);
@@ -64,16 +69,21 @@ public sealed partial class RespireClient
             return await SendBlockingFrameAsync(connection, command, cancellationToken,
                 errorAttempts, observation, sendAsking).ConfigureAwait(false);
         }
+
         cancellationToken.ThrowIfCancellationRequested();
+
         if (id <= 0)
+        {
             return await SendBlockingFrameAsync(connection, command, cancellationToken,
                 errorAttempts, observation, sendAsking).ConfigureAwait(false);
+        }
 
         // Keep the response source alive after caller cancellation so its FIFO reply can be drained.
         // A separate token also lets failed cleanup stop an acquisition before discarding the lease.
         using var sendCancellation = new CancellationTokenSource();
         var pending = SendBlockingFrameAsync(connection, command, sendCancellation.Token,
             errorAttempts, observation, sendAsking).AsTask();
+
         try
         {
             return await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -82,12 +92,14 @@ public sealed partial class RespireClient
         {
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(1));
             var reusable = false;
+
             try
             {
                 // Await acknowledgement even if the blocking reply wins the race. A late UNBLOCK
                 // must never reach a subsequent renter's command on this socket.
                 using var reply = await control.SendAsync(new ClientUnblockCommand(id), cleanup.Token,
                     armCommandDeadline: false, pinToConnection: true).ConfigureAwait(false);
+
                 if (!reply.IsError && reply.Type == RespireDataType.Integer && reply.AsInteger() is 0 or 1)
                 {
                     using var drained = await pending.WaitAsync(cleanup.Token).ConfigureAwait(false);
@@ -102,13 +114,18 @@ public sealed partial class RespireClient
             {
                 await sendCancellation.CancelAsync().ConfigureAwait(false);
             }
-            if (reusable) throw new UnblockedCommandCanceledException(cancellationToken);
+
+            if (reusable)
+            {
+                throw new UnblockedCommandCanceledException(cancellationToken);
+            }
             // If cleanup failed, reclaim any late result (or observe cancellation/failure).
             try
             {
                 using var abandoned = await pending.ConfigureAwait(false);
             }
             catch (Exception) { /* The original cancellation remains the public failure. */ }
+
             throw new OperationCanceledException(cancellationToken);
         }
     }

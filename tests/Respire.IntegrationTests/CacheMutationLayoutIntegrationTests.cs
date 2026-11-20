@@ -19,11 +19,19 @@ public class CacheMutationLayoutIntegrationTests(RedisTestContainer fixture)
         { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var prefix = "cache-layout:" + Guid.NewGuid().ToString("N") + ":";
         RespireKey first = prefix + "first", second = prefix + "second", destination = prefix + "destination";
+
         try
         {
             var add = RespireCommand.Create(operation == "PFMERGE" ? "PFADD" : "SADD");
-            using (await client.ExecuteAsync(add, [first, "common", "only-first"])) { }
-            using (await client.ExecuteAsync(add, [second, "common"])) { }
+
+            using (await client.ExecuteAsync(add, [first, "common", "only-first"]))
+            {
+            }
+
+            using (await client.ExecuteAsync(add, [second, "common"]))
+            {
+            }
+
             (await client.Keys.ExistsAsync(first)).Should().BeTrue();
             (await client.Keys.ExistsAsync(second)).Should().BeTrue();
             (await client.Keys.ExistsAsync(destination)).Should().BeFalse();
@@ -34,7 +42,9 @@ public class CacheMutationLayoutIntegrationTests(RedisTestContainer fixture)
             (await client.Keys.ExistsAsync(destination)).Should().BeFalse();
             cache.GetStatistics().Hits.Should().Be(hits + 3);
 
-            using (await client.ExecuteAsync(RespireCommand.Create(operation), [destination, first, second])) { }
+            using (await client.ExecuteAsync(RespireCommand.Create(operation), [destination, first, second]))
+            {
+            }
 
             hits = cache.GetStatistics().Hits;
             (await client.Keys.ExistsAsync(destination)).Should().BeTrue();

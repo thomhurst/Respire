@@ -11,11 +11,29 @@ public sealed class RespireFakeFaultScope : IDisposable
     private int _disposed;
     private long _matchedCount;
     private long _executionCount;
-    internal string Command { get; }
-    internal byte[]? FirstArgument { get; }
-    internal RespireFakeFault Fault { get; }
-    internal int? Occurrences { get; }
+
+    internal string Command
+    {
+        get;
+    }
+
+    internal byte[]? FirstArgument
+    {
+        get;
+    }
+
+    internal RespireFakeFault Fault
+    {
+        get;
+    }
+
+    internal int? Occurrences
+    {
+        get;
+    }
+
     internal CancellationToken Removal => _removed.Token;
+
     internal bool Available => Volatile.Read(ref _disposed) == 0
         && (Occurrences is null || MatchedCount < Occurrences);
 
@@ -27,19 +45,27 @@ public sealed class RespireFakeFaultScope : IDisposable
     /// <remarks>For an after-execution action, the handler has already returned when this completes.
     /// Removing a rule before that boundary cancels this task. Await with a caller deadline when a match is optional.</remarks>
     public Task Matched => _matched.Task;
+
     /// <summary>The number of complete commands reserved by this rule.</summary>
     public long MatchedCount => Interlocked.Read(ref _matchedCount);
+
     /// <summary>The number of selected commands whose server handler was invoked.</summary>
     public long ExecutionCount => Interlocked.Read(ref _executionCount);
 
     internal void Reserve() => Interlocked.Increment(ref _matchedCount);
+
     internal void ObserveMatch() => _matched.TrySetResult();
+
     internal void ObserveExecution() => Interlocked.Increment(ref _executionCount);
 
     /// <summary>Removes future matching and releases selected delays/pauses. It never reverses an executed command.</summary>
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         _server.RemoveFault(this);
         _removed.Cancel();
         _matched.TrySetCanceled(_removed.Token);

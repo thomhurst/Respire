@@ -18,6 +18,7 @@ public class LoggingCatalogTests
             .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var events = new List<LogEvent>();
         var violations = new List<string>();
+
         foreach (var package in packages)
         {
             foreach (var file in Directory.EnumerateFiles(Path.Combine(root, "src", package), "*.cs", SearchOption.AllDirectories)
@@ -60,6 +61,7 @@ public class LoggingCatalogTests
             new("Package", 3, "Dynamic", "Dynamic"),
         ];
         await Assert.That(events).IsEquivalentTo(published);
+
         foreach (var index in Enumerable.Range(0, published.Length))
         {
             var mismatched = published.ToArray();
@@ -112,8 +114,12 @@ public class LoggingCatalogTests
                 var arguments = attribute.ArgumentList!.Arguments;
                 var id = arguments.FirstOrDefault(argument => argument.NameEquals?.Name.Identifier.ValueText == "EventId")
                     ?? arguments.FirstOrDefault(argument => argument.NameEquals is null && argument.NameColon is null);
+
                 if (id?.Expression is not LiteralExpressionSyntax { Token.Value: int value } || value <= 0)
+                {
                     throw new InvalidOperationException($"{package}.{method.Identifier}: logging requires an explicit positive integer event ID.");
+                }
+
                 var name = arguments.FirstOrDefault(argument => argument.NameEquals?.Name.Identifier.ValueText == "EventName");
                 var eventName = name is null ? method.Identifier.ValueText
                     : name.Expression is LiteralExpressionSyntax { Token.Value: string text } ? text
@@ -144,12 +150,15 @@ public class LoggingCatalogTests
                 SimpleNameSyntax simple => simple.Identifier.ValueText,
                 _ => "",
             };
+
             if (name is "LogTrace" or "LogDebug" or "LogInformation" or "LogWarning" or "LogError" or "LogCritical"
                 || (name == "Define" && call.Expression.ToString().Contains("LoggerMessage", StringComparison.Ordinal))
                 // ACL LOG parses a reply and Math.Log computes a logarithm; neither emits a diagnostic.
                 || (name == "Log" && call.Expression.ToString() is not
                     ("AclParser.Log" or "Math.Log" or "System.Math.Log" or "global::System.Math.Log")))
+            {
                 yield return call.ToString();
+            }
         }
     }
 }

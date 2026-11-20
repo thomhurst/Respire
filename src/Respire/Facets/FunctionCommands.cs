@@ -41,25 +41,31 @@ public interface IRespireFunctionCommands
     ValueTask<RespireResult> ExecuteAsync(RespireFunction function, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
         => ExecuteSpanAsync(function, keys.AsSpan(), args.AsSpan(), cancellationToken);
+
     /// <summary>Consumes key/argument spans before returning. Underlying byte memory must remain unchanged until completion.</summary>
     ValueTask<RespireResult> ExecuteSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default);
+
     /// <summary>Calls a function with one prefixed key and cancellation. Dispose the returned leased result.</summary>
     ValueTask<RespireResult> ExecuteLeaseAsync(RespireFunction function, RespireKey key,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
         => ExecuteLeaseAsync(function, [key], args, cancellationToken);
+
     /// <summary>Calls a function with one prefixed key and argument spans. Dispose the returned leased result; binary argument memory stays borrowed until completion.</summary>
     ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireFunction function, RespireKey key,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
         => ExecuteLeaseSpanAsync(function, [key], args, cancellationToken);
+
     /// <summary>Calls a function and returns a result that must be disposed. Implementations may use pooled storage.</summary>
     ValueTask<RespireResult> ExecuteLeaseAsync(RespireFunction function, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
         => ExecuteLeaseSpanAsync(function, keys.AsSpan(), args.AsSpan(), cancellationToken);
+
     /// <summary>Consumes the spans before returning and returns a result that must be disposed. Binary argument memory stays borrowed until completion.</summary>
     ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
         => ExecuteSpanAsync(function, keys, args, cancellationToken);
+
     /// <summary>Calls a function and deserializes its scalar result using the client serializer.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -69,6 +75,7 @@ public interface IRespireFunctionCommands
         using var result = await ExecuteAsync(function, keys, args, cancellationToken).ConfigureAwait(false);
         return result.As<T>();
     }
+
     /// <summary>Calls a function and reads its integer result.</summary>
     async ValueTask<long> ExecuteIntegerAsync(RespireFunction function, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
@@ -76,6 +83,7 @@ public interface IRespireFunctionCommands
         using var result = await ExecuteAsync(function, keys, args, cancellationToken).ConfigureAwait(false);
         return result.AsInteger();
     }
+
     /// <summary>Calls a function and reads its string result, or null.</summary>
     async ValueTask<string?> ExecuteStringAsync(RespireFunction function, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
@@ -83,24 +91,32 @@ public interface IRespireFunctionCommands
         using var result = await ExecuteAsync(function, keys, args, cancellationToken).ConfigureAwait(false);
         return result.IsNull ? null : result.AsString();
     }
+
     /// <summary>Loads source on the server or all discovered Cluster primaries; returns the library name. Redis: FUNCTION LOAD.</summary>
     ValueTask<string> LoadAsync(string source, bool replace = false, CancellationToken cancellationToken = default);
+
     /// <summary>Loads a reusable library with its replacement policy.</summary>
     ValueTask<string> LoadAsync(RespireFunctionLibrary library, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(library);
         return LoadAsync(library.Source, library.Replace, cancellationToken);
     }
+
     /// <summary>Owned metadata from one server, optionally including source. Pattern uses Redis glob syntax. Redis: FUNCTION LIST.</summary>
     ValueTask<RespireFunctionLibraryInfo[]> ListAsync(string? libraryPattern = null, bool withCode = false, CancellationToken cancellationToken = default);
+
     /// <summary>Deletes a library on the server or all discovered Cluster primaries; true on OK. Redis: FUNCTION DELETE.</summary>
     ValueTask<bool> DeleteAsync(string libraryName, CancellationToken cancellationToken = default);
+
     /// <summary>Clears libraries on the server or all discovered Cluster primaries; true on OK. Redis: FUNCTION FLUSH.</summary>
     ValueTask<bool> FlushAsync(RespireFunctionFlushMode mode = RespireFunctionFlushMode.Default, CancellationToken cancellationToken = default);
+
     /// <summary>Returns an owned binary library backup from one server. Redis: FUNCTION DUMP.</summary>
     ValueTask<byte[]> DumpAsync(CancellationToken cancellationToken = default);
+
     /// <summary>Restores libraries on the server or all discovered Cluster primaries; true on OK. Keep payload bytes unchanged until completion.</summary>
     ValueTask<bool> RestoreAsync(ReadOnlyMemory<byte> payload, RespireFunctionRestorePolicy policy = RespireFunctionRestorePolicy.Append, CancellationToken cancellationToken = default);
+
     /// <summary>Returns owned execution/engine statistics from one server. Redis: FUNCTION STATS.</summary>
     ValueTask<RespireFunctionStats> StatsAsync(CancellationToken cancellationToken = default);
 }
@@ -128,7 +144,6 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<string?> ExecuteStringAsync(RespireFunction function, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
         => ExecuteStringAsync(function, [key], args, cancellationToken);
-
 
     internal static readonly TimeSpan DefaultFunctionPropagationLimit = TimeSpan.FromSeconds(5);
 
@@ -168,11 +183,15 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
         Func<RespireResult, TResult> convert, RespireTelemetry.ErrorObservation observation)
     {
         var command = CallCommand(client, function, keys.AsSpan(), args.AsSpan(), deferred: false);
+
         if (client.Core.Options.CommandHook is { } hook)
+        {
             return await CommandHookScope.RunAsync(hook, function.Operation, cancellationToken,
                 (Commands: this, Function: function, Command: command, Token: cancellationToken, Convert: convert, Observation: observation),
                 static state => state.Commands.ExecuteConvertedUnhookedAsync(state.Function, state.Command,
                     state.Token, state.Convert, state.Observation)).ConfigureAwait(false);
+        }
+
         using var result = await ExecuteWithRetriesAsync(function, command, cancellationToken, observation)
             .ConfigureAwait(false);
         return convert(result);
@@ -213,10 +232,13 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken, bool owned)
     {
         var owner = DispatchResponseSource<RespireResult>.Start();
+
         try
         {
             var command = CallCommand(client, function, keys, args, deferred: false);
+
             if (client.Core.Options.CommandHook is { } hook)
+            {
                 return owner.Attach(CommandHookScope.RunAsync(hook, function.Operation, cancellationToken,
                     (Commands: this, Function: function, Command: command, Token: cancellationToken, Owned: owned, Observation: owner.Observation),
                     static state =>
@@ -224,6 +246,8 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
                         var response = state.Commands.ExecuteWithRetriesAsync(state.Function, state.Command, state.Token, state.Observation);
                         return state.Owned ? RespireResult.MaterializeAsync(response) : response;
                     }));
+            }
+
             var response = ExecuteWithRetriesAsync(function, command, cancellationToken, owner.Observation);
             return owner.Attach(owned ? RespireResult.MaterializeAsync(response) : response);
         }
@@ -255,6 +279,7 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
     {
         var reload = function.Library?.ReloadState(client.Core);
         var generation = reload is null ? 0 : Volatile.Read(ref reload.Generation);
+
         try
         {
             var reply = await client.SendForCorrectionAsync(function.Operation, command, cancellationToken, observation).ConfigureAwait(false);
@@ -268,6 +293,7 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
             var library = function.Library;
             var gate = reload!.Gate;
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
             try
             {
                 var currentGeneration = Volatile.Read(ref reload.Generation);
@@ -280,7 +306,9 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
                 }
                 // Revalidate this function even when another caller refreshed the library.
                 if (currentGeneration == generation)
+                {
                     Interlocked.Increment(ref reload.Generation);
+                }
             }
             finally { gate.Release(); }
             // Redis reserves this reply for a missing function. A primary retry stays bounded;
@@ -305,13 +333,18 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
         using var admission = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         admission.CancelAfter(propagationTimeout);
         var delay = TimeSpan.FromMilliseconds(25);
+
         try
         {
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
                 if (Stopwatch.GetElapsedTime(started) >= propagationTimeout)
+                {
                     throw RespireTimeoutException.FunctionPropagation(operation, propagationTimeout, limit, lastMissingFunction);
+                }
+
                 try
                 {
                     var retry = new FunctionRetryCommand(command, operation, started, propagationTimeout, limit,
@@ -323,8 +356,14 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
                     observation.Handled(error);
                     lastMissingFunction = error;
                 }
+
                 var remaining = propagationTimeout - Stopwatch.GetElapsedTime(started);
-                if (remaining <= TimeSpan.Zero) continue;
+
+                if (remaining <= TimeSpan.Zero)
+                {
+                    continue;
+                }
+
                 await Task.Delay(delay < remaining ? delay : remaining, admission.Token).ConfigureAwait(false);
                 delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 250));
             }
@@ -344,16 +383,26 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
         TimeSpan budget, TimeSpan limit, RespireServerException lastMissingFunction, CancellationToken callerToken) : IRespCommandWrapper
     {
         public int GetWriteSizeHint() => command.GetWriteSizeHint();
+
         public bool IsConnectionProtocol => false;
+
         public ReadCommandKind ReadKind => command.ReadKind;
+
         public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);
+
         public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
+
         public bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
+
         public void Write(ref RespWriter writer) => command.Write(ref writer);
+
         public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => callerToken;
 
         // BatchScriptCommand has no acceptance side effects.
-        public void OnAccepted() { }
+        public void OnAccepted()
+        {
+        }
+
         public ClientSideCacheCoordinator.MutationFence GetMutationFence() => default;
 
         public void ValidateAdmission()
@@ -362,7 +411,9 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
             // Check the clock at publication as well as using a timer for parked acquisition.
             // A delayed timer callback must never admit an expired retry.
             if (Stopwatch.GetElapsedTime(started) >= budget)
+            {
                 throw RespireTimeoutException.FunctionPropagation(operation, budget, limit, lastMissingFunction);
+            }
         }
     }
 
@@ -374,11 +425,17 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
     internal static string EscapeLibraryPattern(string name)
     {
         var pattern = new StringBuilder(name.Length);
+
         foreach (var character in name)
         {
-            if (character is '\\' or '*' or '?' or '[' or ']') pattern.Append('\\');
+            if (character is '\\' or '*' or '?' or '[' or ']')
+            {
+                pattern.Append('\\');
+            }
+
             pattern.Append(character);
         }
+
         return pattern.ToString();
     }
 
@@ -390,16 +447,28 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
     {
         ArgumentNullException.ThrowIfNull(function);
         var tail = client.BuildScriptTailFromSpans(keys, args);
+
         if (client.Core.Cluster is not null && keys.Length > 1)
         {
             tail[1].TryGetClusterSlot(out var expected);
+
             for (var i = 2; i <= keys.Length; i++)
+            {
                 if (tail[i].TryGetClusterSlot(out var slot) && slot != expected)
+                {
                     throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, function.Operation, expected, slot, tail[i]);
+                }
+            }
         }
         // A retried call must resend the bytes of its first attempt.
         if (client.CanRetryDeclared(function.RetryCategory))
-            for (var index = 0; index < tail.Length; index++) tail[index] = tail[index].Snapshot();
+        {
+            for (var index = 0; index < tail.Length; index++)
+            {
+                tail[index] = tail[index].Snapshot();
+            }
+        }
+
         return new(function.Verb, function.Name, tail, keys.Length,
             deferred ? function.RetryCategory : RespireCommandRetryCategory.Never);
     }
@@ -408,6 +477,7 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
         => DispatchResponseSource<string>.Run((Commands: this, Source: source, Replace: replace, Token: cancellationToken),
             static (state, observation) => state.Commands.MutateAsync("FUNCTION LOAD", LoadCommand(state.Source, state.Replace),
                 static (FunctionCommands _, in RespValue value) => ResponseReader.String(in value), state.Token, observation));
+
     public ValueTask<string> LoadAsync(RespireFunctionLibrary library, CancellationToken cancellationToken = default)
         => DispatchResponseSource<string>.Run((Commands: this, Library: library, Token: cancellationToken),
             static (state, observation) =>
@@ -416,12 +486,14 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
                 return state.Commands.MutateAsync("FUNCTION LOAD", LoadCommand(state.Library.Source, state.Library.Replace),
                     static (FunctionCommands _, in RespValue value) => ResponseReader.String(in value), state.Token, observation);
             });
+
     public ValueTask<RespireFunctionLibraryInfo[]> ListAsync(string? libraryPattern = null, bool withCode = false, CancellationToken cancellationToken = default)
         => DispatchResponseSource<RespireFunctionLibraryInfo[]>.Run(
             (Commands: this, Pattern: libraryPattern, WithCode: withCode, Token: cancellationToken),
             static (state, observation) => state.Commands.QueryAsync("FUNCTION LIST",
                 ListCommand(state.Pattern, state.WithCode), state.Token,
                 static (FunctionCommands _, in RespValue value) => FunctionResponseReader.Libraries(in value), observation: observation));
+
     public ValueTask<bool> DeleteAsync(string libraryName, CancellationToken cancellationToken = default)
         => DispatchResponseSource<bool>.Run((Commands: this, Name: libraryName, Token: cancellationToken),
             static (state, observation) =>
@@ -430,18 +502,22 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
                 return state.Commands.MutateAsync("FUNCTION DELETE", new Cmd1(FunctionVerbs.Delete, state.Name),
                     static (FunctionCommands _, in RespValue value) => ResponseReader.Ok(in value), state.Token, observation);
             });
+
     public ValueTask<bool> FlushAsync(RespireFunctionFlushMode mode = RespireFunctionFlushMode.Default, CancellationToken cancellationToken = default)
         => DispatchResponseSource<bool>.Run((Commands: this, Mode: mode, Token: cancellationToken),
             static (state, observation) => state.Commands.MutateAsync("FUNCTION FLUSH", FlushCommand(state.Mode),
                 static (FunctionCommands _, in RespValue value) => ResponseReader.Ok(in value), state.Token, observation));
+
     public ValueTask<byte[]> DumpAsync(CancellationToken cancellationToken = default)
         => DispatchResponseSource<byte[]>.Run((Commands: this, Token: cancellationToken),
             static (state, observation) => state.Commands.QueryAsync("FUNCTION DUMP", new Cmd(FunctionVerbs.Dump),
                 state.Token, static (FunctionCommands _, in RespValue value) => value.AsSpan().ToArray(), observation: observation));
+
     public ValueTask<bool> RestoreAsync(ReadOnlyMemory<byte> payload, RespireFunctionRestorePolicy policy = RespireFunctionRestorePolicy.Append, CancellationToken cancellationToken = default)
         => DispatchResponseSource<bool>.Run((Commands: this, Payload: payload, Policy: policy, Token: cancellationToken),
             static (state, observation) => state.Commands.MutateAsync("FUNCTION RESTORE", RestoreCommand(state.Payload, state.Policy),
                 static (FunctionCommands _, in RespValue value) => ResponseReader.Ok(in value), state.Token, observation));
+
     public ValueTask<RespireFunctionStats> StatsAsync(CancellationToken cancellationToken = default)
         => DispatchResponseSource<RespireFunctionStats>.Run((Commands: this, Token: cancellationToken),
             static (state, observation) => state.Commands.QueryAsync("FUNCTION STATS", new Cmd(FunctionVerbs.Stats),
@@ -456,26 +532,39 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
         ArgumentException.ThrowIfNullOrWhiteSpace(source);
         return new(FunctionVerbs.Load, replace ? ["REPLACE", source] : [source]);
     }
+
     internal static CmdN ListCommand(string? pattern, bool withCode)
     {
-        if (pattern is not null) ArgumentException.ThrowIfNullOrWhiteSpace(pattern);
+        if (pattern is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(pattern);
+        }
+
         RespireValue[] args = (pattern, withCode) switch
         {
-            (null, false) => [], (null, true) => ["WITHCODE"],
-            (_, false) => ["LIBRARYNAME", pattern!], (_, true) => ["LIBRARYNAME", pattern!, "WITHCODE"]
+            (null, false) => [],
+            (null, true) => ["WITHCODE"],
+            (_, false) => ["LIBRARYNAME", pattern!],
+            (_, true) => ["LIBRARYNAME", pattern!, "WITHCODE"]
         };
         return new(FunctionVerbs.List, args);
     }
+
     internal static CmdN FlushCommand(RespireFunctionFlushMode mode)
         => new(FunctionVerbs.Flush, mode switch
         {
-            RespireFunctionFlushMode.Default => [], RespireFunctionFlushMode.Sync => ["SYNC"], RespireFunctionFlushMode.Async => ["ASYNC"],
+            RespireFunctionFlushMode.Default => [],
+            RespireFunctionFlushMode.Sync => ["SYNC"],
+            RespireFunctionFlushMode.Async => ["ASYNC"],
             _ => throw new ArgumentOutOfRangeException(nameof(mode))
         });
+
     internal static CmdN RestoreCommand(ReadOnlyMemory<byte> payload, RespireFunctionRestorePolicy policy)
         => new(FunctionVerbs.Restore, [payload, policy switch
         {
-            RespireFunctionRestorePolicy.Append => "APPEND", RespireFunctionRestorePolicy.Flush => "FLUSH", RespireFunctionRestorePolicy.Replace => "REPLACE",
+            RespireFunctionRestorePolicy.Append => "APPEND",
+            RespireFunctionRestorePolicy.Flush => "FLUSH",
+            RespireFunctionRestorePolicy.Replace => "REPLACE",
             _ => throw new ArgumentOutOfRangeException(nameof(policy))
         }]);
 
@@ -498,23 +587,37 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
         RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
     {
         if (client.Core.Cluster is not { } cluster)
+        {
             return await client.ConvertResponseUnhookedAsync(operation, command, cancellationToken, this, convert,
                 observation: observation).ConfigureAwait(false);
+        }
+
         var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation).ConfigureAwait(false);
-        if (connections.Length == 0) throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
+
+        if (connections.Length == 0)
+        {
+            throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
+        }
+
         var tasks = new Task<T>[connections.Length];
         var legs = RespireTelemetry.FanOutLegObservation.Create(tasks.Length, observation);
-        for (var i = 0; i < tasks.Length; i++) tasks[i] = SendAndConvertAsync(connections[i], operation, command, convert,
+
+        for (var i = 0; i < tasks.Length; i++)
+        {
+            tasks[i] = SendAndConvertAsync(connections[i], operation, command, convert,
             cancellationToken, legs[i].Observation).AsTask();
+        }
         // Every target borrows the caller owner through its own leg. Join all sends, conversions and
         // cleanup before propagating the single exception that reaches the caller, named by its leg.
         var results = await RespireTelemetry.FanOutLegObservation.JoinAsync(tasks, legs, observation).ConfigureAwait(false);
+
         if (results.Any(result => !EqualityComparer<T>.Default.Equals(results[0], result)))
         {
             // A cross-primary comparison failure belongs to no single node.
             observation.UseEndpoint(null);
             throw new RespireProtocolException($"{operation} returned inconsistent results across primaries.");
         }
+
         return results[0];
     }
 #if NET
@@ -529,32 +632,48 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
             observeErrors: false, observation: observation).ConfigureAwait(false);
         return convert(this, in reply);
     }
+
     private async ValueTask<bool> EnsureLibraryAsync(RespireFunctionLibrary library, string functionName,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         if (client.Core.Cluster is { } cluster)
         {
             var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation).ConfigureAwait(false);
-            if (connections.Length == 0) throw new RespireConnectionException("Library reload did not reach any Redis Cluster primary.");
+
+            if (connections.Length == 0)
+            {
+                throw new RespireConnectionException("Library reload did not reach any Redis Cluster primary.");
+            }
+
             var legs = RespireTelemetry.FanOutLegObservation.Create(connections.Length, observation);
             var tasks = new Task<bool>[connections.Length];
+
             for (var i = 0; i < tasks.Length; i++)
+            {
                 tasks[i] = EnsureOnConnectionAsync(connections[i], library, functionName, cancellationToken, legs[i].Observation).AsTask();
+            }
+
             var results = await RespireTelemetry.FanOutLegObservation.JoinAsync(tasks, legs, observation).ConfigureAwait(false);
             return results.All(static available => available);
         }
+
         await client.Core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
         return await EnsureOnConnectionAsync(client.Core.Multiplexer.GetConnection(), library, functionName,
             cancellationToken, observation).ConfigureAwait(false);
     }
+
     private async ValueTask<bool> EnsureOnConnectionAsync(RespireConnection connection, RespireFunctionLibrary library,
         string functionName, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         // Inspect before loading: concurrent first use accepts identical source, but never silently
         // overwrites a different library unless replacement was explicitly requested.
         var matching = await FindMatchingLibraryAsync(connection, library, cancellationToken, observation).ConfigureAwait(false);
+
         if (matching is not null)
+        {
             return matching.Functions.Any(function => function.Name == functionName);
+        }
+
         try
         {
             _ = await SendAndConvertAsync(connection, "FUNCTION LOAD", LoadCommand(library.Source, library.Replace),
@@ -572,7 +691,12 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
             // Another client/process may load after our LIST. Accept only identical source;
             // never replace, retry LOAD, or hide a conflicting library's original error.
             matching = await FindMatchingLibraryAsync(connection, library, cancellationToken, observation).ConfigureAwait(false);
-            if (matching is null) throw;
+
+            if (matching is null)
+            {
+                throw;
+            }
+
             return matching.Functions.Any(function => function.Name == functionName);
         }
     }

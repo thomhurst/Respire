@@ -40,6 +40,7 @@ internal static class StressTestRunner
         var payload = new string('X', options.ValueSizeBytes);
 
         var contexts = new WorkerContext[options.Concurrency];
+
         for (var i = 0; i < contexts.Length; i++)
         {
             contexts[i] = new WorkerContext
@@ -66,6 +67,7 @@ internal static class StressTestRunner
         using (var warmupCts = new CancellationTokenSource(TimeSpan.FromSeconds(options.WarmupSeconds)))
         {
             var warmupWorkers = RunWorkersAsync(scenario, client, contexts, latency: null, tracker: null, warmupCts.Token);
+
             if (!await TryJoinAsync(warmupWorkers, TimeSpan.FromSeconds(options.WarmupSeconds + WorkerJoinGraceSeconds))
                     .ConfigureAwait(false))
             {
@@ -91,6 +93,7 @@ internal static class StressTestRunner
         // an unresponsive server can never observe the stop signal, so the join is
         // bounded and an overrun aborts the run before any later pass can start.
         stopCts.Cancel();
+
         if (!await TryJoinAsync(workers, TimeSpan.FromSeconds(WorkerJoinGraceSeconds)).ConfigureAwait(false))
         {
             throw new TimeoutException(
@@ -144,13 +147,17 @@ internal static class StressTestRunner
         {
             // If every worker died (warmup-style fatal fault), stop sampling early.
             var completed = await Task.WhenAny(workers, Task.Delay(1000)).ConfigureAwait(false);
+
             if (completed == workers)
+            {
                 break;
+            }
 
             tracker.SampleInterval();
             secondsElapsed++;
 
             var operations = tracker.OperationCount;
+
             if (operations == lastOperations)
             {
                 if (++stallSamples >= StallSecondsBeforeAbort)
@@ -193,6 +200,7 @@ internal static class StressTestRunner
     private static async Task<bool> TryJoinAsync(Task workers, TimeSpan timeout)
     {
         var completed = await Task.WhenAny(workers, Task.Delay(timeout)).ConfigureAwait(false);
+
         if (completed != workers)
         {
             _ = workers.ContinueWith(
@@ -216,6 +224,7 @@ internal static class StressTestRunner
         CancellationToken stopToken)
     {
         var tasks = new Task[contexts.Length];
+
         for (var i = 0; i < contexts.Length; i++)
         {
             var context = contexts[i];
@@ -238,6 +247,7 @@ internal static class StressTestRunner
         while (!stopToken.IsCancellationRequested)
         {
             var start = Stopwatch.GetTimestamp();
+
             try
             {
                 await scenario.Execute(client, context).ConfigureAwait(false);
@@ -245,11 +255,16 @@ internal static class StressTestRunner
             catch (Exception ex)
             {
                 if (tracker is null)
+                {
                     throw; // warmup: fail the pass immediately
+                }
 
                 tracker.RecordError(ex);
+
                 if (tracker.ErrorCount >= MaxErrorsBeforeAbort)
+                {
                     return;
+                }
 
                 continue;
             }

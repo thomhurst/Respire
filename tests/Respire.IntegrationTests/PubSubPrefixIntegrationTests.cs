@@ -47,7 +47,12 @@ public class PubSubPrefixIntegrationTests(RedisTestContainer fixture)
         first.Targets.Should().Equal(physicalTarget);
         view.ResolveKey("item").Should().Be((RespireKey)"configured-keys:nested:item");
         var physicalCounts = await view.Server.PubSubSubscriberCountsAsync([physical], sharded: kind == RespireSubscriptionKind.Sharded);
-        if (kind != RespireSubscriptionKind.Pattern) physicalCounts.Single().Subscribers.Should().Be(1);
+
+        if (kind != RespireSubscriptionKind.Pattern)
+        {
+            physicalCounts.Single().Subscribers.Should().Be(1);
+        }
+
         await first.DisposeAsync();
         await view.DisposeAsync();
         (await Publish(physicalClient, physical, "retained")).Should().Be(1);
@@ -91,13 +96,26 @@ public class PubSubPrefixIntegrationTests(RedisTestContainer fixture)
         (await reader.MoveNextAsync()).Should().BeTrue();
         reader.Current.Channel.Should().Be(physical);
         using var clients = await publisher.ExecuteAsync("CLIENT LIST");
-        var verb = kind switch { RespireSubscriptionKind.Pattern => "psubscribe", RespireSubscriptionKind.Sharded => "ssubscribe", _ => "subscribe" };
+        var verb = kind switch
+        {
+            RespireSubscriptionKind.Pattern => "psubscribe",
+            RespireSubscriptionKind.Sharded => "ssubscribe",
+            _ => "subscribe"
+        };
         var line = clients.AsString().Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Single(value => value.Contains($"name={clientName}", StringComparison.Ordinal) && value.Contains($"cmd={verb}", StringComparison.Ordinal));
         var id = line.Split(' ').Single(value => value.StartsWith("id=", StringComparison.Ordinal))[3..];
+
         using (var killed = await publisher.ExecuteAsync("CLIENT KILL", ["ID", id], cancellationToken: deadline.Token))
+        {
             killed.AsInteger().Should().Be(1);
-        while (await Publish("after") == 0) await Task.Delay(10, deadline.Token);
+        }
+
+        while (await Publish("after") == 0)
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+
         (await reader.MoveNextAsync()).Should().BeTrue();
         reader.Current.Kind.Should().Be(RespireMessageKind.Gap);
         reader.Current.Channel.Bytes.IsEmpty.Should().BeTrue();

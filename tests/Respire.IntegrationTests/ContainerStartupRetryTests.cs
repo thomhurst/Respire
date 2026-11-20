@@ -52,6 +52,7 @@ public class ContainerStartupRetryTests
             ? "failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to bind host port 127.0.0.1:32791/tcp: address already in use"
             : "Bind for 127.0.0.1:32791 failed: port is already allocated";
         ContainerPortCollision.IsMatch(ApiError(message), []).Should().BeFalse();
+
         foreach (var error in new Exception[]
         {
             new IOException(message), new AggregateException(ApiError(message)),
@@ -60,7 +61,10 @@ public class ContainerStartupRetryTests
             new DockerApiException(HttpStatusCode.InternalServerError, "{\"message\":42}"),
             new DockerApiException(HttpStatusCode.InternalServerError, "[]"),
             new DockerApiException(HttpStatusCode.InternalServerError, null),
-        }) ContainerPortCollision.IsMatch(error, [32791]).Should().BeFalse();
+        })
+        {
+            ContainerPortCollision.IsMatch(error, [32791]).Should().BeFalse();
+        }
     }
 
     [Test]
@@ -142,12 +146,24 @@ public class ContainerStartupRetryTests
             default, (ports, _) =>
             {
                 var port = ports[^1];
+
                 if (!afterStartup)
-                    while (Array.IndexOf(ports, port) >= 0) port = port == 65535 ? 1 : port + 1;
+                {
+                    while (Array.IndexOf(ports, port) >= 0)
+                    {
+                        port = port == 65535 ? 1 : port + 1;
+                    }
+                }
+
                 expected = DirectCollision(port);
                 var container = ContainerProbe.Create(_ => afterStartup ? Task.CompletedTask : Task.FromException(expected));
                 var probe = (ContainerProbe)container;
-                if (afterStartup) probe.HostnameError = expected;
+
+                if (afterStartup)
+                {
+                    probe.HostnameError = expected;
+                }
+
                 probes.Add(probe);
                 return Task.FromResult(container);
             });
@@ -179,7 +195,11 @@ public class ContainerStartupRetryTests
             var container = ContainerProbe.Create(_ => kind == 2 ? Task.CompletedTask : Task.FromException(expected));
             var probe = (ContainerProbe)container;
             // Even a matching error from post-start inspection must not trigger a retry.
-            if (kind == 2) probe.HostnameError = expected;
+            if (kind == 2)
+            {
+                probe.HostnameError = expected;
+            }
+
             probes.Add(probe);
             return Task.FromResult(container);
         });
@@ -206,7 +226,12 @@ public class ContainerStartupRetryTests
                 var container = ContainerProbe.Create(_ => Task.FromException(failure));
                 var probe = (ContainerProbe)container;
                 probes.Add(probe);
-                if (probes.Count == failCleanupOnAttempt) probe.Cleanup = () => ValueTask.FromException(cleanup);
+
+                if (probes.Count == failCleanupOnAttempt)
+                {
+                    probe.Cleanup = () => ValueTask.FromException(cleanup);
+                }
+
                 return Task.FromResult(container);
             });
         var error = (await start.Should().ThrowAsync<AggregateException>()).Which;
@@ -237,20 +262,37 @@ public class ContainerStartupRetryTests
             var container = ContainerProbe.Create(_ => Task.FromException(failure));
             var probe = (ContainerProbe)container;
             probes.Add(probe);
+
             if (probes.Count == 2)
+            {
                 probe.Cleanup = () =>
                 {
-                    if (callerCancellation) caller.Cancel();
-                    else clock.Advance(options.StartupTimeout);
+                    if (callerCancellation)
+                    {
+                        caller.Cancel();
+                    }
+                    else
+                    {
+                        clock.Advance(options.StartupTimeout);
+                    }
+
                     token.IsCancellationRequested.Should().BeTrue();
                     return ValueTask.CompletedTask;
                 };
+            }
+
             return Task.FromResult(container);
         }, clock);
+
         if (callerCancellation)
+        {
             (await start.Should().ThrowAsync<OperationCanceledException>()).Which.CancellationToken.Should().Be(caller.Token);
+        }
         else
+        {
             (await start.Should().ThrowAsync<TimeoutException>()).Which.InnerException.Should().NotBeNull();
+        }
+
         probes.Should().HaveCount(2);
         probes.Should().OnlyContain(probe => probe.DisposeCount == 1);
         tokens.Distinct().Should().ContainSingle();
@@ -268,11 +310,31 @@ public class ContainerStartupRetryTests
     public class ContainerProbe : DispatchProxy
     {
         private Func<CancellationToken, Task> _start = null!;
-        public Func<ValueTask>? Cleanup { get; set; }
-        public Func<IList<string>, CancellationToken, Task<ExecResult>>? Execute { get; set; }
-        public Exception? HostnameError { get; set; }
-        public int StartCount { get; private set; }
-        public int DisposeCount { get; private set; }
+
+        public Func<ValueTask>? Cleanup
+        {
+            get; set;
+        }
+
+        public Func<IList<string>, CancellationToken, Task<ExecResult>>? Execute
+        {
+            get; set;
+        }
+
+        public Exception? HostnameError
+        {
+            get; set;
+        }
+
+        public int StartCount
+        {
+            get; private set;
+        }
+
+        public int DisposeCount
+        {
+            get; private set;
+        }
 
         internal static IContainer Create(Func<CancellationToken, Task> start)
         {
@@ -285,13 +347,21 @@ public class ContainerStartupRetryTests
         {
             switch (method!.Name)
             {
-                case "StartAsync": StartCount++; return _start((CancellationToken)args![0]!);
-                case "DisposeAsync": DisposeCount++; return Cleanup?.Invoke() ?? ValueTask.CompletedTask;
-                case "ExecAsync": return Execute?.Invoke((IList<string>)args![0]!, (CancellationToken)args[1]!)
+                case "StartAsync":
+                    StartCount++;
+                    return _start((CancellationToken)args![0]!);
+                case "DisposeAsync":
+                    DisposeCount++;
+                    return Cleanup?.Invoke() ?? ValueTask.CompletedTask;
+                case "ExecAsync":
+                    return Execute?.Invoke((IList<string>)args![0]!, (CancellationToken)args[1]!)
                     ?? Task.FromException<ExecResult>(new InvalidOperationException("Daemon diagnostics unavailable."));
-                case "get_Id": return "controlled-container";
-                case "get_Hostname": throw HostnameError ?? new InvalidOperationException("Unexpected successful start in failure test.");
-                default: throw new NotSupportedException(method.Name);
+                case "get_Id":
+                    return "controlled-container";
+                case "get_Hostname":
+                    throw HostnameError ?? new InvalidOperationException("Unexpected successful start in failure test.");
+                default:
+                    throw new NotSupportedException(method.Name);
             }
         }
     }

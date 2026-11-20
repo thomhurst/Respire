@@ -15,13 +15,22 @@ public class PubSubPrefixRegistrationTests
     {
         var services = new ServiceCollection();
         byte[] prefix = [255, 0, (byte)':'];
+
         void Configure(RespireOptionsBuilder options)
         {
             options.Endpoints.Add(new("localhost", 6379));
             options.PubSubPrefix = binary ? (RespireKey)prefix : "events:";
         }
-        if (keyed) services.AddKeyedRespire("prefix", Configure);
-        else services.AddRespire(Configure);
+
+        if (keyed)
+        {
+            services.AddKeyedRespire("prefix", Configure);
+        }
+        else
+        {
+            services.AddRespire(Configure);
+        }
+
         await using var provider = services.BuildServiceProvider();
         var client = keyed ? provider.GetRequiredKeyedService<RespireClient>("prefix")
             : provider.GetRequiredService<RespireClient>();

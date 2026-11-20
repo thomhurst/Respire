@@ -27,6 +27,7 @@ internal sealed partial class ServerCommands
     {
         var owner = DispatchResponseSource<RespireServerClientInfo[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ConvertAsync("CLIENT LIST", ClientFilterArguments.Build(options, false), cancellationToken,
@@ -40,6 +41,7 @@ internal sealed partial class ServerCommands
     {
         var owner = DispatchResponseSource<RespireServerResult<RespireServerClientInfo[]>[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(FanOutAsync("CLIENT LIST", ClientFilterArguments.Build(options, false), cancellationToken,
@@ -52,6 +54,7 @@ internal sealed partial class ServerCommands
     {
         var owner = DispatchResponseSource<long>.Start();
         var observation = owner.Observation;
+
         try
         {
             EnsureAdminAllowed("CLIENT KILL");
@@ -70,6 +73,7 @@ public sealed partial class RespireServerClientConnection
     {
         var owner = DispatchResponseSource<RespireServerClientInfo[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(ReadClientsAsync(ClientFilterArguments.Build(options, false), cancellationToken, observation: observation));
@@ -90,6 +94,7 @@ public sealed partial class RespireServerClientConnection
     {
         var owner = DispatchResponseSource<long>.Start();
         var observation = owner.Observation;
+
         try
         {
             EnsureAdmin("CLIENT KILL");

@@ -12,7 +12,10 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
     private static readonly byte[] Vector = BitConverter.GetBytes(1f).Concat(BitConverter.GetBytes(0f)).ToArray();
 
     [ClassDataSource<SearchProfileHybridContainer>(Shared = SharedType.PerTestSession)]
-    public required SearchProfileHybridContainer HybridServer { get; init; }
+    public required SearchProfileHybridContainer HybridServer
+    {
+        get; init;
+    }
 
     // Redis 8.10 can briefly leave a live, fully indexed document out of FT.HYBRID while FT.DROPINDEX
     // drops another index on the same server. Many tests drop indexes on the shared fixture, so these
@@ -35,17 +38,26 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
                 new("embedding", RespireSearchFieldType.Vector)
                 { Vector = new(RespireSearchVectorAlgorithm.Flat, RespireSearchVectorType.Float32, 2, RespireSearchDistanceMetric.L2) }],
         });
+
         try
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             // Finish the initial keyspace scan before publishing documents. A vector query
             // can see both vectors while the scan is still rebuilding text/numeric indexes.
             while ((await search.GetIndexInfoAsync(index, deadline.Token)).Properties["indexing"].Scalar != "0")
+            {
                 await Task.Delay(20, deadline.Token);
+            }
+
             for (var i = 1; i <= 2; i++)
+            {
                 await client.Hashes.SetAsync(index + ":doc:" + i, ("title", "hello"), ("price", i), ("embedding", Vector));
+            }
+
             while ((await search.VectorSearchAsync(index, new("embedding", Vector, 2), cancellationToken: deadline.Token)).Documents.Count != 2)
+            {
                 await Task.Delay(20, deadline.Token);
+            }
 
             var query = new RespireSearchQuery(RespireSearchExpression.FromRaw("hello @price:[0 3]"),
                 new() { WithScores = true, ReturnFields = ["title"] });
@@ -138,11 +150,13 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
         var index = "profile:" + Guid.NewGuid().ToString("N");
         await client.Search.CreateIndexAsync(index, new()
         {
-            Prefixes = [index + ":doc:"], Fields = [new("title", RespireSearchFieldType.Text),
+            Prefixes = [index + ":doc:"],
+            Fields = [new("title", RespireSearchFieldType.Text),
                 new("embedding", RespireSearchFieldType.Vector)
                 { Vector = new(RespireSearchVectorAlgorithm.Flat, RespireSearchVectorType.Float32, 2, RespireSearchDistanceMetric.L2) }],
         });
         var key = index + ":cached";
+
         try
         {
             await client.SetAsync(key, "value");
@@ -171,8 +185,14 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
     private static IEnumerable<RespireSearchProfileNode> Descendants(RespireSearchProfileNode root)
     {
         yield return root;
+
         foreach (var child in root.Children)
-            foreach (var descendant in Descendants(child)) yield return descendant;
+        {
+            foreach (var descendant in Descendants(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 
     private static void AssertServerProfile(RespireSearchProfileNode profile)

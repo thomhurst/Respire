@@ -103,6 +103,7 @@ public class RespireHybridCacheTests(RedisTestContainer fixture)
     public async Task CodecBackedL2SeedsAFreshHybridCache(bool registeredClient)
     {
         var value = Enumerable.Repeat((byte)255, 4096).ToArray();
+
         await using (var first = BuildCodecProvider())
         {
             await first.GetRequiredService<HybridCache>().SetAsync("codec-l2", value);
@@ -120,10 +121,19 @@ public class RespireHybridCacheTests(RedisTestContainer fixture)
         ServiceProvider BuildCodecProvider()
         {
             var services = new ServiceCollection();
-            if (registeredClient) services.AddSingleton<IRespireClient>(_client);
+
+            if (registeredClient)
+            {
+                services.AddSingleton<IRespireClient>(_client);
+            }
+
             services.AddRespireHybridCache(options =>
             {
-                if (!registeredClient) options.ConnectionString = fixture.IsolatedConnectionString;
+                if (!registeredClient)
+                {
+                    options.ConnectionString = fixture.IsolatedConnectionString;
+                }
+
                 options.InstanceName = InstanceName;
                 options.ValueCodec = new RespireBrotliValueCodec();
             });

@@ -24,9 +24,11 @@ public class ClusterAtomicMigrationIntegrationTests
         var token = deadline.Token;
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [cluster.Endpoint(0)], AllowAdmin = true,
+            Endpoints = [cluster.Endpoint(0)],
+            AllowAdmin = true,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
-            CommandTimeout = TimeSpan.FromSeconds(5), ConnectTimeout = TimeSpan.FromSeconds(5),
+            CommandTimeout = TimeSpan.FromSeconds(5),
+            ConnectTimeout = TimeSpan.FromSeconds(5),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         var destination = client.Server.OnNode(cluster.Endpoint(1));
@@ -47,15 +49,29 @@ public class ClusterAtomicMigrationIntegrationTests
         RespireClusterMigrationTask completed;
         var lastFailure = "";
         var importDeadline = Stopwatch.StartNew();
+
         while (true)
         {
             completed = (await destination.ClusterMigrationStatusAsync(taskId, token)).Should().ContainSingle().Which;
-            if (completed.State == "completed") break;
-            if (completed.State == "failed") lastFailure = $"{completed.LastError} (retries {completed.Retries})";
+
+            if (completed.State == "completed")
+            {
+                break;
+            }
+
+            if (completed.State == "failed")
+            {
+                lastFailure = $"{completed.LastError} (retries {completed.Retries})";
+            }
+
             if (importDeadline.Elapsed > TimeSpan.FromSeconds(30))
+            {
                 throw new TimeoutException($"Import {taskId} stayed {completed.State}; last failure: {lastFailure}");
+            }
+
             await Task.Delay(50, token);
         }
+
         completed.Operation.Should().Be("import");
         completed.SourceNodeId.Should().Be(cluster.NodeIds[0]);
         completed.DestinationNodeId.Should().Be(cluster.NodeIds[1]);
@@ -89,7 +105,12 @@ public class ClusterAtomicMigrationIntegrationTests
     private sealed class OwnedCluster(IContainer container) : IAsyncDisposable
     {
         private NodeCommandSessions? _nodes;
-        internal string[] NodeIds { get; } = new string[3];
+
+        internal string[] NodeIds
+        {
+            get;
+        } = new string[3];
+
         internal RespireEndpoint Endpoint(int index) => new(container.Hostname, container.GetMappedPublicPort(7000 + index));
 
         internal static async Task<OwnedCluster> StartAsync(string image)
@@ -102,6 +123,7 @@ public class ClusterAtomicMigrationIntegrationTests
                 .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(7000)
                     .UntilInternalTcpPortIsAvailable(7001).UntilInternalTcpPortIsAvailable(7002)).Build(), [7000, 7001, 7002], deadline.Token);
             var cluster = new OwnedCluster(container);
+
             try
             {
                 for (var node = 0; node < 3; node++)
@@ -114,9 +136,15 @@ public class ClusterAtomicMigrationIntegrationTests
                 // Keep the internal ports advertised: ASM opens server-to-server replication sockets.
                 await cluster.CommandAsync(0, deadline.Token, "CLUSTER", "MEET", "127.0.0.1", "7001");
                 await cluster.CommandAsync(0, deadline.Token, "CLUSTER", "MEET", "127.0.0.1", "7002");
+
                 for (var node = 0; node < 3; node++)
+                {
                     while (!(await cluster.CommandAsync(node, deadline.Token, "CLUSTER", "INFO")).Contains("cluster_state:ok", StringComparison.Ordinal))
+                    {
                         await Task.Delay(50, deadline.Token);
+                    }
+                }
+
                 return cluster;
             }
             catch { await cluster.DisposeAsync(); throw; }
@@ -132,7 +160,11 @@ public class ClusterAtomicMigrationIntegrationTests
 
         public async ValueTask DisposeAsync()
         {
-            if (_nodes is not null) await _nodes.DisposeAsync();
+            if (_nodes is not null)
+            {
+                await _nodes.DisposeAsync();
+            }
+
             await container.DisposeAsync();
         }
     }

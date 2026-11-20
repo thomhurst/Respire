@@ -11,8 +11,15 @@ internal partial record HashCodecUser(string Id, string Name, string? Session, i
 [RespireHash("mutable:{Id}")]
 internal partial class HashCodecMutable
 {
-    public required string Id { get; init; }
-    public required int Value { get; set; }
+    public required string Id
+    {
+        get; init;
+    }
+
+    public required int Value
+    {
+        get; set;
+    }
 }
 
 [RespireHash("number:{Id}:{Price}")]
@@ -24,8 +31,21 @@ internal partial class HashCodecConstructor
 {
     private int _id;
     private int _writes;
-    public int Id { get => _id; set { _id = value; _writes++; } }
-    public HashCodecConstructor(int id) { Id = id; }
+
+    public int Id
+    {
+        get => _id; set
+        {
+            _id = value;
+            _writes++;
+        }
+    }
+
+    public HashCodecConstructor(int id)
+    {
+        Id = id;
+    }
+
     public int CountWrites() => _writes;
 }
 
@@ -56,6 +76,7 @@ public class GeneratedHashCodecTests
     public async Task NumericAndTimestampEncodingsIgnoreCurrentCulture()
     {
         var previous = CultureInfo.CurrentCulture;
+
         try
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
@@ -89,12 +110,25 @@ public class GeneratedHashCodecTests
     public async Task MissingOrMalformedFieldsFail(string field, string? replacement)
     {
         var fields = HashCodecUserHashMapper.ToFields(Create());
-        if (replacement is null) fields.Remove(field);
-        else fields[field] = replacement;
+
+        if (replacement is null)
+        {
+            fields.Remove(field);
+        }
+        else
+        {
+            fields[field] = replacement;
+        }
+
         var failed = false;
-        try { _ = HashCodecUserHashMapper.FromFields(fields); }
+
+        try
+        {
+            _ = HashCodecUserHashMapper.FromFields(fields);
+        }
         catch (FormatException) { failed = true; }
         catch (OverflowException) { failed = true; }
+
         await Assert.That(failed).IsTrue();
     }
 

@@ -41,6 +41,7 @@ internal sealed class LockFreeStack<T> where T : class
         public Stripe(int capacity)
         {
             Nodes = new Node[capacity];
+
             for (var i = 0; i < Nodes.Length; i++)
             {
                 Nodes[i].Next = i + 1 < Nodes.Length ? i + 1 : EmptyIndex;
@@ -60,6 +61,7 @@ internal sealed class LockFreeStack<T> where T : class
 
         var baseCapacity = capacity / stripeCount;
         var extraSlots = capacity % stripeCount;
+
         for (var i = 0; i < stripeCount; i++)
         {
             _stripes[i] = new Stripe(baseCapacity + (i < extraSlots ? 1 : 0));
@@ -70,6 +72,7 @@ internal sealed class LockFreeStack<T> where T : class
     public bool TryPush(T item)
     {
         var stripeIndex = GetStartStripe();
+
         for (var i = 0; i < _stripes.Length; i++)
         {
             if (TryPush(_stripes[stripeIndex], item))
@@ -102,6 +105,7 @@ internal sealed class LockFreeStack<T> where T : class
     public bool TryPop([NotNullWhen(true)] out T? item)
     {
         var stripeIndex = GetStartStripe();
+
         for (var i = 0; i < _stripes.Length; i++)
         {
             if (TryPop(_stripes[stripeIndex], out item))
@@ -141,6 +145,7 @@ internal sealed class LockFreeStack<T> where T : class
         {
             var observedHead = Volatile.Read(ref head);
             nodeIndex = GetIndex(observedHead);
+
             if (nodeIndex == EmptyIndex)
             {
                 return false;
@@ -148,6 +153,7 @@ internal sealed class LockFreeStack<T> where T : class
 
             var nextIndex = Volatile.Read(ref nodes[nodeIndex].Next);
             var updatedHead = NextHead(observedHead, nextIndex);
+
             if (Interlocked.CompareExchange(ref head, updatedHead, observedHead) == observedHead)
             {
                 return true;
@@ -162,6 +168,7 @@ internal sealed class LockFreeStack<T> where T : class
             var observedHead = Volatile.Read(ref head);
             Volatile.Write(ref nodes[nodeIndex].Next, GetIndex(observedHead));
             var updatedHead = NextHead(observedHead, nodeIndex);
+
             if (Interlocked.CompareExchange(ref head, updatedHead, observedHead) == observedHead)
             {
                 return;

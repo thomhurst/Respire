@@ -30,7 +30,12 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         var keys = JobGroupIntegrationTests.Keys(queue).Select(key => firstClient.ResolveKey(key).ToBytes()).ToArray();
         await Assert.That(keys.Select(key => ClusterHash.GetSlot(key)).Distinct().Count()).IsEqualTo(1);
         await queue.SetGroupOptionsAsync(ApplicationGroup, new() { MaxConcurrency = 2 });
-        for (var i = 0; i < 8; i++) await queue.EnqueueScheduledAsync("job-" + i, "p", new() { Group = ApplicationGroup });
+
+        for (var i = 0; i < 8; i++)
+        {
+            await queue.EnqueueScheduledAsync("job-" + i, "p", new() { Group = ApplicationGroup });
+        }
+
         await firstClient.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
         var reads = await Task.WhenAll(Enumerable.Range(0, 8).Select(async i =>
             (Consumer: "consumer-" + i, Entries: await Read(i % 2 == 0 ? firstClient : secondClient, queue, "consumer-" + i))));
@@ -67,8 +72,12 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         await Assert.That(next.Length).IsEqualTo(1);
         await Assert.That(next.Single().GetString("_respire.job.id")).IsEqualTo("other");
         await Assert.That((await Read(restarted, queue, "restarted", 4)).Length).IsEqualTo(0);
+
         using (var parked = await restarted.ExecuteAsync("ZCARD", [queue.StreamKey + ":group-parked"]))
+        {
             await Assert.That(parked.AsInteger()).IsEqualTo(1);
+        }
+
         var controller = Queue(restarted);
         await Assert.That(await controller.ResumeGroupAsync("a")).IsTrue();
         await Assert.That(await controller.ResumeGroupAsync("a")).IsFalse();
@@ -83,7 +92,12 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         // An indivisible window exercises the same interval rounding in both scripts.
         await queue.SetGroupOptionsAsync("a", new() { RateLimit = new() { PermitLimit = 2, Window = TimeSpan.FromMilliseconds(3600001) } });
         await client.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
-        for (var i = 0; i < 3; i++) await queue.EnqueueScheduledAsync("job-" + i, "p", new() { Group = "a" });
+
+        for (var i = 0; i < 3; i++)
+        {
+            await queue.EnqueueScheduledAsync("job-" + i, "p", new() { Group = "a" });
+        }
+
         for (var i = 0; i < 3; i++)
         {
             var info = await RespireJobGroups.GetAsync(client, queue.StreamKey, "a");
@@ -91,6 +105,7 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
             await Assert.That(info.IsEligible).IsEqualTo(i < 2);
             await Assert.That((await Read(client, queue, "reader")).Length).IsEqualTo(i < 2 ? 1 : 0);
         }
+
         await queue.SetGroupOptionsAsync("a", null);
         await Assert.That((await RespireJobGroups.GetAsync(client, queue.StreamKey, "a")).IsRateLimited).IsFalse();
         await Assert.That((await Read(client, queue, "reader")).Length).IsEqualTo(1);
@@ -105,7 +120,12 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         await queue.SetGroupOptionsAsync("a", new() { RateLimit = new() { PermitLimit = 2, Window = TimeSpan.FromHours(1) } });
         await first.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
         await Assert.That((await Read(first, queue, "empty")).Length).IsEqualTo(0);
-        for (var i = 0; i < 6; i++) await queue.EnqueueScheduledAsync("limited-" + i, "p", new() { Group = "a" });
+
+        for (var i = 0; i < 6; i++)
+        {
+            await queue.EnqueueScheduledAsync("limited-" + i, "p", new() { Group = "a" });
+        }
+
         var results = await Task.WhenAll(Enumerable.Range(0, 6).Select(i => Read(i % 2 == 0 ? first : second, queue, "reader-" + i)));
         await Assert.That(results.Sum(entries => entries.Length)).IsEqualTo(2);
         await queue.EnqueueScheduledAsync("other", "p", new() { Group = "b" });
@@ -130,9 +150,19 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         var member = leases[0].AsString();
         var separator = member.IndexOf('|');
         var expired = member[..(separator + 1)] + "0000000000000000" + member[(separator + 17)..];
-        using (await client.ExecuteAsync("ZREM", [queue.StreamKey + ":group-leases", member])) { }
-        using (await client.ExecuteAsync("ZADD", [queue.StreamKey + ":group-leases", 0, expired])) { }
-        using (await client.ExecuteAsync("HSET", [queue.StreamKey + ":group-owners", abandoned.Id.Value, expired])) { }
+
+        using (await client.ExecuteAsync("ZREM", [queue.StreamKey + ":group-leases", member]))
+        {
+        }
+
+        using (await client.ExecuteAsync("ZADD", [queue.StreamKey + ":group-leases", 0, expired]))
+        {
+        }
+
+        using (await client.ExecuteAsync("HSET", [queue.StreamKey + ":group-owners", abandoned.Id.Value, expired]))
+        {
+        }
+
         await Assert.That((await Read(client, queue, "replacement")).Single().GetString("_respire.job.id")).IsEqualTo("next");
         await Assert.That(await Release(client, queue, "crashed", abandoned.Id, 1)).IsEqualTo(0);
         await Assert.That((await Read(client, queue, "extra")).Length).IsEqualTo(0);
@@ -153,7 +183,12 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         await client.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
         var first = (await Read(client, queue, "owner")).Single();
         await queue.SetGroupOptionsAsync("a", new() { MaxConcurrency = 1, RateLimit = rate, LeaseDuration = TimeSpan.FromMinutes(1) });
-        if (limit == "paused") await queue.PauseGroupAsync("a");
+
+        if (limit == "paused")
+        {
+            await queue.PauseGroupAsync("a");
+        }
+
         await Assert.That((await Read(client, queue, "waiting")).Length).IsEqualTo(0);
         using var oldDeadline = await client.ExecuteAsync("ZSCORE", [queue.StreamKey + ":group-parked", "61|"]);
         await Assert.That(await client.Scripts.ExecuteIntegerAsync(Script("Renew"), JobGroupIntegrationTests.Keys(queue),
@@ -161,12 +196,16 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         using var owner = await client.ExecuteAsync("HGET", [queue.StreamKey + ":group-owners", first.Id.Value]);
         var expiry = long.Parse(owner.AsString().Split('|')[1], System.Globalization.CultureInfo.InvariantCulture);
         using var deadline = await client.ExecuteAsync("ZSCORE", [queue.StreamKey + ":group-parked", "61|"]);
+
         if (limit == "concurrency")
         {
             await Assert.That(deadline.AsDouble()).IsEqualTo((double)expiry);
             await Assert.That(deadline.AsDouble()).IsLessThan(oldDeadline.AsDouble());
         }
-        else await Assert.That(deadline.AsDouble()).IsEqualTo(oldDeadline.AsDouble());
+        else
+        {
+            await Assert.That(deadline.AsDouble()).IsEqualTo(oldDeadline.AsDouble());
+        }
         // The shortened lease still owns capacity until its new deadline.
         await Assert.That((await Read(client, queue, "waiting")).Length).IsEqualTo(0);
     }
@@ -187,11 +226,16 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         await client.Scripts.ExecuteIntegerAsync(Script("Nack"),
             [queue.StreamKey, queue.StreamKey + ":group-leases", queue.StreamKey + ":group-owners"],
             [ConsumerGroup, "owner", failed.Id.Value, 1, 0]);
+
         using (var pending = await client.ExecuteAsync("XPENDING", [queue.StreamKey, ConsumerGroup, "-", "+", 1]))
+        {
             await Assert.That(pending[0][2].AsInteger()).IsEqualTo(-1);
+        }
+
         await Assert.That(await Release(client, queue, "owner", failed.Id, 1)).IsEqualTo(1);
         var claim = (RespireScript)typeof(RespireJobQueue<string>).Assembly.GetType("Respire.Streaming.JobQueueControls")!
             .GetField("ClaimGrouped", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+
         using (var recovered = await client.Scripts.ExecuteAsync(claim,
             [.. JobGroupIntegrationTests.Keys(queue), queue.ControlKey], [ConsumerGroup, "replacement", 60000, "0-0", 1]))
         {
@@ -199,6 +243,7 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
             await Assert.That(recovered[1][0][0].AsString()).IsEqualTo(failed.Id.Value);
             await Assert.That(recovered[1][0][2].AsString()).IsEqualTo("2");
         }
+
         await Assert.That((await Read(client, queue, "waiting")).Length).IsEqualTo(0);
         await Assert.That(await client.Scripts.ExecuteIntegerAsync(Script("Complete"),
             [queue.StreamKey, queue.EventsStreamKey, queue.StreamKey + ":group-leases", queue.StreamKey + ":group-owners"],
@@ -234,10 +279,20 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         await queue.EnqueueScheduledAsync("job", "p", new() { Group = "a" });
         await client.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
         var original = (await Read(client, queue, "owner")).Single();
-        using (var live = await Claim()) await Assert.That(live[1].Count).IsEqualTo(0);
+
+        using (var live = await Claim())
+        {
+            await Assert.That(live[1].Count).IsEqualTo(0);
+        }
+
         await queue.PauseGroupAsync("a");
         await Release(client, queue, "owner", original.Id, 1);
-        using (var paused = await Claim()) await Assert.That(paused[1].Count).IsEqualTo(0);
+
+        using (var paused = await Claim())
+        {
+            await Assert.That(paused[1].Count).IsEqualTo(0);
+        }
+
         using (var replay = await client.Scripts.ExecuteAsync(
             (RespireScript)typeof(RespireJobQueue<string>).Assembly.GetType("Respire.Streaming.JobQueueControls")!
                 .GetField("ReplayGrouped", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!,
@@ -246,13 +301,16 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
             await Assert.That(replay[1].Count).IsEqualTo(0);
             await Assert.That(replay[0].AsString()).IsEqualTo("0-0");
         }
+
         await Assert.That((await client.Streams.PendingAsync(queue.StreamKey, ConsumerGroup)).Single().DeliveryCount).IsEqualTo(1);
         await queue.ResumeGroupAsync("a");
+
         using (var recovered = await Claim())
         {
             await Assert.That(recovered[1].Count).IsEqualTo(1);
             await Assert.That(recovered[1][0][2].AsString()).IsEqualTo("2");
         }
+
         await Assert.That(await Complete(1)).IsEqualTo(0);
         await Assert.That(await Release(client, queue, "owner", original.Id, 1)).IsEqualTo(0);
         await Assert.That((await client.Streams.PendingSummaryAsync(queue.StreamKey, ConsumerGroup)).Count).IsEqualTo(1);
@@ -264,6 +322,7 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
             (RespireScript)typeof(RespireJobQueue<string>).Assembly.GetType("Respire.Streaming.JobQueueControls")!
                 .GetField("ClaimGrouped", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!,
             [.. JobGroupIntegrationTests.Keys(queue), queue.ControlKey], [ConsumerGroup, "owner", 0, "0-0", 1]);
+
         ValueTask<long> Complete(long attempt) => client.Scripts.ExecuteIntegerAsync(Script("Complete"),
             [queue.StreamKey, queue.EventsStreamKey, queue.StreamKey + ":group-leases", queue.StreamKey + ":group-owners"],
             [ConsumerGroup, "owner", original.Id.Value, attempt, "completed"]);
@@ -297,6 +356,7 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
     {
         await using var client = await Connect();
         var queue = Queue(client);
+
         foreach (var options in new RespireJobGroupOptions[]
         {
             new() { MaxConcurrency = 0 }, new() { MaxConcurrency = -1 },
@@ -305,7 +365,10 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
             new() { RateLimit = new() { PermitLimit = 0 } },
             new() { RateLimit = new() { Window = TimeSpan.Zero } },
         })
+        {
             await Assert.That(async () => await queue.SetGroupOptionsAsync("a", options)).Throws<ArgumentOutOfRangeException>();
+        }
+
         await Assert.That(async () => await queue.SetGroupOptionsAsync(null!, new())).Throws<ArgumentNullException>();
         await Assert.That(async () => await queue.PauseGroupAsync("")).Throws<ArgumentException>();
         await Assert.That(async () => await queue.ResumeGroupAsync("")).Throws<ArgumentException>();
@@ -345,10 +408,12 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         await admin.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
         var user = "group-control-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-" + denied]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = user, Password = "password" });
+                with
+            { Username = user, Password = "password" });
             await Assert.That(async () => await Read(restricted, queue, "owner")).Throws<RespireServerException>();
             await Assert.That(await admin.Streams.CountAsync(queue.StreamKey)).IsEqualTo(0);
             await Assert.That(await admin.Streams.CountAsync(queue.StreamKey + ":scheduled")).IsEqualTo(1);
@@ -364,8 +429,11 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
     {
         await using var client = await Connect();
         var queue = Queue(client);
-        await queue.SetGroupOptionsAsync("a", new() { MaxConcurrency = 1,
-            RateLimit = new() { PermitLimit = 1, Window = TimeSpan.FromHours(1) } });
+        await queue.SetGroupOptionsAsync("a", new()
+        {
+            MaxConcurrency = 1,
+            RateLimit = new() { PermitLimit = 1, Window = TimeSpan.FromHours(1) }
+        });
         await queue.EnqueueScheduledAsync("job", "p", new() { Group = "a" });
         await client.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
         var source = JobSchedulingIntegrationTests.Script("ReadGroups").Source;
@@ -377,12 +445,22 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(0);
         await Assert.That(await client.Streams.CountAsync(queue.StreamKey + ":scheduled")).IsEqualTo(1);
         await Assert.That((await client.Streams.PendingSummaryAsync(queue.StreamKey, ConsumerGroup)).Count).IsEqualTo(0);
+
         using (var leases = await client.ExecuteAsync("ZCARD", [queue.StreamKey + ":group-leases"]))
+        {
             await Assert.That(leases.AsInteger()).IsEqualTo(0);
+        }
+
         using (var owners = await client.ExecuteAsync("HLEN", [queue.StreamKey + ":group-owners"]))
+        {
             await Assert.That(owners.AsInteger()).IsEqualTo(0);
+        }
+
         using (var tat = await client.ExecuteAsync("HEXISTS", [queue.StreamKey + ":group-policy", "61|tat"]))
+        {
             await Assert.That(tat.AsInteger()).IsEqualTo(0);
+        }
+
         await Assert.That((await Read(client, queue, "owner")).Single().GetString("_respire.job.id")).IsEqualTo("job");
     }
 
@@ -399,24 +477,40 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         await using var first = await Connect();
         await using var second = await Connect();
         var queue = Queue(first);
-        await queue.SetGroupOptionsAsync("a", new() { MaxConcurrency = 1,
-            LeaseDuration = outcome == "renew" ? TimeSpan.FromSeconds(5) : TimeSpan.FromMinutes(1) });
+        await queue.SetGroupOptionsAsync("a", new()
+        {
+            MaxConcurrency = 1,
+            LeaseDuration = outcome == "renew" ? TimeSpan.FromSeconds(5) : TimeSpan.FromMinutes(1)
+        });
         var jobCount = outcome == "renew" ? 2 : 6;
-        for (var i = 0; i < jobCount; i++) await queue.EnqueueScheduledAsync("job-" + i, "p", new() { Group = "a" });
+
+        for (var i = 0; i < jobCount; i++)
+        {
+            await queue.EnqueueScheduledAsync("job-" + i, "p", new() { Group = "a" });
+        }
+
         var state = new HandlerState { Outcome = outcome };
         await using var firstHost = Host(first, state, "first");
         await using var secondHost = Host(second, state, "second");
         var workers = new[] { firstHost.GetRequiredService<IHostedService>(), secondHost.GetRequiredService<IHostedService>() };
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+
         try
         {
-            foreach (var worker in workers) await worker.StartAsync(deadline.Token);
+            foreach (var worker in workers)
+            {
+                await worker.StartAsync(deadline.Token);
+            }
+
             var expectedCalls = jobCount * (outcome is "nack" or "retry" or "throw" ? 2 : 1);
             await Until(async () =>
             {
                 if (state.Calls.Values.Sum() < expectedCalls
                     || (await first.Streams.PendingSummaryAsync(queue.StreamKey, ConsumerGroup)).Count != 0
-                    || await first.Streams.CountAsync(queue.StreamKey + ":scheduled") != 0) return false;
+                    || await first.Streams.CountAsync(queue.StreamKey + ":scheduled") != 0)
+                {
+                    return false;
+                }
                 // Acknowledgement precedes the handler's finally/release operation. Wait for
                 // that transition too before asserting that no concurrency permit leaked.
                 using var remaining = await first.ExecuteAsync("ZCARD", [queue.StreamKey + ":group-leases"]);
@@ -425,29 +519,47 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
             await Assert.That(state.Calls.Values.Sum()).IsEqualTo(expectedCalls);
             await Assert.That(state.MaximumActive).IsEqualTo(1);
             await Assert.That(state.Calls.Count).IsEqualTo(jobCount);
+
             foreach (var (id, calls) in state.Calls)
+            {
                 await Assert.That((await queue.GetLogsAsync(id)).Length).IsEqualTo(calls);
+            }
+
             using var leases = await first.ExecuteAsync("ZCARD", [queue.StreamKey + ":group-leases"]);
             await Assert.That(leases.AsInteger()).IsEqualTo(0);
             await Assert.That(await first.Streams.CountAsync(queue.DeadLetterStreamKey)).IsEqualTo(outcome == "dead-letter" ? jobCount : 0);
         }
-        finally { foreach (var worker in workers) await worker.StopAsync(CancellationToken.None); }
+        finally { foreach (var worker in workers) { await worker.StopAsync(CancellationToken.None); } }
     }
 
     private static ServiceProvider Host(IRespireClient client, HandlerState state, string consumer)
     {
         var services = new ServiceCollection().AddSingleton(client).AddSingleton(state);
         services.AddRespireJobQueue<Handler, string>("group-controls", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
-            new() { ConsumerName = consumer, ConsumerCount = 2, DeliveryLimit = 3, MinimumIdleTime = TimeSpan.FromMilliseconds(100),
-                RecoveryPollInterval = TimeSpan.FromMilliseconds(20), ReadWait = TimeSpan.FromMilliseconds(20) },
+            new()
+            {
+                ConsumerName = consumer,
+                ConsumerCount = 2,
+                DeliveryLimit = 3,
+                MinimumIdleTime = TimeSpan.FromMilliseconds(100),
+                RecoveryPollInterval = TimeSpan.FromMilliseconds(20),
+                ReadWait = TimeSpan.FromMilliseconds(20)
+            },
             new() { SchedulingPollInterval = TimeSpan.FromMilliseconds(20) });
         return services.BuildServiceProvider();
     }
 
     public sealed class HandlerState
     {
-        public string Outcome { get; init; } = "ack";
-        public ConcurrentDictionary<string, int> Calls { get; } = new();
+        public string Outcome
+        {
+            get; init;
+        } = "ack";
+
+        public ConcurrentDictionary<string, int> Calls
+        {
+            get;
+        } = new();
         public int Active;
         public int MaximumActive;
     }
@@ -458,15 +570,25 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
         {
             var active = Interlocked.Increment(ref state.Active);
             int observed;
-            do { observed = Volatile.Read(ref state.MaximumActive); }
+
+            do
+            {
+                observed = Volatile.Read(ref state.MaximumActive);
+            }
             while (active > observed && Interlocked.CompareExchange(ref state.MaximumActive, active, observed) != observed);
+
             try
             {
                 var call = state.Calls.AddOrUpdate(job.Id, 1, (_, previous) => previous + 1);
                 await Assert.That(await job.LogAsync("attempt " + call, cancellationToken)).IsTrue();
                 // NACK must outlive MinimumIdleTime to exercise native XNACK on Redis 8.8+.
                 await Task.Delay(state.Outcome == "renew" ? 6500 : state.Outcome == "nack" ? 250 : 10, cancellationToken);
-                if (call != 1) return RespireStreamWorkerResult.Ack;
+
+                if (call != 1)
+                {
+                    return RespireStreamWorkerResult.Ack;
+                }
+
                 return state.Outcome switch
                 {
                     "nack" => RespireStreamWorkerResult.Nack,
@@ -482,16 +604,23 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
 
     private static async Task Until(Func<Task<bool>> condition, CancellationToken cancellationToken)
     {
-        while (!await condition()) await Task.Delay(10, cancellationToken);
+        while (!await condition())
+        {
+            await Task.Delay(10, cancellationToken);
+        }
     }
 
     private ValueTask<RespireClient> Connect(int protocol = 3) => RespireClient.ConnectAsync(
         RespireOptions.Parse(redis.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
+
     private static RespireJobQueue<string> Queue(IRespireClient client) => new(client, "group-controls", Encoding.UTF8.GetBytes);
+
     private static Task<RespireStreamEntry[]> Read(IRespireClient client, RespireJobQueue<string> queue, string consumer, int count = 1)
         => JobGroupIntegrationTests.Read(client, queue, consumer, count);
+
     private static ValueTask<long> Release(IRespireClient client, RespireJobQueue<string> queue, string consumer, RespireStreamId id, long attempt)
         => client.Scripts.ExecuteIntegerAsync(Script("Release"), JobGroupIntegrationTests.Keys(queue), [consumer, id.Value, attempt]);
+
     private static RespireScript Script(string name) => (RespireScript)typeof(RespireJobQueue<string>).Assembly
         .GetType("Respire.Streaming.JobGroupControls")!.GetField(name, BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
 }

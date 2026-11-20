@@ -113,11 +113,13 @@ public class SyncOverAsyncAnalyzerTests
                 }
             }
             """;
+
         if (localFunction)
         {
             source = NestInOuter(source);
             fixedSource = NestInOuter(fixedSource);
         }
+
         return VerifyFix.VerifyAsync(source.ReplaceLineEndings(), fixedSource.ReplaceLineEndings());
 
         static string NestInOuter(string text)

@@ -66,12 +66,14 @@ public class FakeServerFaultTests
         var loading = await Assert.That(async () => await client.SetAsync(new byte[] { 0, 255, 65 }, "bad"))
             .Throws<RespireServerException>();
         await Assert.That(loading!.Message).StartsWith("LOADING");
+
         for (var index = 0; index < 2; index++)
         {
             var readOnly = await Assert.That(async () => await client.SetAsync(new byte[] { 0, 255, 65 }, "bad"))
                 .Throws<RespireServerException>();
             await Assert.That(readOnly!.Message).StartsWith("READONLY");
         }
+
         await Assert.That(first.MatchedCount).IsEqualTo(1);
         await Assert.That(repeated.MatchedCount).IsEqualTo(2);
         await Assert.That(first.ExecutionCount + repeated.ExecutionCount).IsEqualTo(0);
@@ -102,7 +104,10 @@ public class FakeServerFaultTests
         await Assert.That(command.IsCompleted).IsFalse();
         await Assert.That(await observer.GetStringAsync("counter")).IsEqualTo(afterExecution ? "1" : null);
         cancel.Cancel();
-        await Assert.That(async () => { using var reply = await command.WaitAsync(Limit); }).Throws<OperationCanceledException>();
+        await Assert.That(async () =>
+        {
+            using var reply = await command.WaitAsync(Limit);
+        }).Throws<OperationCanceledException>();
         gate.Release();
         // This connection's next reply proves the cancelled response drained in FIFO order.
         await Assert.That(await client.GetStringAsync("counter").AsTask().WaitAsync(Limit)).IsEqualTo("1");
@@ -120,7 +125,8 @@ public class FakeServerFaultTests
         await using var server = new RespireFakeServer();
         var options = server.CreateOptions() with
         {
-            Connections = 1, Protocol = (RespireProtocol)protocol,
+            Connections = 1,
+            Protocol = (RespireProtocol)protocol,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },
         };
 #pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
@@ -130,10 +136,16 @@ public class FakeServerFaultTests
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
+            if (change.State == RespireConnectionState.Connected)
+            {
+                recovered.TrySetResult();
+            }
         };
         using var fault = server.InjectFault("INCR", RespireFakeFault.Disconnect(afterExecution), occurrences: null);
-        await Assert.That(async () => { using var reply = await client.ExecuteAsync("INCR", "counter").AsTask().WaitAsync(Limit); })
+        await Assert.That(async () =>
+            {
+                using var reply = await client.ExecuteAsync("INCR", "counter").AsTask().WaitAsync(Limit);
+            })
             .Throws<RespireConnectionException>();
         await Assert.That(await observer.GetStringAsync("counter")).IsEqualTo(afterExecution ? "1" : null);
         await Assert.That(fault.MatchedCount).IsEqualTo(1);
@@ -141,8 +153,12 @@ public class FakeServerFaultTests
         fault.Dispose();
         // Normal standalone sends fail fast while scheduling replacement. Trigger that
         // recovery with a safe read, then await its lifecycle event without polling.
-        try { await client.GetStringAsync("counter"); }
+        try
+        {
+            await client.GetStringAsync("counter");
+        }
         catch (RespireConnectionException) { }
+
         await recovered.Task.WaitAsync(Limit);
         // Reconnect policy restores transport for future work, without resending INCR.
         await Assert.That(await client.GetStringAsync("counter").AsTask().WaitAsync(Limit)).IsEqualTo(afterExecution ? "1" : null);
@@ -161,8 +177,16 @@ public class FakeServerFaultTests
         var command = client.SetAsync("key", "value").AsTask();
         await fault.Matched.WaitAsync(Limit);
         await Assert.That(command.IsCompleted).IsFalse();
-        if (latency) server.ResetFaults();
-        else fault.Dispose();
+
+        if (latency)
+        {
+            server.ResetFaults();
+        }
+        else
+        {
+            fault.Dispose();
+        }
+
         await Assert.That(await command.WaitAsync(Limit)).IsTrue();
         await Assert.That(fault.ExecutionCount).IsEqualTo(1);
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
@@ -198,7 +222,11 @@ public class FakeServerFaultTests
         using var fault = server.InjectFault("INCR", RespireFakeFault.Loading());
         var calls = Enumerable.Range(0, 32).Select(async _ =>
         {
-            try { using var reply = await client.ExecuteAsync("INCR", "counter"); return true; }
+            try
+            {
+                using var reply = await client.ExecuteAsync("INCR", "counter");
+                return true;
+            }
             catch (RespireServerException error) when (error.Message.StartsWith("LOADING", StringComparison.Ordinal)) { return false; }
         });
         await Assert.That((await Task.WhenAll(calls).WaitAsync(Limit)).Count(success => success)).IsEqualTo(31);
@@ -237,8 +265,12 @@ public class FakeServerFaultTests
         using var unused = server.InjectFault("GET", RespireFakeFault.Loading());
         var options = server.CreateOptions();
         await using var stream = await options.TestingStreamFactory!(options.Endpoints[0].Host, 6379, default);
+
         foreach (var value in "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n"u8.ToArray())
+        {
             await stream.WriteAsync(new byte[] { value });
+        }
+
         await fault.Matched.WaitAsync(Limit);
         var expected = "-LOADING Redis is loading the dataset in memory\r\n"u8.ToArray();
         var actual = new byte[expected.Length];

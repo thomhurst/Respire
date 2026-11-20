@@ -20,13 +20,18 @@ internal static partial class AclParser
     private static void RequireString(in RespValue value)
     {
         if (value.Type is not (RespireDataType.SimpleString or RespireDataType.BulkString))
+        {
             throw new RespireProtocolException("ACL text fields must be strings.");
+        }
     }
 
     private static ReadOnlySpan<RespValue> Items(in RespValue value, bool allowSet = false)
     {
         if (value.Type != RespireDataType.Array && !(allowSet && value.Type == RespireDataType.Set))
+        {
             throw new RespireProtocolException("ACL lists must be arrays.");
+        }
+
         return value.AsArray();
     }
 
@@ -34,7 +39,12 @@ internal static partial class AclParser
     {
         var items = Items(in value);
         var result = new byte[items.Length][];
-        for (var index = 0; index < items.Length; index++) result[index] = Bytes(in items[index]);
+
+        for (var index = 0; index < items.Length; index++)
+        {
+            result[index] = Bytes(in items[index]);
+        }
+
         return result;
     }
 
@@ -42,21 +52,32 @@ internal static partial class AclParser
     {
         var items = Items(in value, allowSet: true);
         var result = new string[items.Length];
-        for (var index = 0; index < items.Length; index++) result[index] = Text(in items[index]);
+
+        for (var index = 0; index < items.Length; index++)
+        {
+            result[index] = Text(in items[index]);
+        }
+
         return result;
     }
 
     internal static bool Ok(in RespValue value)
     {
         if (value.Type != RespireDataType.SimpleString || !value.AsSpan().SequenceEqual("OK"u8))
+        {
             throw new RespireProtocolException("ACL mutation must return OK.");
+        }
+
         return true;
     }
 
     internal static long NonnegativeInteger(in RespValue value)
     {
         if (value.Type != RespireDataType.Integer || value.AsInteger() < 0)
+        {
             throw new RespireProtocolException("ACL counts and identifiers must be nonnegative integers.");
+        }
+
         return value.AsInteger();
     }
 
@@ -64,14 +85,22 @@ internal static partial class AclParser
     {
         // Redis uses a bulk string for simulated denial and +OK for success. Actual command
         // errors (including the caller's NOPERM) are thrown by the response pipeline.
-        if (value.Type == RespireDataType.BulkString) return new(false, value.AsString());
+        if (value.Type == RespireDataType.BulkString)
+        {
+            return new(false, value.AsString());
+        }
+
         Ok(in value);
         return new(true, null);
     }
 
     internal static RespireAclUser? User(in RespValue value)
     {
-        if (value.IsNull) return null;
+        if (value.IsNull)
+        {
+            return null;
+        }
+
         var fields = Fields(in value);
         var flags = Strings(Take(fields, "flags"));
         var passwords = Strings(Take(fields, "passwords"));
@@ -79,12 +108,18 @@ internal static partial class AclParser
         var keys = Patterns(Take(fields, "keys"));
         var channels = fields.Remove("channels", out var channelValue) ? Patterns(in channelValue) : null;
         RespireAclSelector[] selectors = [];
+
         if (fields.Remove("selectors", out var selectorValue))
         {
             var items = Items(in selectorValue);
             selectors = new RespireAclSelector[items.Length];
-            for (var index = 0; index < items.Length; index++) selectors[index] = Selector(in items[index]);
+
+            for (var index = 0; index < items.Length; index++)
+            {
+                selectors[index] = Selector(in items[index]);
+            }
         }
+
         return new(flags, passwords, commands, keys, channels, selectors, OwnRemaining(fields));
     }
 
@@ -104,7 +139,12 @@ internal static partial class AclParser
     {
         var items = Items(in value);
         var result = new RespireAclLogEntry[items.Length];
-        for (var index = 0; index < items.Length; index++) result[index] = LogEntry(in items[index]);
+
+        for (var index = 0; index < items.Length; index++)
+        {
+            result[index] = LogEntry(in items[index]);
+        }
+
         return result;
     }
 
@@ -127,11 +167,21 @@ internal static partial class AclParser
     private static double Age(in RespValue value)
     {
         double age;
-        if (value.Type == RespireDataType.Double) age = value.AsDouble();
+
+        if (value.Type == RespireDataType.Double)
+        {
+            age = value.AsDouble();
+        }
         else if (!double.TryParse(Text(in value), NumberStyles.Float, CultureInfo.InvariantCulture, out age))
+        {
             throw new RespireProtocolException("ACL log age must be a finite nonnegative number.");
+        }
+
         if (!double.IsFinite(age) || age < 0)
+        {
             throw new RespireProtocolException("ACL log age must be a finite nonnegative number.");
+        }
+
         return age;
     }
 
@@ -141,15 +191,27 @@ internal static partial class AclParser
     private static Dictionary<string, RespValue> Fields(in RespValue value)
     {
         if (value.Type is not (RespireDataType.Array or RespireDataType.Map))
+        {
             throw new RespireProtocolException("ACL structures must be maps or arrays of field/value pairs.");
+        }
+
         var items = value.AsArray();
-        if (items.Length % 2 != 0) throw new RespireProtocolException("ACL structures contain an incomplete field/value pair.");
+
+        if (items.Length % 2 != 0)
+        {
+            throw new RespireProtocolException("ACL structures contain an incomplete field/value pair.");
+        }
+
         var result = new Dictionary<string, RespValue>(items.Length / 2, StringComparer.Ordinal);
+
         for (var index = 0; index < items.Length; index += 2)
         {
             if (!result.TryAdd(Text(in items[index]), items[index + 1]))
+            {
                 throw new RespireProtocolException("ACL structures contain duplicate fields.");
+            }
         }
+
         return result;
     }
 
@@ -159,7 +221,12 @@ internal static partial class AclParser
     private static Dictionary<string, RespireResult> OwnRemaining(Dictionary<string, RespValue> fields)
     {
         var result = new Dictionary<string, RespireResult>(fields.Count, StringComparer.Ordinal);
-        foreach (var (name, value) in fields) result.Add(name, RespireResult.CreateOwned(in value));
+
+        foreach (var (name, value) in fields)
+        {
+            result.Add(name, RespireResult.CreateOwned(in value));
+        }
+
         return result;
     }
 }

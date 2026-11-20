@@ -42,6 +42,7 @@ public class CrossSurfaceTypeConsistencyTests
 
         var expected = server.ReceivedCommands.ToArray();
         RespirePending<bool>[] pending;
+
         if (useTransaction)
         {
             await using var transaction = client.CreateTransaction();
@@ -59,6 +60,7 @@ public class CrossSurfaceTypeConsistencyTests
         {
             await Assert.That(result.Result).IsTrue();
         }
+
         var actual = server.ReceivedCommands.Skip(4).Where(command => command != "MULTI" && command != "EXEC");
         await Assert.That(actual).IsEquivalentTo(expected);
     }
@@ -88,6 +90,7 @@ public class CrossSurfaceTypeConsistencyTests
         var pending = QueueWrites(batch);
         var execution = await batch.TryExecuteAsync();
         await Assert.That(execution.FailureCount).IsEqualTo(4);
+
         foreach (var result in pending)
         {
             await Assert.That(result.Error!.GetType())

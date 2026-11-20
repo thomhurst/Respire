@@ -42,6 +42,7 @@ public readonly struct RespireLease : IDisposable
     public bool TryCopyTo(Span<byte> destination)
     {
         var source = Span;
+
         if (source.Length > destination.Length)
         {
             return false;

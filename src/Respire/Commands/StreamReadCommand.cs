@@ -8,9 +8,12 @@ internal readonly struct StreamReadCommand(RespireValue[] keys, RespireStreamId[
 {
     private static readonly ReadCommandKind ReadClassification = CommandReadMetadata.Get("XREAD").Kind;
     private static readonly ReadCommandKind GroupReadClassification = CommandReadMetadata.Get("XREADGROUP").Kind;
+
     public ReadCommandKind ReadKind => group is null ? ReadClassification : GroupReadClassification;
+
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation)
         => group is null ? CacheMetadata.Read.Value : CacheMetadata.GroupRead.Value;
+
     public RespireCacheMutation GetCacheMutation(string operation) => GetClientCacheMetadata(operation).Policy;
 
     private static class CacheMetadata
@@ -38,40 +41,59 @@ internal readonly struct StreamReadCommand(RespireValue[] keys, RespireStreamId[
             + (maxCount.HasValue ? 2 : 0) + (maxSize.HasValue ? 2 : 0) + (group is null ? 0 : 3)
             + (noAck ? 1 : 0) + (claimMinIdleMilliseconds.HasValue ? 2 : 0));
         writer.WriteRaw(group is null ? CommandOptionFrames.XREAD : CommandOptionFrames.XREADGROUP);
+
         if (group is not null)
         {
             writer.WriteRaw(CommandOptionFrames.GROUP);
             writer.WriteBulkString(group);
             writer.WriteBulkString(consumer!);
         }
+
         if (count is { } take)
         {
             writer.WriteRaw(CommandOptionFrames.COUNT);
             writer.WriteBulkInteger(take);
         }
+
         if (maxCount is { } total)
         {
             writer.WriteRaw(CommandOptionFrames.MAXCOUNT);
             writer.WriteBulkInteger(total);
         }
+
         if (maxSize is { } bytes)
         {
             writer.WriteRaw(CommandOptionFrames.MAXSIZE);
             writer.WriteBulkInteger(bytes);
         }
+
         if (blockMilliseconds is { } wait)
         {
             writer.WriteRaw(CommandOptionFrames.BLOCK);
             writer.WriteBulkInteger(wait);
         }
+
         if (claimMinIdleMilliseconds is { } idle)
         {
             writer.WriteRaw(CommandOptionFrames.CLAIM);
             writer.WriteBulkInteger(idle);
         }
-        if (noAck) writer.WriteRaw(CommandOptionFrames.NOACK);
+
+        if (noAck)
+        {
+            writer.WriteRaw(CommandOptionFrames.NOACK);
+        }
+
         writer.WriteRaw(CommandOptionFrames.STREAMS);
-        foreach (var key in keys) key.WriteTo(ref writer);
-        foreach (var id in ids) writer.WriteBulkString(id.Value);
+
+        foreach (var key in keys)
+        {
+            key.WriteTo(ref writer);
+        }
+
+        foreach (var id in ids)
+        {
+            writer.WriteBulkString(id.Value);
+        }
     }
 }

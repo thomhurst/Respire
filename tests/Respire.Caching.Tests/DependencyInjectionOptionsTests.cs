@@ -32,7 +32,12 @@ public class DependencyInjectionOptionsTests
     public async Task Configuration_LatencyTolerance_CanClearInheritedValue(string? value, int? expectedMilliseconds)
     {
         var values = new Dictionary<string, string?>();
-        if (value is not null) values["ReplicaLatencyTolerance"] = value;
+
+        if (value is not null)
+        {
+            values["ReplicaLatencyTolerance"] = value;
+        }
+
         var options = RespireConfiguration.Apply(Section(values),
             new RespireOptions { ReplicaLatencyTolerance = TimeSpan.FromMilliseconds(5) });
         await Assert.That(options.ReplicaLatencyTolerance).IsEqualTo(
@@ -44,12 +49,14 @@ public class DependencyInjectionOptionsTests
     {
         var builder = new RespireOptionsBuilder();
         var defaults = new RespireOptions();
+
         foreach (var property in typeof(RespireOptions).GetProperties())
         {
             var target = typeof(RespireOptionsBuilder).GetProperty(property.Name);
             await Assert.That(target).IsNotNull();
             await Assert.That(target!.CanWrite).IsTrue();
             await Assert.That(target.PropertyType).IsEqualTo(property.PropertyType);
+
             if (property.PropertyType == typeof(IList<RespireEndpoint>))
             {
                 await Assert.That((IList<RespireEndpoint>)target.GetValue(builder)!).IsEmpty();
@@ -71,26 +78,87 @@ public class DependencyInjectionOptionsTests
     private static object Sample(Type type)
     {
         type = Nullable.GetUnderlyingType(type) ?? type;
-        if (type == typeof(string)) return "configured";
-        if (type == typeof(bool)) return true;
-        if (type == typeof(int)) return 17;
-        if (type == typeof(TimeSpan)) return TimeSpan.FromSeconds(17);
-        if (type == typeof(RespireKey)) return (RespireKey)"prefix:";
-        if (type.IsEnum) return Enum.GetValues(type).GetValue(1)!;
-        if (type == typeof(IRespireCredentialProvider)) return new Credentials();
-        if (type == typeof(RespireConnectionHook)) return new ConnectionHook();
-        if (type == typeof(IRespireSerializer)) return RespireSerializer.Default;
-        if (type == typeof(ILoggerFactory)) return NullLoggerFactory.Instance;
-        if (type == typeof(RespirePipelineHook)) return new PipelineHook();
-        if (type == typeof(RespireCommandHook)) return new CommandHook();
+
+        if (type == typeof(string))
+        {
+            return "configured";
+        }
+
+        if (type == typeof(bool))
+        {
+            return true;
+        }
+
+        if (type == typeof(int))
+        {
+            return 17;
+        }
+
+        if (type == typeof(TimeSpan))
+        {
+            return TimeSpan.FromSeconds(17);
+        }
+
+        if (type == typeof(RespireKey))
+        {
+            return (RespireKey)"prefix:";
+        }
+
+        if (type.IsEnum)
+        {
+            return Enum.GetValues(type).GetValue(1)!;
+        }
+
+        if (type == typeof(IRespireCredentialProvider))
+        {
+            return new Credentials();
+        }
+
+        if (type == typeof(RespireConnectionHook))
+        {
+            return new ConnectionHook();
+        }
+
+        if (type == typeof(IRespireSerializer))
+        {
+            return RespireSerializer.Default;
+        }
+
+        if (type == typeof(ILoggerFactory))
+        {
+            return NullLoggerFactory.Instance;
+        }
+
+        if (type == typeof(RespirePipelineHook))
+        {
+            return new PipelineHook();
+        }
+
+        if (type == typeof(RespireCommandHook))
+        {
+            return new CommandHook();
+        }
+
         if (type == typeof(Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>))
+        {
             return (Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>)((_, _) => throw new InvalidOperationException("Builder must not connect."));
+        }
+
         if (type == typeof(IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>))
+        {
             return new Dictionary<RespireEndpoint, RespireEndpoint> { ["private:6379"] = "localhost:7001" };
+        }
+
         if (type == typeof(Func<RespireEndpoint, RespireEndpoint>))
+        {
             return (Func<RespireEndpoint, RespireEndpoint>)(endpoint => endpoint);
+        }
+
         if (type == typeof(Func<RespireEndpoint, bool>))
+        {
             return (Func<RespireEndpoint, bool>)(endpoint => endpoint.Port == 6379);
+        }
+
         return Activator.CreateInstance(type)!;
     }
 
@@ -100,67 +168,127 @@ public class DependencyInjectionOptionsTests
         // A new property requires either a configuration sample or an explicit runtime-service exception.
         var values = new Dictionary<string, string?>
         {
-            ["Endpoints:0"] = "localhost:6380", ["ReplicaEndpoints:0"] = "replica:6381",
-            ["NodeAddressMap"] = "private:6379=localhost:7001", ["UseMappedHostForTls"] = "true",
-            ["KeyPrefix"] = "keys:", ["PubSubPrefix"] = "channels:", ["ReadFrom"] = "Primary",
-            ["HedgedReads:Delay"] = "00:00:00.025", ["ClientAvailabilityZone"] = "zone-1",
-            ["ReplicaRefreshInterval"] = "00:00:02", ["UseCluster"] = "false",
+            ["Endpoints:0"] = "localhost:6380",
+            ["ReplicaEndpoints:0"] = "replica:6381",
+            ["NodeAddressMap"] = "private:6379=localhost:7001",
+            ["UseMappedHostForTls"] = "true",
+            ["KeyPrefix"] = "keys:",
+            ["PubSubPrefix"] = "channels:",
+            ["ReadFrom"] = "Primary",
+            ["HedgedReads:Delay"] = "00:00:00.025",
+            ["ClientAvailabilityZone"] = "zone-1",
+            ["ReplicaRefreshInterval"] = "00:00:02",
+            ["UseCluster"] = "false",
             ["ReplicaLatencyTolerance"] = "00:00:00.005",
-            ["IncludeCrossSlotKeyContext"] = "true", ["EnableReplicaRedirects"] = "true",
+            ["IncludeCrossSlotKeyContext"] = "true",
+            ["EnableReplicaRedirects"] = "true",
             ["SplitCrossSlotCommands"] = "true",
-            ["SentinelPrimaryName"] = "primary", ["Username"] = "user", ["Password"] = "password",
-            ["CredentialRefreshBeforeExpiry"] = "00:02:00", ["CredentialRefreshRetryDelay"] = "00:00:03",
-            ["SentinelUsername"] = "sentinel-user", ["SentinelPassword"] = "sentinel-password",
-            ["SentinelUseTls"] = "true", ["SentinelTlsOptions:TargetHost"] = "sentinel",
-            ["ClientName"] = "test", ["LibraryName"] = "configured-library", ["Database"] = "2", ["AllowAdmin"] = "true", ["Protocol"] = "Resp3",
-            ["MaintenanceNotifications"] = "Auto", ["MaintenanceRelaxedTimeout"] = "00:00:45",
-            ["MaintenanceWindowTimeout"] = "00:01:30", ["ConnectTimeout"] = "00:00:04",
-            ["ReconnectPolicy:MaxAttempts"] = "4", ["ClusterTopologyRefreshInterval"] = "00:00:50",
-            ["BacklogPolicy"] = "FailFast", ["BacklogCapacity"] = "123",
-            ["UseTls"] = "true", ["TlsOptions:TargetHost"] = "redis", ["EnableMultipathTcp"] = "true",
-            ["ConnectionIdleReadTimeout"] = "00:00:12", ["GatheredWriteStallTimeout"] = "00:00:13",
-            ["ConnectionMaxLifetime"] = "00:05:00", ["ConnectionMaxLifetimeJitter"] = "00:00:30",
-            ["CommandTimeout"] = "00:00:05", ["ThreadPoolMonitoring"] = "false",
-            ["ContinuationDispatch"] = "ThreadPool", ["StalledDeliveryThreshold"] = "00:00:00.025",
-            ["ThreadPoolWarningThreshold"] = "00:00:00.200", ["Connections"] = "3",
-            ["DedicatedPool:MinimumSize"] = "2", ["DedicatedPool:MaximumSize"] = "12",
-            ["DedicatedPool:MaximumIdle"] = "5", ["DedicatedPool:IdleTimeout"] = "00:00:30",
-            ["ClientSideCache:MaxEntries"] = "222", ["ClientSideCache:KeyPrefixes:0"] = "tracked:",
-            ["RetryPolicy:MaxAttempts"] = "7", ["RetryPolicy:MaxCommandRetryCategory"] = "ReadOnly",
-            ["RetryPolicy:RetryableErrors"] = "Loading", ["RetryPolicy:InitialBackoff"] = "00:00:00.020",
-            ["RetryPolicy:MaxBackoff"] = "00:00:02", ["RetryPolicy:Jitter"] = "0.5",
-            ["StreamProducerId"] = "producer-1", ["TcpKeepAliveTime"] = "00:00:20",
-            ["TcpKeepAliveInterval"] = "00:00:04", ["TcpKeepAliveRetryCount"] = "5",
-            ["SubscriptionBufferSize"] = "333", ["SubscriptionOverflow"] = "DropNewest",
-            ["ReceiveBufferSize"] = "32768", ["WriteBufferSize"] = "16384", ["MaxInflightCommands"] = "444",
-            ["CircuitBreaker:FailureRateThreshold"] = "0.7", ["CircuitBreaker:MinimumFailureCount"] = "8",
-            ["CircuitBreaker:SamplingWindow"] = "00:00:40", ["CircuitBreaker:MaximumSampleCount"] = "100",
-            ["CircuitBreaker:OpenDuration"] = "00:00:09", ["CircuitBreaker:HalfOpenProbeCount"] = "2",
+            ["SentinelPrimaryName"] = "primary",
+            ["Username"] = "user",
+            ["Password"] = "password",
+            ["CredentialRefreshBeforeExpiry"] = "00:02:00",
+            ["CredentialRefreshRetryDelay"] = "00:00:03",
+            ["SentinelUsername"] = "sentinel-user",
+            ["SentinelPassword"] = "sentinel-password",
+            ["SentinelUseTls"] = "true",
+            ["SentinelTlsOptions:TargetHost"] = "sentinel",
+            ["ClientName"] = "test",
+            ["LibraryName"] = "configured-library",
+            ["Database"] = "2",
+            ["AllowAdmin"] = "true",
+            ["Protocol"] = "Resp3",
+            ["MaintenanceNotifications"] = "Auto",
+            ["MaintenanceRelaxedTimeout"] = "00:00:45",
+            ["MaintenanceWindowTimeout"] = "00:01:30",
+            ["ConnectTimeout"] = "00:00:04",
+            ["ReconnectPolicy:MaxAttempts"] = "4",
+            ["ClusterTopologyRefreshInterval"] = "00:00:50",
+            ["BacklogPolicy"] = "FailFast",
+            ["BacklogCapacity"] = "123",
+            ["UseTls"] = "true",
+            ["TlsOptions:TargetHost"] = "redis",
+            ["EnableMultipathTcp"] = "true",
+            ["ConnectionIdleReadTimeout"] = "00:00:12",
+            ["GatheredWriteStallTimeout"] = "00:00:13",
+            ["ConnectionMaxLifetime"] = "00:05:00",
+            ["ConnectionMaxLifetimeJitter"] = "00:00:30",
+            ["CommandTimeout"] = "00:00:05",
+            ["ThreadPoolMonitoring"] = "false",
+            ["ContinuationDispatch"] = "ThreadPool",
+            ["StalledDeliveryThreshold"] = "00:00:00.025",
+            ["ThreadPoolWarningThreshold"] = "00:00:00.200",
+            ["Connections"] = "3",
+            ["DedicatedPool:MinimumSize"] = "2",
+            ["DedicatedPool:MaximumSize"] = "12",
+            ["DedicatedPool:MaximumIdle"] = "5",
+            ["DedicatedPool:IdleTimeout"] = "00:00:30",
+            ["ClientSideCache:MaxEntries"] = "222",
+            ["ClientSideCache:KeyPrefixes:0"] = "tracked:",
+            ["RetryPolicy:MaxAttempts"] = "7",
+            ["RetryPolicy:MaxCommandRetryCategory"] = "ReadOnly",
+            ["RetryPolicy:RetryableErrors"] = "Loading",
+            ["RetryPolicy:InitialBackoff"] = "00:00:00.020",
+            ["RetryPolicy:MaxBackoff"] = "00:00:02",
+            ["RetryPolicy:Jitter"] = "0.5",
+            ["StreamProducerId"] = "producer-1",
+            ["TcpKeepAliveTime"] = "00:00:20",
+            ["TcpKeepAliveInterval"] = "00:00:04",
+            ["TcpKeepAliveRetryCount"] = "5",
+            ["SubscriptionBufferSize"] = "333",
+            ["SubscriptionOverflow"] = "DropNewest",
+            ["ReceiveBufferSize"] = "32768",
+            ["WriteBufferSize"] = "16384",
+            ["MaxInflightCommands"] = "444",
+            ["CircuitBreaker:FailureRateThreshold"] = "0.7",
+            ["CircuitBreaker:MinimumFailureCount"] = "8",
+            ["CircuitBreaker:SamplingWindow"] = "00:00:40",
+            ["CircuitBreaker:MaximumSampleCount"] = "100",
+            ["CircuitBreaker:OpenDuration"] = "00:00:09",
+            ["CircuitBreaker:HalfOpenProbeCount"] = "2",
         };
         var section = Section(values);
         // Mapping is tested separately from validation: this exercises all fields, including
         // settings that cannot be enabled together on one client (replicas and circuit breaker).
         var options = RespireConfiguration.Apply(section, new RespireOptions());
         string[] runtimeServices = ["CredentialProvider", "SentinelCredentialProvider", "ConnectionFactory", "ConnectionHook", "Serializer", "LoggerFactory", "PipelineHook", "CommandHook", "NodeAddressResolver", "ReplicaRedirectValidator"];
+
         foreach (var property in typeof(RespireOptions).GetProperties())
         {
-            if (runtimeServices.Contains(property.Name)) continue;
+            if (runtimeServices.Contains(property.Name))
+            {
+                continue;
+            }
+
             await Assert.That(values.Keys.Any(key => key.Split(':')[0] == property.Name)).IsTrue();
         }
+
         foreach (var (path, expected) in values)
         {
             object actual = options;
+
             foreach (var segment in path.Split(':'))
             {
                 actual = int.TryParse(segment, out var index)
                     ? ((System.Collections.IEnumerable)actual).Cast<object>().ElementAt(index)
                     : actual.GetType().GetProperty(segment)!.GetValue(actual)!;
             }
+
             if (actual is IReadOnlyDictionary<RespireEndpoint, RespireEndpoint> map)
+            {
                 await Assert.That(map[new("private", 6379)]).IsEqualTo(new RespireEndpoint("localhost", 7001));
-            else if (actual is bool boolean) await Assert.That(boolean).IsEqualTo(bool.Parse(expected!));
-            else if (actual is TimeSpan time) await Assert.That(time).IsEqualTo(TimeSpan.Parse(expected!, CultureInfo.InvariantCulture));
-            else await Assert.That(Convert.ToString(actual, CultureInfo.InvariantCulture)).IsEqualTo(expected);
+            }
+            else if (actual is bool boolean)
+            {
+                await Assert.That(boolean).IsEqualTo(bool.Parse(expected!));
+            }
+            else if (actual is TimeSpan time)
+            {
+                await Assert.That(time).IsEqualTo(TimeSpan.Parse(expected!, CultureInfo.InvariantCulture));
+            }
+            else
+            {
+                await Assert.That(Convert.ToString(actual, CultureInfo.InvariantCulture)).IsEqualTo(expected);
+            }
         }
     }
 
@@ -175,7 +303,11 @@ public class DependencyInjectionOptionsTests
         bool configured, string? value, string? initialValue, string? expectedValue)
     {
         var values = new Dictionary<string, string?>();
-        if (configured) values["LibraryName"] = value;
+
+        if (configured)
+        {
+            values["LibraryName"] = value;
+        }
 
         var options = RespireConfiguration.Apply(Section(values), new RespireOptions { LibraryName = initialValue });
 
@@ -189,14 +321,18 @@ public class DependencyInjectionOptionsTests
         {
             DedicatedPool = new()
             {
-                MinimumSize = 2, MaximumIdle = 5, MaximumSize = 12, IdleTimeout = TimeSpan.FromSeconds(30),
+                MinimumSize = 2,
+                MaximumIdle = 5,
+                MaximumSize = 12,
+                IdleTimeout = TimeSpan.FromSeconds(30),
             },
         };
         var unchanged = RespireConfiguration.Apply(Section(new()), original);
         await Assert.That(unchanged.DedicatedPool).IsSameReferenceAs(original.DedicatedPool);
         var configured = RespireConfiguration.Apply(Section(new()
         {
-            ["DedicatedPool:MaximumSize"] = "", ["DedicatedPool:IdleTimeout"] = "",
+            ["DedicatedPool:MaximumSize"] = "",
+            ["DedicatedPool:IdleTimeout"] = "",
         }), original);
         await Assert.That(configured.DedicatedPool.MinimumSize).IsEqualTo(2);
         await Assert.That(configured.DedicatedPool.MaximumIdle).IsEqualTo(5);
@@ -215,6 +351,7 @@ public class DependencyInjectionOptionsTests
         string? configuredValue, bool initialValue, bool expectedValue)
     {
         var values = new Dictionary<string, string?>();
+
         if (configuredValue is not null)
         {
             values["IncludeCrossSlotKeyContext"] = configuredValue;
@@ -237,6 +374,7 @@ public class DependencyInjectionOptionsTests
         string? configuredValue, bool initialValue, bool expectedValue)
     {
         var values = new Dictionary<string, string?>();
+
         if (configuredValue is not null)
         {
             values["SplitCrossSlotCommands"] = configuredValue;
@@ -302,9 +440,18 @@ public class DependencyInjectionOptionsTests
         var builder = Host.CreateApplicationBuilder();
         var expected = new InvalidOperationException("Callback service failed.", new Exception("Original cause."));
         var section = Section(new() { ["Endpoints:0"] = "127.0.0.1:1" });
+
         RespireOptions Configure(IServiceProvider provider, RespireOptions options) => throw expected;
-        if (keyed) builder.Services.AddKeyedRespire("jobs", section, Configure);
-        else builder.Services.AddRespire(section, Configure);
+
+        if (keyed)
+        {
+            builder.Services.AddKeyedRespire("jobs", section, Configure);
+        }
+        else
+        {
+            builder.Services.AddRespire(section, Configure);
+        }
+
         using var host = builder.Build();
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => host.StartAsync());
@@ -322,8 +469,16 @@ public class DependencyInjectionOptionsTests
         var expected = new InvalidOperationException("Logger service failed.");
         services.AddSingleton<ILoggerFactory>(_ => throw expected);
         var section = Section(new() { ["Endpoints:0"] = "127.0.0.1:1" });
-        if (keyed) services.AddKeyedRespire("jobs", section);
-        else services.AddRespire(section);
+
+        if (keyed)
+        {
+            services.AddKeyedRespire("jobs", section);
+        }
+        else
+        {
+            services.AddRespire(section);
+        }
+
         await using var provider = services.BuildServiceProvider();
 
         var error = Assert.Throws<InvalidOperationException>(() =>
@@ -402,7 +557,9 @@ public class DependencyInjectionOptionsTests
         public override object? OnExecuting(RespireCommandContext context) => null;
 
         public override void OnCompleted(RespireCommandContext context, object? state,
-            RespireCommandOutcome outcome, Exception? error) { }
+            RespireCommandOutcome outcome, Exception? error)
+        {
+        }
     }
 
     private sealed class PipelineHook : RespirePipelineHook
@@ -410,7 +567,9 @@ public class DependencyInjectionOptionsTests
         public override object? OnExecuting(RespirePipelineContext context) => null;
 
         public override void OnCompleted(RespirePipelineContext context, object? state,
-            RespirePipelineOutcome outcome, Exception? error) { }
+            RespirePipelineOutcome outcome, Exception? error)
+        {
+        }
     }
 
     private sealed class ConnectionHook : RespireConnectionHook

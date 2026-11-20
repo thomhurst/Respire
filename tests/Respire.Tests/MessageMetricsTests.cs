@@ -50,6 +50,7 @@ public class MessageMetricsTests
         await using var server = new FakeRespServer(":5\r\n"u8.ToArray(), "-ERR rejected\r\n"u8.ToArray(), ":0\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var capture = new Capture();
+
         if (fireAndForget)
         {
             await client.ExecuteFireAndForgetAsync("publish", "channel", "first");
@@ -60,9 +61,13 @@ public class MessageMetricsTests
         else
         {
             using var published = await client.ExecuteAsync("publish", "channel", "first");
-            await Assert.That(async () => { using var rejected = await client.ExecuteAsync("SPUBLISH", "channel", "rejected"); })
+            await Assert.That(async () =>
+                {
+                    using var rejected = await client.ExecuteAsync("SPUBLISH", "channel", "rejected");
+                })
                 .Throws<RespireServerException>();
         }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         await Assert.That((bool)capture.Items.Single().Tags["redis.client.pubsub.sharded"]!).IsFalse();
     }
@@ -77,7 +82,12 @@ public class MessageMetricsTests
         using var cancellation = new CancellationTokenSource();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var publication = client.PublishAsync("channel", "payload", cancellation.Token).AsTask();
-        while (server.CommandsSeen == 0) await Task.Delay(1, deadline.Token);
+
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         cancellation.Cancel();
         await Assert.That(async () => await publication).Throws<OperationCanceledException>();
         await Assert.That(capture.Items.Count).IsEqualTo(0);
@@ -111,7 +121,12 @@ public class MessageMetricsTests
             && (bool)item.Tags["redis.client.pubsub.sharded"]! == (kind == RespireSubscriptionKind.Sharded) && item.Tags.Count == 4)).IsTrue();
         // Drop callbacks follow the message metric; wait for their deterministic count boundary.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (first.DroppedMessages != 2 || second.DroppedMessages != 2) await Task.Delay(1, deadline.Token);
+
+        while (first.DroppedMessages != 2 || second.DroppedMessages != 2)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         await using var reader = first.GetAsyncEnumerator(deadline.Token);
         await Assert.That(await reader.MoveNextAsync()).IsTrue();
         // Both local subscriptions send a control command, but neither acknowledgement counts.
@@ -136,7 +151,12 @@ public class MessageMetricsTests
         await Assert.That(await reader.MoveNextAsync()).IsTrue();
         using var cancellation = new CancellationTokenSource();
         var stalled = client.SubscribeAsync("stalled", cancellationToken: cancellation.Token).AsTask();
-        while (server.CommandsSeen < 2) await Task.Delay(1, deadline.Token);
+
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         cancellation.Cancel();
         await Assert.That(async () => await stalled).Throws<OperationCanceledException>();
         await Assert.That(await reader.MoveNextAsync()).IsTrue();
@@ -163,9 +183,12 @@ public class MessageMetricsTests
         var response = RespValue.Integer(2);
         RespireTelemetry.RecordPublication(operation, in response);
         await Assert.That(capture.Items.Count(item => item.Name == "redis.client.pubsub.messages")).IsEqualTo(expected);
+
         if (expected == 1)
+        {
             await Assert.That(capture.Items.Single().Tags["redis.client.pubsub.sharded"])
                 .IsEqualTo(operation!.Length == 8);
+        }
     }
 
     [Test]
@@ -203,7 +226,12 @@ public class MessageMetricsTests
         using var capture = new Capture();
         RespireTelemetry.RecordStreamProcessingStart(new(id), new FixedClock(now));
         await Assert.That(capture.Items.Count).IsEqualTo(expected < 0 ? 0 : 1);
-        if (expected < 0) return;
+
+        if (expected < 0)
+        {
+            return;
+        }
+
         var item = capture.Items.Single();
         await Assert.That(item.Value).IsEqualTo(expected);
         await Assert.That(item.Unit).IsEqualTo("s");
@@ -218,10 +246,16 @@ public class MessageMetricsTests
     public async Task DisabledGroupsOrListenersAvoidClockAndAllocations(bool listenerEnabled)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = listenerEnabled ? RespireMetricGroups.None : RespireMetricGroups.PubSub | RespireMetricGroups.Streaming });
+        { Groups = listenerEnabled ? RespireMetricGroups.None : RespireMetricGroups.PubSub | RespireMetricGroups.Streaming });
         using var capture = listenerEnabled ? new Capture() : null;
         var clock = new FixedClock(2000);
-        for (var i = 0; i < 5; i++) { Measure(clock, false); Measure(clock, true); }
+
+        for (var i = 0; i < 5; i++)
+        {
+            Measure(clock, false);
+            Measure(clock, true);
+        }
+
         var measured = AllocationMeasurement.WithoutConcurrentGc(() => (Bytes: Measure(clock, false), Control: Measure(clock, true)));
         await Assert.That(measured.Bytes).IsEqualTo(0L);
         await Assert.That(measured.Control).IsGreaterThanOrEqualTo(37_000L);
@@ -252,29 +286,50 @@ public class MessageMetricsTests
     {
         var response = RespValue.Integer(3);
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1000; i++)
         {
             RespireTelemetry.RecordPublication("PUBLISH", in response);
             RespireTelemetry.RecordReceivedMessage(false);
             RespireTelemetry.RecordStreamProcessingStart(new("1000-0"), clock);
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
     private sealed class FixedClock(long milliseconds) : TimeProvider
     {
         internal int Reads;
-        public override DateTimeOffset GetUtcNow() { Reads++; return DateTimeOffset.FromUnixTimeMilliseconds(milliseconds); }
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            Reads++;
+            return DateTimeOffset.FromUnixTimeMilliseconds(milliseconds);
+        }
     }
 
     private static RespireClient LazyClient(int port) => RespireClient.Create(new RespireOptions
-        { Protocol = RespireProtocol.Resp2, Endpoints = { new RespireEndpoint("127.0.0.1", port) } });
+    { Protocol = RespireProtocol.Resp2, Endpoints = { new RespireEndpoint("127.0.0.1", port) } });
 
     private static (byte[] Confirmation, byte[] Message) Frames(RespireSubscriptionKind kind)
     {
-        var verb = kind switch { RespireSubscriptionKind.Pattern => "psubscribe", RespireSubscriptionKind.Sharded => "ssubscribe", _ => "subscribe" };
-        var message = kind switch { RespireSubscriptionKind.Pattern => "pmessage", RespireSubscriptionKind.Sharded => "smessage", _ => "message" };
+        var verb = kind switch
+        {
+            RespireSubscriptionKind.Pattern => "psubscribe",
+            RespireSubscriptionKind.Sharded => "ssubscribe",
+            _ => "subscribe"
+        };
+        var message = kind switch
+        {
+            RespireSubscriptionKind.Pattern => "pmessage",
+            RespireSubscriptionKind.Sharded => "smessage",
+            _ => "message"
+        };
         var pattern = kind == RespireSubscriptionKind.Pattern ? "$2\r\nch\r\n" : "";
         return (Encoding.ASCII.GetBytes($"*3\r\n${verb.Length}\r\n{verb}\r\n$2\r\nch\r\n:1\r\n"),
             Encoding.ASCII.GetBytes($"*{(kind == RespireSubscriptionKind.Pattern ? 4 : 3)}\r\n${message.Length}\r\n{message}\r\n{pattern}$2\r\nch\r\n$5\r\nhello\r\n"));
@@ -285,7 +340,11 @@ public class MessageMetricsTests
     internal sealed class Capture : IDisposable
     {
         private readonly MeterListener _listener = new();
-        internal ConcurrentQueue<Item> Items { get; } = new();
+
+        internal ConcurrentQueue<Item> Items
+        {
+            get;
+        } = new();
         private readonly Channel<bool> _events = Channel.CreateUnbounded<bool>();
         private readonly bool _throwOnMeasurement;
 
@@ -295,7 +354,9 @@ public class MessageMetricsTests
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name is "redis.client.pubsub.messages" or "redis.client.stream.lag")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) => Add(instrument, value, tags));
             _listener.SetMeasurementEventCallback<double>((instrument, value, tags, _) => Add(instrument, value, tags));
@@ -306,13 +367,21 @@ public class MessageMetricsTests
         {
             Items.Enqueue(new(instrument.Name, instrument.Unit, value, tags.ToArray().ToDictionary(pair => pair.Key, pair => pair.Value)));
             _events.Writer.TryWrite(true);
-            if (_throwOnMeasurement) throw new InvalidOperationException("Test listener failure.");
+
+            if (_throwOnMeasurement)
+            {
+                throw new InvalidOperationException("Test listener failure.");
+            }
         }
 
         internal async Task WaitForCountAsync(int count)
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (Items.Count < count) await _events.Reader.ReadAsync(deadline.Token);
+
+            while (Items.Count < count)
+            {
+                await _events.Reader.ReadAsync(deadline.Token);
+            }
         }
 
         public void Dispose() => _listener.Dispose();

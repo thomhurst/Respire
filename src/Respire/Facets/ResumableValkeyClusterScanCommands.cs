@@ -14,11 +14,13 @@ internal sealed partial class KeyCommands
         ScanRecovery recovery, CancellationToken cancellationToken)
     {
         var cache = _scanCapabilities;
+
         if (cache is null)
         {
             var created = new ClusterScanCapabilityCache();
             cache = Interlocked.CompareExchange(ref _scanCapabilities, created, null) ?? created;
         }
+
         return cache.SupportsAsync(client, connection, runId, recovery.Capabilities, cancellationToken, recovery.Observation);
     }
 
@@ -27,15 +29,23 @@ internal sealed partial class KeyCommands
         int countHint, CancellationToken cancellationToken, ScanRecovery recovery)
     {
         var starting = state.ValkeyCursor is null;
+
         if (!ClusterScanPassCertifier.BeginOwnerRange(state, topology.Moving, node.Metadata.Id,
             node.Metadata.ConfigurationEpoch, runId, out var slot))
+        {
             return new(new RespireClusterScanCursor(state), []) { WaitingOnMigration = true };
+        }
+
         var command = CreateValkeyClusterScanCommand(client, state.ValkeyCursor ?? "0", match, type,
             countHint, starting ? slot : null, cancellationToken);
         var sent = await SendValkeyScanWithRedirectsAsync(state, topology, node, runId, command,
             slot, starting, cancellationToken, recovery).ConfigureAwait(false);
+
         if (sent.Unsupported)
+        {
             return sent.Redirected && !starting ? new(new RespireClusterScanCursor(state), []) : null;
+        }
+
         return await ApplyValkeyScanPageAsync(state, sent, slot, starting, match,
             cancellationToken, recovery.Discovery, recovery.Observation).ConfigureAwait(false);
     }
@@ -49,6 +59,7 @@ internal sealed partial class KeyCommands
         var connection = node.Connection;
         var redirected = false;
         var asking = false;
+
         while (true)
         {
             try
@@ -80,6 +91,7 @@ internal sealed partial class KeyCommands
                 recovery.Observation.Handled(error);
                 recovery.Rejections++;
                 cluster.RecordRejection(ref recovery.Discovery, connection, error);
+
                 if (ClusterRouter.TryParseRedirect(error, connection.Host, out var changedSlot, out _)
                     && (!starting || changedSlot == slot))
                 {
@@ -90,10 +102,12 @@ internal sealed partial class KeyCommands
                     // another slot have scanned no data and do not invalidate its progress.
                     topology.Moving[changedSlot] = true;
                 }
+
                 connection = await cluster.GetRedirectConnectionAsync(error, connection,
                     cancellationToken, slot, recovery.Discovery, recovery.Observation).ConfigureAwait(false);
                 asking = error.Code == RespireErrorCodes.Ask;
                 runId = await ReadScanRunIdAsync(connection, cancellationToken, recovery.Observation).ConfigureAwait(false);
+
                 if (!await SupportsClusterScanAsync(connection, runId, recovery, cancellationToken).ConfigureAwait(false))
                 {
                     state.ResetPass();
@@ -108,6 +122,7 @@ internal sealed partial class KeyCommands
         CancellationToken cancellationToken, ClusterRouter.DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation)
     {
         var reply = sent.Reply;
+
         using (reply)
         {
             // Keep the page API's existing string decoding/prefix contract. The typed
@@ -119,18 +134,37 @@ internal sealed partial class KeyCommands
             var effectiveMatch = prefix is { HasSurrogateBoundary: true } ? null : ScanMatch(prefix, match);
             var pattern = prefix is { HasSurrogateBoundary: true } && match is not null
                 ? Encoding.UTF8.GetBytes(match) : null;
+
             foreach (ref readonly var key in raw)
             {
                 if (key.Type != RespireDataType.BulkString || key.IsNull)
+                {
                     throw new RespireProtocolException("CLUSTERSCAN keys must be bulk strings.");
-                if (state.Completed[ClusterHash.GetSlot(key.AsSpan())]) continue;
-                if (prefix is null) keys.Add(key.AsString());
+                }
+
+                if (state.Completed[ClusterHash.GetSlot(key.AsSpan())])
+                {
+                    continue;
+                }
+
+                if (prefix is null)
+                {
+                    keys.Add(key.AsString());
+                }
                 else if (ScanKey(in key, prefix) is { } stripped
-                    && (pattern is null || ByteGlob.IsMatch(Encoding.UTF8.GetBytes(stripped), pattern))) keys.Add(stripped);
+                    && (pattern is null || ByteGlob.IsMatch(Encoding.UTF8.GetBytes(stripped), pattern)))
+                {
+                    keys.Add(stripped);
+                }
             }
+
             cancellationToken.ThrowIfCancellationRequested();
+
             if (ClusterScanPassCertifier.ApplyPosition(state, nextCursor, slot, starting, sent.Redirected, raw.Length == 0))
+            {
                 await CompleteScanPassAsync(state, effectiveMatch, cancellationToken, discovery, observation).ConfigureAwait(false);
+            }
+
             return new(new RespireClusterScanCursor(state), keys.ToArray());
         }
     }

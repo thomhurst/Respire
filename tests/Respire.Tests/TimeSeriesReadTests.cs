@@ -1,6 +1,6 @@
-using Respire.TimeSeries;
 using Respire.Commands;
 using Respire.Tests.Networking;
+using Respire.TimeSeries;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -59,9 +59,15 @@ public class TimeSeriesReadTests
         var timeSeries = new RespireTimeSeriesClient(owner.WithKeyPrefix("p:"));
         var options = new RespireTimeSeriesKeyRangeOptions
         {
-            Latest = true, Count = 3, FilterByTimestamps = [10], FilterByValue = (0, 10),
+            Latest = true,
+            Count = 3,
+            FilterByTimestamps = [10],
+            FilterByValue = (0, 10),
             Aggregators = [[RespireTimeSeriesAggregation.Min, RespireTimeSeriesAggregation.Max], [RespireTimeSeriesAggregation.Sum]],
-            BucketMilliseconds = 10, Align = 0, BucketTimestamp = RespireTimeSeriesBucketTimestamp.End, Empty = true,
+            BucketMilliseconds = 10,
+            Align = 0,
+            BucketTimestamp = RespireTimeSeriesBucketTimestamp.End,
+            Empty = true,
         };
         var result = reverse
             ? await timeSeries.ReverseRangeKeysAsync(["a", "a"], new(0, 100), options)
@@ -123,8 +129,12 @@ public class TimeSeriesReadTests
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var samples = new List<long>();
+
         await foreach (var sample in new RespireTimeSeriesClient(client).FollowAsync("series", RespireTimeSeriesTimestamp.New, batchSize: 2))
+        {
             samples.Add(sample.Timestamp);
+        }
+
         await Assert.That(samples).IsEquivalentTo([10L, 20L, long.MaxValue]);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo([
             "TS.READ series + MAX_COUNT 1", "TS.READ series 10 BLOCK 0 1 MAX_COUNT 2", "TS.READ series 21 BLOCK 0 1 MAX_COUNT 2",
@@ -142,7 +152,10 @@ public class TimeSeriesReadTests
             ReplyOverride = (_, command) =>
             {
                 if (command.Contains(" + ", StringComparison.Ordinal))
+                {
                     return initiallyMissing ? "*0\r\n"u8.ToArray() : "*1\r\n*2\r\n:10\r\n+1\r\n"u8.ToArray();
+                }
+
                 return Interlocked.Increment(ref blockingReads) == 1 ? "*0\r\n"u8.ToArray()
                     : "*1\r\n*2\r\n:11\r\n+2\r\n"u8.ToArray();
             },
@@ -170,12 +183,15 @@ public class TimeSeriesReadTests
         await Assert.That(async () => await timeSeries.RangeKeysAsync([], new(0, 10))).ThrowsExactly<ArgumentException>();
         await Assert.That(async () => await timeSeries.RangeKeysAsync(["a"], new(0, 10), new()
         {
-            Aggregators = [], BucketMilliseconds = 10,
+            Aggregators = [],
+            BucketMilliseconds = 10,
         })).ThrowsExactly<ArgumentException>();
         await Assert.That(async () => await timeSeries.ReadAsync("a", RespireTimeSeriesTimestamp.Now)).ThrowsExactly<ArgumentException>();
         await Assert.That(async () => await timeSeries.ReadAsync("a", 0, new()
         {
-            BlockMilliseconds = 0, MinimumCount = 3, MaximumCount = 2,
+            BlockMilliseconds = 0,
+            MinimumCount = 3,
+            MaximumCount = 2,
         })).ThrowsExactly<ArgumentException>();
         await Assert.That(async () => await timeSeries.ReadAsync("a", 0, cancellationToken: new(true))).Throws<OperationCanceledException>();
         await using var iterator = timeSeries.FollowAsync("a", 0, cancellationToken: new(true)).GetAsyncEnumerator();
@@ -196,8 +212,12 @@ public class TimeSeriesReadTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var options = new RespireTimeSeriesFollowOptions { BatchSize = 1, MaximumConsecutiveEmptyReads = 2 };
         var samples = new List<long>();
+
         await foreach (var sample in client.TimeSeries.FollowAsync(options, "series", 0, timeout.Token))
+        {
             samples.Add(sample.Timestamp);
+        }
+
         await Assert.That(samples).IsEquivalentTo([10L]);
         await Assert.That(calls).IsEqualTo(4);
     }

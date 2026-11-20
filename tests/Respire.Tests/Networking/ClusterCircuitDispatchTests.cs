@@ -48,8 +48,13 @@ public class ClusterCircuitDispatchTests
         await Assert.That(source.ReceivedCommands.Any(command => command.Contains("rejected", StringComparison.Ordinal))).IsFalse();
         await Assert.That(source.ReceivedCommands.Contains("MULTI")).IsFalse();
         await Send(client, shape, "{healthy}key");
-        await Received(target, shape switch { "integer" => "STRLEN {healthy}key",
-            "upload" => "SET {healthy}key value", "blocking" => "BLPOP {healthy}key 1", _ => "GET {healthy}key" });
+        await Received(target, shape switch
+        {
+            "integer" => "STRLEN {healthy}key",
+            "upload" => "SET {healthy}key value",
+            "blocking" => "BLPOP {healthy}key 1",
+            _ => "GET {healthy}key"
+        });
         await Assert.That(Circuit(client, source).Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
         await Assert.That(Circuit(client, target).Snapshot().FailureCount).IsEqualTo(0);
     }
@@ -104,10 +109,20 @@ public class ClusterCircuitDispatchTests
         await using var client = await RespireClient.ConnectAsync(Options(source));
 #pragma warning restore RESP010
         await client.GetStringAsync("warm");
-        if (targetOpen) Open(client, target);
+
+        if (targetOpen)
+        {
+            Open(client, target);
+        }
+
         var key = "redirect";
         var redirect = Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot(key)} 127.0.0.1:{target.Port}\r\n");
-        var applicationCommand = shape switch { "upload" => "SET redirect value", "blocking" => "BLPOP redirect 1", _ => "GET redirect" };
+        var applicationCommand = shape switch
+        {
+            "upload" => "SET redirect value",
+            "blocking" => "BLPOP redirect 1",
+            _ => "GET redirect"
+        };
         source.ReplyOverride = (_, command) => shape == "transaction" ? command switch
         {
             "MULTI" => FakeRespServer.OkReply,
@@ -117,13 +132,18 @@ public class ClusterCircuitDispatchTests
             _ => Reply(command),
         } : command == applicationCommand ? redirect
             : command == "CLUSTER SLOTS" ? Slots(source.Port) : Reply(command);
+
         if (targetOpen)
         {
             var error = await Failure(() => Send(client, shape, key));
             await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
             await Assert.That(((RespireCircuitOpenException)error).Endpoint).IsEqualTo(Endpoint(target));
         }
-        else await Send(client, shape, key);
+        else
+        {
+            await Send(client, shape, key);
+        }
+
         await Assert.That(target.ReceivedCommands.Contains(applicationCommand)).IsEqualTo(!targetOpen);
         await Assert.That(target.ReceivedCommands.Contains("ASKING")).IsEqualTo(code == "ASK" && !targetOpen);
         await Assert.That(target.ReceivedCommands.Contains("MULTI")).IsFalse();
@@ -173,8 +193,13 @@ public class ClusterCircuitDispatchTests
         {
             await primary.DisposeAsync();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (node.IsConnected) await Task.Delay(1, timeout.Token);
+
+            while (node.IsConnected)
+            {
+                await Task.Delay(1, timeout.Token);
+            }
         }
+
         var error = await Failure(async () => await router.GetReadConnectionAsync(ClusterHash.GetSlot("rejected"),
             replicaRoute ? RespireReadFrom.ReplicaPreferred : RespireReadFrom.Primary, default, observation: default));
         await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
@@ -206,8 +231,12 @@ public class ClusterCircuitDispatchTests
         router.SetSlotOwner(slot, node);
         await unavailable.DisposeAsync();
         // Discovery may recover through the healthy seed after this candidate fails.
-        try { await client.GetStringAsync("disconnected"); }
+        try
+        {
+            await client.GetStringAsync("disconnected");
+        }
         catch (RespireConnectionException) { }
+
         await Assert.That(Circuit(client, unavailable).Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
         node = router.GetMultiplexer(Endpoint(unavailable));
         router.SetSlotOwner(slot, node);
@@ -248,8 +277,10 @@ public class ClusterCircuitDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
-            MaxInflightCommands = tracked ? 4 : 2, CommandTimeout = TimeSpan.FromSeconds(10),
+            Protocol = RespireProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            MaxInflightCommands = tracked ? 4 : 2,
+            CommandTimeout = TimeSpan.FromSeconds(10),
             ClientSideCache = tracked ? new() : null,
         });
 #pragma warning restore RESP010
@@ -257,34 +288,58 @@ public class ClusterCircuitDispatchTests
         var router = client.Core.Cluster!;
         var targetNode = router.GetMultiplexer(Endpoint(target));
         router.SetSlotOwner(ClusterHash.GetSlot("hold"), targetNode);
-        if (tracked) router.SetSlotOwner(ClusterHash.GetSlot("hold2"), targetNode);
+
+        if (tracked)
+        {
+            router.SetSlotOwner(ClusterHash.GetSlot("hold2"), targetNode);
+        }
+
         await client.GetStringAsync("hold");
         var original = targetNode.GetConnection();
         target.SuppressReply = command => command.StartsWith("GET hold", StringComparison.Ordinal);
         var held = client.WithoutClientCache().GetStringAsync("hold").AsTask();
         var heldSecond = tracked ? client.WithoutClientCache().GetStringAsync("hold2").AsTask() : null;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (target.ReceivedCommands.Count(command => command == "GET hold") < 2)
+        {
             await Task.Delay(1, timeout.Token);
-        if (tracked) await Received(target, "GET hold2");
+        }
+
+        if (tracked)
+        {
+            await Received(target, "GET hold2");
+        }
+
         var circuit = Circuit(client, target);
         var clock = new Clock();
         CircuitClock(circuit) = clock;
         Open(client, target);
         clock.Advance();
-        if (replacementOpen) Open(client, replacement);
+
+        if (replacementOpen)
+        {
+            Open(client, replacement);
+        }
+
         source.ReplyOverride = (_, command) => command == "GET streamed"
             ? Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("streamed")} 127.0.0.1:{target.Port}\r\n")
             : command == "CLUSTER SLOTS" ? Slots(source.Port) : Reply(command);
         var pendingStream = tracked ? null : client.Strings.GetStreamAsync("streamed").AsTask();
         var pendingRead = tracked ? client.GetStringAsync("streamed").AsTask() : null;
         var pending = (Task?)pendingRead ?? pendingStream!;
-        while (circuit.Snapshot().ActiveProbes != 1) await Task.Delay(1, timeout.Token);
+
+        while (circuit.Snapshot().ActiveProbes != 1)
+        {
+            await Task.Delay(1, timeout.Token);
+        }
+
         var announcement = targetNode.CaptureMovingAnnouncement(0, original,
             new MaintenanceNotification("MOVING", 1, 10, Endpoint(replacement)));
         typeof(RespireConnectionMultiplexer).GetMethod("QueueMovingHandoff",
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .Invoke(targetNode, [0, original, announcement]);
+
         try
         {
             if (replacementOpen)
@@ -295,7 +350,10 @@ public class ClusterCircuitDispatchTests
             }
             else
             {
-                if (tracked) await Assert.That(await pendingRead!).IsEqualTo("value");
+                if (tracked)
+                {
+                    await Assert.That(await pendingRead!).IsEqualTo("value");
+                }
                 else
                 {
                     await using var stream = await pendingStream!;
@@ -303,6 +361,7 @@ public class ClusterCircuitDispatchTests
                     await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("value");
                 }
             }
+
             await Assert.That(target.ReceivedCommands.Contains("GET streamed")).IsFalse();
             await Assert.That(replacement.ReceivedCommands.Contains("GET streamed")).IsEqualTo(!replacementOpen);
             await Assert.That(replacement.ReceivedCommands.Contains("ASKING")).IsEqualTo(!replacementOpen);
@@ -312,9 +371,18 @@ public class ClusterCircuitDispatchTests
         finally
         {
             await target.SendRawAsync(Bulk, target.ReceivedConnectionIds[^1]);
-            if (tracked) await target.SendRawAsync(Bulk, target.ReceivedConnectionIds[^1]);
+
+            if (tracked)
+            {
+                await target.SendRawAsync(Bulk, target.ReceivedConnectionIds[^1]);
+            }
+
             await held;
-            if (tracked) await heldSecond!;
+
+            if (tracked)
+            {
+                await heldSecond!;
+            }
         }
     }
 
@@ -329,7 +397,12 @@ public class ClusterCircuitDispatchTests
         await using var client = await RespireClient.ConnectAsync(Options(source));
 #pragma warning restore RESP010
         await client.GetStringAsync("warm");
-        if (targetOpen) Open(client, target);
+
+        if (targetOpen)
+        {
+            Open(client, target);
+        }
+
         var router = client.Core.Cluster!;
         var original = await router.GetConnectionAsync(ClusterHash.GetSlot("retired"), default, null, observation: default);
         router.SetSlotOwner(ClusterHash.GetSlot("retired"), router.GetMultiplexer(Endpoint(target)));
@@ -337,15 +410,22 @@ public class ClusterCircuitDispatchTests
         var command = new Cmd1(Verbs.Get, "retired");
         var send = client.ResumeRetiredClusterSendAsync("GET", command, original,
             new RespireConnectionRetiredException("127.0.0.1", source.Port), RespireReadFrom.Primary, default);
+
         if (targetOpen)
         {
-            await Assert.That(await Failure(async () => { using var response = await send; })).IsTypeOf<RespireCircuitOpenException>();
+            await Assert.That(
+                await Failure(async () =>
+                {
+                    using var response = await send;
+                })
+            ).IsTypeOf<RespireCircuitOpenException>();
         }
         else
         {
             using var response = await send;
             await Assert.That(ResponseReader.StringOrNull(in response)).IsEqualTo("value");
         }
+
         await Assert.That(source.ReceivedCommands.Contains("GET retired")).IsFalse();
         await Assert.That(target.ReceivedCommands.Contains("GET retired")).IsEqualTo(!targetOpen);
         await Assert.That(Circuit(client, source).Snapshot().FailureCount).IsEqualTo(0);
@@ -362,6 +442,7 @@ public class ClusterCircuitDispatchTests
     public async Task CancelledOrFailedRecoveryReleasesCapacityForFullBatch(string shape, bool timeout)
     {
         await using var server = Server();
+
 #pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         // Compile the selected dispatch path before the 300 ms deadline can start, using
         // a separate client and server so warmup cannot affect circuit history or receipt waits.
@@ -373,6 +454,7 @@ public class ClusterCircuitDispatchTests
             });
             await Send(warmup, shape, "warm-dispatch");
         }
+
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             CommandTimeout = timeout ? TimeSpan.FromMilliseconds(300) : TimeSpan.FromSeconds(10),
@@ -388,7 +470,12 @@ public class ClusterCircuitDispatchTests
         using var cancellation = new CancellationTokenSource();
         var pending = Send(client, shape, "probe", cancellation.Token);
         await Received(server, shape == "transaction" ? "EXEC" : "GET probe");
-        if (!timeout) cancellation.Cancel();
+
+        if (!timeout)
+        {
+            cancellation.Cancel();
+        }
+
         var error = await Failure(async () => await pending);
         await Assert.That(error.GetType()).IsEqualTo(timeout ? typeof(RespireTimeoutException) : typeof(OperationCanceledException));
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
@@ -398,7 +485,12 @@ public class ClusterCircuitDispatchTests
         // Suppressed EXEC did not invoke the fake server's transaction state transition.
         server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Slots(server.Port) : Reply(command);
         server.SuppressReply = null;
-        if (timeout) clock.Advance();
+
+        if (timeout)
+        {
+            clock.Advance();
+        }
+
         using var batch = client.CreateBatch();
         var first = batch.GetString("{full}first");
         var second = batch.GetString("{full}second");
@@ -416,7 +508,8 @@ public class ClusterCircuitDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            MaxInflightCommands = 4, CommandTimeout = TimeSpan.FromSeconds(10),
+            MaxInflightCommands = 4,
+            CommandTimeout = TimeSpan.FromSeconds(10),
         });
 #pragma warning restore RESP010
         await client.GetStringAsync("warm");
@@ -427,6 +520,7 @@ public class ClusterCircuitDispatchTests
         await Received(server, "GET hold");
         await Received(server, "GET hold2");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
         try
         {
             var command = new Cmd1(Verbs.Get, "deadline");
@@ -507,10 +601,16 @@ public class ClusterCircuitDispatchTests
                 Interlocked.Increment(ref attempts);
                 var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream,
                     System.Net.Sockets.ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, cancellationToken);
-                    if (openDuringConnect) Open(client!, server);
+
+                    if (openDuringConnect)
+                    {
+                        Open(client!, server);
+                    }
+
                     return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
                 }
                 catch { socket.Dispose(); throw; }
@@ -528,6 +628,7 @@ public class ClusterCircuitDispatchTests
         var previousAttempts = attempts;
         var connection = await pool.RentAsync(default,
             kind: shape == "upload" ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
+
         try
         {
             await Assert.That(connection.IsConnected).IsTrue();
@@ -555,8 +656,10 @@ public class ClusterCircuitDispatchTests
                     Interlocked.Increment(ref failedAttempts);
                     throw new IOException("Injected dedicated connect failure.");
                 }
+
                 var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream,
                     System.Net.Sockets.ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, cancellationToken);
@@ -636,25 +739,37 @@ public class ClusterCircuitDispatchTests
 #pragma warning disable RESP010 // Test-owned client isolates endpoint circuit history and dispatch admission for this scenario.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            UseCluster = true, Endpoints = [new("127.0.0.1", 9000)], CircuitBreaker = new() { MinimumFailureCount = 1 },
+            UseCluster = true,
+            Endpoints = [new("127.0.0.1", 9000)],
+            CircuitBreaker = new() { MinimumFailureCount = 1 },
             ThreadPoolMonitoring = false,
         });
 #pragma warning restore RESP010
         var circuits = client.Core.Circuits!;
         var endpoints = Enumerable.Range(0, 32).Select(i => new RespireEndpoint("127.0.0.1", 9000 + i)).ToArray();
+
         foreach (var endpoint in endpoints)
         {
             client.Core.Cluster!.GetMultiplexer(endpoint);
             var admission = circuits.Acquire(endpoint, default);
-            try { admission.Failed(new RespireConnectionException("Injected failure."), default); }
+
+            try
+            {
+                admission.Failed(new RespireConnectionException("Injected failure."), default);
+            }
             finally { admission.Dispose(); }
         }
+
         await Assert.That(circuits.CountForTests).IsEqualTo(32);
+
         foreach (var endpoint in endpoints)
+        {
             await Assert.That(() => circuits.Acquire(endpoint, default)).Throws<RespireCircuitOpenException>();
+        }
     }
 
     private static readonly byte[] Bulk = "$5\r\nvalue\r\n"u8.ToArray();
+
     private static byte[]? Reply(string command) => command.StartsWith("HELLO 3", StringComparison.Ordinal)
         ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray()
         : command.StartsWith("GET ", StringComparison.Ordinal) ? Bulk
@@ -666,10 +781,28 @@ public class ClusterCircuitDispatchTests
         var inTransaction = false;
         server.ReplyOverride = (_, command) =>
         {
-            if (command == "CLUSTER SLOTS") return Slots(server.Port);
-            if (command == "MULTI") { inTransaction = true; return FakeRespServer.OkReply; }
-            if (command == "EXEC") { inTransaction = false; return "*1\r\n$5\r\nvalue\r\n"u8.ToArray(); }
-            if (inTransaction) return "+QUEUED\r\n"u8.ToArray();
+            if (command == "CLUSTER SLOTS")
+            {
+                return Slots(server.Port);
+            }
+
+            if (command == "MULTI")
+            {
+                inTransaction = true;
+                return FakeRespServer.OkReply;
+            }
+
+            if (command == "EXEC")
+            {
+                inTransaction = false;
+                return "*1\r\n$5\r\nvalue\r\n"u8.ToArray();
+            }
+
+            if (inTransaction)
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
             return Reply(command);
         };
         return server;
@@ -681,19 +814,35 @@ public class ClusterCircuitDispatchTests
 
     private static RespireOptions Options(FakeRespServer server) => new()
     {
-        Endpoints = [Endpoint(server)], UseCluster = true, Connections = 1, Protocol = RespireProtocol.Resp2,
-        ThreadPoolMonitoring = false, ClusterTopologyRefreshInterval = null, CommandTimeout = TimeSpan.FromSeconds(5),
-        CircuitBreaker = new() { MinimumFailureCount = 1, FailureRateThreshold = 0.01,
-            HalfOpenProbeCount = 2, OpenDuration = TimeSpan.FromMinutes(1) },
+        Endpoints = [Endpoint(server)],
+        UseCluster = true,
+        Connections = 1,
+        Protocol = RespireProtocol.Resp2,
+        ThreadPoolMonitoring = false,
+        ClusterTopologyRefreshInterval = null,
+        CommandTimeout = TimeSpan.FromSeconds(5),
+        CircuitBreaker = new()
+        {
+            MinimumFailureCount = 1,
+            FailureRateThreshold = 0.01,
+            HalfOpenProbeCount = 2,
+            OpenDuration = TimeSpan.FromMinutes(1)
+        },
     };
 
     private static RespireEndpoint Endpoint(FakeRespServer server) => new("127.0.0.1", server.Port);
+
     private static EndpointCircuitBreaker Circuit(RespireClient client, FakeRespServer server)
         => client.Core.Circuits!.GetForTests(Endpoint(server));
+
     private static void Open(RespireClient client, FakeRespServer server)
     {
         var admission = client.Core.Circuits!.Acquire(Endpoint(server), default);
-        try { admission.Failed(new RespireConnectionException("Injected node failure."), default); }
+
+        try
+        {
+            admission.Failed(new RespireConnectionException("Injected node failure."), default);
+        }
         finally { admission.Dispose(); }
     }
 
@@ -701,26 +850,53 @@ public class ClusterCircuitDispatchTests
     {
         switch (shape)
         {
-            case "string": await client.GetStringAsync(key, cancellationToken); break;
-            case "bytes": await client.GetBytesAsync(key, cancellationToken); break;
-            case "integer": await client.Strings.LengthAsync(key, cancellationToken); break;
+            case "string":
+                await client.GetStringAsync(key, cancellationToken);
+                break;
+            case "bytes":
+                await client.GetBytesAsync(key, cancellationToken);
+                break;
+            case "integer":
+                await client.Strings.LengthAsync(key, cancellationToken);
+                break;
             case "pinned":
                 var connection = await client.Core.Cluster!.GetConnectionAsync(ClusterHash.GetSlot(key), cancellationToken, null, observation: default);
-                using (var response = await client.SendOnPinnedConnectionAsync("GET", connection, new Cmd1(Verbs.Get, key), cancellationToken)) { }
+                using (var response = await client.SendOnPinnedConnectionAsync("GET", connection, new Cmd1(Verbs.Get, key), cancellationToken))
+                {
+                }
                 break;
             case "stream":
                 await using (var stream = await client.Strings.GetStreamAsync(key, cancellationToken))
-                    if (stream is not null) await stream.CopyToAsync(Stream.Null, cancellationToken);
+                {
+                    if (stream is not null)
+                    {
+                        await stream.CopyToAsync(Stream.Null, cancellationToken);
+                    }
+                }
                 break;
             case "upload":
                 using (var payload = new MemoryStream("value"u8.ToArray()))
+                {
                     await client.Strings.SetAsync(key, payload, 5, cancellationToken: cancellationToken);
+                }
                 break;
-            case "blocking": using (var response = await client.ExecuteAsync("BLPOP", [key, "1"], cancellationToken: cancellationToken)) { } break;
-            case "converted": await client.ConvertResponseAsync("GET", new Cmd1(Verbs.Get, key), cancellationToken,
-                0, static (int _, in RespValue response) => ResponseReader.StringOrNull(in response)); break;
-            case "raw": using (var response = await client.ExecuteAsync("GET", [key], cancellationToken: cancellationToken)) { } break;
-            case "fire-and-forget": await client.ExecuteFireAndForgetAsync("GET", [key], cancellationToken: cancellationToken); break;
+            case "blocking":
+                using (var response = await client.ExecuteAsync("BLPOP", [key, "1"], cancellationToken: cancellationToken))
+                {
+                }
+                break;
+            case "converted":
+                await client.ConvertResponseAsync("GET", new Cmd1(Verbs.Get, key), cancellationToken,
+                0, static (int _, in RespValue response) => ResponseReader.StringOrNull(in response));
+                break;
+            case "raw":
+                using (var response = await client.ExecuteAsync("GET", [key], cancellationToken: cancellationToken))
+                {
+                }
+                break;
+            case "fire-and-forget":
+                await client.ExecuteFireAndForgetAsync("GET", [key], cancellationToken: cancellationToken);
+                break;
             case "batch":
                 using (var batch = client.CreateBatch())
                 {
@@ -737,30 +913,43 @@ public class ClusterCircuitDispatchTests
                     await Assert.That(pending.Result).IsEqualTo("value");
                 }
                 break;
-            default: throw new ArgumentOutOfRangeException(nameof(shape));
+            default:
+                throw new ArgumentOutOfRangeException(nameof(shape));
         }
     }
 
     private static async Task<Exception> Failure(Func<Task> operation)
     {
-        try { await operation(); }
+        try
+        {
+            await operation();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected dispatch failure.");
     }
 
     private static async Task Received(FakeRespServer server, string command)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!server.ReceivedCommands.Contains(command)) await Task.Delay(1, timeout.Token);
+
+        while (!server.ReceivedCommands.Contains(command))
+        {
+            await Task.Delay(1, timeout.Token);
+        }
     }
 
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_clock")]
     private static extern ref TimeProvider CircuitClock(EndpointCircuitBreaker circuit);
+
     private sealed class Clock : TimeProvider
     {
         private long _timestamp = TimeProvider.System.GetTimestamp();
+
         public override long GetTimestamp() => Interlocked.Read(ref _timestamp);
+
         public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
+
         internal void Advance() => Interlocked.Add(ref _timestamp, TimestampFrequency * 60);
     }
 }

@@ -61,6 +61,7 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
     protected override void SetResultCore(in RespValue result)
     {
         _duration.MarkCompleted();
+
         if (_hasDirectResult)
         {
             // Direct completions carry a default RespValue; nothing to retain.
@@ -84,16 +85,22 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
         var observation = _observation;
         var observeErrors = _observeErrors;
         Exception? failure = null;
+
         try
         {
             try
             {
                 _core.GetResult(token);
+
                 if (!_hasDirectResult && _response.IsError)
+                {
                     throw ResponseReader.ServerError(in _response, _commandName, ErrorEndpoint);
+                }
             }
             catch (Exception error) { _duration.Complete(_commandName, error); throw; }
+
             _duration.Complete(_commandName);
+
             if (_hasDirectResult)
             {
                 return _directResult;
@@ -104,10 +111,17 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
         catch (Exception error) { failure = error; throw; }
         finally
         {
-            try { Clear(); }
+            try
+            {
+                Clear();
+            }
             catch (Exception error)
             {
-                if (failure is null) { failure = error; throw; }
+                if (failure is null)
+                {
+                    failure = error;
+                    throw;
+                }
             }
             finally
             {
@@ -129,7 +143,10 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
 
     private void Clear()
     {
-        try { DisposeResponse(ref _response, ref _hasResponse); }
+        try
+        {
+            DisposeResponse(ref _response, ref _hasResponse);
+        }
         finally
         {
             _response = default;
@@ -149,12 +166,16 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
 
         public bool TryReset(BytesPendingResponseSource source)
         {
-            try { source.Clear(); }
+            try
+            {
+                source.Clear();
+            }
             finally
             {
                 source._commandName = null;
                 source._core.Reset();
             }
+
             return true;
         }
     }

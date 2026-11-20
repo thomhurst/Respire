@@ -28,13 +28,24 @@ public class SetManyIfNotExistsTests
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = queue.Strings.SetManyIfNotExists(pairs);
         pairs[1] = ("changed", "changed");
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         await Assert.That(pending.Result).IsTrue();
         var commands = server.ReceivedCommands.Where(c => c is not "MULTI" and not "EXEC").ToArray();
         await Assert.That(commands.Length).IsEqualTo(3);
+
         foreach (var command in commands)
+        {
             await Assert.That(command).IsEqualTo("MSETNX tenant:a one tenant:b two");
+        }
     }
 
     [Test]
@@ -65,7 +76,9 @@ public class SetManyIfNotExistsTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
@@ -99,13 +112,19 @@ public class SetManyIfNotExistsTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("{tenant}:");
         (RespireKey Key, RespireValue Value)[] pairs = [("a", "{different}:one"), ("b", "{other}:two")];
         bool result;
-        if (path == "immediate") result = await view.Strings.SetManyIfNotExistsAsync(pairs);
+
+        if (path == "immediate")
+        {
+            result = await view.Strings.SetManyIfNotExistsAsync(pairs);
+        }
         else if (path == "batch")
         {
             using var batch = view.CreateBatch();
@@ -120,6 +139,7 @@ public class SetManyIfNotExistsTests
             await transaction.CommitAsync();
             result = pending.Result;
         }
+
         await Assert.That(result).IsTrue();
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         await Assert.That(owner.ReceivedCommands.Where(c => c is not "MULTI" and not "EXEC"))

@@ -25,52 +25,100 @@ public partial interface IRespireCommandQueue
     RespirePending<RespireResult> Execute(RespireCommand command, params RespireValue[] args);
 
     /// <summary>String (plain value) commands.</summary>
-    IRespireBatchStringCommands Strings { get; }
+    IRespireBatchStringCommands Strings
+    {
+        get;
+    }
 
     /// <summary>Generic key management commands.</summary>
-    IRespireBatchKeyCommands Keys { get; }
+    IRespireBatchKeyCommands Keys
+    {
+        get;
+    }
 
     /// <summary>Server flush commands affecting only the execution node.</summary>
-    IRespireBatchServerCommands Server { get; }
+    IRespireBatchServerCommands Server
+    {
+        get;
+    }
 
     /// <summary>Hash (field → value map) commands.</summary>
-    IRespireBatchHashCommands Hashes { get; }
+    IRespireBatchHashCommands Hashes
+    {
+        get;
+    }
 
     /// <summary>List commands.</summary>
-    IRespireBatchListCommands Lists { get; }
+    IRespireBatchListCommands Lists
+    {
+        get;
+    }
 
     /// <summary>Redis sparse array commands.</summary>
-    IRespireBatchArrayCommands Arrays { get; }
+    IRespireBatchArrayCommands Arrays
+    {
+        get;
+    }
 
     /// <summary>Valkey 9.2 Path Hash commands, tested against RC1.</summary>
-    IRespireBatchPathHashCommands PathHashes { get; }
+    IRespireBatchPathHashCommands PathHashes
+    {
+        get;
+    }
 
     /// <summary>Set (unordered, unique members) commands.</summary>
-    IRespireBatchSetCommands Sets { get; }
+    IRespireBatchSetCommands Sets
+    {
+        get;
+    }
 
     /// <summary>Sorted set (score-ordered members) commands.</summary>
-    IRespireBatchSortedSetCommands SortedSets { get; }
+    IRespireBatchSortedSetCommands SortedSets
+    {
+        get;
+    }
 
     /// <summary>Bitmap commands.</summary>
-    IRespireBatchBitmapCommands Bitmaps { get; }
+    IRespireBatchBitmapCommands Bitmaps
+    {
+        get;
+    }
 
     /// <summary>HyperLogLog commands.</summary>
-    IRespireBatchHyperLogLogCommands HyperLogLog { get; }
+    IRespireBatchHyperLogLogCommands HyperLogLog
+    {
+        get;
+    }
 
     /// <summary>Geospatial commands.</summary>
-    IRespireBatchGeoCommands Geo { get; }
+    IRespireBatchGeoCommands Geo
+    {
+        get;
+    }
 
     /// <summary>Redis vector-set commands.</summary>
-    IRespireBatchVectorSetCommands VectorSets { get; }
+    IRespireBatchVectorSetCommands VectorSets
+    {
+        get;
+    }
 
     /// <summary>Lua script evaluation.</summary>
-    IRespireBatchScriptCommands Scripts { get; }
+    IRespireBatchScriptCommands Scripts
+    {
+        get;
+    }
 
     /// <summary>Redis Functions, without automatic reload or replay.</summary>
-    IRespireBatchFunctionCommands Functions { get; }
+    IRespireBatchFunctionCommands Functions
+    {
+        get;
+    }
 
     /// <summary>Non-blocking stream append, range, count, acknowledge, remove, and trim commands.</summary>
-    IRespireBatchStreamCommands Streams { get; }
+    IRespireBatchStreamCommands Streams
+    {
+        get;
+    }
 
     /// <inheritdoc cref="IRespireBatchStringCommands.GetString"/>
     RespirePending<string?> GetString(RespireKey key);

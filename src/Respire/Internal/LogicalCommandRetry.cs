@@ -23,10 +23,21 @@ internal static class LogicalCommandRetry
     internal readonly struct Attempt(int number, CancellationToken token, CommandDeadline deadline)
     {
         /// <summary>One for the initial send.</summary>
-        internal int Number { get; } = number;
+        internal int Number
+        {
+            get;
+        } = number;
+
         /// <summary>The logical cancellation and deadline budget shared by all attempts.</summary>
-        internal CancellationToken Token { get; } = token;
-        internal CommandDeadline Deadline { get; } = deadline;
+        internal CancellationToken Token
+        {
+            get;
+        } = token;
+
+        internal CommandDeadline Deadline
+        {
+            get;
+        } = deadline;
     }
 
     internal static CommandDeadline CreateDeadline(TimeSpan? commandTimeout)
@@ -58,34 +69,56 @@ internal static class LogicalCommandRetry
         var token = timeout?.Token ?? callerToken;
         var retries = 0;
         Exception? finalError = null;
+
         try
         {
             for (var attempt = 1; ; attempt++)
             {
                 ThrowIfStopped(operation, commandTimeout, token, deadline);
                 var sending = false;
+
                 try
                 {
                     var current = new Attempt(attempt, token, deadline);
                     // Preparation selects and admits the resend's route before anything executes.
                     if (attempt > 1 && prepareResend is not null)
+                    {
                         await prepareResend(state, current).ConfigureAwait(false);
+                    }
+
                     sending = true;
                     var result = await send(state, current).ConfigureAwait(false);
                     RecordAttempted(category, attempt, ref retries);
-                    if (retries != 0) RespireTelemetry.RecordCommandRetry(category, "succeeded");
+
+                    if (retries != 0)
+                    {
+                        RespireTelemetry.RecordCommandRetry(category, "succeeded");
+                    }
+
                     return result;
                 }
                 catch (Exception error)
                 {
                     // Circuit rejection is never a selected failure, so it always ends the operation.
                     if (error is not RespireCircuitOpenException || (sending && !rejectionProvesUnexecuted))
+                    {
                         RecordAttempted(category, attempt, ref retries);
+                    }
+
                     var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
+
                     if (!policy.TryGetDelay(error, CommandWriteOutcome.Unknown, category, attempt, remaining, token, out var delay))
+                    {
                         throw;
+                    }
+
                     observation.Handled(error);
-                    if (delay != TimeSpan.Zero) await Task.Delay(delay, token).ConfigureAwait(false);
+
+                    if (delay != TimeSpan.Zero)
+                    {
+                        await Task.Delay(delay, token).ConfigureAwait(false);
+                    }
+
                     ThrowIfStopped(operation, commandTimeout, token, deadline);
                 }
             }
@@ -106,7 +139,9 @@ internal static class LogicalCommandRetry
         finally
         {
             if (finalError is not null && retries != 0)
+            {
                 RespireTelemetry.RecordCommandRetry(category, "exhausted");
+            }
         }
     }
 
@@ -115,7 +150,11 @@ internal static class LogicalCommandRetry
     // single-command dispatch on the route the retry selected is not reported as another attempt.
     private static void RecordAttempted(RespireCommandRetryCategory category, int attempt, ref int retries)
     {
-        if (attempt == 1) return;
+        if (attempt == 1)
+        {
+            return;
+        }
+
         retries++;
         RespireTelemetry.RecordCommandRetry(category, "attempted");
     }
@@ -123,7 +162,10 @@ internal static class LogicalCommandRetry
     private static void ThrowIfStopped(string operation, TimeSpan? commandTimeout, CancellationToken token, CommandDeadline deadline)
     {
         token.ThrowIfCancellationRequested();
+
         if (deadline.IsSet && deadline.RemainingMilliseconds == 0)
+        {
             throw new RespireTimeoutException(operation, commandTimeout!.Value);
+        }
     }
 }

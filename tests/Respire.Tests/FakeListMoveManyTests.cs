@@ -22,19 +22,33 @@ public class FakeListMoveManyTests
         var move = client.Lists.MoveManyAsync("source", "destination", waitFor: Timeout.InfiniteTimeSpan,
             cancellationToken: deadline.Token).AsTask();
         await observed.Matched.WaitAsync(deadline.Token);
-        while (observed.ExecutionCount == 0) await Task.Delay(1, deadline.Token);
+
+        while (observed.ExecutionCount == 0)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
         // The clock is sampled once per execution under the server gate. Taking the same
         // gate ensures the blocked command has registered its wait before the baseline.
         var gate = (Lock)typeof(RespireFakeServer).GetField("_gate",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(server)!;
         long before;
-        lock (gate) before = clock.Count;
+
+        lock (gate)
+        {
+            before = clock.Count;
+        }
+
         await client.GetStringAsync("source");
         await client.SetAsync("unrelated", "value");
         await client.PingAsync();
         await Task.Delay(100, deadline.Token);
         long after;
-        lock (gate) after = clock.Count;
+
+        lock (gate)
+        {
+            after = clock.Count;
+        }
+
         await Assert.That(after - before).IsEqualTo(3);
         await Assert.That(move.IsCompleted).IsFalse();
         await client.Lists.RightPushAsync("source", "ready");
@@ -99,13 +113,19 @@ public class FakeListMoveManyTests
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var gate = (Lock)typeof(RespireFakeServer).GetField("_gate", flags)!.GetValue(server)!;
         var groups = (System.Collections.IDictionary)typeof(RespireFakeServer).GetField("_listMoveWaiters", flags)!.GetValue(server)!;
+
         while (true)
         {
             lock (gate)
             {
                 var count = groups.Values.Cast<object>().Sum(group => (int)group.GetType().GetField("Count", flags)!.GetValue(group)!);
-                if (count == expected && (expected != 0 || groups.Count == 0)) return;
+
+                if (count == expected && (expected != 0 || groups.Count == 0))
+                {
+                    return;
+                }
             }
+
             await Task.Delay(1, cancellationToken);
         }
     }
@@ -113,7 +133,9 @@ public class FakeListMoveManyTests
     private sealed class CountingClock : TimeProvider
     {
         private long _count;
+
         public long Count => Interlocked.Read(ref _count);
+
         public override DateTimeOffset GetUtcNow()
         {
             Interlocked.Increment(ref _count);
@@ -127,6 +149,7 @@ public class FakeListMoveManyTests
         await using var server = new RespireFakeServer();
 #pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+
 #pragma warning restore RESP010
         foreach (var watched in new[] { "s", "d" })
         {
@@ -136,10 +159,18 @@ public class FakeListMoveManyTests
             await client.Lists.MoveManyAsync("s", "d");
             await Assert.That(await transaction.CommitAsync()).IsFalse();
         }
+
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions());
-        using (var multi = await session.CommandAsync("MULTI")) { }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
         using (var queued = await session.CommandAsync("BLMOVEM", "missing", "d", "LEFT", "RIGHT", "0", "EXACTLY", "2", "BULK"))
+        {
             await Assert.That(queued.AsString()).IsEqualTo("QUEUED");
+        }
+
         using var reply = await session.CommandAsync("EXEC").WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(reply.AsArray()[0].IsNull).IsTrue();
     }
@@ -160,9 +191,16 @@ public class FakeListMoveManyTests
             ["s", "d", "LEFT", "RIGHT", "COUNT", 2, "invalid"],
             ["s", "d", "invalid", "RIGHT"],
         ];
+
         foreach (var arguments in invalid)
-            await Assert.That(async () => { using var reply = await client.ExecuteAsync("LMOVEM", arguments); })
+        {
+            await Assert.That(async () =>
+                {
+                    using var reply = await client.ExecuteAsync("LMOVEM", arguments);
+                })
                 .Throws<RespireServerException>();
+        }
+
 #pragma warning disable RESP011 // This isolated fake list contains at most three seeded items; read the whole list to verify no unexpected elements remain.
         await Assert.That(await client.Lists.RangeAsync("s")).IsEquivalentTo(["a", "b"], CollectionOrdering.Matching);
 #pragma warning restore RESP011
@@ -182,7 +220,11 @@ public class FakeListMoveManyTests
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
 #pragma warning restore RESP010
         await client.Lists.RightPushAsync("s", "a", "b", "c");
-        using (var expiry = await client.ExecuteAsync("PEXPIRE", "s", 1000)) { }
+
+        using (var expiry = await client.ExecuteAsync("PEXPIRE", "s", 1000))
+        {
+        }
+
         await client.SetAsync("wrong", "text");
         await Assert.That(await client.Lists.MoveManyAsync("s", "wrong", 4, countMode: RespireListMoveCountMode.Exactly)).IsNull();
         await Assert.That(async () => await client.Lists.MoveManyAsync("s", "wrong", 2)).Throws<RespireServerException>();

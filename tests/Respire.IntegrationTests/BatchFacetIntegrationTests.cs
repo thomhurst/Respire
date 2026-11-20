@@ -25,6 +25,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         using var batch = client.CreateBatch();
         var failed = batch.GetString(key);
         var successful = batch.Hashes.GetString(key, "field");
+
         if (inspect)
         {
             var result = await batch.TryExecuteAsync();
@@ -33,10 +34,14 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         }
         else
         {
-            Func<Task> execute = async () => { await batch.ExecuteAsync(); };
+            Func<Task> execute = async () =>
+            {
+                await batch.ExecuteAsync();
+            };
             var thrown = await execute.Should().ThrowAsync<RespireServerException>();
             thrown.Which.Should().BeSameAs(failed.Error);
         }
+
         successful.Result.Should().Be("value");
         failed.Error.Should().BeOfType<RespireServerException>();
         await client.Keys.DeleteAsync(key);
@@ -134,8 +139,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         var hllAdded = batch.HyperLogLog.Add("batch:hll", "ada", "grace");
         var hllCount = batch.HyperLogLog.Count("batch:hll");
         var geoAdded = batch.Geo.Add(
-            "batch:cities", entries:
-            [
+            "batch:cities", entries: [
                 new RespireGeoEntry(-0.1276, 51.5072, "london"),
                 new RespireGeoEntry(2.3522, 48.8566, "paris"),
             ]);
@@ -263,6 +267,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
 
         stored.Result.Should().Be(new RespireGetResult<int>(true, 0));
         missing.Result.Found.Should().BeFalse();
+
         using (var result = batchScript.Result)
         {
             result[0].AsString().Should().Be("deferred:typed");

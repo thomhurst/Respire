@@ -34,7 +34,9 @@ public partial class ErrorMetricsTests
             .CreateDelegate<Func<RespireConnectionOptions, CancellationToken, bool, Task>>(connection);
         var error = await Assert.That(() => handshake(new()
         {
-            Protocol = protocol, Password = "private-password", ClientName = "private-name",
+            Protocol = protocol,
+            Password = "private-password",
+            ClientName = "private-name",
         }, CancellationToken.None, false)).Throws<RespireConnectionClosedBeforeSendException>();
         using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         ReadEndpointRouter.RecordCandidateFailure(observation, error!);

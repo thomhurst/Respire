@@ -37,17 +37,26 @@ public class NativeLockCommandTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespireProtocol)protocol, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         try
         {
             var error = await Assert.That(async () =>
             {
-                if (extend) await mutex.ResetExpiryAsync(TimeSpan.FromMinutes(1), deadline.Token);
-                else await mutex.ReleaseAsync(deadline.Token);
+                if (extend)
+                {
+                    await mutex.ResetExpiryAsync(TimeSpan.FromMinutes(1), deadline.Token);
+                }
+                else
+                {
+                    await mutex.ReleaseAsync(deadline.Token);
+                }
             }).Throws<RespireScriptingEngineUnavailableException>();
             await Assert.That(error!.ServerError.Code).IsEqualTo("ERR");
             await Assert.That(error.ServerError.CommandName).IsEqualTo("EVAL");
@@ -56,8 +65,15 @@ public class NativeLockCommandTests
             // The capability probe includes SKIPME; a fence of this owner does not.
             await Assert.That(server.ReceivedCommands).DoesNotContain("CLIENT KILL ID 41");
             missingEngine = false;
-            if (extend) await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromMinutes(1), deadline.Token)).IsTrue();
-            else await Assert.That(await mutex.ReleaseAsync(deadline.Token)).IsEqualTo(RespireLockReleaseOutcome.Released);
+
+            if (extend)
+            {
+                await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromMinutes(1), deadline.Token)).IsTrue();
+            }
+            else
+            {
+                await Assert.That(await mutex.ReleaseAsync(deadline.Token)).IsEqualTo(RespireLockReleaseOutcome.Released);
+            }
         }
         finally
         {
@@ -79,7 +95,8 @@ public class NativeLockCommandTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         await Assert.That(async () => await client.Locks.ResetExpiryAsync("key", "owner", TimeSpan.FromTicks(ticks)))
@@ -119,11 +136,13 @@ public class NativeLockCommandTests
         await using var server = new FakeRespServer(UnsupportedSet, One, UnknownDelex, UnknownDelifeq, One, One, One);
         await using var owner = await FakeRespServer.ConnectClientAsync(server.Port);
         var client = owner.WithKeyPrefix("tenant:");
+
         for (var i = 0; i < 2; i++)
         {
             await Assert.That(await client.Locks.ResetExpiryAsync("lock", "owner", TimeSpan.FromSeconds(5))).IsTrue();
             await Assert.That(await client.Locks.ReleaseAsync("lock", "owner")).IsTrue();
         }
+
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
             "SET tenant:lock owner IFEQ owner PX 5000",
@@ -141,11 +160,13 @@ public class NativeLockCommandTests
         var unknown = "-ERR unknown command\r\n"u8.ToArray();
         await using var server = new FakeRespServer(unknown, One, unknown, unknown, One, One, One);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
         for (var i = 0; i < 2; i++)
         {
             await Assert.That(await client.Locks.ResetExpiryAsync("lock", "owner", TimeSpan.FromSeconds(5))).IsTrue();
             await Assert.That(await client.Locks.ReleaseAsync("lock", "owner")).IsTrue();
         }
+
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
             "SET lock owner IFEQ owner PX 5000",
@@ -200,18 +221,27 @@ public class NativeLockCommandTests
         await using var server = new FakeRespServer(One)
         {
             CloseConnectionAfterCommand = disconnect ? 1 : null,
-            SuppressReply = _ => { arrived.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                arrived.TrySetResult();
+                return true;
+            },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
         var pending = ExecuteAsync(client, extend, cancellation.Token).AsTask();
+
         if (!disconnect)
         {
             await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
             cancellation.Cancel();
             await Assert.That(async () => await pending).Throws<OperationCanceledException>();
         }
-        else await Assert.That(async () => await pending).Throws<RespireConnectionException>();
+        else
+        {
+            await Assert.That(async () => await pending).Throws<RespireConnectionException>();
+        }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
     }
 
@@ -253,19 +283,25 @@ public class NativeLockCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
 #pragma warning restore RESP010
         await Assert.That(await client.Locks.ReleaseAsync("resource", "owner")).IsTrue();
         await Assert.That(source.ReceivedCommands).Count().IsEqualTo(3);
         await Assert.That(target.ReceivedCommands[ask ? 1 : 0]).IsEqualTo("DELEX resource IFEQ owner");
+
         if (ask)
         {
             await Assert.That(target.ReceivedCommands.Where((_, index) => index % 2 == 0))
                 .IsEquivalentTo(new[] { "ASKING", "ASKING", "ASKING", "ASKING" });
             await Assert.That(target.ReceivedCommands[^1]).StartsWith("EVAL ");
         }
-        else await Assert.That(target.CommandsSeen).IsEqualTo(1);
+        else
+        {
+            await Assert.That(target.CommandsSeen).IsEqualTo(1);
+        }
     }
 
     [Test]
@@ -276,13 +312,18 @@ public class NativeLockCommandTests
         var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer
         {
-            SuppressReply = _ => { written.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                written.TrySetResult();
+                return true;
+            },
         };
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
             CommandTimeout = null,
         });
 #pragma warning restore RESP010
@@ -308,7 +349,11 @@ public class NativeLockCommandTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("SET ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("SET ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 renewalArrived.TrySetResult();
                 return true;
             },
@@ -321,7 +366,9 @@ public class NativeLockCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
 #pragma warning restore RESP010
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
@@ -337,6 +384,7 @@ public class NativeLockCommandTests
         await Assert.That(target.ReceivedCommands.Any(command => command.StartsWith("EVAL", StringComparison.Ordinal))).IsFalse();
         await mutex.DisposeAsync();
     }
+
     private static ValueTask<bool> ExecuteAsync(RespireClient client, bool extend, CancellationToken cancellationToken = default)
         => extend ? client.Locks.ResetExpiryAsync("resource", "owner", TimeSpan.FromSeconds(5), cancellationToken)
             : client.Locks.ReleaseAsync("resource", "owner", cancellationToken);

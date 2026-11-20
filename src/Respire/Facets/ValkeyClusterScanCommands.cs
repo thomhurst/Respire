@@ -53,21 +53,47 @@ internal sealed partial class KeyCommands
     {
         ArgumentException.ThrowIfNullOrEmpty(cursor);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
-        if (slot is < 0 or >= ClusterHash.SlotCount) throw new ArgumentOutOfRangeException(nameof(slot));
+
+        if (slot is < 0 or >= ClusterHash.SlotCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(slot));
+        }
+
         var typeToken = FormatKeyType(type);
         ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
         // The conversion scope admits configured calls before observing cancellation.
-        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
-        if (client.Core.Cluster is null) throw new InvalidOperationException("CLUSTERSCAN requires UseCluster.");
+        if (client.Core.Options.CommandHook is null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        if (client.Core.Cluster is null)
+        {
+            throw new InvalidOperationException("CLUSTERSCAN requires UseCluster.");
+        }
+
         var prefix = client.EncodedKeyPrefix;
         // A trailing high surrogate has both paired-text and replacement-byte encodings.
         // No single literal UTF-8 prefix covers both. Filter that namespace after scanning.
         var effectiveMatch = prefix is { HasSurrogateBoundary: true } ? null : ScanMatch(prefix, match);
         List<RespireValue> arguments = [cursor];
-        if (effectiveMatch is not null) arguments.AddRange(["MATCH", effectiveMatch.Value]);
+
+        if (effectiveMatch is not null)
+        {
+            arguments.AddRange(["MATCH", effectiveMatch.Value]);
+        }
+
         arguments.AddRange(["COUNT", countHint]);
-        if (typeToken is not null) arguments.AddRange(["TYPE", typeToken]);
-        if (slot is { } selectedSlot) arguments.AddRange(["SLOT", selectedSlot]);
+
+        if (typeToken is not null)
+        {
+            arguments.AddRange(["TYPE", typeToken]);
+        }
+
+        if (slot is { } selectedSlot)
+        {
+            arguments.AddRange(["SLOT", selectedSlot]);
+        }
         // The server cursor carries a physical hash tag. Never resolve it through client.Key().
         var routingSlot = cursor == "0" ? slot ?? 0 : ClusterHash.GetSlot(cursor);
         return new ValkeyClusterScanCommand(arguments.ToArray(), routingSlot);
@@ -76,11 +102,20 @@ internal sealed partial class KeyCommands
     internal readonly struct ValkeyClusterScanCommand(RespireValue[] arguments, int routingSlot) : IRespCommand
     {
         private static readonly Verb ScanVerb = new("CLUSTERSCAN", allowReadRouting: false);
+
         // Replica rotation could repeatedly restart the server's fingerprinted cursor.
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => ScanVerb.CacheMetadata;
+
         public RespireCacheMutation GetCacheMutation(string operation) => ScanVerb.CacheMetadata.Policy;
-        public bool TryGetClusterSlot(out int slot) { slot = routingSlot; return true; }
+
+        public bool TryGetClusterSlot(out int slot)
+        {
+            slot = routingSlot;
+            return true;
+        }
+
         public void Write(ref RespWriter writer) => new CmdN(ScanVerb, arguments).Write(ref writer);
     }
 }
@@ -99,26 +134,53 @@ internal static class ValkeyClusterScanParser
         var pattern = prefix is { HasSurrogateBoundary: true } && match is not null
             ? Encoding.UTF8.GetBytes(match) : null;
         var keys = new List<RespireKey>(values.Length);
+
         foreach (ref readonly var key in values)
         {
-            if (key.Type != RespireDataType.BulkString || key.IsNull) throw new RespireProtocolException("CLUSTERSCAN keys must be bulk strings.");
+            if (key.Type != RespireDataType.BulkString || key.IsNull)
+            {
+                throw new RespireProtocolException("CLUSTERSCAN keys must be bulk strings.");
+            }
+
             var bytes = key.AsSpan();
             RespireKey owned;
-            if (prefix is null) owned = new RespireKey(bytes.ToArray());
-            else if (!prefix.TryStripScanKey(bytes, out owned)) continue;
-            if (pattern is null || ByteGlob.IsMatch(owned.ToBytes(), pattern)) keys.Add(owned);
+
+            if (prefix is null)
+            {
+                owned = new RespireKey(bytes.ToArray());
+            }
+            else if (!prefix.TryStripScanKey(bytes, out owned))
+            {
+                continue;
+            }
+
+            if (pattern is null || ByteGlob.IsMatch(owned.ToBytes(), pattern))
+            {
+                keys.Add(owned);
+            }
         }
+
         return new(cursor, keys.ToArray());
     }
 
     internal static string ReadCursor(in RespValue reply)
     {
         if (reply.Type != RespireDataType.Array || reply.AsArray().Length != 2)
+        {
             throw new RespireProtocolException("CLUSTERSCAN must return a cursor and a key array.");
+        }
+
         var fields = reply.AsArray();
+
         if (fields[0].Type != RespireDataType.BulkString || fields[0].AsSpan().IsEmpty || fields[1].Type != RespireDataType.Array)
+        {
             throw new RespireProtocolException("CLUSTERSCAN returned an invalid cursor or key array.");
-        try { return CursorEncoding.GetString(fields[0].AsSpan()); }
+        }
+
+        try
+        {
+            return CursorEncoding.GetString(fields[0].AsSpan());
+        }
         catch (DecoderFallbackException error)
         {
             throw new RespireProtocolException("CLUSTERSCAN cursor is not valid UTF-8.", error);
